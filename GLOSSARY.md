@@ -80,7 +80,7 @@ _Avoid_: Notification, warning
 
 **Bank-data provider**:
 A third-party service that connects to many banks and returns their Transactions, such as Plaid.
-_Avoid_: Aggregator, adapter, connector
+_Avoid_: Aggregator, connector
 
 **AI provider**:
 A service that runs an AI model with the Household's own API key, such as OpenAI or Anthropic.
