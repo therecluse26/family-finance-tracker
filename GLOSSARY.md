@@ -39,19 +39,19 @@ Money that leaves the Household for goods or services. Cash withdrawals and paym
 _Avoid_: Expense, outflow
 
 **Income**:
-Money that enters the Household from outside, such as a paycheck. Refunds and Reimbursements are not Income.
+Money that enters the Household from outside, such as a paycheck. Card rewards count as Income. Refunds, Reimbursements, and money borrowed from a loan are not Income.
 _Avoid_: Inflow, deposit
 
 **Saving**:
-Money moved from an Account into an investment or retirement account. Not Spending.
+Money moved from an Account into an investment or retirement account. Not Spending. Money taken back out of such an account reduces Saving.
 _Avoid_: Contribution
 
 **Refund**:
-Money a merchant returns for an earlier purchase. It reduces Spending in that purchase's category.
+Money a merchant returns for an earlier purchase. It reduces Spending in that purchase's Category and month.
 _Avoid_: Return, credit
 
 **Reimbursement**:
-Money a person outside the Household pays back for shared Spending, such as a split dinner. It reduces that Spending.
+Money a person outside the Household pays back for shared Spending, such as a split dinner. It reduces that Spending, in that Spending's month.
 _Avoid_: Payback, repayment
 
 ## Categories
@@ -89,6 +89,12 @@ _Avoid_: Outlier, unusual activity
 **Alert**:
 A notice sent to Members' phones or email about Overspending or an Anomaly.
 _Avoid_: Notification, warning
+
+## Review
+
+**Review list**:
+An optional list of the app's uncertain decisions, such as a guessed Transfer or Category. A Member may check it; nothing waits for it.
+_Avoid_: Inbox, queue, triage
 
 ## Outside services
 
