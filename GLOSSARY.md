@@ -98,6 +98,10 @@ _Avoid_: Resolution, rule, objective
 Spending in a Category above its Budget, or on pace to pass it. The Budget is the only baseline.
 _Avoid_: Over budget, excess
 
+**Recurring charge**:
+Spending with one Merchant that repeats at a steady interval and a similar amount, such as a subscription or a utility bill.
+_Avoid_: Subscription, bill
+
 **Anomaly**:
 A Transaction or pattern that is unusual against the Household's own history, such as a duplicate charge or a subscription price increase.
 _Avoid_: Outlier, unusual activity
