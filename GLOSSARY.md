@@ -22,6 +22,18 @@ _Avoid_: Login, user account
 An Account that holds the Household's money but does not sync, such as an HSA. Money sent to it counts as a Transfer. A loan is never an Unconnected account.
 _Avoid_: External account, manual account
 
+**Manual loan**:
+A loan that a Member enters by hand, because no Bank-data provider syncs it. The app finds its payments and lowers its balance by itself.
+_Avoid_: Manual debt, offline loan
+
+**Cash loan**:
+A loan whose money lands in one of the Household's Accounts, such as a personal loan. Its principal payments are Transfers.
+_Avoid_: Personal loan, cash advance
+
+**Purchase loan**:
+A loan whose lender pays the seller directly, such as a car loan or a mortgage. Its principal payments are Spending.
+_Avoid_: Financing, secured loan
+
 **Transaction**:
 One movement of money on one Account, as the bank reports it.
 _Avoid_: Entry, activity, charge
@@ -35,7 +47,7 @@ Money that moves between two of the Household's own Accounts, including a credit
 _Avoid_: Internal transfer, linked pair
 
 **Spending**:
-Money that leaves the Household for goods or services. Cash withdrawals and payments on a loan the app does not track count as Spending. Refunds and Reimbursements reduce it.
+Money that leaves the Household for goods or services. Cash withdrawals, loan interest, and principal payments on a Purchase loan count as Spending. Refunds and Reimbursements reduce it.
 _Avoid_: Expense, outflow
 
 **Income**:
