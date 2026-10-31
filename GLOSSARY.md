@@ -110,6 +110,10 @@ _Avoid_: Outlier, unusual activity
 A notice sent to Members' phones or email about Overspending or an Anomaly.
 _Avoid_: Notification, warning
 
+**System notice**:
+A notice to Members about the app itself, such as a failed backup. It is never about money.
+_Avoid_: Error, warning
+
 ## Review
 
 **Review list**:
