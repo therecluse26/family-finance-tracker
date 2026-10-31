@@ -83,8 +83,12 @@ _Avoid_: Payee rule, auto-rule, filter
 ## Targets and warnings
 
 **Budget**:
-A monthly Spending limit for one Category. The AI drafts it and a Member accepts or edits it.
+A Spending limit for one Category, per month, or per year for Travel and Gifts and donations. The app drafts it, and a Member may edit it. Money left over does not carry into the next month.
 _Avoid_: Limit, target, envelope
+
+**Benchmark**:
+Typical Spending for a Category by similar US households, from public data. It is a reference for drafting Budgets, never a Budget itself.
+_Avoid_: Average, norm, standard
 
 **Goal**:
 A plain-English statement of intent by a Member, such as "I want to spend less on restaurants". It steers the AI's advice and its proposed Budget changes.
