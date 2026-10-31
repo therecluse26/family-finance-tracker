@@ -19,19 +19,23 @@ A bank account, credit card, or loan that belongs to the Household.
 _Avoid_: Login, user account
 
 **Unconnected account**:
-An Account the Household owns but does not sync, such as an HSA. Money sent to it counts as a Transfer.
+An Account that holds the Household's money but does not sync, such as an HSA. Money sent to it counts as a Transfer. A loan is never an Unconnected account.
 _Avoid_: External account, manual account
 
 **Transaction**:
 One movement of money on one Account, as the bank reports it.
 _Avoid_: Entry, activity, charge
 
+**Merchant**:
+The business or person on the other side of a Transaction, under a clean name, such as Starbucks.
+_Avoid_: Payee, vendor, counterparty
+
 **Transfer**:
 Money that moves between two of the Household's own Accounts, including a credit card bill payment. Never counts as Spending or Income.
 _Avoid_: Internal transfer, linked pair
 
 **Spending**:
-Money that leaves the Household for goods or services. Refunds and Reimbursements reduce it.
+Money that leaves the Household for goods or services. Cash withdrawals and payments on a loan the app does not track count as Spending. Refunds and Reimbursements reduce it.
 _Avoid_: Expense, outflow
 
 **Income**:
@@ -50,11 +54,21 @@ _Avoid_: Return, credit
 Money a person outside the Household pays back for shared Spending, such as a split dinner. It reduces that Spending.
 _Avoid_: Payback, repayment
 
-## Targets and warnings
+## Categories
 
 **Category**:
-A label for what Spending paid for, such as Restaurants or Interest and fees.
+A label for what Spending paid for, such as Restaurants or Interest and fees. When the app cannot see what Spending paid for, the Category says where it went, such as Superstores or Cash. Only Spending has a Category. A Refund or Reimbursement takes the Category of the Spending it reduces.
 _Avoid_: Tag, bucket, type
+
+**Category group**:
+A named set of Categories, such as Bills or Leisure, for seeing Spending at a high level. Each Category belongs to exactly one Category group.
+_Avoid_: Super-category, parent category
+
+**Category rule**:
+A rule that gives every Transaction with one Merchant the same Category. A Member's correction creates it. It covers past and future Transactions, except those a Member set by hand.
+_Avoid_: Payee rule, auto-rule, filter
+
+## Targets and warnings
 
 **Budget**:
 A monthly Spending limit for one Category. The AI drafts it and a Member accepts or edits it.
