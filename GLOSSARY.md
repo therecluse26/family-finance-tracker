@@ -9,7 +9,7 @@ The group of people whose finances one instance tracks. One instance serves exac
 _Avoid_: Family, tenant, organization
 
 **Member**:
-A person in the Household who has a login. Every Member sees all of the Household's data.
+A person in the Household who has a login. Every Member sees all of the Household's data and has the same powers; there are no roles.
 _Avoid_: User, account holder
 
 ## Accounts and money movement
