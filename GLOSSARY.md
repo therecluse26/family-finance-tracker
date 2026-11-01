@@ -133,13 +133,21 @@ _Avoid_: LLM vendor, model host
 ## AI output
 
 **Monthly review**:
-A written AI report on the past month's overspending and practical ways to save.
+An AI report, written on the 1st, on the past month's Habits, overspending, and practical ways to save. It never changes once written.
 _Avoid_: Monthly report, summary
 
 **Insight card**:
-A short AI finding shown on the dashboard and refreshed after each sync.
+A short AI finding in the dashboard's AI box, rewritten at most once a day after a sync brings new Transactions.
 _Avoid_: Tip, widget
 
 **Chat**:
-A conversation where a Member asks the AI questions about the Household's money.
+A conversation where a Member asks the AI questions about the Household's money. Every Member can see every Chat.
 _Avoid_: Assistant, Q&A
+
+**Habit**:
+A repeated behavior the AI notices in the Household's Spending, named in plain words, such as "Takeout fills the busy nights".
+_Avoid_: Pattern, trend
+
+**Proposal**:
+A change the AI suggests, such as a new Budget amount or a new Goal. Nothing changes until a Member accepts it.
+_Avoid_: Suggestion, recommendation
