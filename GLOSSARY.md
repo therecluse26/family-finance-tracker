@@ -18,6 +18,10 @@ _Avoid_: User, account holder
 A bank account, credit card, or loan that belongs to the Household.
 _Avoid_: Login, user account
 
+**Connection**:
+One link to one bank, through one Bank-data provider. It brings in one or more Accounts. A bank has at most one Connection.
+_Avoid_: Item, link, enrollment, login
+
 **Unconnected account**:
 An Account that holds the Household's money but does not sync, such as an HSA. Money sent to it counts as a Transfer. A loan is never an Unconnected account.
 _Avoid_: External account, manual account
