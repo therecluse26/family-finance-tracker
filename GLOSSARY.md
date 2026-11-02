@@ -124,6 +124,12 @@ _Avoid_: Error, warning
 An optional list of the app's uncertain decisions, such as a guessed Transfer or Category. A Member may check it; nothing waits for it.
 _Avoid_: Inbox, queue, triage
 
+## Security
+
+**Master key**:
+The secret that locks the bank and AI keys the app stores. The Household keeps a copy outside the app. Without it, every Connection must be made again.
+_Avoid_: Encryption key, recovery key, password
+
 ## Outside services
 
 **Bank-data provider**:
