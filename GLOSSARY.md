@@ -134,6 +134,10 @@ _Avoid_: Aggregator, connector
 A service that runs an AI model with the Household's own API key, such as OpenAI or Anthropic.
 _Avoid_: LLM vendor, model host
 
+**AI cost cap**:
+The most the Household lets the app spend on its AI provider in one calendar month. When the app reaches it, background AI stops until the 1st.
+_Avoid_: AI budget, spending limit, quota
+
 ## AI output
 
 **Monthly review**:
