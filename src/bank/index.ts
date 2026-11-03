@@ -26,6 +26,13 @@ export {
 } from "./balances.ts";
 export { SyncConnectionJob, startSync } from "./job.ts";
 export {
+  mapPlaidCategory,
+  PLAID_V2_CODES,
+  type PlaidCategoryMatch,
+  type PlaidConfidence,
+  plaidConfidence,
+} from "./plaid-categories.ts";
+export {
   type PlaidClientMaker,
   type PlaidKeysClient,
   plaidSettings,

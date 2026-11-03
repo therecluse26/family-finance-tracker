@@ -1,4 +1,5 @@
 import {
+  type ArrivingTxn,
   type Database,
   finishSync,
   type PageCounts,
@@ -6,14 +7,28 @@ import {
   storeSyncPage,
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
+import { cleanMerchant } from "../merchants/index.ts";
 import type { Secrets } from "../secrets/index.ts";
-import type { AdapterActions, BankConnection, BankDataAdapter, Provider } from "./adapter.ts";
+import type {
+  AdapterActions,
+  BankConnection,
+  BankDataAdapter,
+  Provider,
+  TxnRecord,
+} from "./adapter.ts";
 
 // Syncing one Connection (spec 02, Sync schedule and Changes to synced data). A sync asks the
 // adapter for pages from the saved cursor, stores each page's records by their stable IDs, and
 // saves the new cursor only after every record is stored. A sync that fails partway saves no
 // cursor, so the next one starts again from the same cursor and stores no record twice. A sync
 // that ends saves each Account's balance for the day (spec 02, Balances).
+
+// Each Transaction gets its Merchant as it arrives, before matching, because Refund links need the
+// Merchant (spec 04, Names).
+function arriving(record: TxnRecord): ArrivingTxn {
+  const { merchant, needsAi } = cleanMerchant(record);
+  return { ...record, merchant: { cleanName: merchant?.name || null, needsAi } };
+}
 
 // A sync that has not reached its last page after this many pages stops, with no cursor saved.
 const MAX_PAGES = 10_000;
@@ -123,7 +138,13 @@ async function syncOnce(
   let cursor = stored.syncCursor;
   for (let pages = 0; pages < MAX_PAGES; pages += 1) {
     const page = await adapter.sync(connection, cursor);
-    const counts = await storeSyncPage(database, connection.id, page, now(), zone);
+    const counts = await storeSyncPage(
+      database,
+      connection.id,
+      { ...page, added: page.added.map(arriving), changed: page.changed.map(arriving) },
+      now(),
+      zone,
+    );
     options.onPageStored?.(counts);
     report.added += counts.added;
     report.changed += counts.changed;

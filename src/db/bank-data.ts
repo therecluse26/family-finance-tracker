@@ -68,8 +68,15 @@ function accountFields(snapshot: AccountSnapshot) {
   };
 }
 
-// The provider's fields of a Transaction. handSet and the hidden state are left out.
-function transactionFields(record: TxnRecord, accountId: string) {
+// A Transaction as it arrives in a sync: the provider's record, with the Merchant that the bank
+// module's cleanup rules gave it (spec 04, Names).
+export type ArrivingTxn = TxnRecord & {
+  merchant: { cleanName: string | null; needsAi: boolean };
+};
+
+// The provider's fields of a Transaction, and its Merchant. handSet and the hidden state are left
+// out.
+function transactionFields(record: ArrivingTxn, accountId: string) {
   return {
     accountId,
     amount: record.amount,
@@ -80,6 +87,8 @@ function transactionFields(record: TxnRecord, accountId: string) {
     description: record.description,
     merchantName: record.merchantName,
     merchantId: record.merchantId,
+    merchantCleanName: record.merchant.cleanName,
+    merchantNeedsAi: record.merchant.needsAi,
     counterparties: record.counterparties,
     providerCategory: record.category?.name ?? null,
     providerCategoryConfidence: record.category?.confidence ?? null,
@@ -299,7 +308,7 @@ export type PageCounts = { added: number; changed: number; removed: number };
 export async function storeSyncPage(
   database: Database,
   connectionId: string,
-  page: Pick<SyncResult, "accounts" | "added" | "changed" | "removed">,
+  page: Pick<SyncResult, "accounts" | "removed"> & { added: ArrivingTxn[]; changed: ArrivingTxn[] },
   at = new Date(),
   timeZone = "UTC",
 ): Promise<PageCounts> {

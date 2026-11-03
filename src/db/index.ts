@@ -5,6 +5,7 @@ export {
   type StoredDailyBalance,
 } from "./balances.ts";
 export {
+  type ArrivingTxn,
   addConnection,
   closeAccount,
   finishSync,

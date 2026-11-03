@@ -294,6 +294,84 @@ describe("syncing a fake Connection", () => {
     ]);
   });
 
+  it("gives each Transaction its Merchant as it arrives, and again when it changes", async () => {
+    bank.fake.addPages(BANK, {
+      accounts: [CHECKING],
+      added: [
+        fakeTxn({
+          id: "m1",
+          accountId: CHECKING.id,
+          amount: -650,
+          description: "SQ *BLUE DOOR COFFEE",
+          merchantName: "Blue Door Coffee Roasters",
+          merchantId: "merchant-bdc",
+        }),
+        fakeTxn({
+          id: "m2",
+          accountId: CHECKING.id,
+          amount: -4_210,
+          description: "SHELL OIL 57444 AUSTIN TX",
+        }),
+        fakeTxn({ id: "m3", accountId: CHECKING.id, amount: -12_000, description: "CHECK 1042" }),
+        // The rules leave nothing: no name, and AI cleanup finds one.
+        fakeTxn({
+          id: "m0",
+          accountId: CHECKING.id,
+          amount: -999,
+          description: "4111111111111111",
+        }),
+        fakeTxn({
+          id: "m4",
+          accountId: CHECKING.id,
+          amount: -3_300,
+          description: "HAPPY VALLEY DOG GROOMING AND SPA #0042 SALT LAKE CITY UT",
+        }),
+      ],
+    });
+    const merchantRows = () =>
+      rows(
+        "SELECT provider_transaction_id AS id, merchant_id, merchant_clean_name, merchant_needs_ai FROM transactions ORDER BY provider_transaction_id",
+      );
+
+    await syncConnection(connectionId);
+
+    expect(await merchantRows()).toEqual([
+      { id: "m0", merchant_id: null, merchant_clean_name: null, merchant_needs_ai: 1 },
+      {
+        id: "m1",
+        merchant_id: "merchant-bdc",
+        merchant_clean_name: "Blue Door Coffee Roasters",
+        merchant_needs_ai: 0,
+      },
+      { id: "m2", merchant_id: null, merchant_clean_name: "Shell Oil", merchant_needs_ai: 0 },
+      { id: "m3", merchant_id: null, merchant_clean_name: null, merchant_needs_ai: 0 },
+      {
+        id: "m4",
+        merchant_id: null,
+        merchant_clean_name: "Happy Valley Dog Grooming And Spa",
+        merchant_needs_ai: 1,
+      },
+    ]);
+
+    // The provider names the Merchant later.
+    bank.fake.addPages(BANK, {
+      changed: [
+        fakeTxn({
+          id: "m4",
+          accountId: CHECKING.id,
+          amount: -3_300,
+          description: "HAPPY VALLEY DOG GROOMING AND SPA #0042 SALT LAKE CITY UT",
+          merchantName: "Happy Valley Grooming",
+        }),
+      ],
+    });
+    expect(await syncConnection(connectionId)).toEqual(report(0, 1, 0));
+    expect((await merchantRows()).at(-1)).toMatchObject({
+      merchant_clean_name: "Happy Valley Grooming",
+      merchant_needs_ai: 0,
+    });
+  });
+
   it("reports no change for a sync that brings nothing new", async () => {
     bank.fake.addPages(...threePages());
     await syncConnection(connectionId);

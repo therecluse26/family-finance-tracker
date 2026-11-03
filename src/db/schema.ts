@@ -329,8 +329,14 @@ export const transactions = sqliteTable(
     pendingTransactionId: text("pending_transaction_id"),
     // The original bank description.
     description: text("description").notNull(),
+    // The provider's Merchant name and Merchant ID.
     merchantName: text("merchant_name"),
     merchantId: text("merchant_id"),
+    // The Merchant's clean name (spec 04, Names). Null when the Transaction has no Merchant, such
+    // as a paper check.
+    merchantCleanName: text("merchant_clean_name"),
+    // Set when the cleanup rules could not fix the clean name, so AI cleanup takes it later.
+    merchantNeedsAi: integer("merchant_needs_ai", { mode: "boolean" }).notNull().default(false),
     // The other parties named on it, with their types, as JSON.
     counterparties: text("counterparties", { mode: "json" })
       .$type<{ name: string; type: string }[]>()
