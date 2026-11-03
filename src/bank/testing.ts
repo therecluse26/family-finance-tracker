@@ -1,7 +1,9 @@
-// Test support: app.db with the bank module running on the fake adapter, and a job list that holds
-// the sync job. No test uses a real Bank-data provider or real bank data.
+// Test support: app.db with the bank module and the follow-up pipeline running on the fake adapter,
+// and a job list that holds the sync and follow-up jobs. No test uses a real Bank-data provider or
+// real bank data.
 import { addConnection, type Database } from "../db/index.ts";
 import { newTestDatabase } from "../db/testing.ts";
+import { startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
@@ -10,6 +12,7 @@ import type { PlaidClientMaker, PlaidKeysClient } from "./plaid-keys.ts";
 import type { PlaidKeys } from "./plaid-view.ts";
 import { startBank } from "./sync.ts";
 
+export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "../jobs/sidequest.ts";
 export { SyncConnectionJob } from "./job.ts";
 
@@ -35,6 +38,7 @@ export async function newTestBank(options: { timeZone?: string } = {}): Promise<
     adapters: [fake],
     timeZone: async () => options.timeZone,
   });
+  const followUp = startFollowUpPipeline({ database: db.database });
   return {
     database: db.database,
     secrets,
@@ -48,6 +52,7 @@ export async function newTestBank(options: { timeZone?: string } = {}): Promise<
         syncMinute: 7,
       }),
     close() {
+      followUp.stop();
       bank.stop();
       db.close();
     },

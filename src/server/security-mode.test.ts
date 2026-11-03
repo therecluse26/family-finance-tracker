@@ -10,6 +10,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { signedOutAuth } from "../auth/testing.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import { createLogger } from "../log.ts";
+import { type Secrets, unlockSecrets } from "../secrets/index.ts";
+import { newMasterKey } from "../secrets/testing.ts";
 import type { ServerEnv } from "./env.ts";
 import { loadSecurity, type Security, securityCheck } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
@@ -1162,6 +1164,7 @@ function rawRequest(port: number, lines: string[], body = ""): Promise<RawRespon
 describe("the server", () => {
   let webRoot: string;
   let db: TestDatabase;
+  let secrets: Secrets;
   const servers: RunningServer[] = [];
 
   const startLogged = async (appUrl: string, trustedProxies?: string) => {
@@ -1172,6 +1175,7 @@ describe("the server", () => {
       security: loaded,
       auth: signedOutAuth,
       database: db.database,
+      secrets,
     });
     servers.push(server);
     return { port: server.port, refusals, text };
@@ -1182,6 +1186,8 @@ describe("the server", () => {
 
   beforeAll(async () => {
     db = await newTestDatabase();
+    const quiet = createLogger(() => {}, { throwOnSecretField: true });
+    secrets = await unlockSecrets(db.database, newMasterKey().masterKey, { logger: quiet });
     webRoot = mkdtempSync(join(tmpdir(), "fft-web-"));
     writeFileSync(join(webRoot, "index.html"), INDEX_HTML);
     mkdirSync(join(webRoot, "assets"));

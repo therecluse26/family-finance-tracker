@@ -1,8 +1,10 @@
 import { createAuth } from "../auth/index.ts";
 import { type BankDataAdapter, plaidSettings, startBank } from "../bank/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
+import { startFollowUpPipeline } from "../follow-up/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
+import { startNotify } from "../notify/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
@@ -42,12 +44,19 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const applied = await applyMigrations(database, options.migrationsFolder);
     log.info("Applied migrations", { count: applied });
     const secrets = await unlockSecrets(database, options.masterKey);
+    const notify = startNotify({ database });
     const bank = startBank({ database, secrets, adapters: options.bankAdapters ?? [] });
+    const followUp = startFollowUpPipeline({ database });
+    const stopModules = () => {
+      followUp.stop();
+      bank.stop();
+      notify.stop();
+    };
     let jobs: Awaited<ReturnType<typeof startJobs>>;
     try {
       jobs = await startJobs({ ...options.jobs, database });
     } catch (error) {
-      bank.stop();
+      stopModules();
       throw error;
     }
     try {
@@ -58,6 +67,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         security: options.security,
         auth: createAuth({ database, secrets, appOrigin: options.security.appUrl.origin }),
         database,
+        secrets,
         plaid: plaidSettings({ database, secrets }),
       });
       return {
@@ -70,14 +80,14 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
           try {
             await settleAll([server.close(), jobs.stop()]);
           } finally {
-            bank.stop();
+            stopModules();
             closeDatabase(database);
           }
         },
       };
     } catch (error) {
       await jobs.stop();
-      bank.stop();
+      stopModules();
       throw error;
     }
   } catch (error) {

@@ -1,12 +1,21 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { api } from "../api.ts";
-import { BackupCodes, BUTTON, ErrorLine, NewTotp, TextField } from "../components/Fields.tsx";
+import {
+  BackupCodes,
+  BUTTON,
+  ErrorLine,
+  NewTotp,
+  PasteField,
+  TextField,
+} from "../components/Fields.tsx";
+import { grouped, sendPastedKey } from "../master-key.ts";
 import { postJson, refusalText } from "../requests.ts";
 import { codeFromHash, fetchSetupState } from "../setup-gate.ts";
 
 // The first-run wizard (spec 12, The first-run wizard). Step 1 takes the setup code from the setup
-// link, and step 2 makes the first Member. Steps 3 and 4 come with their own tickets.
+// link, step 2 makes the first Member, and step 3 shows the Master key until the Member pastes it
+// back. Step 4 comes with its own ticket.
 
 type Step = "setup link" | "first member" | "master key" | "household facts";
 
@@ -175,6 +184,61 @@ function FirstMember(props: { setupCode: string; onDone: () => void }) {
   );
 }
 
+// Step 3: the Master key, shown on each visit until the paste-back succeeds.
+function MasterKey(props: { onDone: () => void }) {
+  const [masterKey, setMasterKey] = useState<string | undefined>();
+  const [pasted, setPasted] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  useEffect(() => {
+    api.setup["master-key"]
+      .$get()
+      .then(async (res) => {
+        if (res.status === 200) setMasterKey((await res.json()).masterKey);
+        else setError("The Master key cannot be shown.");
+      })
+      .catch(() => setError("The server did not answer."));
+  }, []);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    sendPastedKey("/api/setup/master-key", pasted)
+      .then((result) => {
+        if (result.matches) return props.onDone();
+        setError(result.error);
+      })
+      .catch(() => setError("The server did not answer."))
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <form className="mt-4" onSubmit={submit}>
+      <p>
+        This is the Master key. It locks the bank and AI keys the app stores. Save it in your
+        password manager now, off this server. Without it, every Connection must be made again.
+      </p>
+      {masterKey === undefined ? null : (
+        <p className="mt-3 rounded border border-gray-300 p-3 font-mono break-all">
+          {grouped(masterKey)}
+        </p>
+      )}
+      <p className="mt-3">After this step, the app never shows the Master key again.</p>
+      <PasteField
+        label="Paste the Master key back from where you saved it"
+        value={pasted}
+        onChange={setPasted}
+      />
+      <button className={BUTTON} type="submit" disabled={busy}>
+        Check and go on
+      </button>
+      <ErrorLine error={error} />
+    </form>
+  );
+}
+
 export function Setup() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step | undefined>();
@@ -220,7 +284,8 @@ export function Setup() {
       {step === "first member" && setupCode !== undefined ? (
         <FirstMember setupCode={setupCode} onDone={() => void load()} />
       ) : null}
-      {step === "master key" || step === "household facts" ? (
+      {step === "master key" ? <MasterKey onDone={() => void load()} /> : null}
+      {step === "household facts" ? (
         <p className="mt-4 text-gray-600">This step is not built yet.</p>
       ) : null}
     </main>

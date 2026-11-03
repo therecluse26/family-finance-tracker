@@ -20,9 +20,21 @@ export {
   storeSyncPage,
   type TransactionFilter,
 } from "./bank-data.ts";
-export { APP_DB_URL, closeDatabase, type Database, openDatabase } from "./client.ts";
+export {
+  APP_DB_URL,
+  closeDatabase,
+  type Database,
+  openDatabase,
+  type Queries,
+} from "./client.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
+export { listUnhandledTransactions, markTransactionsHandled } from "./follow-up.ts";
 export { loginTables } from "./login-tables.ts";
+export {
+  type MasterKeyCheck,
+  readLastMasterKeyCheck,
+  recordMasterKeyCheck,
+} from "./master-key-checks.ts";
 export {
   applyMigrations,
   checkMigrations,
@@ -31,12 +43,30 @@ export {
   SkippedMigrationError,
 } from "./migrate.ts";
 export {
+  addNotice,
+  closeEventNotice,
+  endNoticeCondition,
+  listOpenNotices,
+  type NewNotice,
+  type StoredNotice,
+} from "./notices.ts";
+export {
   PLAID_SETTINGS_ROW,
   readPlaidSettings,
   type StoredPlaidSettings,
   storeItemsUsed,
   storePlaidKeys,
 } from "./plaid-settings.ts";
+export {
+  addReviewItem,
+  answerOpenReviewItem,
+  closeReviewItem,
+  countOpenReviewItems,
+  listOpenReviewItems,
+  type NewReviewItem,
+  readReviewItem,
+  type StoredReviewItem,
+} from "./review-items.ts";
 export { scheduledTasks } from "./schema.ts";
 export { hasMember, markSetupStep, readSetupSteps, type SetupStepStatus } from "./setup-steps.ts";
 export {

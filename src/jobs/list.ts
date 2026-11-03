@@ -4,6 +4,7 @@
 import type { ScheduledTask } from "./scheduler.ts";
 
 export { SyncConnectionJob } from "../bank/index.ts";
+export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "./sidequest.ts";
 
 // Every scheduled task. Each task's job is in the list above.

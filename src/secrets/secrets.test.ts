@@ -464,4 +464,10 @@ describe("the secrets module", () => {
       expect(secrets.checkMasterKey(pasted(hex))).toBe(false);
     });
   });
+
+  describe("showMasterKey", () => {
+    it("shows the Master key as 64 lowercase hexadecimal characters", () => {
+      expect(secrets.showMasterKey()).toBe(hex.toLowerCase());
+    });
+  });
 });

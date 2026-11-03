@@ -1,6 +1,9 @@
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
+import type { MasterKeyRoutes } from "./master-key-views.ts";
+import type { NoticeRoutes } from "./notice-views.ts";
+import type { ReviewRoutes } from "./review-views.ts";
 
 // What the security check sets on every request it accepts, and the session check on every /api
 // route outside /api/auth/ and /api/setup.
@@ -19,5 +22,11 @@ export type ServerEnv = {
     checkFreshCode: (code: string) => Promise<"fresh" | "wrong" | "too many tries">;
     // The Plaid keys and the count of Plaid Items, for the routes under /api/plaid/.
     plaid: PlaidSettings;
+    // The wizard's step 3 and "Check my master key".
+    masterKey: MasterKeyRoutes;
+    // The open System notices.
+    notices: NoticeRoutes;
+    // The Review list.
+    reviewList: ReviewRoutes;
   };
 };

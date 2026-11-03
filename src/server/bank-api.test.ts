@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
-import { addConnection } from "../db/index.ts";
+import { addConnection, markSetupStep } from "../db/index.ts";
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
 import type { AccountView, BalancesView, ConnectionView, TransactionView } from "./bank-views.ts";
@@ -45,11 +45,14 @@ describe("the bank routes", () => {
       await loadSecurity({ APP_URL }, { logger: quiet }),
       test.auth,
       test.database,
+      test.secrets,
     );
     fake = new FakeBankAdapter();
     fake.actions = { repairInApp: true, importExisting: false, refresh: false };
     stopBank = startBank({ database: test.database, secrets: test.secrets, adapters: [fake] }).stop;
     member = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
+    // Every write waits for the wizard's step 3 (T10).
+    await markSetupStep(test.database, "master key", "done");
 
     const checking = fakeAccount({
       id: "acc-checking",

@@ -133,14 +133,15 @@ export const rateLimits = sqliteTable("rate_limits", {
 });
 
 // One row for each failed sign-in, or a try still being checked, per Member and per IP address
-// (spec 09, Failed sign-ins), and for each setup code that is wrong or refused. Rows older than the
-// window are deleted.
+// (spec 09, Failed sign-ins), for each setup code that is wrong or refused, and for each pasted
+// Master key that is wrong or refused. Rows older than the window are deleted.
 export const signInTries = sqliteTable(
   "sign_in_tries",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     // "member:" with a Member's ID, "email:" with an address no Member has, or "ip:" with an IP address.
     // For the setup code: "setup-code" for the whole app, or "setup-code-ip:" with an IP address.
+    // For a pasted Master key: "master-key:" with the Member's ID.
     key: text("key").notNull(),
     at: moment("at").notNull(),
   },
@@ -172,6 +173,49 @@ export const plaidSettings = sqliteTable(
   },
   (table) => [check("plaid_settings_one_row", sql`${table.id} = 1`)],
 );
+
+// The last check of a pasted Master key, by the wizard's step 3 or "Check my master key" (spec 09,
+// The Master key). One row, with ID 1. It holds who checked, when, and whether the key matched, and
+// never the key.
+export const masterKeyChecks = sqliteTable("master_key_checks", {
+  id: integer("id").primaryKey(),
+  memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+  at: moment("at").notNull(),
+  matched: integer("matched", { mode: "boolean" }).notNull(),
+});
+
+// System notices: notices to every Member about the app itself, never about the Household's
+// Spending (spec 06, System notices). They are not Alerts, so they never count against the weekly
+// Alert cap. An event notice stays open until a Member closes it, for every Member. A condition
+// notice stays open until its condition ends; one condition has at most one open notice.
+export const systemNotices = sqliteTable(
+  "system_notices",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: ["event", "condition"] }).notNull(),
+    text: text("text").notNull(),
+    // The condition's key, such as "connection broken:<Connection ID>". Condition notices only.
+    condition: text("condition"),
+    raisedAt: moment("raised_at").notNull(),
+    // When a Member closed the event, or the condition ended.
+    closedAt: moment("closed_at"),
+    closedBy: text("closed_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("system_notices_open_condition")
+      .on(table.condition)
+      .where(sql`${table.closedAt} IS NULL`),
+  ],
+);
+
+// One delivery record for each new System notice. The email and push Delivery jobs send them.
+export const noticeDeliveries = sqliteTable("notice_deliveries", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  noticeId: text("notice_id")
+    .notNull()
+    .references(() => systemNotices.id),
+  createdAt: moment("created_at").notNull(),
+});
 
 // One link to one bank through one Bank-data provider (spec 02, Connections). bank_id is not
 // unique: a bank can be linked again after its Connection is removed, and "Link again" on a Broken
@@ -342,4 +386,53 @@ export const dailyBalances = sqliteTable(
     syncedAt: moment("synced_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.accountId, table.date] })],
+);
+
+// Each follow-up step's handled mark on each Transaction (spec 10, The follow-up pipeline). A step
+// handles every Transaction it has no mark on. A sync that changes or hides a Transaction deletes
+// its marks, so every step handles it again.
+export const followUpMarks = sqliteTable(
+  "follow_up_marks",
+  {
+    step: text("step").notNull(),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    handledAt: moment("handled_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.step, table.transactionId] }),
+    index("follow_up_marks_transaction_id").on(table.transactionId),
+  ],
+);
+
+// The Review list: the app's uncertain decisions, and things it cannot settle alone (spec 07,
+// Review list page). Each item already has a result that counts, so nothing waits for it. An item
+// closes when a Member answers it, or when a later event settles it.
+export const reviewItems = sqliteTable(
+  "review_items",
+  {
+    id: text("id").primaryKey(),
+    // The kind of item, such as "category guess". Each kind registers its choices and its answer.
+    kind: text("kind").notNull(),
+    // What the item is about: Transactions, or a loan Account.
+    subjectType: text("subject_type", { enum: ["transactions", "loan"] }).notNull(),
+    // The Transaction IDs, or the loan Account's ID, as JSON.
+    subjectIds: text("subject_ids", { mode: "json" }).$type<string[]>().notNull(),
+    // What the app decided, or could not settle, in words.
+    decided: text("decided").notNull(),
+    // The app's best answer, which one button accepts, such as "Yes, Restaurants".
+    bestAnswer: text("best_answer", { mode: "json" })
+      .$type<{ value: string; label: string }>()
+      .notNull(),
+    createdAt: moment("created_at").notNull(),
+    // Set when the item closes, with the reason: "answered" by a Member, or the event that settled
+    // it.
+    closedAt: moment("closed_at"),
+    closedReason: text("closed_reason"),
+    // A Member's answer.
+    answer: text("answer", { mode: "json" }).$type<{ value: string; label: string }>(),
+    answeredBy: text("answered_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [index("review_items_closed_at_created_at").on(table.closedAt, table.createdAt)],
 );

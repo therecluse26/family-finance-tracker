@@ -1,4 +1,10 @@
-import { type Database, finishSync, readConnection, storeSyncPage } from "../db/index.ts";
+import {
+  type Database,
+  finishSync,
+  type PageCounts,
+  readConnection,
+  storeSyncPage,
+} from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
 import type { Secrets } from "../secrets/index.ts";
 import type { AdapterActions, BankConnection, BankDataAdapter, Provider } from "./adapter.ts";
@@ -66,9 +72,19 @@ export type SyncReport = {
 // The sync running for each Connection, so one Connection runs one sync at a time.
 const syncing = new Map<string, Promise<unknown>>();
 
-export function syncConnection(connectionId: string, now = () => new Date()): Promise<SyncReport> {
+export type SyncOptions = {
+  // Called after each page is stored, with what it did to the Transactions. A sync that fails
+  // later keeps the pages it stored, so a caller can act on them, such as starting a follow-up job.
+  onPageStored?: (counts: PageCounts) => void;
+};
+
+export function syncConnection(
+  connectionId: string,
+  now: () => Date = () => new Date(),
+  options: SyncOptions = {},
+): Promise<SyncReport> {
   const before = syncing.get(connectionId) ?? Promise.resolve();
-  const run = before.catch(() => {}).then(() => syncOnce(connectionId, now));
+  const run = before.catch(() => {}).then(() => syncOnce(connectionId, now, options));
   const settled = run.catch(() => {});
   syncing.set(connectionId, settled);
   void settled.then(() => {
@@ -77,7 +93,11 @@ export function syncConnection(connectionId: string, now = () => new Date()): Pr
   return run;
 }
 
-async function syncOnce(connectionId: string, now: () => Date): Promise<SyncReport> {
+async function syncOnce(
+  connectionId: string,
+  now: () => Date,
+  options: SyncOptions,
+): Promise<SyncReport> {
   if (services === undefined) throw new Error("The bank module is not running.");
   const { database, secrets, adapters, timeZone } = services;
   const stored = await readConnection(database, connectionId);
@@ -104,6 +124,7 @@ async function syncOnce(connectionId: string, now: () => Date): Promise<SyncRepo
   for (let pages = 0; pages < MAX_PAGES; pages += 1) {
     const page = await adapter.sync(connection, cursor);
     const counts = await storeSyncPage(database, connection.id, page, now(), zone);
+    options.onPageStored?.(counts);
     report.added += counts.added;
     report.changed += counts.changed;
     report.removed += counts.removed;

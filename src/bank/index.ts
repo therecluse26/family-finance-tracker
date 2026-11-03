@@ -39,4 +39,10 @@ export {
   type PlaidSettings,
   type PlaidView,
 } from "./plaid-view.ts";
-export { adapterActions, type SyncReport, startBank, syncConnection } from "./sync.ts";
+export {
+  adapterActions,
+  type SyncOptions,
+  type SyncReport,
+  startBank,
+  syncConnection,
+} from "./sync.ts";

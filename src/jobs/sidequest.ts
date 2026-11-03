@@ -161,3 +161,29 @@ export async function startJob<Args extends JobArgument[]>(
   if (options.at !== undefined) builder.availableAt(options.at);
   await builder.enqueue(...args);
 }
+
+// How many jobs of this class wait to run, a running one not counted.
+export async function countWaitingJobs(job: JobClass): Promise<number> {
+  if (running === undefined) throw new Error("The jobs module is not running.");
+  return (await Sidequest.job.list({ jobClass: job.name, state: "waiting" })).length;
+}
+
+// startJob calls that skip a job already waiting run one at a time, so two calls at once start one
+// job. The app is one Node process (ADR 0002), so this queue covers every caller.
+let waitingCheck: Promise<unknown> = Promise.resolve();
+
+// Starts a job as startJob does, unless a job of this class already waits; a running one does not
+// count. True when it started one.
+export function startJobUnlessWaiting<Args extends JobArgument[]>(
+  job: JobClass<Args>,
+  args: Args,
+  options: { at?: Date } = {},
+): Promise<boolean> {
+  const run = waitingCheck.then(async () => {
+    if ((await countWaitingJobs(job)) > 0) return false;
+    await startJob(job, args, options);
+    return true;
+  });
+  waitingCheck = run.catch(() => {});
+  return run;
+}

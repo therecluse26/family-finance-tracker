@@ -71,7 +71,13 @@ describe("the first-run wizard, steps 1 and 2", () => {
     lines = [];
     const logger = createLogger((line) => lines.push(line), { throwOnSecretField: true });
     test = await newTestAuth(APP_URL, logger);
-    app = createApp(webRoot, await loadSecurity({ APP_URL }, { logger }), test.auth, test.database);
+    app = createApp(
+      webRoot,
+      await loadSecurity({ APP_URL }, { logger }),
+      test.auth,
+      test.database,
+      test.secrets,
+    );
     code = test.secrets.setupCode();
   });
 

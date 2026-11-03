@@ -207,7 +207,7 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       { APP_URL: mode.appUrl, TRUSTED_PROXIES: mode.trustedProxies },
       { logger },
     );
-    app = createApp(webRoot, security, test.auth, test.database);
+    app = createApp(webRoot, security, test.auth, test.database, test.secrets);
     alice = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
     bob = await addMember(test.auth, { name: "Bob", email: "bob@example.com" });
   });

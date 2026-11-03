@@ -47,6 +47,7 @@ describe("the Plaid routes", () => {
       await loadSecurity({ APP_URL }, { logger }),
       test.auth,
       test.database,
+      test.secrets,
       {
         plaid: plaidSettings({
           database: test.database,

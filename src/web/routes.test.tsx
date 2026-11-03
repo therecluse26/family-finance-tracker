@@ -1,7 +1,9 @@
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
+import { NoticeList } from "./components/NoticeLines.tsx";
 import { AiMark, DirectionAgainstUsual, Estimated, Status } from "./components/Status.tsx";
+import { grouped, lastCheckText } from "./master-key.ts";
 import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { routes } from "./routes.tsx";
 import { Shell } from "./Shell.tsx";
@@ -78,6 +80,44 @@ describe("the app shell", () => {
       "Make new backup codes",
       "Sign out",
     ]);
+  });
+
+  it("gives Backups and data its Check my master key form", () => {
+    const html = render("/settings/backups-and-data");
+
+    expect(texts(html, "h3")).toEqual(["Check my master key"]);
+    expect(texts(html, "button")).toEqual(["Check my master key"]);
+    expect(html).toMatch(/<textarea[^>]*autoComplete="off"[^>]*spellCheck="false"/i);
+  });
+
+  it("shows the Master key in groups of 4, and who last checked it and when", () => {
+    expect(grouped("0123456789abcdef")).toBe("0123 4567 89ab cdef");
+    expect(lastCheckText(null)).toBe("No one has checked the Master key yet.");
+    const at = "2026-11-03T14:05:09.000Z";
+    expect(lastCheckText({ memberName: "Bob", at, matched: true }, new Date(at))).toMatch(
+      /^Bob last checked it on Nov \d+ at \d+:05 [AP]M\. It matched\.$/,
+    );
+    expect(lastCheckText({ memberName: null, at, matched: false }, new Date(at))).toMatch(
+      /^A removed Member last checked it on .+\. It did not match\.$/,
+    );
+  });
+
+  it("shows each open System notice as a line, with a close button for an event", () => {
+    const html = renderToString(
+      <NoticeList
+        notices={[
+          { id: "n1", text: "Your history is ready", closable: true },
+          { id: "n2", text: "First Fake Bank needs you to sign in again", closable: false },
+        ]}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(texts(html, "li")).toEqual([
+      "● Your history is readyClose",
+      "● First Fake Bank needs you to sign in again",
+    ]);
+    expect(renderToString(<NoticeList notices={[]} onClose={() => {}} />)).toBe("");
   });
 
   it("shows a slot for the Review list's open count", () => {

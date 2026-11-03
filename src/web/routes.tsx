@@ -1,9 +1,11 @@
 import type { RouteObject } from "react-router";
 import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
+import { Dashboard } from "./pages/Dashboard.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
+import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
@@ -15,6 +17,7 @@ import { Shell } from "./Shell.tsx";
 const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   "my-login": MyLogin,
   banks: Banks,
+  "backups-and-data": BackupsAndData,
 };
 
 const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
@@ -29,7 +32,7 @@ const pages: RouteObject[] = [...MAIN_MENU, ...MORE_MENU]
   .filter((item) => item.path !== "/settings")
   .map((item) =>
     item.path === "/"
-      ? { index: true, element: <Placeholder title={item.label} /> }
+      ? { index: true, element: <Dashboard /> }
       : { path: item.path.slice(1), element: <Placeholder title={item.label} /> },
   );
 

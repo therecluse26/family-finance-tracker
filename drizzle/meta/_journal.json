@@ -57,6 +57,34 @@
       "when": 1793725007912,
       "tag": "0007_closed_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793725429545,
+      "tag": "0008_master_key_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793725510241,
+      "tag": "0009_system_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1793725544492,
+      "tag": "0010_follow_up_marks",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1793725555721,
+      "tag": "0011_review_items",
+      "breakpoints": true
     }
   ]
 }

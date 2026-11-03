@@ -8,9 +8,9 @@ import type {
 } from "../bank/adapter.ts";
 import { calendarDateIn } from "../format.ts";
 import { saveDailyBalance } from "./balances.ts";
-import type { Database } from "./client.ts";
+import type { Database, Queries } from "./client.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
-import { connections, householdAccounts, transactions } from "./schema.ts";
+import { connections, followUpMarks, householdAccounts, transactions } from "./schema.ts";
 
 // Connections, Accounts, and Transactions in app.db (spec 02). The bank module decides; these
 // functions store and read.
@@ -294,7 +294,8 @@ export type PageCounts = { added: number; changed: number; removed: number };
 // Stores one sync page in one transaction: its Accounts, then each added or changed Transaction by
 // its stable ID, then each removal. A page stored twice, as after a restarted sync, changes
 // nothing the second time. A Member's own fields are never written. `timeZone` is the Household's,
-// for day D of a carry-over.
+// for day D of a carry-over. A changed or hidden Transaction loses its follow-up marks, so every
+// follow-up step handles it again.
 export async function storeSyncPage(
   database: Database,
   connectionId: string,
@@ -312,11 +313,16 @@ export async function storeSyncPage(
     const ids = await storeAccounts(tx, connection, page.accounts, at, timeZone);
     const splits = new Map<string, string | null>();
 
+    const unmark = async (row: { id: string }) => {
+      await tx.delete(followUpMarks).where(eq(followUpMarks.transactionId, row.id));
+    };
+
     const hide = async (row: { id: string }, reason: RemovalReason) => {
       await tx
         .update(transactions)
         .set({ hiddenReason: reason, hiddenAt: at })
         .where(eq(transactions.id, row.id));
+      await unmark(row);
     };
 
     for (const record of [...page.added, ...page.changed]) {
@@ -358,6 +364,7 @@ export async function storeSyncPage(
           .update(transactions)
           .set({ ...fields, handSet })
           .where(eq(transactions.id, found.id));
+        await unmark(found);
         if (replaced && found.hiddenReason === null) await hide(found, "replaced by re-link");
         counts.changed += 1;
       }
@@ -447,7 +454,7 @@ export async function readAccount(database: Database, id: string) {
 
 // Sets fields a Member set by hand on a Transaction, such as its Category.
 export async function setHandSetFields(
-  database: Database,
+  database: Queries,
   transactionId: string,
   fields: Record<string, unknown>,
 ): Promise<void> {

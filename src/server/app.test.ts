@@ -6,6 +6,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { signedOutAuth } from "../auth/testing.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import { createLogger, registerSecretValue } from "../log.ts";
+import { type Secrets, unlockSecrets } from "../secrets/index.ts";
+import { newMasterKey } from "../secrets/testing.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 
@@ -27,9 +29,12 @@ describe.each([true, false])(
     let db: TestDatabase;
     let lines: string[];
     let stderr: unknown[];
+    let secrets: Secrets;
 
     beforeAll(async () => {
       db = await newTestDatabase();
+      const quiet = createLogger(() => {}, { throwOnSecretField: true });
+      secrets = await unlockSecrets(db.database, newMasterKey().masterKey, { logger: quiet });
       webRoot = mkdtempSync(join(tmpdir(), "fft-app-"));
       writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
     });
@@ -60,6 +65,7 @@ describe.each([true, false])(
         await loadSecurity({ APP_URL }, { logger }),
         signedOutAuth,
         db.database,
+        secrets,
       );
       app.post("/fail", () => {
         throw thrown;
@@ -131,6 +137,7 @@ describe.each([true, false])(
         await loadSecurity({ APP_URL }, { logger }),
         signedOutAuth,
         db.database,
+        secrets,
       );
       app.post(
         "/echo",

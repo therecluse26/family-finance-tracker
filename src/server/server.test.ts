@@ -50,6 +50,7 @@ describe("the server", () => {
       security,
       auth: login.auth,
       database: login.database,
+      secrets: login.secrets,
     });
     base = `http://127.0.0.1:${server.port}`;
     signedIn = await signIn();

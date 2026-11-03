@@ -1,13 +1,47 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import * as z from "zod";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
+import type { MasterKeyCheckResult } from "./master-key-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // A Plaid client ID or secret, as Plaid's dashboard shows it: letters and digits.
 const PLAID_KEY = /^[A-Za-z0-9]{16,64}$/;
+
+// 64 hexadecimal characters, with room for spaces and line breaks.
+const MAX_PASTED_KEY_LENGTH = 1000;
+
+// The pasted Master key in a request body such as {"masterKey": "..."}, or undefined. A body that
+// is not JSON is refused as it is: a JSON parse error quotes part of the body, which may hold the
+// key, and must not reach the log.
+async function pastedKey(c: Context<ServerEnv>): Promise<string | undefined> {
+  const body: unknown = await c.req.json().catch(() => undefined);
+  if (typeof body !== "object" || body === null || !("masterKey" in body)) return undefined;
+  const { masterKey } = body;
+  if (typeof masterKey !== "string" || masterKey.length > MAX_PASTED_KEY_LENGTH) return undefined;
+  return masterKey;
+}
+
+// The answer to a pasted Master key. It never holds the pasted text.
+function checkAnswer(c: Context<ServerEnv>, result: MasterKeyCheckResult) {
+  switch (result) {
+    case "matches":
+      return c.json({ matches: true }, 200);
+    case "wrong":
+      return c.json({ matches: false }, 200);
+    case "too many tries":
+      return c.json({ error: "Too many wrong keys. Wait 15 minutes, then try again." }, 429);
+    case "step done":
+      return c.json({ error: "This step is done. Use Check my master key in Settings." }, 409);
+  }
+}
+
+const NO_KEY = "Paste the Master key.";
+
+const NO_REVIEW_ITEM = "No open Review list item has this ID.";
+const MAX_CHOICE_LENGTH = 200;
 
 // The filters of GET /api/transactions: account, and a date range on the posted date.
 function transactionQuery(query: Record<string, string>): TransactionQuery | undefined {
@@ -111,6 +145,63 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: `The app itself has used ${appItems}, so N cannot be lower.` }, 400);
     }
     return c.json({ plaid });
+  })
+  // The wizard's step 3 (spec 12): the Master key on each visit, until the paste-back succeeds.
+  .get("/setup/master-key", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const masterKey = await c.var.masterKey.shown();
+    if (masterKey === undefined) {
+      return c.json(
+        { error: "The Master key was shown during setup, and is never shown again." },
+        410,
+      );
+    }
+    return c.json({ masterKey }, 200);
+  })
+  .post("/setup/master-key", async (c) => {
+    const pasted = await pastedKey(c);
+    if (pasted === undefined) return c.json({ error: NO_KEY }, 400);
+    return checkAnswer(c, await c.var.masterKey.pasteBack(c.var.member.id, pasted));
+  })
+  // "Check my master key" in Settings, Backups and data (spec 09).
+  .get("/master-key/check", async (c) => c.json({ lastCheck: await c.var.masterKey.lastCheck() }))
+  .post("/master-key/check", async (c) => {
+    const pasted = await pastedKey(c);
+    if (pasted === undefined) return c.json({ error: NO_KEY }, 400);
+    return checkAnswer(c, await c.var.masterKey.check(c.var.member.id, pasted));
+  })
+  // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
+  .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))
+  .post("/notices/:id/close", async (c) => {
+    const result = await c.var.notices.close(c.req.param("id"), c.var.member.id);
+    if (result === "not open") return c.json({ error: "No open System notice has this ID." }, 404);
+    if (result === "condition") {
+      return c.json({ error: "This notice stays until its condition ends." }, 409);
+    }
+    return c.json({ closed: true }, 200);
+  })
+  // The Review list (spec 07, Review list page). The main menu shows the open count.
+  .get("/review-list", async (c) => c.json({ items: await c.var.reviewList.open() }))
+  .get("/review-list/count", async (c) => c.json({ open: await c.var.reviewList.count() }))
+  .get("/review-list/:id/choices", async (c) => {
+    const choices = await c.var.reviewList.otherChoices(c.req.param("id"));
+    if (choices === undefined) return c.json({ error: NO_REVIEW_ITEM }, 404);
+    return c.json({ choices }, 200);
+  })
+  // A Member's answer: {"value": ...}, the best answer's value or another choice's.
+  .post("/review-list/:id/answer", async (c) => {
+    const body: unknown = await c.req.json().catch(() => undefined);
+    const value =
+      typeof body === "object" && body !== null && "value" in body ? body.value : undefined;
+    if (typeof value !== "string" || value === "" || value.length > MAX_CHOICE_LENGTH) {
+      return c.json({ error: "Pick an answer." }, 400);
+    }
+    const result = await c.var.reviewList.answer(c.req.param("id"), value, c.var.member.id);
+    if (result === "not open") return c.json({ error: NO_REVIEW_ITEM }, 404);
+    if (result === "not a choice") {
+      return c.json({ error: "That is not a choice for this item." }, 400);
+    }
+    return c.json({ answered: true }, 200);
   });
 
 export type Api = typeof api;

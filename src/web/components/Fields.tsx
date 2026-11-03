@@ -37,6 +37,28 @@ export function TextField(props: {
   );
 }
 
+// A box for pasting a secret, such as the Master key. The browser neither fills nor spell-checks it.
+export function PasteField(props: {
+  label: ReactNode;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="mt-3 block">
+      {props.label}
+      <textarea
+        className={`${FIELD} font-mono`}
+        rows={3}
+        autoComplete="off"
+        spellCheck={false}
+        required
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
 // A new TOTP secret for an authenticator app: the link a phone opens, and the secret to type in.
 export function NewTotp(props: { totpURI: string }) {
   return (

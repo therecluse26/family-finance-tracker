@@ -5,9 +5,13 @@ import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
+import type { Secrets } from "../secrets/index.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
 import type { ServerEnv } from "./env.ts";
+import { masterKeyRoutes } from "./master-key.ts";
+import { noticeRoutes } from "./notices.ts";
+import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
 import { readSetupState } from "./setup.ts";
 
@@ -92,15 +96,30 @@ function sameOriginChanges(appOrigin: string): MiddlewareHandler<ServerEnv> {
     await next();
   };
 }
+// Until the wizard's step 3 is done, the API stores no Master-key secret (spec 12, Order and resume
+// rules). It refuses every write but step 3's own paste-back, so no route can store one early.
+const PASTE_BACK = "/api/setup/master-key";
+
+const masterKeyFirst: MiddlewareHandler<ServerEnv> = async (c, next) => {
+  const write = c.req.method !== "GET" && c.req.method !== "HEAD";
+  if (write && c.req.path !== PASTE_BACK && !(await c.var.masterKey.saved())) {
+    return c.json({ error: "Save the Master key first: finish step 3 of setup." }, 409);
+  }
+  await next();
+};
 
 export function createApp(
   webRoot: string,
   security: Security,
   auth: Auth,
   database: Database,
+  secrets: Secrets,
   services: { plaid?: PlaidSettings } = {},
 ) {
   const bank = bankViews(database);
+  const masterKey = masterKeyRoutes(database, secrets);
+  const notices = noticeRoutes(database);
+  const reviewList = reviewRoutes(database);
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
@@ -115,8 +134,12 @@ export function createApp(
       .use("/api/*", sameOriginChanges(security.appUrl.origin))
       .use("/api/*", async (c, next) => {
         c.set("bank", bank);
+        c.set("masterKey", masterKey);
+        c.set("notices", notices);
+        c.set("reviewList", reviewList);
         await next();
       })
+      .use("/api/*", masterKeyFirst)
       .use("/api/plaid/*", plaidRoutes(database, services.plaid))
       .route("/api", api)
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))

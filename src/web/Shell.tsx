@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { api } from "./api.ts";
 import { MAIN_MENU, type MenuItem, MORE_MENU } from "./menu.ts";
@@ -30,15 +30,17 @@ function MenuLink(props: { item: MenuItem; count?: number | undefined }) {
 
 export function Shell(props: { reviewListOpenCount?: number }) {
   const navigate = useNavigate();
+  const [openCount, setOpenCount] = useState(props.reviewListOpenCount);
 
   // Every page leads to the wizard until it is done. After that, every page in the shell needs a
-  // signed-in Member.
+  // signed-in Member. The Review list's menu item then shows its open count.
   useEffect(() => {
     openWizardIfNeeded(navigate, "app")
       .then(async (opened) => {
         if (opened) return;
-        const res = await api.ping.$get();
-        if (res.status === 401) await navigate("/sign-in", { replace: true });
+        const res = await api["review-list"].count.$get();
+        if (res.status === 401) return navigate("/sign-in", { replace: true });
+        if (res.ok) setOpenCount((await res.json()).open);
       })
       .catch(() => {});
   }, [navigate]);
@@ -53,10 +55,7 @@ export function Shell(props: { reviewListOpenCount?: number }) {
         <ul className="flex flex-wrap gap-1 min-[900px]:flex-col">
           {MAIN_MENU.map((item) => (
             <li key={item.path}>
-              <MenuLink
-                item={item}
-                count={item.path === "/review-list" ? props.reviewListOpenCount : undefined}
-              />
+              <MenuLink item={item} count={item.path === "/review-list" ? openCount : undefined} />
             </li>
           ))}
         </ul>

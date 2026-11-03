@@ -30,8 +30,12 @@ export type Secrets = {
   decrypt(ciphertext: string, place: SecretPlace): string;
   // HKDF-SHA256 from the Master key. Made again on each call, and never stored.
   derive(use: DerivedUse): Buffer;
-  // Ignores spaces, line breaks, and letter case.
+  // Ignores spaces, line breaks, and letter case. Constant time for any pasted text that is 64
+  // hexadecimal characters once spaces and line breaks are gone.
   checkMasterKey(pasted: string): boolean;
+  // The Master key, as 64 lowercase hexadecimal characters. Only the wizard's step 3 shows it, and
+  // only until the paste-back succeeds (spec 09, The Master key). The logger refuses it.
+  showMasterKey(): string;
   // The setup code in the setup link, such as "7KQ2-M9XD-4TRF".
   setupCode(): string;
   // Whether an entered code is the setup code. Ignores letter case and dashes. Constant time.
@@ -189,6 +193,15 @@ function secretsWith(masterKey: MasterKey, dataKey: DataKey): Secrets {
       } finally {
         given.fill(0);
         saved.fill(0);
+      }
+    },
+
+    showMasterKey() {
+      const bytes = masterKey.key.export();
+      try {
+        return bytes.toString("hex");
+      } finally {
+        bytes.fill(0);
       }
     },
   };
