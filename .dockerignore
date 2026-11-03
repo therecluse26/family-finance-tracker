@@ -1,0 +1,14 @@
+.claude
+.git
+.github
+.playwright-mcp
+.env
+.env.*
+coverage
+dist
+docs
+node_modules
+backups
+data
+secrets
+**/*.key
