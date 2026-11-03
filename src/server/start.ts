@@ -1,3 +1,4 @@
+import { createAuth } from "../auth/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
@@ -45,6 +46,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         port: options.port,
         webRoot: options.webRoot,
         security: options.security,
+        auth: createAuth({ database, secrets, appOrigin: options.security.appUrl.origin }),
       });
       return {
         port: server.port,

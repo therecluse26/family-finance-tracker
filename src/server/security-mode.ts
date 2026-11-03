@@ -41,6 +41,11 @@ const ROUTE_HEADERS = new Set([
   "origin", // Better Auth compares it with APP_URL to refuse cross-site requests.
   "range", // serveStatic answers a Range request with part of a file.
   "referer", // Better Auth's cross-site check reads it when a request has no Origin.
+  // The browser's Fetch Metadata. Better Auth refuses a sign-in form posted from another site,
+  // and checks the Origin of any sign-in that carries these headers.
+  "sec-fetch-dest",
+  "sec-fetch-mode",
+  "sec-fetch-site",
   "user-agent", // Better Auth stores it with each session.
 ]);
 

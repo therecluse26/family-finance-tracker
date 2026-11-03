@@ -98,6 +98,29 @@ describe("loading the Master key", () => {
     ]);
   });
 
+  it.each([
+    ["the key", () => newMasterKeyHex()],
+    ["a value that is not a key", () => "not-a-key"],
+  ])(
+    "deletes FFT_MASTER_KEY from the environment it read when it holds %s",
+    async (_case, value) => {
+      const env = { FFT_MASTER_KEY_FILE: file, FFT_MASTER_KEY: value() };
+
+      await loadMasterKey(env, { logger: captureLogger().logger }).catch(() => undefined);
+
+      expect(env).toEqual({ FFT_MASTER_KEY_FILE: file });
+    },
+  );
+
+  it("deletes FFT_MASTER_KEY from the environment when it reads the file instead", async () => {
+    writeFileSync(file, newMasterKeyHex());
+    const env = { FFT_MASTER_KEY_FILE: file, FFT_MASTER_KEY: newMasterKeyHex() };
+
+    await loadMasterKey(env, { logger: captureLogger().logger });
+
+    expect(env).toEqual({ FFT_MASTER_KEY_FILE: file });
+  });
+
   it("ignores the line break that ends the file and spaces around the key, in any letter case", async () => {
     const hex = newMasterKeyHex();
     writeFileSync(file, `  ${hex.toUpperCase()}\r\n`);

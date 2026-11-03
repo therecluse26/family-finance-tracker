@@ -35,6 +35,7 @@ const SECRET_WORDS = new Set([
 const KEY_SUFFIX = /keys?$/;
 
 // A name written as one word, such as "smtppassword" or "setupcode", is refused if it holds one of these.
+// Better Auth's totpURI and an otpauth:// link hold the TOTP secret.
 const SECRET_PARTS = [
   "apikey",
   "authorization",
@@ -43,12 +44,14 @@ const SECRET_PARTS = [
   "credential",
   "datakey",
   "masterkey",
+  "otpauth",
   "passphrase",
   "password",
   "privatekey",
   "secret",
   "setupcode",
   "token",
+  "totpuri",
 ];
 
 // Names that pass although they hold a secret word. Compared in lowercase, without separators.

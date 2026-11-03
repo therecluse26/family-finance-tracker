@@ -317,6 +317,18 @@ describe("the secrets module", () => {
       );
     });
 
+    it.each([12, 4])("fail on a ciphertext whose tag is cut to its first %i bytes", (bytes) => {
+      const ciphertext = secrets.encrypt("household-value", PLACE);
+      const [keyId, iv, body, tag = ""] = ciphertext.split(".");
+      const cut = Buffer.from(tag, "base64url").subarray(0, bytes).toString("base64url");
+
+      expect(() => secrets.decrypt([keyId, iv, body, cut].join("."), PLACE)).toThrow(
+        new SecretDecryptError(
+          "The secret in connections.access_token of row 1 does not decrypt. It was moved, changed, or made with another data key.",
+        ),
+      );
+    });
+
     it("fail with another app.db's data key", async () => {
       const other = await migratedDatabase("other.db");
       const theirs = await unlockSecrets(other, masterKey, { logger: log.logger });
@@ -409,6 +421,16 @@ describe("the secrets module", () => {
 
       expect(secrets.derive("login signing secret")).toEqual(value);
       for (const form of writtenForms(value)) expect(copiedFiles()).not.toContain(form);
+    });
+
+    it("makes the logger refuse the value from then on, in each way it is written", () => {
+      const { logger, lines } = captureLogger(false);
+      const value = secrets.derive("login signing secret");
+      const forms = [...writtenForms(value).slice(1), value.toString("hex").toUpperCase()];
+
+      logger.info("After", Object.fromEntries(forms.map((form, i) => [`note${i}`, form])));
+
+      for (const form of forms) expect(lines.join("")).not.toContain(form);
     });
   });
 

@@ -1,7 +1,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validator } from "hono/validator";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { signedOutAuth } from "../auth/testing.ts";
 import { createLogger, registerSecretValue } from "../log.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -45,13 +47,13 @@ describe.each([true, false])(
       vi.restoreAllMocks();
     });
 
-    // The app, with one more route that throws this error.
-    async function failingApp(error: Error) {
+    // The app, with one more route that throws this value.
+    async function failingApp(thrown: unknown) {
       lines = [];
       const logger = createLogger((line) => lines.push(line), { throwOnSecretField });
-      const app = createApp(webRoot, await loadSecurity({ APP_URL }, { logger }));
+      const app = createApp(webRoot, await loadSecurity({ APP_URL }, { logger }), signedOutAuth);
       app.post("/fail", () => {
-        throw error;
+        throw thrown;
       });
       return app.request(
         `${APP_URL}/fail`,
@@ -79,6 +81,61 @@ describe.each([true, false])(
           error: { name: "Error", message: "The bank answered 502", stack: error.stack },
         }),
       ]);
+      expect(stderr).toEqual([]);
+    });
+
+    it.each<[string, unknown]>([
+      ["a string", "The bank answered 502"],
+      ["an object", { status: 502 }],
+      ["undefined", undefined],
+    ])("answers 500 and writes one line when a route throws %s", async (_kind, thrown) => {
+      const res = await failingApp(thrown);
+
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: "Internal error" });
+      expect(failures()).toEqual([
+        expect.objectContaining({
+          level: "error",
+          error: expect.objectContaining({
+            name: "ThrownValueError",
+            message: `A route threw a ${typeof thrown}, not an Error.`,
+          }),
+        }),
+      ]);
+      expect(stderr).toEqual([]);
+    });
+
+    it("writes no thrown value that is not an Error, since it can hold a secret", async () => {
+      const value = newSecretValue();
+
+      const res = await failingApp(`The bank refused ${value}`);
+
+      expect(res.status).toBe(500);
+      expect(lines.join("")).not.toContain(value);
+    });
+
+    it("keeps the 400 that Hono answers for malformed JSON, and logs no failure", async () => {
+      lines = [];
+      const logger = createLogger((line) => lines.push(line), { throwOnSecretField });
+      const app = createApp(webRoot, await loadSecurity({ APP_URL }, { logger }), signedOutAuth);
+      app.post(
+        "/echo",
+        validator("json", (value) => value),
+        (c) => c.json(c.req.valid("json")),
+      );
+
+      const res = await app.request(
+        `${APP_URL}/echo`,
+        {
+          method: "POST",
+          headers: { host: "nas.local:8080", "content-type": "application/json" },
+          body: '{"amount":',
+        },
+        { incoming: { socket: { remoteAddress: "192.168.1.30" } } },
+      );
+
+      expect(res.status).toBe(400);
+      expect(failures()).toEqual([]);
       expect(stderr).toEqual([]);
     });
 

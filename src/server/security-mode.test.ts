@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { signedOutAuth } from "../auth/testing.ts";
 import { createLogger } from "../log.ts";
 import type { ServerEnv } from "./env.ts";
 import { loadSecurity, type Security, securityCheck } from "./security-mode.ts";
@@ -837,6 +838,9 @@ describe("the header allow list, through the Node server", () => {
     Origin: "https://money.example.com",
     Range: "bytes=0-1",
     Referer: "https://money.example.com/settings",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
     "User-Agent": "probe-agent/1.0",
   };
   const BODY = '{"amount":12}';
@@ -1160,7 +1164,7 @@ describe("the server", () => {
 
   const startLogged = async (appUrl: string, trustedProxies?: string) => {
     const { loaded, refusals, text } = await loggedApp(appUrl, trustedProxies);
-    const server = await startServer({ port: 0, webRoot, security: loaded });
+    const server = await startServer({ port: 0, webRoot, security: loaded, auth: signedOutAuth });
     servers.push(server);
     return { port: server.port, refusals, text };
   };
@@ -1228,7 +1232,7 @@ describe("the server", () => {
     expect(noProxy.status).toBe(403);
   });
 
-  it("serves the app and the security mode at the APP_URL Host", async () => {
+  it("serves the app at the APP_URL Host, where the API asks for a session", async () => {
     const port = await start("http://nas.local:8080");
 
     const page = await rawRequest(port, ["GET /transactions HTTP/1.1", "Host: nas.local:8080"]);
@@ -1239,8 +1243,8 @@ describe("the server", () => {
 
     expect(page.status).toBe(200);
     expect(page.body).toBe(INDEX_HTML);
-    expect(mode.status).toBe(200);
-    expect(JSON.parse(mode.body)).toEqual({ mode: "http", appUrl: "http://nas.local:8080" });
+    expect(mode.status).toBe(401);
+    expect(JSON.parse(mode.body)).toEqual({ error: "Sign in first" });
   });
 
   it("refuses an absolute request target for another host, even with the right Host", async () => {
@@ -1271,11 +1275,7 @@ describe("the server", () => {
   it("reads the real socket address: a loopback source is trusted only when listed", async () => {
     const trusted = await start("https://money.example.com", "127.0.0.1");
     const untrusted = await start("https://money.example.com", "10.9.9.9");
-    const request = [
-      "GET /api/ping HTTP/1.1",
-      "Host: money.example.com",
-      "X-Forwarded-Proto: https",
-    ];
+    const request = ["GET / HTTP/1.1", "Host: money.example.com", "X-Forwarded-Proto: https"];
 
     expect((await rawRequest(trusted, request)).status).toBe(200);
     expect((await rawRequest(untrusted, request)).status).toBe(403);

@@ -92,6 +92,12 @@ const SECRET_NAMES = [
   "masterKeyBase64",
   "setupCode",
   "backupCodes",
+  "totpURI",
+  "totpUri",
+  "totp_uri",
+  "TOTPURI",
+  "otpauth",
+  "otpauthUrl",
 ];
 
 const ALLOWED_NAMES = [
@@ -115,6 +121,8 @@ const ALLOWED_NAMES = [
   "totalTokens",
   "reasoningTokens",
   "cachedInputTokens",
+  "twoFactorEnabled",
+  "totpDigits",
 ];
 
 class Creds {

@@ -15,7 +15,7 @@ const SEAMS: Record<string, readonly string[]> = {
   ai: ["ai", "@ai-sdk/*", "@openrouter/*"],
   secrets: ["node:crypto"],
   notify: ["web-push", "nodemailer"],
-  auth: ["better-auth", "@better-auth/passkey"],
+  auth: ["better-auth", "@better-auth/*"],
 };
 
 // The Chat page's answer stream in the browser. It is not an AI provider package.

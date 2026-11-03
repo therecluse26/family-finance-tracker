@@ -18,12 +18,15 @@ export class MasterKeyError extends Error {
 export type MasterKeyEnv = { FFT_MASTER_KEY_FILE?: string; FFT_MASTER_KEY?: string };
 
 // Startup step 1. Reads the file named by FFT_MASTER_KEY_FILE, or FFT_MASTER_KEY when that file
-// is missing. Throws with the reason when the app must not start.
+// is missing. Throws with the reason when the app must not start. Deletes FFT_MASTER_KEY from
+// `env`, so a job or child process that gets process.env never sees the key.
 export async function loadMasterKey(
   env: MasterKeyEnv,
   options: { logger?: Logger } = {},
 ): Promise<MasterKey> {
   const logger = options.logger ?? log;
+  const fromEnv = env.FFT_MASTER_KEY ?? "";
+  delete env.FFT_MASTER_KEY;
   const file = env.FFT_MASTER_KEY_FILE || DEFAULT_MASTER_KEY_FILE;
   const written = await readKeyFile(file);
   if (written !== undefined) {
@@ -31,7 +34,6 @@ export async function loadMasterKey(
     logger.info("Loaded the Master key", { from: file });
     return masterKey;
   }
-  const fromEnv = env.FFT_MASTER_KEY ?? "";
   if (fromEnv.trim() === "") {
     throw new MasterKeyError(
       `There is no Master key: ${file} is missing, and FFT_MASTER_KEY is not set. Run \`fft setup\` first.`,

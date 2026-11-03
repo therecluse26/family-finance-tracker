@@ -3,38 +3,41 @@ import { getRequestListener } from "@hono/node-server";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
 import { browserNotices } from "./scripts/browser-notices.ts";
-import type { Security } from "./src/server/security-mode.ts";
 
 const webRoot = fileURLToPath(new URL("./src/web", import.meta.url));
-const serverApp = fileURLToPath(new URL("./src/server/app.ts", import.meta.url));
-const securityMode = fileURLToPath(new URL("./src/server/security-mode.ts", import.meta.url));
+const devApp = fileURLToPath(new URL("./src/server/dev-app.ts", import.meta.url));
 const DEV_PORT = 5173;
 
-// In `pnpm dev`, Vite serves the web app and hands /api and /healthz to the Hono app.
+type DevAppModule = Partial<typeof import("./src/server/dev-app.ts")>;
+type HonoApp = Awaited<ReturnType<NonNullable<DevAppModule["createDevApp"]>>>;
+
+// In `pnpm dev`, Vite serves the web app and hands /api and /healthz to the Hono app, which runs
+// on its own app.db in .dev/ and needs the Master key.
 function honoDevServer(): Plugin {
   return {
     name: "hono-dev-server",
     apply: "serve",
     configureServer(server) {
-      let security: Promise<Security> | undefined;
+      let app: Promise<HonoApp> | undefined;
+      // The Master key leaves process.env here; loadMasterKey then deletes it from `env`.
+      const startDevApp = () => {
+        const env = {
+          APP_URL: process.env.APP_URL ?? `http://localhost:${DEV_PORT}`,
+          TRUSTED_PROXIES: process.env.TRUSTED_PROXIES,
+          FFT_MASTER_KEY_FILE: process.env.FFT_MASTER_KEY_FILE,
+          FFT_MASTER_KEY: process.env.FFT_MASTER_KEY,
+        };
+        delete process.env.FFT_MASTER_KEY;
+        return server.ssrLoadModule(devApp).then((mod: DevAppModule) => {
+          if (!mod.createDevApp) throw new Error("dev-app.ts has no createDevApp export.");
+          return mod.createDevApp(webRoot, env);
+        });
+      };
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split("?")[0] ?? "";
         if (path !== "/healthz" && path !== "/api" && !path.startsWith("/api/")) return next();
-        security ??= server
-          .ssrLoadModule(securityMode)
-          .then((mod: Partial<typeof import("./src/server/security-mode.ts")>) => {
-            if (!mod.loadSecurity) throw new Error("security-mode.ts has no loadSecurity export.");
-            return mod.loadSecurity({
-              APP_URL: process.env.APP_URL ?? `http://localhost:${DEV_PORT}`,
-              TRUSTED_PROXIES: process.env.TRUSTED_PROXIES,
-            });
-          });
-        Promise.all([server.ssrLoadModule(serverApp), security])
-          .then(([mod, loaded]: [Partial<typeof import("./src/server/app.ts")>, Security]) => {
-            if (!mod.createApp) throw new Error("src/server/app.ts has no createApp export.");
-            return getRequestListener(mod.createApp(webRoot, loaded).fetch)(req, res);
-          })
-          .catch(next);
+        app ??= startDevApp();
+        app.then((loaded) => getRequestListener(loaded.fetch)(req, res)).catch(next);
       });
     },
   };

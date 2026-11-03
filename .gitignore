@@ -3,6 +3,8 @@ dist/
 coverage/
 *.log
 .env
+# The app.db that `pnpm dev` uses.
+/.dev/
 # A Master key, such as the one the README's Docker example writes.
 /secrets/
 *.key

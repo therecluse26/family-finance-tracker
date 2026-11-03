@@ -11,7 +11,7 @@ The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 
 | Command | What it does |
 |---|---|
 | `pnpm install` | Installs the packages |
-| `pnpm dev` | Runs the web app and the API at http://localhost:5173, which is also its `APP_URL` unless you set one |
+| `pnpm dev` | Runs the web app and the API at http://localhost:5173, which is also its `APP_URL` unless you set one. It needs the Master key, as `pnpm start` does, and keeps its own `app.db` in `.dev/` |
 | `pnpm lint` | Checks lint and formatting with Biome; `pnpm format` fixes them |
 | `pnpm typecheck` | Type-checks the server, the web app, and the tests |
 | `pnpm test` | Runs the tests with Vitest |

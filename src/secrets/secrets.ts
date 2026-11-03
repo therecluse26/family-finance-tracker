@@ -165,7 +165,14 @@ function secretsWith(masterKey: MasterKey, dataKey: DataKey): Secrets {
 
     derive(use) {
       const info = `family-finance-tracker ${use}`;
-      return Buffer.from(hkdfSync("sha256", masterKey.key, Buffer.alloc(0), info, KEY_BYTES));
+      const value = Buffer.from(
+        hkdfSync("sha256", masterKey.key, Buffer.alloc(0), info, KEY_BYTES),
+      );
+      // The logger refuses the value as soon as it is made, in each way a caller may write it.
+      const hex = value.toString("hex");
+      const forms = [hex, hex.toUpperCase(), value.toString("base64"), value.toString("base64url")];
+      for (const form of forms) registerSecretValue(form);
+      return value;
     },
 
     checkMasterKey(pasted) {
