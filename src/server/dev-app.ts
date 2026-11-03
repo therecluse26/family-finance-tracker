@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createAuth } from "../auth/index.ts";
+import { plaidSettings } from "../bank/index.ts";
 import { applyMigrations, openDatabase } from "../db/index.ts";
 import { checkDataKey, loadMasterKey, unlockSecrets } from "../secrets/index.ts";
 import { createApp } from "./app.ts";
@@ -27,5 +28,7 @@ export async function createDevApp(
   await applyMigrations(database, fileURLToPath(new URL("../../drizzle", import.meta.url)));
   const secrets = await unlockSecrets(database, masterKey);
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
-  return createApp(webRoot, security, auth, database);
+  return createApp(webRoot, security, auth, database, {
+    plaid: plaidSettings({ database, secrets }),
+  });
 }

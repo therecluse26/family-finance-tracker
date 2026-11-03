@@ -18,7 +18,13 @@ export class TestBrowser {
     this.client = client;
   }
 
-  async send(method: string, path: string, body?: unknown): Promise<Response> {
+  // `headers` adds to the browser's own headers, or replaces them.
+  async send(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
     const cookie = [...this.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
     const res = await this.app.request(
       `${this.appUrl.origin}${path}`,
@@ -29,6 +35,7 @@ export class TestBrowser {
           origin: this.appUrl.origin,
           ...(body === undefined ? {} : { "content-type": "application/json" }),
           ...(cookie === "" ? {} : { cookie }),
+          ...headers,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       },

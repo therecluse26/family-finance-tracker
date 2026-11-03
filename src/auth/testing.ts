@@ -60,7 +60,7 @@ export async function newTestAuth(appOrigin: string, logger?: Logger): Promise<T
 export const signedOutAuth: Auth = {
   handle: async () => Response.json({ error: "Not found" }, { status: 404 }),
   signedIn: async () => undefined,
-  checkFreshCode: async () => false,
+  checkFreshCode: async () => "wrong",
 };
 
 export type TestMember = {

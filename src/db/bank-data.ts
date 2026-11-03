@@ -7,6 +7,7 @@ import type {
   TxnRecord,
 } from "../bank/adapter.ts";
 import type { Database } from "./client.ts";
+import { countPlaidItem } from "./plaid-settings.ts";
 import { connections, householdAccounts, transactions } from "./schema.ts";
 
 // Connections, Accounts, and Transactions in app.db (spec 02). The bank module decides; these
@@ -28,7 +29,11 @@ export async function addConnection(
   at = new Date(),
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await database.insert(connections).values({ id, ...connection, createdAt: at });
+  await database.transaction(async (tx) => {
+    await tx.insert(connections).values({ id, ...connection, createdAt: at });
+    // N counts every Plaid Connection the app created or imported (spec 02, The 10 lifetime Items).
+    if (connection.provider === "plaid") await countPlaidItem(tx);
+  });
   return id;
 }
 

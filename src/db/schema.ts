@@ -1,5 +1,14 @@
 // The only source of app.db's shape. After a change here, `pnpm db:generate` writes its migration.
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import {
+  check,
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { calendarDate, cents, moment } from "./columns.ts";
 
 // The data key that encrypts every Master-key secret (spec 09, Encryption at rest). v1 stores one.
@@ -144,6 +153,24 @@ export const setupSteps = sqliteTable("setup_steps", {
   status: text("status", { enum: ["done", "skipped"] }).notNull(),
   at: moment("at").notNull(),
 });
+
+// The Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10 lifetime Items). It
+// has one row, whose ID is 1.
+export const plaidSettings = sqliteTable(
+  "plaid_settings",
+  {
+    id: integer("id").primaryKey(),
+    clientId: text("client_id"),
+    // The Production secret, encrypted with the Master key and bound to this row and column.
+    secret: text("secret"),
+    // Every Plaid Connection the app created or imported. It only grows, so a removed Connection
+    // stays counted, even when its row is gone.
+    appItems: integer("app_items").notNull().default(0),
+    // Items spent outside the app, from the N a Member set. N is app_items plus outside_items.
+    outsideItems: integer("outside_items").notNull().default(0),
+  },
+  (table) => [check("plaid_settings_one_row", sql`${table.id} = 1`)],
+);
 
 // One link to one bank through one Bank-data provider (spec 02, Connections). bank_id is not
 // unique: a bank can be linked again after its Connection is removed, and "Link again" on a Broken

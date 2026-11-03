@@ -22,6 +22,13 @@ export {
   NewerDatabaseError,
   SkippedMigrationError,
 } from "./migrate.ts";
+export {
+  PLAID_SETTINGS_ROW,
+  readPlaidSettings,
+  type StoredPlaidSettings,
+  storeItemsUsed,
+  storePlaidKeys,
+} from "./plaid-settings.ts";
 export { scheduledTasks } from "./schema.ts";
 export { hasMember, markSetupStep, readSetupSteps, type SetupStepStatus } from "./setup-steps.ts";
 export {

@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import type { Auth } from "../auth/index.ts";
+import type { PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import { createApp } from "./app.ts";
 import type { Security } from "./security-mode.ts";
@@ -15,11 +16,14 @@ export function startServer(options: {
   security: Security;
   auth: Auth;
   database: Database;
+  plaid?: PlaidSettings;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
       {
-        fetch: createApp(options.webRoot, options.security, options.auth, options.database).fetch,
+        fetch: createApp(options.webRoot, options.security, options.auth, options.database, {
+          ...(options.plaid === undefined ? {} : { plaid: options.plaid }),
+        }).fetch,
         port: options.port,
       },
       (info) => {

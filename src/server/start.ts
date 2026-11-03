@@ -1,5 +1,5 @@
 import { createAuth } from "../auth/index.ts";
-import { type BankDataAdapter, startBank } from "../bank/index.ts";
+import { type BankDataAdapter, plaidSettings, startBank } from "../bank/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
@@ -58,6 +58,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         security: options.security,
         auth: createAuth({ database, secrets, appOrigin: options.security.appUrl.origin }),
         database,
+        plaid: plaidSettings({ database, secrets }),
       });
       return {
         port: server.port,

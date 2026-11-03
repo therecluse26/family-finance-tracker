@@ -792,6 +792,24 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       await browser().signIn(alice, newPassword);
     });
 
+    it("refuse every code after 5 wrong ones in 15 minutes, with 429", async () => {
+      const tab = browser();
+      await tab.signIn(alice);
+      later(TOTP_STEP_MS);
+      const code = await alice.totpCode();
+      const actions = [
+        (c: string) => changePassword(tab, "a new password here", c),
+        (c: string) => tab.post("/api/auth/my-login/new-totp", { code: c }),
+        (c: string) => tab.post("/api/auth/my-login/new-backup-codes", { code: c }),
+      ];
+
+      for (const action of [...actions, ...actions].slice(0, 5)) {
+        expect((await action(wrong(code))).status).toBe(401);
+      }
+
+      for (const action of actions) await tooManyFailed(await action(code));
+    });
+
     it("take a backup code once in place of a TOTP code", async () => {
       const tab = browser();
       await tab.signIn(alice);

@@ -54,10 +54,13 @@ export type Auth = {
     request: Request,
     clientAddress: string,
   ): Promise<{ member: SignedInMember; setCookies: string[] } | undefined>;
-  // The sensitive-action helper: true only for a fresh TOTP or backup code from the Member signed
-  // in on this request. A wrong code counts as a failed sign-in, and a backup code is used up.
-  checkFreshCode(request: Request, clientAddress: string, code: string): Promise<boolean>;
+  // The sensitive-action helper: "fresh" only for a fresh TOTP or backup code from the Member
+  // signed in on this request. A wrong code counts as a failed sign-in, and a backup code is used
+  // up. Past the failed sign-in limit, every code is "too many tries" without being checked.
+  checkFreshCode(request: Request, clientAddress: string, code: string): Promise<FreshCode>;
 };
+
+export type FreshCode = "fresh" | "wrong" | "too many tries";
 
 export type AuthOptions = {
   database: Database;
@@ -201,8 +204,15 @@ export function createAuth(options: AuthOptions): Auth {
       return { member: { id, name, email }, setCookies: responseHeaders.getSetCookie() };
     },
 
-    checkFreshCode(request, clientAddress, code) {
-      return checkFreshCode(withClientAddress(request.headers, clientAddress), code);
+    async checkFreshCode(request, clientAddress, code) {
+      try {
+        const headers = withClientAddress(request.headers, clientAddress);
+        return (await checkFreshCode(headers, code)) ? "fresh" : "wrong";
+      } catch (error) {
+        // The sign-in limit's refusal. Better Auth's own routes answer it as 429 by themselves.
+        if (isAPIError(error) && error.status === "TOO_MANY_REQUESTS") return "too many tries";
+        throw error;
+      }
     },
   };
   instances.set(made, auth);

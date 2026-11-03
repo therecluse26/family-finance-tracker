@@ -133,5 +133,21 @@
     "reviewer": "Claude, T06 build agent",
     "date": "2026-11-03",
     "licenseText": "licenses/texts/express-basic-auth@1.2.1.txt"
+  },
+  {
+    "package": "agent-base",
+    "version": "6.0.2",
+    "license": "MIT",
+    "reviewer": "Claude, T21 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/agent-base@6.0.2.txt"
+  },
+  {
+    "package": "https-proxy-agent",
+    "version": "5.0.1",
+    "license": "MIT",
+    "reviewer": "Claude, T21 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/https-proxy-agent@5.0.1.txt"
   }
 ]

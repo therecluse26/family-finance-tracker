@@ -2,6 +2,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { Auth } from "../auth/index.ts";
+import type { PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import { api } from "./api.ts";
@@ -51,11 +52,41 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
     if (signedIn === undefined) return c.json({ error: "Sign in first" }, 401);
     for (const cookie of signedIn.setCookies) c.header("Set-Cookie", cookie, { append: true });
     c.set("member", signedIn.member);
+    c.set("checkFreshCode", (code) => auth.checkFreshCode(c.req.raw, c.var.clientAddress, code));
     await next();
   };
 }
 
-export function createApp(webRoot: string, security: Security, auth: Auth, database: Database) {
+// Before the routes under /api/plaid/. No Plaid key or token is stored until the first-run
+// wizard's required steps are done (spec 12): until then, every route but a GET answers 409. They
+// take only JSON bodies, so a form on another site cannot post to them. An app made with no Plaid
+// settings answers 404.
+function plaidRoutes(
+  database: Database,
+  plaid: PlaidSettings | undefined,
+): MiddlewareHandler<ServerEnv> {
+  return async (c, next) => {
+    if (plaid === undefined) return c.json({ error: "Not found" }, 404);
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+      if ((await readSetupState(database)).wizard) {
+        return c.json({ error: "Finish the first-run wizard first." }, 409);
+      }
+      if (c.req.header("content-type")?.split(";")[0]?.trim() !== "application/json") {
+        return c.json({ error: "Send JSON." }, 415);
+      }
+    }
+    c.set("plaid", plaid);
+    await next();
+  };
+}
+
+export function createApp(
+  webRoot: string,
+  security: Security,
+  auth: Auth,
+  database: Database,
+  services: { plaid?: PlaidSettings } = {},
+) {
   const bank = bankViews(database);
   return (
     new Hono<ServerEnv>()
@@ -72,6 +103,7 @@ export function createApp(webRoot: string, security: Security, auth: Auth, datab
         c.set("bank", bank);
         await next();
       })
+      .use("/api/plaid/*", plaidRoutes(database, services.plaid))
       .route("/api", api)
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
       .use(serveStatic({ root: webRoot }))

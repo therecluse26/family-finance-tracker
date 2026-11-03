@@ -18,4 +18,18 @@ export type {
 } from "./adapter.ts";
 export { BankDataError } from "./adapter.ts";
 export { SyncConnectionJob, startSync } from "./job.ts";
+export {
+  type PlaidClientMaker,
+  type PlaidKeysClient,
+  plaidSettings,
+  productionPlaidClient,
+  readPlaidKeys,
+} from "./plaid-keys.ts";
+export {
+  PLAID_ITEM_LIMIT,
+  type PlaidKeys,
+  type PlaidKeysCheck,
+  type PlaidSettings,
+  type PlaidView,
+} from "./plaid-view.ts";
 export { adapterActions, type SyncReport, startBank, syncConnection } from "./sync.ts";
