@@ -3,5 +3,8 @@ dist/
 coverage/
 *.log
 .env
+# A Master key, such as the one the README's Docker example writes.
+/secrets/
+*.key
 .playwright-mcp/
 .claude/

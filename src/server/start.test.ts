@@ -9,9 +9,11 @@ import {
   closeDatabase,
   NewerDatabaseError,
   openDatabase,
+  readDataKeys,
   SkippedMigrationError,
 } from "../db/index.ts";
 import {
+  appMigrations,
   changedSettings,
   FIRST_MIGRATION,
   type FixtureMigration,
@@ -23,8 +25,13 @@ import {
   writeMigrationsFolder,
 } from "../db/testing.ts";
 import { createLogger } from "../log.ts";
+import { type MasterKey, WrongMasterKeyError } from "../secrets/index.ts";
+import { newMasterKey } from "../secrets/testing.ts";
 import { loadSecurity, type Security } from "./security-mode.ts";
 import { type RunningApp, startApp } from "./start.ts";
+
+// The app's own migrations, which come before the fixtures in every test folder.
+const APP = appMigrations().length;
 
 describe("starting the app", () => {
   let dir: string;
@@ -33,6 +40,7 @@ describe("starting the app", () => {
   let webRoot: string;
   let running: RunningApp[];
   let security: Security;
+  let masterKey: MasterKey;
 
   beforeAll(async () => {
     security = await loadSecurity(
@@ -49,6 +57,7 @@ describe("starting the app", () => {
     mkdirSync(webRoot);
     writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
     running = [];
+    masterKey = newMasterKey().masterKey;
   });
 
   afterEach(async () => {
@@ -57,12 +66,19 @@ describe("starting the app", () => {
   });
 
   const folder = (name: string, migrations: FixtureMigration[]) =>
-    writeMigrationsFolder(join(dir, name), migrations);
+    writeMigrationsFolder(join(dir, name), [...appMigrations(), ...migrations]);
   const v1 = () => folder("v1", [FIRST_MIGRATION]);
   const v2 = () => folder("v2", [FIRST_MIGRATION, SECOND_MIGRATION]);
 
-  async function start(migrationsFolder: string, port = 0): Promise<RunningApp> {
-    const app = await startApp({ databaseUrl: url, migrationsFolder, port, webRoot, security });
+  async function start(migrationsFolder: string, port = 0, key = masterKey): Promise<RunningApp> {
+    const app = await startApp({
+      masterKey: key,
+      databaseUrl: url,
+      migrationsFolder,
+      port,
+      webRoot,
+      security,
+    });
     running.push(app);
     return app;
   }
@@ -92,6 +108,19 @@ describe("starting the app", () => {
     });
   }
 
+  // What a start could change in app.db: its data keys and its migrations.
+  async function readFileState() {
+    const database = await openDatabase(url);
+    try {
+      return {
+        dataKeys: await readDataKeys(database),
+        migrations: await checkMigrations(database, v2()),
+      };
+    } finally {
+      closeDatabase(database);
+    }
+  }
+
   it("creates app.db on a fresh start and applies the migrations, then answers /healthz", async () => {
     expect(existsSync(path)).toBe(false);
 
@@ -99,7 +128,7 @@ describe("starting the app", () => {
 
     expect(existsSync(path)).toBe(true);
     expect(await checkMigrations(app.database, v2())).toEqual({
-      applied: 2,
+      applied: APP + 2,
       pending: 0,
       newer: 0,
       skipped: 0,
@@ -113,7 +142,7 @@ describe("starting the app", () => {
 
     const app = await start(v2());
 
-    expect((await checkMigrations(app.database, v2())).applied).toBe(2);
+    expect((await checkMigrations(app.database, v2())).applied).toBe(APP + 2);
   });
 
   it("applies only the new migrations after an update", async () => {
@@ -121,7 +150,10 @@ describe("starting the app", () => {
 
     const app = await start(v2());
 
-    expect(await checkMigrations(app.database, v2())).toMatchObject({ applied: 2, pending: 0 });
+    expect(await checkMigrations(app.database, v2())).toMatchObject({
+      applied: APP + 2,
+      pending: 0,
+    });
     expect((await checkMigrations(app.database, v1())).newer).toBe(1);
   });
 
@@ -140,8 +172,34 @@ describe("starting the app", () => {
     await expect(start(shipped(), port)).rejects.toThrow(error);
     await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
     const database = await openDatabase(url);
-    expect((await checkMigrations(database, written())).applied).toBe(2);
+    expect((await checkMigrations(database, written())).applied).toBe(APP + 2);
     closeDatabase(database);
+  });
+
+  it("makes one data key at the first start, and decrypts with it after a restart", async () => {
+    const first = await start(v1());
+    const stored = await readDataKeys(first.database);
+    const place = { rowId: 1, column: "settings.smtp_password" };
+    const ciphertext = first.secrets.encrypt("household-smtp-value", place);
+    await stop(first);
+
+    const again = await start(v1());
+
+    expect(stored).toHaveLength(1);
+    expect(await readDataKeys(again.database)).toEqual(stored);
+    expect(again.secrets.decrypt(ciphertext, place)).toBe("household-smtp-value");
+  });
+
+  it("refuses to start with a Master key that cannot decrypt the data key, changes nothing, and never listens", async () => {
+    await stop(await start(v1()));
+    const before = await readFileState();
+    const port = await freePort();
+
+    await expect(start(v2(), port, newMasterKey().masterKey)).rejects.toThrow(WrongMasterKeyError);
+
+    await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
+    expect(await readFileState()).toEqual(before);
+    expect(before.migrations.pending).toBe(1);
   });
 
   it("opens app.db with the spec's settings on every connection", async () => {

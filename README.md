@@ -16,7 +16,7 @@ The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 
 | `pnpm typecheck` | Type-checks the server, the web app, and the tests |
 | `pnpm test` | Runs the tests with Vitest |
 | `pnpm build` | Builds the web app into `dist/web` and the server into `dist/server.js`, and writes the third-party notices: `dist/THIRD-PARTY-NOTICES.txt` for the image and `dist/web/third-party-notices.txt` for the browser bundle |
-| `pnpm start` | Runs the built server on `PORT` (default `3000`). It needs `APP_URL`. It opens `/data/app.db` and applies migrations first |
+| `pnpm start` | Runs the built server on `PORT` (default `3000`). It needs `APP_URL` and the Master key. It loads the Master key, then opens `/data/app.db` and applies migrations |
 | `pnpm db:generate` | Writes a migration into `drizzle/` after a change to `src/db/schema.ts`. Commit it with the change |
 | `pnpm check:licenses` | Checks every package's license against the allowlist; a package whose license field is missing, `UNLICENSED`, or `SEE LICENSE IN …` needs a record in `licenses/reviewed.json` |
 | `pnpm check:audit` | Runs `pnpm audit --prod --audit-level high` against the public registry, in a temporary folder that holds only `package.json` and `pnpm-lock.yaml`; an advisory with no fix passes only with a record in `security/audit-exceptions.json`, and any pnpm setting that ignores advisories fails the check |
@@ -27,11 +27,15 @@ A package in the production tree or the browser bundle that ships no license fil
 
 `APP_URL` is the address Members open, and it sets the security mode. An `http://` address must be local, and the app then answers only requests sent to that address. An `https://` address makes the app answer only requests that a proxy in `TRUSTED_PROXIES` marks as HTTPS. The rules are in [Members, login, and security](docs/spec/09-members-login-security.md#security-mode).
 
+The Master key is 32 random bytes written as 64 hexadecimal characters. The app reads the file named by `FFT_MASTER_KEY_FILE` (default `/run/secrets/master.key`), or `FFT_MASTER_KEY` when that file is missing, and does not start without one. `fft setup` will make it; until then, `openssl rand -hex 32` does. The rules are in [Members, login, and security](docs/spec/09-members-login-security.md#the-master-key).
+
 ## Docker
 
 ```sh
 docker build --tag family-finance-tracker .
-docker run --rm --env APP_URL=http://localhost:3000 --publish 3000:3000 --volume fft-data:/data family-finance-tracker
+mkdir -p secrets && openssl rand -hex 32 > secrets/master.key
+docker run --rm --env APP_URL=http://localhost:3000 --publish 3000:3000 --volume fft-data:/data \
+  --volume ./secrets:/run/secrets:ro family-finance-tracker
 ```
 
 ## License

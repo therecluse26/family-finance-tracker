@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createLogger, isSecretFieldName, type LogFields, throwsOnSecretField } from "./log.ts";
+import {
+  createLogger,
+  isSecretFieldName,
+  type LogFields,
+  registerSecretValue,
+  throwsOnSecretField,
+} from "./log.ts";
 
 function captureLogger(throwOnSecretField: boolean) {
   const lines: string[] = [];
@@ -52,6 +58,17 @@ const SECRET_NAMES = [
   "aiKey",
   "aiKeys",
   "aiKeyValue",
+  "aikey",
+  "AIKEY",
+  "aikeys",
+  "aikey2",
+  "aikeyValue",
+  "openaikey",
+  "OPENAIKEY",
+  "vapidkeys",
+  "plaidkeys",
+  "encryptionkey",
+  "signingkey",
   "anthropicKey",
   "openaiKey",
   "plaidKeys",
@@ -312,6 +329,163 @@ describe("the logger in production", () => {
         msg: "Sync failed",
         logFailure: expect.any(String),
       }),
+    ]);
+  });
+});
+
+let secretValues = 0;
+
+// Registers a new secret value for one test. Every logger shares the registered values, so each
+// test makes its own.
+function newSecretValue(tail = ""): string {
+  secretValues += 1;
+  const value = `registered-${secretValues}-${Date.now().toString(36)}${tail}`;
+  registerSecretValue(value);
+  return value;
+}
+
+function thrownBy(run: () => void): string {
+  try {
+    run();
+  } catch (error) {
+    return String(error);
+  }
+  return "nothing";
+}
+
+// Each case puts a registered secret value where no field name marks it, with the paths that
+// the logger refuses.
+const SECRET_VALUE_PLACES: [string, (value: string) => [string, LogFields], string[]][] = [
+  ["the message", (value) => [`Synced with ${value}`, {}], ["msg"]],
+  ["a field's value", (value) => ["Saved", { note: value }], ["note"]],
+  ["the middle of a string", (value) => ["Saved", { note: `sent ${value} to the bank` }], ["note"]],
+  [
+    "a URL",
+    (value) => ["Fetched", { url: new URL(`https://bank.example.com/items?access=${value}`) }],
+    ["url"],
+  ],
+  [
+    "a Map key",
+    (value) => ["Saved", { connections: new Map([[value, "c1"]]) }],
+    ["connections.[refused]"],
+  ],
+  [
+    "an object key",
+    (value) => ["Saved", { connections: { [value]: "c1" } }],
+    ["connections.[refused]"],
+  ],
+  ["an array", (value) => ["Saved", { items: ["c1", value] }], ["items[1]"]],
+  [
+    "a toJSON result",
+    (value) => ["Saved", { thing: { toJSON: () => ({ note: value }) } }],
+    ["thing.note"],
+  ],
+  [
+    "an Error's message and stack",
+    (value) => ["Sync failed", { error: new Error(`The bank refused ${value}`) }],
+    ["error.message", "error.stack"],
+  ],
+];
+
+// Each case writes the value with characters escaped, so the text no longer holds it as written.
+const ESCAPED_PLACES: [string, (value: string) => unknown][] = [
+  ["a URL's query", (value) => new URL(`https://bank.example.com/items?access=${value}`)],
+  [
+    "URLSearchParams",
+    (value) => {
+      const url = new URL("https://bank.example.com/items");
+      url.searchParams.set("access", value);
+      return url;
+    },
+  ],
+  [
+    "a URL's password",
+    (value) => {
+      const url = new URL("smtp://mail.example.com");
+      url.username = "household";
+      url.password = value;
+      return url;
+    },
+  ],
+  ["a URL's path", (value) => new URL(`https://bank.example.com/items/${value}`)],
+  ["encodeURIComponent", (value) => `/items?access=${encodeURIComponent(value)}`],
+];
+
+describe("a registered secret value", () => {
+  it.each(SECRET_VALUE_PLACES)(
+    "in tests, throws on one in %s and writes nothing",
+    (_place, place, [path]) => {
+      const value = newSecretValue();
+      const { lines, logger } = captureLogger(true);
+      const [message, fields] = place(value);
+
+      const thrown = thrownBy(() => logger.info(message, fields));
+
+      expect(thrown).toContain(`refuses the field "${path}"`);
+      expect(thrown).toMatch(/holds a secret value/);
+      expect(thrown).not.toContain(value);
+      expect(lines).toHaveLength(0);
+    },
+  );
+
+  it.each(SECRET_VALUE_PLACES)(
+    "in production, refuses one in %s and names the path without the value",
+    (_place, place, paths) => {
+      const value = newSecretValue();
+      const { lines, logger, parsed } = captureLogger(false);
+      const [message, fields] = place(value);
+
+      logger.info(message, fields);
+
+      expect(lines.join("")).not.toContain(value);
+      expect(lines.join("")).toContain("[refused]");
+      expect(parsed()[1]).toMatchObject({ level: "warn", refused: paths });
+    },
+  );
+
+  it.each(ESCAPED_PLACES)("refuses one that %s writes escaped", (_place, place) => {
+    const value = newSecretValue(" p@ss/+&=:é<>");
+    const target = place(value);
+    expect(String(target)).not.toContain(value);
+    const { logger, parsed } = captureLogger(false);
+
+    logger.info("Fetched", { target });
+
+    expect(parsed()[0].target).toBe("[refused]");
+  });
+
+  it("refuses one that holds a lone surrogate, which no URL can escape", () => {
+    const value = newSecretValue("\uD800");
+    const { logger, parsed } = captureLogger(false);
+
+    logger.info("Saved", { note: `sent ${value}` });
+
+    expect(parsed()[0].note).toBe("[refused]");
+  });
+
+  it("writes text that holds only part of one", () => {
+    const value = newSecretValue();
+    const { logger, parsed } = captureLogger(true);
+
+    logger.info("Saved", { note: value.slice(0, -1), id: value.slice(1) });
+
+    expect(parsed()[0]).toMatchObject({ note: value.slice(0, -1), id: value.slice(1) });
+  });
+
+  it("in production, refuses the message too when a field cannot be read", () => {
+    const value = newSecretValue();
+    const { lines, logger, parsed } = captureLogger(false);
+    const broken = {
+      get note(): string {
+        throw new Error("unreadable");
+      },
+    };
+
+    logger.error(`Sync failed for ${value}`, { broken });
+
+    expect(lines.join("")).not.toContain(value);
+    expect(parsed()).toEqual([
+      expect.objectContaining({ msg: "[refused]", logFailure: expect.any(String) }),
     ]);
   });
 });

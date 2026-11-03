@@ -1,14 +1,28 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { newMasterKeyHex } from "../secrets/testing.ts";
 
 const MAIN = fileURLToPath(new URL("./main.ts", import.meta.url));
 
-// Runs the real entry point, the way the image starts it, with only these settings.
+const dir = mkdtempSync(join(tmpdir(), "fft-main-"));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// Runs the real entry point, the way the image starts it, with only these settings. Its Master
+// key file is missing unless a test names another.
 function start(settings: Record<string, string>) {
-  const { APP_URL: _appUrl, TRUSTED_PROXIES: _trustedProxies, ...env } = process.env;
+  const {
+    APP_URL: _appUrl,
+    TRUSTED_PROXIES: _trustedProxies,
+    FFT_MASTER_KEY: _masterKey,
+    FFT_MASTER_KEY_FILE: _masterKeyFile,
+    ...env
+  } = process.env;
   const run = spawnSync(process.execPath, [MAIN], {
-    env: { ...env, ...settings },
+    env: { ...env, FFT_MASTER_KEY_FILE: join(dir, "missing.key"), ...settings },
     encoding: "utf8",
     timeout: 10_000,
   });
@@ -16,7 +30,7 @@ function start(settings: Record<string, string>) {
     .split("\n")
     .filter((line) => line.startsWith("{"))
     .map((line) => JSON.parse(line));
-  return { status: run.status, lines };
+  return { status: run.status, lines, output: run.stdout + run.stderr };
 }
 
 describe("the app at start", () => {
@@ -65,5 +79,48 @@ describe("the app at start", () => {
         error: expect.objectContaining({ message: expect.stringContaining(reason) }),
       }),
     ]);
+  });
+});
+
+describe("the app at start, before it opens app.db", () => {
+  const ready = { PORT: "1", APP_URL: "http://nas.local:3000" };
+
+  const errors = (lines: { level: string }[]) => lines.filter((line) => line.level === "error");
+
+  it("logs that `fft setup` must run first, and exits, when there is no Master key", () => {
+    const { status, lines } = start(ready);
+
+    expect(status).toBe(1);
+    expect(errors(lines)).toEqual([
+      expect.objectContaining({
+        msg: "The app could not start",
+        error: expect.objectContaining({
+          name: "MasterKeyError",
+          message: expect.stringContaining("Run `fft setup` first."),
+        }),
+      }),
+    ]);
+  });
+
+  it.each<[string, (hex: string) => string]>([
+    ["is one character short", (hex) => hex.slice(1)],
+    ["is one character long", (hex) => `${hex}0`],
+    ["holds a letter that is not hexadecimal", (hex) => `g${hex.slice(1)}`],
+    ["is the 32 bytes in base64", (hex) => Buffer.from(hex, "hex").toString("base64")],
+  ])("logs the reason and exits when FFT_MASTER_KEY %s, and never logs it", (_case, written) => {
+    const value = written(newMasterKeyHex());
+
+    const { status, lines, output } = start({ ...ready, FFT_MASTER_KEY: value });
+
+    expect(status).toBe(1);
+    expect(errors(lines)).toEqual([
+      expect.objectContaining({
+        error: expect.objectContaining({
+          name: "MasterKeyError",
+          message: expect.stringContaining("is not 32 bytes written as 64 hexadecimal characters"),
+        }),
+      }),
+    ]);
+    expect(output).not.toContain(value);
   });
 });

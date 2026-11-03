@@ -100,7 +100,12 @@ jobs:
         run: docker build --tag family-finance-tracker:ci .
       - name: GET /healthz answers 200
         run: |
+          # A throwaway Master key, made for this run, in the file the app reads by default. The
+          # app runs as the image's node user, so that user must be able to read it.
+          openssl rand -hex 32 > "$RUNNER_TEMP/master.key"
+          chmod 644 "$RUNNER_TEMP/master.key"
           docker run --detach --name app --env PORT=8080 --env APP_URL=http://127.0.0.1:8080 \
+            --mount "type=bind,source=$RUNNER_TEMP/master.key,target=/run/secrets/master.key,readonly" \
             --publish 8080:8080 family-finance-tracker:ci
           for _ in $(seq 1 30); do
             if curl --fail --silent --show-error http://127.0.0.1:8080/healthz; then exit 0; fi

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { APP_DB_URL } from "../db/index.ts";
 import { log } from "../log.ts";
+import { loadMasterKey } from "../secrets/index.ts";
 import { readPort } from "./port.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { startApp } from "./start.ts";
@@ -14,8 +15,10 @@ async function main(): Promise<void> {
   const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
   const port = readPort(process.env.PORT);
   const security = await loadSecurity(process.env);
+  const masterKey = await loadMasterKey(process.env);
   setInterval(() => void security.proxies.refresh(), PROXY_NAME_REFRESH_MS).unref();
   const server = await startApp({
+    masterKey,
     databaseUrl: APP_DB_URL,
     migrationsFolder,
     port,

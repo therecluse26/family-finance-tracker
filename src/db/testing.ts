@@ -1,5 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Client, createClient, type ResultSet } from "@libsql/client";
 import { sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
@@ -125,6 +126,20 @@ export const MIDDLE_MIGRATION: FixtureMigration = {
   when: 1_790_000_050_000,
   sql: "CREATE TABLE `middle` (`id` integer PRIMARY KEY NOT NULL);",
 };
+
+const SHIPPED_FOLDER = fileURLToPath(new URL("../../drizzle", import.meta.url));
+
+// The app's own migrations from drizzle/, for a folder that adds fixture migrations after them.
+// Each gets a time before FIRST_MIGRATION's, so the fixtures stay the newest.
+export function appMigrations(): FixtureMigration[] {
+  const journal = readFileSync(join(SHIPPED_FOLDER, "meta", "_journal.json"), "utf8");
+  const entries: { tag: string }[] = JSON.parse(journal).entries;
+  return entries.map(({ tag }, i) => ({
+    tag,
+    when: FIRST_MIGRATION.when - (entries.length - i) * 1000,
+    sql: readFileSync(join(SHIPPED_FOLDER, `${tag}.sql`), "utf8"),
+  }));
+}
 
 // Joins statements as `drizzle-kit generate` does in a migration file.
 function migrationSql(statements: string[]): string {
