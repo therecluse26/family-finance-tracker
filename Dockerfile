@@ -5,12 +5,22 @@ RUN npm install --global pnpm@12.9.0
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-FROM base AS build
+# better-sqlite3, Sidequest's SQLite driver, compiles from its npm tarball, which the lockfile
+# pins. prebuild-install then downloads no binary, and node-gyp uses the image's own Node headers
+# instead of fetching them. The final image gets none of these build tools.
+FROM base AS native-build
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+ENV npm_config_build_from_source=true
+ENV npm_config_nodedir=/usr/local
+
+FROM native-build AS build
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-FROM base AS prod-deps
+FROM native-build AS prod-deps
 RUN pnpm install --frozen-lockfile --prod
 
 FROM node:26-slim

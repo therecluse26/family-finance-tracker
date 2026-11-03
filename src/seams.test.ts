@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // in that scope, so `ai` owns every AI provider package, such as @ai-sdk/gateway.
 const SEAMS: Record<string, readonly string[]> = {
   db: ["drizzle-orm", "@libsql/client"],
-  jobs: ["sidequest"],
+  jobs: ["sidequest", "@sidequest/*"],
   bank: ["plaid"],
   ai: ["ai", "@ai-sdk/*", "@openrouter/*"],
   secrets: ["node:crypto"],
@@ -159,6 +159,20 @@ describe("module seams", () => {
       "src/server/chat.ts imports @ai-sdk/gateway, which only src/ai may import",
       "src/jobs/review.ts imports @ai-sdk/anthropic, which only src/ai may import",
       "src/web/chat.tsx imports @openrouter/ai-sdk-provider, which only src/ai may import",
+    ]);
+  });
+
+  it("allows Sidequest only in src/jobs", () => {
+    const files: SourceFile[] = [
+      { path: "src/jobs/sidequest.ts", code: 'import { Sidequest } from "sidequest";' },
+      { path: "src/jobs/engine.ts", code: 'import { Engine } from "@sidequest/engine";' },
+      { path: "src/server/start.ts", code: 'import { Sidequest } from "sidequest";' },
+      { path: "src/bank/sync.ts", code: 'import { Job } from "@sidequest/core";' },
+    ];
+
+    expect(findSeamBreaches(files)).toEqual([
+      "src/server/start.ts imports sidequest, which only src/jobs may import",
+      "src/bank/sync.ts imports @sidequest/core, which only src/jobs may import",
     ]);
   });
 

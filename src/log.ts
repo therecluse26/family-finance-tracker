@@ -98,7 +98,8 @@ function escapedForms(value: string): string[] {
   ].filter((form) => form !== "");
 }
 
-function holdsSecretValue(text: string): boolean {
+// Whether the text holds a registered secret value, in any of its forms.
+export function holdsSecretValue(text: string): boolean {
   for (const value of secretValues) {
     if (text.includes(value)) return true;
   }

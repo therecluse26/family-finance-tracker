@@ -8,3 +8,4 @@ export {
   NewerDatabaseError,
   SkippedMigrationError,
 } from "./migrate.ts";
+export { scheduledTasks } from "./schema.ts";

@@ -28,11 +28,13 @@
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@libsql/client": "^0.18.0",
+    "@sidequest/sqlite-backend": "~1.17.0",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.16",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router": "^8.5.1",
+    "sidequest": "~1.17.0",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {

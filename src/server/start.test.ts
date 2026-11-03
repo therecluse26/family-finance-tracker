@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   applyMigrations,
@@ -11,6 +12,7 @@ import {
   openDatabase,
   readDataKeys,
   SkippedMigrationError,
+  scheduledTasks,
 } from "../db/index.ts";
 import {
   appMigrations,
@@ -24,6 +26,16 @@ import {
   SECOND_MIGRATION,
   writeMigrationsFolder,
 } from "../db/testing.ts";
+import { type ScheduledTask, startJob } from "../jobs/index.ts";
+import {
+  finishSlowJob,
+  jobRuns,
+  SampleJob,
+  SlowJob,
+  sampleTask,
+  TEST_JOB_LIST,
+  waitFor,
+} from "../jobs/testing.ts";
 import { createLogger } from "../log.ts";
 import { type MasterKey, WrongMasterKeyError } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
@@ -58,9 +70,11 @@ describe("starting the app", () => {
     writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
     running = [];
     masterKey = newMasterKey().masterKey;
+    jobRuns.length = 0;
   });
 
   afterEach(async () => {
+    finishSlowJob();
     await Promise.all(running.map((app) => app.close()));
     rmSync(dir, { recursive: true, force: true });
   });
@@ -69,12 +83,19 @@ describe("starting the app", () => {
     writeMigrationsFolder(join(dir, name), [...appMigrations(), ...migrations]);
   const v1 = () => folder("v1", [FIRST_MIGRATION]);
   const v2 = () => folder("v2", [FIRST_MIGRATION, SECOND_MIGRATION]);
+  const shipped = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
-  async function start(migrationsFolder: string, port = 0, key = masterKey): Promise<RunningApp> {
+  async function start(
+    migrationsFolder: string,
+    port = 0,
+    key = masterKey,
+    tasks: ScheduledTask[] = [],
+  ): Promise<RunningApp> {
     const app = await startApp({
       masterKey: key,
       databaseUrl: url,
       migrationsFolder,
+      jobs: { jobsDb: join(dir, "jobs.db"), jobList: TEST_JOB_LIST, tasks },
       port,
       webRoot,
       security,
@@ -251,5 +272,63 @@ describe("starting the app", () => {
     // Bytes 18 and 19 of an SQLite file are 2 in WAL mode and 1 in rollback-journal mode.
     expect([...readFileSync(path).subarray(18, 20)]).toEqual([2, 2]);
     expect(existsSync(`${path}-wal`)).toBe(true);
+  });
+
+  it("runs the first scheduler tick before it listens", async () => {
+    await migrateFile(shipped);
+    const database = await openDatabase(url);
+    await database.insert(scheduledTasks).values({
+      name: sampleTask.name,
+      lastRunAt: null,
+      nextRunAt: new Date(Date.now() - 60_000),
+      timeZone: "UTC",
+    });
+    closeDatabase(database);
+
+    const app = await start(shipped, 0, masterKey, [sampleTask]);
+
+    const [task] = await app.database.select().from(scheduledTasks);
+    expect(task?.lastRunAt).not.toBeNull();
+    await waitFor(() => jobRuns.length > 0);
+    expect(jobRuns).toEqual(["SampleJob"]);
+  });
+
+  it("never listens when the first scheduler tick fails", async () => {
+    const port = await freePort();
+    const failing: ScheduledTask = {
+      name: "failing",
+      schedule: {
+        next() {
+          throw new Error("A schedule that fails");
+        },
+      },
+      job: SampleJob,
+    };
+
+    await expect(start(shipped, port, masterKey, [failing])).rejects.toThrow(
+      "A schedule that fails",
+    );
+    await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
+  });
+
+  it("on close, stops taking requests and starting jobs, and waits for the running job", async () => {
+    const app = await start(shipped);
+    await startJob(SlowJob, []);
+    await startJob(SampleJob, ["queued"]);
+    await waitFor(() => jobRuns.length > 0);
+
+    running.splice(running.indexOf(app), 1);
+    let closed = false;
+    const closing = app.close().then(() => {
+      closed = true;
+    });
+
+    await expect(fetch(`http://127.0.0.1:${app.port}/healthz`)).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(closed).toBe(false);
+
+    finishSlowJob();
+    await closing;
+    expect(jobRuns).toEqual(["SlowJob"]);
   });
 });

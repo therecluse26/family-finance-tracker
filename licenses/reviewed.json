@@ -61,5 +61,77 @@
     "reviewer": "Claude, T03 build agent",
     "date": "2026-11-03",
     "licenseText": "licenses/texts/promise-limit@2.7.0.txt"
+  },
+  {
+    "package": "sidequest",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/sidequest@1.17.0.txt"
+  },
+  {
+    "package": "@sidequest/backend",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/sidequest@1.17.0.txt"
+  },
+  {
+    "package": "@sidequest/core",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/sidequest@1.17.0.txt"
+  },
+  {
+    "package": "@sidequest/dashboard",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/sidequest@1.17.0.txt"
+  },
+  {
+    "package": "@sidequest/engine",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/sidequest@1.17.0.txt"
+  },
+  {
+    "package": "@sidequest/sqlite-backend",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/sidequest@1.17.0.txt"
+  },
+  {
+    "package": "filelist",
+    "version": "1.0.6",
+    "license": "Apache-2.0",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/filelist@1.0.6.txt"
+  },
+  {
+    "package": "jake",
+    "version": "10.9.4",
+    "license": "Apache-2.0",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/jake@10.9.4.txt"
+  },
+  {
+    "package": "express-basic-auth",
+    "version": "1.2.1",
+    "license": "MIT",
+    "reviewer": "Claude, T06 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/express-basic-auth@1.2.1.txt"
   }
 ]

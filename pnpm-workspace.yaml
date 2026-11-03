@@ -1,3 +1,6 @@
 # pnpm settings only. This is one package: never add a `packages` list here.
 allowBuilds:
   esbuild: false
+  better-sqlite3: true
+ignoredOptionalDependencies:
+  - "@napi-rs/nice"

@@ -85,7 +85,7 @@ Each outside dependency sits behind one module. No other module imports that dep
 | Module | Owns | Sole importer of |
 |---|---|---|
 | `db` | The Drizzle schema, the client, the migrator | `drizzle-orm`, `@libsql/client` |
-| `jobs` | Job registration, the scheduler tick | `sidequest` |
+| `jobs` | Job registration, the scheduler tick | `sidequest` and the `@sidequest/*` packages |
 | `bank` | The `BankDataAdapter` interface and its adapters ([Accounts and bank sync](02-accounts-and-bank-sync.md)) | `plaid` |
 | `ai` | Every AI call: models, the privacy filter, cost counting, the AI cost cap ([AI](08-ai.md)) | `ai` and the AI provider packages |
 | `secrets` | The Master key, encrypting and decrypting secrets | `node:crypto` for secrets |
@@ -109,6 +109,7 @@ The `ai` module also follows these library rules:
 - **Sidequest 1.17** runs every background job.
 - It keeps its own file, `/data/jobs.db`, in the same data volume.
 - It runs inside the app process (`runner: "inline"`), one job at a time (`maxConcurrentJobs: 1`), as its docs advise for SQLite.
+- It also runs with `fork: false`. Otherwise Sidequest starts its engine in a child process.
 - App code registers jobs through the `jobs` module and never imports Sidequest directly.
 - Every job is safe to run twice.
 - No job waits in place. A step that must wait, such as a retry or push held for quiet hours, becomes a new job with a start time.
@@ -231,6 +232,7 @@ CI checks every dependency's license. A license outside the allowlist fails the 
 
 - Vite builds the server into one file. Every package stays external, in the image's `node_modules`.
 - **Sidequest stays a separate package,** not bundled into the server file. A self-hoster can then swap it, as the LGPL requires.
+- The image notices include the GPL-3.0 text with the LGPL-3.0 text for the Sidequest packages, as LGPL-3.0 section 4(b) requires.
 - The `jobs` module hands every job class to Sidequest directly, through Sidequest's manual mode for bundled builds. The bundled server has no script file per job.
 - **`web-push` stays unmodified.** If it is ever patched, the patched files stay MPL-2.0.
 

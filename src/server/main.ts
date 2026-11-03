@@ -1,12 +1,18 @@
 import { fileURLToPath } from "node:url";
 import { APP_DB_URL } from "../db/index.ts";
+import { JOBS_DB_FILE } from "../jobs/index.ts";
+import { scheduledTasks } from "../jobs/list.ts";
 import { log } from "../log.ts";
 import { loadMasterKey } from "../secrets/index.ts";
 import { readPort } from "./port.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { startApp } from "./start.ts";
+import { exitOnSignal } from "./stop.ts";
 
-const STOP_TIMEOUT_MS = 10_000;
+// Sidequest imports each job class from the job list. The server build is this one file, so it
+// re-exports the list and names itself as the job list.
+export * from "../jobs/list.ts";
+
 // A Compose service gets a new IP address when its container is made again.
 const PROXY_NAME_REFRESH_MS = 10_000;
 
@@ -21,22 +27,13 @@ async function main(): Promise<void> {
     masterKey,
     databaseUrl: APP_DB_URL,
     migrationsFolder,
+    jobs: { jobsDb: JOBS_DB_FILE, jobList: import.meta.url, tasks: scheduledTasks },
     port,
     webRoot,
     security,
   });
   log.info("Listening", { port: server.port });
-
-  const stop = (signal: NodeJS.Signals) => {
-    log.info("Stopping", { signal });
-    setTimeout(() => process.exit(0), STOP_TIMEOUT_MS).unref();
-    server.close().then(
-      () => process.exit(0),
-      () => process.exit(0),
-    );
-  };
-  process.once("SIGTERM", stop);
-  process.once("SIGINT", stop);
+  exitOnSignal(server);
 }
 
 main().catch((error: unknown) => {

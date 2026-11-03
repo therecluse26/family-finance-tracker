@@ -25,6 +25,12 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
+      # better-sqlite3 compiles from its npm tarball, which the lockfile pins, against this Node's
+      # own headers. Its install script then downloads no binary and no headers.
+      - name: Build native modules from source
+        run: |
+          echo "npm_config_build_from_source=true" >> "$GITHUB_ENV"
+          echo "npm_config_nodedir=$(dirname "$(dirname "$(command -v node)")")" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - name: Biome
         run: pnpm lint
@@ -47,6 +53,12 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
+      # better-sqlite3 compiles from its npm tarball, which the lockfile pins, against this Node's
+      # own headers. Its install script then downloads no binary and no headers.
+      - name: Build native modules from source
+        run: |
+          echo "npm_config_build_from_source=true" >> "$GITHUB_ENV"
+          echo "npm_config_nodedir=$(dirname "$(dirname "$(command -v node)")")" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - name: License check
         run: pnpm check:licenses
