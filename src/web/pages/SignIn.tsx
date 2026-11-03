@@ -1,5 +1,6 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { openWizardIfNeeded } from "../setup-gate.ts";
 
 // Sign-in takes the password, then a TOTP code or a backup code. Better Auth answers under
 // /api/auth/; the web app talks to it with plain requests, since only src/auth may import it.
@@ -39,6 +40,11 @@ export function SignIn() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+
+  // Before the first Member exists, no one can sign in, so the page leads to the wizard.
+  useEffect(() => {
+    openWizardIfNeeded(navigate, "sign-in").catch(() => {});
+  }, [navigate]);
 
   async function submitPassword(event: FormEvent) {
     event.preventDefault();

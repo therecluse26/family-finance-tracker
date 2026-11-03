@@ -1,7 +1,7 @@
 import { Sidequest } from "sidequest";
 import type { Database } from "../db/index.ts";
 import { holdsSecretValue, log } from "../log.ts";
-import { Job, type JobArgument, type JobClass } from "./job.ts";
+import { Job, type JobArgument, type JobClass, refusePerformOverride } from "./job.ts";
 import { createScheduler, type ScheduledTask } from "./scheduler.ts";
 
 // Sidequest's own file, in the same data volume as app.db. It holds waiting and finished jobs only.
@@ -50,6 +50,7 @@ async function readJobList(url: string): Promise<Set<JobClass>> {
   const jobs = new Set<JobClass>();
   for (const [name, value] of Object.entries(list)) {
     if (!isJobClass(value)) continue;
+    refusePerformOverride(value);
     if (value.name !== name) {
       throw new Error(
         `The job list exports ${value.name} as "${name}". Sidequest finds a job class by its ` +
@@ -149,6 +150,7 @@ export async function startJob<Args extends JobArgument[]>(
   options: { at?: Date } = {},
 ): Promise<void> {
   if (running === undefined) throw new Error("The jobs module is not running.");
+  refusePerformOverride(job);
   if (!running.jobs.has(job)) {
     throw new Error(`${job.name} is not in the job list. Export it from src/jobs/list.ts.`);
   }

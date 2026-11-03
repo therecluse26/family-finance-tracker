@@ -1,4 +1,4 @@
-import { createSecretKey, type KeyObject } from "node:crypto";
+import { createSecretKey, type KeyObject, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 
@@ -17,31 +17,51 @@ export class MasterKeyError extends Error {
 
 export type MasterKeyEnv = { FFT_MASTER_KEY_FILE?: string; FFT_MASTER_KEY?: string };
 
-// Startup step 1. Reads the file named by FFT_MASTER_KEY_FILE, or FFT_MASTER_KEY when that file
-// is missing. Throws with the reason when the app must not start. Deletes FFT_MASTER_KEY from
-// `env`, so a job or child process that gets process.env never sees the key.
+// The file that holds the Master key: FFT_MASTER_KEY_FILE, or the default.
+export function masterKeyFile(env: MasterKeyEnv): string {
+  return env.FFT_MASTER_KEY_FILE || DEFAULT_MASTER_KEY_FILE;
+}
+
+// Reads the file named by FFT_MASTER_KEY_FILE, or FFT_MASTER_KEY when that file is missing.
+// Undefined when neither holds a key. Throws with the reason for a key that cannot be used.
+// Deletes FFT_MASTER_KEY from `env`, so a job or child process that gets process.env never sees
+// the key.
+export async function findMasterKey(
+  env: MasterKeyEnv,
+): Promise<{ masterKey: MasterKey; from: string } | undefined> {
+  const fromEnv = env.FFT_MASTER_KEY ?? "";
+  delete env.FFT_MASTER_KEY;
+  const file = masterKeyFile(env);
+  const written = await readKeyFile(file);
+  if (written !== undefined) {
+    return { masterKey: parseMasterKey(written, `The Master key in ${file}`), from: file };
+  }
+  if (fromEnv.trim() === "") return undefined;
+  const masterKey = parseMasterKey(fromEnv, "The Master key in FFT_MASTER_KEY");
+  return { masterKey, from: "FFT_MASTER_KEY" };
+}
+
+// Startup step 1. Throws with the reason when the app must not start.
 export async function loadMasterKey(
   env: MasterKeyEnv,
   options: { logger?: Logger } = {},
 ): Promise<MasterKey> {
   const logger = options.logger ?? log;
-  const fromEnv = env.FFT_MASTER_KEY ?? "";
-  delete env.FFT_MASTER_KEY;
-  const file = env.FFT_MASTER_KEY_FILE || DEFAULT_MASTER_KEY_FILE;
-  const written = await readKeyFile(file);
-  if (written !== undefined) {
-    const masterKey = parseMasterKey(written, `The Master key in ${file}`);
-    logger.info("Loaded the Master key", { from: file });
-    return masterKey;
-  }
-  if (fromEnv.trim() === "") {
+  const found = await findMasterKey(env);
+  if (found === undefined) {
     throw new MasterKeyError(
-      `There is no Master key: ${file} is missing, and FFT_MASTER_KEY is not set. Run \`fft setup\` first.`,
+      `There is no Master key: ${masterKeyFile(env)} is missing, and FFT_MASTER_KEY is not set. Run \`fft setup\` first.`,
     );
   }
-  const masterKey = parseMasterKey(fromEnv, "The Master key in FFT_MASTER_KEY");
-  logger.info("Loaded the Master key", { from: "FFT_MASTER_KEY" });
-  return masterKey;
+  logger.info("Loaded the Master key", { from: found.from });
+  return found.masterKey;
+}
+
+// A new Master key, for `fft setup`: 32 random bytes, and the key written as 64 hexadecimal
+// characters. The logger refuses it from now on.
+export function makeMasterKey(): { hex: string; masterKey: MasterKey } {
+  const hex = randomBytes(32).toString("hex");
+  return { hex, masterKey: parseMasterKey(hex, "The new Master key") };
 }
 
 // Undefined when the file is missing. Any other failure stops the start.

@@ -27,5 +27,5 @@ export async function createDevApp(
   await applyMigrations(database, fileURLToPath(new URL("../../drizzle", import.meta.url)));
   const secrets = await unlockSecrets(database, masterKey);
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
-  return createApp(webRoot, security, auth);
+  return createApp(webRoot, security, auth, database);
 }

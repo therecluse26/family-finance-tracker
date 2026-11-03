@@ -2,14 +2,15 @@ import {
   createCipheriv,
   createDecipheriv,
   createSecretKey,
-  hkdfSync,
   type KeyObject,
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
 import { type Database, readDataKeys, type StoredDataKey, storeDataKey } from "../db/index.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
+import { type DerivedUse, deriveFrom } from "./derive.ts";
 import { MASTER_KEY_HEX, type MasterKey } from "./master-key.ts";
+import { isSetupCode, setupCodeOf } from "./setup-code.ts";
 
 const CIPHER = "aes-256-gcm";
 const KEY_BYTES = 32;
@@ -19,10 +20,9 @@ const KEY_ID_BYTES = 4;
 
 // Where a ciphertext is stored. The AAD binds the ciphertext to it, so it fails to decrypt
 // anywhere else. Name the column with its table, such as "connections.access_token".
-export type SecretPlace = { rowId: string | number; column: string };
+export type { DerivedUse };
 
-// One label for each use of a value derived from the Master key (spec 09, The Master key).
-export type DerivedUse = "setup code" | "login signing secret";
+export type SecretPlace = { rowId: string | number; column: string };
 
 export type Secrets = {
   // Returns the key ID, then the IV, the ciphertext, and the tag in base64url, joined by dots.
@@ -32,6 +32,10 @@ export type Secrets = {
   derive(use: DerivedUse): Buffer;
   // Ignores spaces, line breaks, and letter case.
   checkMasterKey(pasted: string): boolean;
+  // The setup code in the setup link, such as "7KQ2-M9XD-4TRF".
+  setupCode(): string;
+  // Whether an entered code is the setup code. Ignores letter case and dashes. Constant time.
+  checkSetupCode(entered: string): boolean;
 };
 
 // The Master key cannot decrypt the data key in app.db.
@@ -164,15 +168,15 @@ function secretsWith(masterKey: MasterKey, dataKey: DataKey): Secrets {
     },
 
     derive(use) {
-      const info = `family-finance-tracker ${use}`;
-      const value = Buffer.from(
-        hkdfSync("sha256", masterKey.key, Buffer.alloc(0), info, KEY_BYTES),
-      );
-      // The logger refuses the value as soon as it is made, in each way a caller may write it.
-      const hex = value.toString("hex");
-      const forms = [hex, hex.toUpperCase(), value.toString("base64"), value.toString("base64url")];
-      for (const form of forms) registerSecretValue(form);
-      return value;
+      return deriveFrom(masterKey, use);
+    },
+
+    setupCode() {
+      return setupCodeOf(masterKey);
+    },
+
+    checkSetupCode(entered) {
+      return isSetupCode(masterKey, entered);
     },
 
     checkMasterKey(pasted) {

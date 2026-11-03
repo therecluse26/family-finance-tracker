@@ -1,13 +1,33 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Client, createClient, type ResultSet } from "@libsql/client";
 import { sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import type { Database } from "./client.ts";
+import { closeDatabase, type Database, openDatabase } from "./client.ts";
+import { applyMigrations } from "./migrate.ts";
 
-// Test support: app.db's settings, and migration folders in drizzle-kit's layout, for one app
-// version or the next.
+// Test support: a new migrated app.db, app.db's settings, and migration folders in drizzle-kit's
+// layout, for one app version or the next.
+
+export type TestDatabase = { database: Database; path: string; close(): void };
+
+// A new app.db in a new folder, with the app's own migrations applied.
+export async function newTestDatabase(): Promise<TestDatabase> {
+  const dir = mkdtempSync(join(tmpdir(), "fft-db-"));
+  const path = join(dir, "app.db");
+  const database = await openDatabase(`file:${path}`);
+  await applyMigrations(database, SHIPPED_FOLDER);
+  return {
+    database,
+    path,
+    close() {
+      closeDatabase(database);
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
 
 export type Settings = {
   journal_mode: string;

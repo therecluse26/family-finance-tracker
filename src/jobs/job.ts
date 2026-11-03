@@ -22,14 +22,25 @@ export type JobArgument =
 // - may throw any error. Job logs it through the app's log, which refuses secrets, and hands
 //   Sidequest only "<class> failed.". Sidequest would log the original error whole and store it in
 //   jobs.db, and an HTTP client's error can hold a request's credentials.
+// - never overrides perform, which would skip that guard, as a method or as a class field. The
+//   job list, startJob, and each new job refuse a class that does. Whatever run returns is ignored,
+//   so no job hands Sidequest an error that way.
 export abstract class Job extends SidequestJob {
   abstract override run(...args: JobArgument[]): Promise<void>;
+
+  constructor() {
+    super();
+    if (overridesPerform(this.constructor)) {
+      throw new Error(`${this.constructor.name} overrides perform, which no job may do.`);
+    }
+  }
 
   // Sidequest calls perform, which calls run. This replaces Sidequest's own perform, which hands
   // a thrown error to Sidequest as it is.
   override async perform(...args: JobArgument[]): ReturnType<SidequestJob["perform"]> {
     const name = this.constructor.name;
     try {
+      // What run returns is ignored: a job cannot hand Sidequest a fail or retry of its own.
       await this.run(...args);
     } catch (error) {
       log.error("A job failed", { job: name, error });
@@ -42,3 +53,19 @@ export abstract class Job extends SidequestJob {
 export type JobClass<Args extends JobArgument[] = JobArgument[]> = (new () => Job) & {
   prototype: { run(...args: Args): Promise<void> };
 };
+
+// Whether a job class, or a class between it and Job, defines its own perform method.
+function overridesPerform(jobClass: unknown): boolean {
+  if (typeof jobClass !== "function") return false;
+  const prototype = (jobClass as { prototype: { perform: unknown } }).prototype;
+  return prototype.perform !== Job.prototype.perform;
+}
+
+// Throws for a job class that defines its own perform: a method, which the Job constructor also
+// refuses, or a class field such as `perform = async () => ...`. A field is set on each instance
+// after the Job constructor runs, so this makes one instance and looks for it there.
+export function refusePerformOverride(jobClass: JobClass): void {
+  const refusal = `${jobClass.name} overrides perform, which no job may do. Put its work in run.`;
+  if (overridesPerform(jobClass)) throw new Error(refusal);
+  if (Object.hasOwn(new jobClass(), "perform")) throw new Error(refusal);
+}

@@ -1,6 +1,6 @@
 // The only source of app.db's shape. After a change here, `pnpm db:generate` writes its migration.
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { moment } from "./columns.ts";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { calendarDate, cents, moment } from "./columns.ts";
 
 // The data key that encrypts every Master-key secret (spec 09, Encryption at rest). v1 stores one.
 export const dataKeys = sqliteTable("data_keys", {
@@ -123,14 +123,156 @@ export const rateLimits = sqliteTable("rate_limits", {
 });
 
 // One row for each failed sign-in, or a try still being checked, per Member and per IP address
-// (spec 09, Failed sign-ins). Rows older than the window are deleted.
+// (spec 09, Failed sign-ins), and for each setup code that is wrong or refused. Rows older than the
+// window are deleted.
 export const signInTries = sqliteTable(
   "sign_in_tries",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     // "member:" with a Member's ID, "email:" with an address no Member has, or "ip:" with an IP address.
+    // For the setup code: "setup-code" for the whole app, or "setup-code-ip:" with an IP address.
     key: text("key").notNull(),
     at: moment("at").notNull(),
   },
   (table) => [index("sign_in_tries_key_at").on(table.key, table.at)],
+);
+
+// The first-run wizard's steps after the first Member, each one done or skipped (spec 12, The
+// first-run wizard). Steps 1 and 2 need no row: they are done once a Member exists.
+export const setupSteps = sqliteTable("setup_steps", {
+  step: text("step").primaryKey(),
+  status: text("status", { enum: ["done", "skipped"] }).notNull(),
+  at: moment("at").notNull(),
+});
+
+// One link to one bank through one Bank-data provider (spec 02, Connections). bank_id is not
+// unique: a bank can be linked again after its Connection is removed, and "Link again" on a Broken
+// Connection links the same bank. The duplicate check before a token exchange belongs to linking.
+export const connections = sqliteTable(
+  "connections",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider", { enum: ["plaid", "fake"] }).notNull(),
+    // The bank's ID and name, from the provider.
+    bankId: text("bank_id").notNull(),
+    bankName: text("bank_name").notNull(),
+    health: text("health", { enum: ["healthy", "retrying", "needs a member", "broken"] })
+      .notNull()
+      .default("healthy"),
+    // True once the provider has sent all the history it will send.
+    historyLoaded: integer("history_loaded", { mode: "boolean" }).notNull().default(false),
+    // The cursor the next sync starts from. Saved only after a sync stores every record.
+    syncCursor: text("sync_cursor"),
+    // The minute past the hour of each scheduled sync, picked once, 0 to 59.
+    syncMinute: integer("sync_minute").notNull(),
+    // The provider credential, such as a Plaid access token, encrypted with the Master key.
+    credential: text("credential"),
+    origin: text("origin", { enum: ["linked", "imported"] }).notNull(),
+    lastSyncedAt: moment("last_synced_at"),
+    createdAt: moment("created_at").notNull(),
+  },
+  (table) => [index("connections_bank_id").on(table.bankId)],
+);
+
+// The Household's Accounts (spec 02, Account fields). Better Auth's credential table already has
+// the name "accounts", so this one is named for whose Accounts they are.
+export const householdAccounts = sqliteTable(
+  "household_accounts",
+  {
+    id: text("id").primaryKey(),
+    // Empty for an Account that no provider syncs.
+    connectionId: text("connection_id").references(() => connections.id),
+    // The adapter's stable ID for the Account.
+    providerAccountId: text("provider_account_id"),
+    // The name from the provider. A Member's rename is memberName, which sync never writes.
+    name: text("name").notNull(),
+    memberName: text("member_name"),
+    // Kind and subtype, such as "loan" and "personal".
+    kind: text("kind").notNull(),
+    subtype: text("subtype"),
+    institutionId: text("institution_id"),
+    institutionName: text("institution_name"),
+    // The last 4 digits.
+    mask: text("mask"),
+    currentBalance: cents("current_balance"),
+    availableBalance: cents("available_balance"),
+    creditLimit: cents("credit_limit"),
+    // Card details: each APR, as JSON, then the statement balance.
+    cardAprs: text("card_aprs", { mode: "json" }).$type<{ type: string; apr: number }[]>(),
+    statementBalance: cents("statement_balance"),
+    // Card and loan details.
+    minimumPayment: cents("minimum_payment"),
+    paymentDueDate: calendarDate("payment_due_date"),
+    // Loan details. An APR is a percent, such as 6.5.
+    loanApr: real("loan_apr"),
+    loanPrincipal: cents("loan_principal"),
+    interestPaidThisYear: cents("interest_paid_this_year"),
+    // Loans only.
+    loanType: text("loan_type", { enum: ["cash loan", "purchase loan"] }),
+    // An APR a Member typed, for a loan.
+    memberApr: real("member_apr"),
+    excluded: integer("excluded", { mode: "boolean" }).notNull().default(false),
+    // Set when the Account is Closed.
+    closedAt: moment("closed_at"),
+    // The provider's original data for the Account, from the last sync.
+    raw: text("raw", { mode: "json" }),
+  },
+  (table) => [
+    uniqueIndex("household_accounts_connection_provider_id").on(
+      table.connectionId,
+      table.providerAccountId,
+    ),
+  ],
+);
+
+// Transactions as the bank reports them (spec 02, Records the adapter returns). Sync writes the
+// provider's fields and never handSet. A hidden Transaction is kept, with the reason.
+export const transactions = sqliteTable(
+  "transactions",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => householdAccounts.id),
+    // The adapter's stable ID.
+    providerTransactionId: text("provider_transaction_id").notNull(),
+    // Money into the Account is positive.
+    amount: cents("amount").notNull(),
+    postedDate: calendarDate("posted_date").notNull(),
+    authorizedDate: calendarDate("authorized_date"),
+    pending: integer("pending", { mode: "boolean" }).notNull(),
+    // The provider ID of the pending Transaction that this posted one replaces.
+    pendingTransactionId: text("pending_transaction_id"),
+    // The original bank description.
+    description: text("description").notNull(),
+    merchantName: text("merchant_name"),
+    merchantId: text("merchant_id"),
+    // The other parties named on it, with their types, as JSON.
+    counterparties: text("counterparties", { mode: "json" })
+      .$type<{ name: string; type: string }[]>()
+      .notNull(),
+    // Optional category data from the provider.
+    providerCategory: text("provider_category"),
+    providerCategoryConfidence: text("provider_category_confidence"),
+    providerCategoryVersion: text("provider_category_version"),
+    mcc: text("mcc"),
+    // The provider's original data, so a later version can reprocess history.
+    raw: text("raw", { mode: "json" }).notNull(),
+    // Each field a Member set by hand, by name. Sync never writes it. Pending to posted carries it.
+    handSet: text("hand_set", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    hiddenReason: text("hidden_reason", {
+      enum: ["posted", "removed by provider", "replaced by re-link"],
+    }),
+    hiddenAt: moment("hidden_at"),
+  },
+  (table) => [
+    uniqueIndex("transactions_connection_provider_id").on(
+      table.connectionId,
+      table.providerTransactionId,
+    ),
+    index("transactions_account_posted_date").on(table.accountId, table.postedDate),
+  ],
 );

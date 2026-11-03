@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { validator } from "hono/validator";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { signedOutAuth } from "../auth/testing.ts";
+import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import { createLogger, registerSecretValue } from "../log.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -23,15 +24,18 @@ describe.each([true, false])(
   "an error in a route, throwOnSecretField: %s",
   (throwOnSecretField) => {
     let webRoot: string;
+    let db: TestDatabase;
     let lines: string[];
     let stderr: unknown[];
 
-    beforeAll(() => {
+    beforeAll(async () => {
+      db = await newTestDatabase();
       webRoot = mkdtempSync(join(tmpdir(), "fft-app-"));
       writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
     });
 
     afterAll(() => {
+      db.close();
       rmSync(webRoot, { recursive: true, force: true });
     });
 
@@ -51,7 +55,12 @@ describe.each([true, false])(
     async function failingApp(thrown: unknown) {
       lines = [];
       const logger = createLogger((line) => lines.push(line), { throwOnSecretField });
-      const app = createApp(webRoot, await loadSecurity({ APP_URL }, { logger }), signedOutAuth);
+      const app = createApp(
+        webRoot,
+        await loadSecurity({ APP_URL }, { logger }),
+        signedOutAuth,
+        db.database,
+      );
       app.post("/fail", () => {
         throw thrown;
       });
@@ -117,7 +126,12 @@ describe.each([true, false])(
     it("keeps the 400 that Hono answers for malformed JSON, and logs no failure", async () => {
       lines = [];
       const logger = createLogger((line) => lines.push(line), { throwOnSecretField });
-      const app = createApp(webRoot, await loadSecurity({ APP_URL }, { logger }), signedOutAuth);
+      const app = createApp(
+        webRoot,
+        await loadSecurity({ APP_URL }, { logger }),
+        signedOutAuth,
+        db.database,
+      );
       app.post(
         "/echo",
         validator("json", (value) => value),

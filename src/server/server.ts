@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import type { Auth } from "../auth/index.ts";
+import type { Database } from "../db/index.ts";
 import { createApp } from "./app.ts";
 import type { Security } from "./security-mode.ts";
 
@@ -13,11 +14,12 @@ export function startServer(options: {
   webRoot: string;
   security: Security;
   auth: Auth;
+  database: Database;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
       {
-        fetch: createApp(options.webRoot, options.security, options.auth).fetch,
+        fetch: createApp(options.webRoot, options.security, options.auth, options.database).fetch,
         port: options.port,
       },
       (info) => {

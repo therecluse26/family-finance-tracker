@@ -3,6 +3,7 @@
 // re-exports this list and names the server file as the job list.
 import type { ScheduledTask } from "./scheduler.ts";
 
+export { SyncConnectionJob } from "../bank/index.ts";
 export { TickJob } from "./sidequest.ts";
 
 // Every scheduled task. Each task's job is in the list above.

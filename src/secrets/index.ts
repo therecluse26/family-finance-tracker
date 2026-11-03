@@ -2,9 +2,12 @@
 // node:crypto for secrets.
 export {
   DEFAULT_MASTER_KEY_FILE,
+  findMasterKey,
   loadMasterKey,
   type MasterKey,
   MasterKeyError,
+  makeMasterKey,
+  masterKeyFile,
 } from "./master-key.ts";
 export {
   checkDataKey,
@@ -15,3 +18,4 @@ export {
   unlockSecrets,
   WrongMasterKeyError,
 } from "./secrets.ts";
+export { setupCodeOf } from "./setup-code.ts";

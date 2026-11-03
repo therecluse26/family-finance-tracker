@@ -8,6 +8,7 @@ import { readPort } from "./port.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { startApp } from "./start.ts";
 import { exitOnSignal } from "./stop.ts";
+import { logUnhandledRejections } from "./unhandled.ts";
 
 // Sidequest imports each job class from the job list. The server build is this one file, so it
 // re-exports the list and names itself as the job list.
@@ -17,6 +18,7 @@ export * from "../jobs/list.ts";
 const PROXY_NAME_REFRESH_MS = 10_000;
 
 async function main(): Promise<void> {
+  logUnhandledRejections();
   const webRoot = fileURLToPath(new URL("web", import.meta.url));
   const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
   const port = readPort(process.env.PORT);

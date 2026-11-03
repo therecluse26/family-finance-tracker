@@ -8,6 +8,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { signedOutAuth } from "../auth/testing.ts";
+import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import { createLogger } from "../log.ts";
 import type { ServerEnv } from "./env.ts";
 import { loadSecurity, type Security, securityCheck } from "./security-mode.ts";
@@ -1160,11 +1161,18 @@ function rawRequest(port: number, lines: string[], body = ""): Promise<RawRespon
 
 describe("the server", () => {
   let webRoot: string;
+  let db: TestDatabase;
   const servers: RunningServer[] = [];
 
   const startLogged = async (appUrl: string, trustedProxies?: string) => {
     const { loaded, refusals, text } = await loggedApp(appUrl, trustedProxies);
-    const server = await startServer({ port: 0, webRoot, security: loaded, auth: signedOutAuth });
+    const server = await startServer({
+      port: 0,
+      webRoot,
+      security: loaded,
+      auth: signedOutAuth,
+      database: db.database,
+    });
     servers.push(server);
     return { port: server.port, refusals, text };
   };
@@ -1172,7 +1180,8 @@ describe("the server", () => {
   const start = async (appUrl: string, trustedProxies?: string) =>
     (await startLogged(appUrl, trustedProxies)).port;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    db = await newTestDatabase();
     webRoot = mkdtempSync(join(tmpdir(), "fft-web-"));
     writeFileSync(join(webRoot, "index.html"), INDEX_HTML);
     mkdirSync(join(webRoot, "assets"));
@@ -1181,6 +1190,7 @@ describe("the server", () => {
 
   afterAll(async () => {
     await Promise.all(servers.map((server) => server.close()));
+    db.close();
     rmSync(webRoot, { recursive: true, force: true });
   });
 

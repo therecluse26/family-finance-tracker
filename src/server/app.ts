@@ -2,10 +2,13 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { Auth } from "../auth/index.ts";
+import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import { api } from "./api.ts";
+import { bankViews } from "./bank-data.ts";
 import type { ServerEnv } from "./env.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
+import { readSetupState } from "./setup.ts";
 
 // A route threw a value that is not an Error, such as a string.
 class ThrownValueError extends Error {
@@ -41,7 +44,7 @@ function routeFailed(logger: Logger): ErrorHandler<ServerEnv> {
   };
 }
 
-// Every API route except /api/auth/* needs a session (spec 09). Using the session renews it.
+// Every API route except /api/auth/* and /api/setup needs a session (spec 09). Using the session renews it.
 function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
   return async (c, next) => {
     const signedIn = await auth.signedIn(c.req.raw, c.var.clientAddress);
@@ -52,7 +55,8 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
   };
 }
 
-export function createApp(webRoot: string, security: Security, auth: Auth) {
+export function createApp(webRoot: string, security: Security, auth: Auth, database: Database) {
+  const bank = bankViews(database);
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
@@ -60,7 +64,14 @@ export function createApp(webRoot: string, security: Security, auth: Auth) {
       .get("/healthz", (c) => c.json({ status: "ok" }))
       .use(securityCheck(security))
       .all("/api/auth/*", (c) => auth.handle(c.req.raw, c.var.clientAddress))
+      // The wizard's progress, which every page reads, before any Member can sign in. It says only
+      // which step comes next.
+      .get("/api/setup", async (c) => c.json(await readSetupState(database)))
       .use("/api/*", requireSession(auth))
+      .use("/api/*", async (c, next) => {
+        c.set("bank", bank);
+        await next();
+      })
       .route("/api", api)
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
       .use(serveStatic({ root: webRoot }))

@@ -1,4 +1,5 @@
 import { createAuth } from "../auth/index.ts";
+import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
@@ -15,6 +16,8 @@ export type StartOptions = {
   port: number;
   webRoot: string;
   security: Security;
+  // The Bank-data adapters. Tests give the fake adapter.
+  bankAdapters?: readonly BankDataAdapter[];
 };
 
 // The open database stays open until close().
@@ -39,7 +42,14 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const applied = await applyMigrations(database, options.migrationsFolder);
     log.info("Applied migrations", { count: applied });
     const secrets = await unlockSecrets(database, options.masterKey);
-    const jobs = await startJobs({ ...options.jobs, database });
+    const bank = startBank({ database, secrets, adapters: options.bankAdapters ?? [] });
+    let jobs: Awaited<ReturnType<typeof startJobs>>;
+    try {
+      jobs = await startJobs({ ...options.jobs, database });
+    } catch (error) {
+      bank.stop();
+      throw error;
+    }
     try {
       await jobs.tick();
       const server = await startServer({
@@ -47,6 +57,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         webRoot: options.webRoot,
         security: options.security,
         auth: createAuth({ database, secrets, appOrigin: options.security.appUrl.origin }),
+        database,
       });
       return {
         port: server.port,
@@ -58,12 +69,14 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
           try {
             await settleAll([server.close(), jobs.stop()]);
           } finally {
+            bank.stop();
             closeDatabase(database);
           }
         },
       };
     } catch (error) {
       await jobs.stop();
+      bank.stop();
       throw error;
     }
   } catch (error) {

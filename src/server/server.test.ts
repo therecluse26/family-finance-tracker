@@ -44,7 +44,13 @@ describe("the server", () => {
       { logger: createLogger(() => {}, { throwOnSecretField: true }) },
     );
     login = await newTestAuth(APP_URL);
-    server = await startServer({ port: 0, webRoot, security, auth: login.auth });
+    server = await startServer({
+      port: 0,
+      webRoot,
+      security,
+      auth: login.auth,
+      database: login.database,
+    });
     base = `http://127.0.0.1:${server.port}`;
     signedIn = await signIn();
   });

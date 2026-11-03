@@ -15,7 +15,7 @@
   "packageManager": "pnpm@12.9.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --config vite.server.config.ts && node scripts/write-notices.ts",
+    "build": "vite build && vite build --config vite.server.config.ts && vite build --config vite.fft.config.ts && node scripts/write-notices.ts",
     "start": "node dist/server.js",
     "lint": "biome check .",
     "format": "biome check --write .",

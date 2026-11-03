@@ -125,6 +125,19 @@ jobs:
           done
           docker logs app
           exit 1
+      - name: The image has the fft command
+        run: |
+          # It prints a throwaway Master key, which only grep reads.
+          docker run --rm family-finance-tracker:ci fft setup --app-url https://money.example.com \
+            | grep --quiet '^  https://money.example.com/setup#code='
+      - name: No path under /app is group- or world-writable
+        run: |
+          # Symbolic links always show every permission, so find skips them.
+          writable=$(docker run --rm --entrypoint find family-finance-tracker:ci /app ! -type l -perm /go=w)
+          if [ -n "$writable" ]; then
+            echo "$writable" | head -20
+            exit 1
+          fi
       - name: The image holds its notices, and the app serves the browser's
         run: |
           docker run --rm --entrypoint grep family-finance-tracker:ci --quiet '^hono ' dist/THIRD-PARTY-NOTICES.txt

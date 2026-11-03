@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type UserConfig } from "vite";
 
 // Packages stay in node_modules, so the LGPL job runner can be swapped in the image.
 function isPackage(id: string): boolean {
@@ -26,17 +26,22 @@ function oneFileWithExternalPackages(): Plugin {
   };
 }
 
-export default defineConfig({
-  publicDir: false,
-  plugins: [oneFileWithExternalPackages()],
-  build: {
-    ssr: fileURLToPath(new URL("./src/server/main.ts", import.meta.url)),
-    outDir: fileURLToPath(new URL("./dist", import.meta.url)),
-    emptyOutDir: false,
-    target: "node22",
-    rolldownOptions: {
-      external: isPackage,
-      output: { entryFileNames: "server.js" },
+// One Node entry point, built into one file in dist/. The `fft` command's build uses it too.
+export function nodeBuild(entry: string, fileName: string): UserConfig {
+  return {
+    publicDir: false,
+    plugins: [oneFileWithExternalPackages()],
+    build: {
+      ssr: fileURLToPath(new URL(entry, import.meta.url)),
+      outDir: fileURLToPath(new URL("./dist", import.meta.url)),
+      emptyOutDir: false,
+      target: "node22",
+      rolldownOptions: {
+        external: isPackage,
+        output: { entryFileNames: fileName },
+      },
     },
-  },
-});
+  };
+}
+
+export default defineConfig(nodeBuild("./src/server/main.ts", "server.js"));

@@ -40,4 +40,8 @@ while (job === undefined && Date.now() < deadline) {
 }
 await jobs.stop();
 closeDatabase(database);
-process.stdout.write(`${JSON.stringify({ probe: "done", errors: job?.errors ?? null })}\n`);
+// Exit as soon as the line is written. better-sqlite3, which Sidequest uses, can abort in its
+// statement destructor (Statement::~Statement) during teardown.
+process.stdout.write(`${JSON.stringify({ probe: "done", errors: job?.errors ?? null })}\n`, () =>
+  process.exit(0),
+);

@@ -1,4 +1,17 @@
 // The db module's interface. Other modules import from here.
+export {
+  addConnection,
+  finishSync,
+  listAccounts,
+  listConnections,
+  listTransactions,
+  type PageCounts,
+  readConnection,
+  type StoredConnection,
+  setHandSetFields,
+  storeSyncPage,
+  type TransactionFilter,
+} from "./bank-data.ts";
 export { APP_DB_URL, closeDatabase, type Database, openDatabase } from "./client.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
 export { loginTables } from "./login-tables.ts";
@@ -10,6 +23,7 @@ export {
   SkippedMigrationError,
 } from "./migrate.ts";
 export { scheduledTasks } from "./schema.ts";
+export { hasMember, markSetupStep, readSetupSteps, type SetupStepStatus } from "./setup-steps.ts";
 export {
   addSignInTries,
   countSignInTries,

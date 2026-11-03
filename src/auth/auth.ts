@@ -5,6 +5,7 @@ import { twoFactor } from "better-auth/plugins/two-factor";
 import { type Database, loginTables } from "../db/index.ts";
 import { type Logger, log } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { firstMember } from "./first-member.ts";
 import {
   APP_NAME,
   BACKUP_CODE_COUNT,
@@ -34,6 +35,9 @@ const ROUTES = new Set([
   "POST /my-login/new-totp",
   "POST /my-login/confirm-totp",
   "POST /my-login/new-backup-codes",
+  "POST /first-member/check-code",
+  "POST /first-member/new-totp",
+  "POST /first-member/create",
 ]);
 
 // A TOTP code is 6 digits. A backup code is two groups of 5 letters and digits.
@@ -106,7 +110,8 @@ function buildBetterAuth(options: AuthOptions) {
       ),
     emailAndPassword: {
       enabled: true,
-      // Members join only by invite (T95), and the first-run wizard makes the first (T09).
+      // Members join only by invite (T95), and the first-run wizard makes the first through
+      // first-member.ts.
       disableSignUp: true,
       minPasswordLength: MIN_PASSWORD_LENGTH,
       autoSignIn: false,
@@ -132,6 +137,7 @@ function buildBetterAuth(options: AuthOptions) {
     logger: loggerFor(options.logger ?? log),
     plugins: [
       myLogin({ database, secrets, freshCode: (headers, code) => fresh.check(headers, code) }),
+      firstMember({ database, secrets }),
       signInLimit(database),
       // After the sign-in limit, so that a used code counts as a failed sign-in.
       totpOnce(database),

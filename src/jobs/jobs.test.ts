@@ -187,6 +187,46 @@ describe("background jobs", () => {
     await expect(start([], elsewhere)).rejects.toThrow("does not export this app's TickJob");
   });
 
+  it("refuses a job class that overrides perform, which would skip the error guard", () => {
+    class OverridingJob extends Job {
+      override async run(): Promise<void> {}
+      override async perform(...args: Parameters<Job["perform"]>): ReturnType<Job["perform"]> {
+        return super.perform(...args);
+      }
+    }
+    class Below extends OverridingJob {}
+
+    expect(() => new OverridingJob()).toThrow("OverridingJob overrides perform");
+    expect(() => new Below()).toThrow("Below overrides perform");
+    expect(() => new UnlistedJob()).not.toThrow();
+  });
+
+  it("refuses a job class that sets perform as a class field, in the job list and in startJob", async () => {
+    // A job list that exports such a class, and the class itself, from a test module.
+    const { FieldPerformJob } = await import("./field-perform-list.ts");
+    const fieldList = new URL("./field-perform-list.ts", import.meta.url).href;
+
+    await expect(start([], fieldList)).rejects.toThrow("FieldPerformJob overrides perform");
+
+    await start();
+    await expect(startJob(FieldPerformJob, [])).rejects.toThrow("overrides perform");
+  });
+
+  it("ignores what run returns, so a job cannot hand Sidequest its own error", async () => {
+    const secret = fakeSecret();
+    class ReturningJob extends Job {
+      override async run(): Promise<void> {
+        // A job that tries to fail itself with a raw error, around the guard.
+        return this.fail(new Error(secret)) as unknown as undefined;
+      }
+    }
+
+    const result = await new ReturningJob().perform();
+
+    expect(result).toMatchObject({ type: "completed" });
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
   it("refuses a task or a job that is not in the job list", async () => {
     const unlisted: ScheduledTask = {
       name: "unlisted",
