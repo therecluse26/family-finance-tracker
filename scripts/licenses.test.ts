@@ -8,11 +8,14 @@ import {
   isAllowed,
   needsReview,
   parsePnpmLicenses,
+  parsePnpmTreePaths,
   parseReviewed,
+  productionPackages,
   type ReviewedRecord,
   readReviewed,
   SHIPPED_LICENSES,
 } from "./licenses.ts";
+import { noticesFor } from "./notices.ts";
 
 function fixture(name: string): unknown {
   return JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
@@ -241,6 +244,86 @@ describe("isAllowed", () => {
   it("allows CC-BY-4.0 only for build-time tools", () => {
     expect(isAllowed("CC-BY-4.0", BUILD_TIME_LICENSES)).toBe(true);
     expect(isAllowed("CC-BY-4.0", SHIPPED_LICENSES)).toBe(false);
+  });
+});
+
+describe("the production list", () => {
+  // A driver whose native binary is an optional dependency, as libsql's is.
+  const store = "/fixture/node_modules/.pnpm";
+  const DRIVER = `${store}/db-driver@1.0.0/node_modules/db-driver`;
+  const NATIVE = `${store}/@db+native-linux-x64@1.0.0/node_modules/@db/native-linux-x64`;
+  const TOOL = `${store}/build-tool@2.0.0/node_modules/build-tool`;
+  const entry = (name: string, version: string, path: string, license = "MIT") => ({
+    name,
+    versions: [version],
+    paths: [path],
+    license,
+  });
+  const licenses = (native: string) => ({
+    MIT: [entry("db-driver", "1.0.0", DRIVER), entry("build-tool", "2.0.0", TOOL)],
+    [native]: [entry("@db/native-linux-x64", "1.0.0", NATIVE, native)],
+  });
+  const manifestFor = (native: string) => (dir: string) => ({
+    license: dir === NATIVE ? native : "MIT",
+  });
+  // pnpm licenses list --prod --json leaves out the optional native package.
+  const LISTED_PROD = { MIT: [entry("db-driver", "1.0.0", DRIVER)] };
+  // pnpm list --prod --depth Infinity --json. It names every optional binary, installed or not.
+  const TREE = [
+    {
+      name: "app",
+      path: "/fixture",
+      dependencies: {
+        "db-driver": {
+          version: "1.0.0",
+          path: DRIVER,
+          dependencies: {
+            "@db/native-linux-x64": { version: "1.0.0", path: NATIVE },
+            "@db/native-darwin-arm64": {
+              version: "1.0.0",
+              path: `${store}/@db+native-darwin-arm64@1.0.0/node_modules/@db/native-darwin-arm64`,
+            },
+          },
+        },
+      },
+    },
+  ];
+  const shippedWith = (native: string) =>
+    productionPackages(
+      parsePnpmLicenses(LISTED_PROD, manifestFor(native)),
+      parsePnpmLicenses(licenses(native), manifestFor(native)),
+      parsePnpmTreePaths(TREE),
+    );
+
+  it("takes an installed optional dependency that pnpm licenses list --prod leaves out", () => {
+    expect(shippedWith("MIT").map((pkg) => `${pkg.name}@${pkg.version}`)).toEqual([
+      "db-driver@1.0.0",
+      "@db/native-linux-x64@1.0.0",
+    ]);
+  });
+
+  it("fails the notices when that optional package ships no license file", () => {
+    const readTexts = (dir: string) => (dir === DRIVER ? [{ file: "LICENSE", text: "MIT" }] : []);
+
+    expect(noticesFor(shippedWith("MIT"), [], readTexts).problems).toEqual([
+      '@db/native-linux-x64@1.0.0 ships no license file. Save its license text in licenses/texts/ and name that file as "licenseText" in its record in licenses/reviewed.json.',
+    ]);
+  });
+
+  it("fails the license check when that optional package's license is not allowed", () => {
+    expect(
+      checkLicenses({ shipped: shippedWith("SSPL-1.0"), buildTime: [], reviewed: [] }),
+    ).toEqual([
+      '@db/native-linux-x64@1.0.0 (shipped) has the license "SSPL-1.0", which the shipped allowlist does not allow.',
+    ]);
+  });
+
+  it.each([
+    ["an object", {}],
+    ["a project that is not an object", ["app"]],
+    ["an entry without a path", [{ dependencies: { a: { version: "1.0.0" } } }]],
+  ])("refuses pnpm list output that is %s", (_case, json) => {
+    expect(() => parsePnpmTreePaths(json)).toThrow(/unexpected shape/);
   });
 });
 

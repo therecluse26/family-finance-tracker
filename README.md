@@ -16,7 +16,8 @@ The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 
 | `pnpm typecheck` | Type-checks the server, the web app, and the tests |
 | `pnpm test` | Runs the tests with Vitest |
 | `pnpm build` | Builds the web app into `dist/web` and the server into `dist/server.js`, and writes the third-party notices: `dist/THIRD-PARTY-NOTICES.txt` for the image and `dist/web/third-party-notices.txt` for the browser bundle |
-| `pnpm start` | Runs the built server on `PORT` (default `3000`). It needs `APP_URL` |
+| `pnpm start` | Runs the built server on `PORT` (default `3000`). It needs `APP_URL`. It opens `/data/app.db` and applies migrations first |
+| `pnpm db:generate` | Writes a migration into `drizzle/` after a change to `src/db/schema.ts`. Commit it with the change |
 | `pnpm check:licenses` | Checks every package's license against the allowlist; a package whose license field is missing, `UNLICENSED`, or `SEE LICENSE IN …` needs a record in `licenses/reviewed.json` |
 | `pnpm check:audit` | Runs `pnpm audit --prod --audit-level high` against the public registry, in a temporary folder that holds only `package.json` and `pnpm-lock.yaml`; an advisory with no fix passes only with a record in `security/audit-exceptions.json`, and any pnpm setting that ignores advisories fails the check |
 
@@ -30,7 +31,7 @@ A package in the production tree or the browser bundle that ships no license fil
 
 ```sh
 docker build --tag family-finance-tracker .
-docker run --rm --env APP_URL=http://localhost:3000 --publish 3000:3000 family-finance-tracker
+docker run --rm --env APP_URL=http://localhost:3000 --publish 3000:3000 --volume fft-data:/data family-finance-tracker
 ```
 
 ## License

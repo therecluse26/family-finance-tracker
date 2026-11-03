@@ -145,6 +145,25 @@ describe("noticesFor", () => {
     ]);
   });
 
+  it.each([
+    ["empty", ""],
+    ["whitespace only", " \n\t\n"],
+  ])("fails when the recorded license text file is %s", (_case, text) => {
+    const reviewed = [
+      record({ package: "no-file", version: "1.0.0", licenseText: "licenses/texts/blank.txt" }),
+    ];
+    const problems = noticesFor(
+      [pkg("no-file", "1.0.0", "ISC")],
+      reviewed,
+      readTexts,
+      () => text,
+    ).problems;
+
+    expect(problems).toEqual([
+      "no-file@1.0.0: licenses/texts/blank.txt, named in licenses/reviewed.json, is empty.",
+    ]);
+  });
+
   it("fails a package whose license field names no license and has no record", () => {
     expect(check([pkg("react", "19.3.1", "SEE LICENSE IN LICENSE")]).problems).toEqual([
       "react@19.3.1 names no license the notices can use. Add a record to licenses/reviewed.json.",

@@ -1,0 +1,2 @@
+# A migration's hash covers its bytes, so migrations check out with LF on every system.
+drizzle/** text eol=lf

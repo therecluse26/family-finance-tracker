@@ -58,6 +58,8 @@ export function noticesFor(
       const text = readRecorded(recorded);
       if (text === undefined) {
         problems.push(`${id}: ${recorded}, named in ${REVIEWED_FILE}, is missing.`);
+      } else if (text.trim() === "") {
+        problems.push(`${id}: ${recorded}, named in ${REVIEWED_FILE}, is empty.`);
       } else {
         texts = [{ file: recorded, text }, ...texts];
         hasLicenseText = true;

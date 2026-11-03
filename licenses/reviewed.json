@@ -5,5 +5,61 @@
     "license": "MIT",
     "reviewer": "Claude, T02 build agent",
     "date": "2026-11-03"
+  },
+  {
+    "package": "@libsql/client",
+    "version": "0.18.0",
+    "license": "MIT",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/@libsql+client@0.18.0.txt"
+  },
+  {
+    "package": "@libsql/core",
+    "version": "0.18.0",
+    "license": "MIT",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/@libsql+core@0.18.0.txt"
+  },
+  {
+    "package": "@libsql/isomorphic-ws",
+    "version": "0.1.5",
+    "license": "MIT",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/@libsql+isomorphic-ws@0.1.5.txt"
+  },
+  {
+    "package": "@libsql/linux-x64-gnu",
+    "version": "0.5.29",
+    "license": "MIT",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/@libsql+linux-x64-gnu@0.5.29.txt"
+  },
+  {
+    "package": "@libsql/linux-arm64-gnu",
+    "version": "0.5.29",
+    "license": "MIT",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/@libsql+linux-arm64-gnu@0.5.29.txt"
+  },
+  {
+    "package": "drizzle-orm",
+    "version": "0.45.4",
+    "license": "Apache-2.0",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/drizzle-orm@0.45.4.txt"
+  },
+  {
+    "package": "promise-limit",
+    "version": "2.7.0",
+    "license": "ISC",
+    "reviewer": "Claude, T03 build agent",
+    "date": "2026-11-03",
+    "licenseText": "licenses/texts/promise-limit@2.7.0.txt"
   }
 ]

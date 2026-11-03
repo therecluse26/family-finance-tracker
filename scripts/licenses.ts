@@ -144,17 +144,70 @@ function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+// Reads the output of `pnpm list --json --depth Infinity`: the path of each package in the tree,
+// optional dependencies included.
+export function parsePnpmTreePaths(json: unknown): Set<string> {
+  const unexpected = (detail: string) =>
+    new Error(`pnpm list --json gave an unexpected shape: ${detail}.`);
+  if (!Array.isArray(json)) throw unexpected("not a list");
+  const paths = new Set<string>();
+  const walk = (dependencies: unknown) => {
+    if (dependencies === undefined) return;
+    if (!isRecord(dependencies)) throw unexpected("dependencies are not an object");
+    for (const [name, node] of Object.entries(dependencies)) {
+      if (!isRecord(node) || typeof node.path !== "string") {
+        throw unexpected(`the entry for ${name}`);
+      }
+      paths.add(node.path);
+      walk(node.dependencies);
+      walk(node.optionalDependencies);
+    }
+  };
+  for (const project of json) {
+    if (!isRecord(project)) throw unexpected("a project is not an object");
+    walk(project.dependencies);
+    walk(project.optionalDependencies);
+  }
+  return paths;
+}
+
+// `pnpm licenses list --prod` leaves out optional dependencies, such as libsql's native binary,
+// which the image ships. So the production tree also takes every installed package whose path is
+// in `pnpm list --prod`.
+export function productionPackages(
+  listed: readonly InstalledPackage[],
+  installed: readonly InstalledPackage[],
+  productionPaths: ReadonlySet<string>,
+): InstalledPackage[] {
+  const byPath = new Map(listed.map((pkg) => [pkg.path, pkg]));
+  for (const pkg of installed) {
+    if (productionPaths.has(pkg.path) && !byPath.has(pkg.path)) byPath.set(pkg.path, pkg);
+  }
+  return [...byPath.values()];
+}
+
 export type Tree = "prod" | "dev" | "all";
 
-export function listInstalled(tree: Tree, root = ROOT): InstalledPackage[] {
-  const flag = { prod: ["--prod"], dev: ["--dev"], all: [] }[tree];
-  const out = execFileSync("pnpm", ["licenses", "list", "--json", ...flag], {
+function pnpmJson(args: string[], root: string): unknown {
+  const out = execFileSync("pnpm", args, {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "inherit"],
   });
-  return parsePnpmLicenses(JSON.parse(out));
+  return JSON.parse(out);
+}
+
+export function listInstalled(tree: Tree, root = ROOT): InstalledPackage[] {
+  const licenses = (flag: string[]) =>
+    parsePnpmLicenses(pnpmJson(["licenses", "list", "--json", ...flag], root));
+  if (tree === "dev") return licenses(["--dev"]);
+  if (tree === "all") return licenses([]);
+  return productionPackages(
+    licenses(["--prod"]),
+    licenses([]),
+    parsePnpmTreePaths(pnpmJson(["list", "--prod", "--depth", "Infinity", "--json"], root)),
+  );
 }
 
 const OPERATORS = new Set(["AND", "OR", "WITH"]);
