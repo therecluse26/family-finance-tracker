@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { getRequestListener } from "@hono/node-server";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
+import { browserNotices } from "./scripts/browser-notices.ts";
 
 const webRoot = fileURLToPath(new URL("./src/web", import.meta.url));
 const serverApp = fileURLToPath(new URL("./src/server/app.ts", import.meta.url));
@@ -30,7 +31,7 @@ function honoDevServer(): Plugin {
 export default defineConfig({
   root: webRoot,
   oxc: { jsx: { runtime: "automatic" } },
-  plugins: [tailwindcss(), honoDevServer()],
+  plugins: [tailwindcss(), honoDevServer(), browserNotices()],
   build: {
     outDir: fileURLToPath(new URL("./dist/web", import.meta.url)),
     emptyOutDir: true,

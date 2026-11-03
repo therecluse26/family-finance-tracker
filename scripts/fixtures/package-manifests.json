@@ -1,0 +1,114 @@
+{
+  "/fixture/node_modules/.pnpm/react@19.3.1/node_modules/react": {
+    "name": "react",
+    "version": "19.3.1",
+    "license": "MIT"
+  },
+  "/fixture/node_modules/.pnpm/express-ejs-layouts@2.5.1/node_modules/express-ejs-layouts": {
+    "name": "express-ejs-layouts",
+    "version": "2.5.1",
+    "main": "lib/express-layouts.js"
+  },
+  "/fixture/node_modules/.pnpm/or-later-jobs@1.17.0/node_modules/or-later-jobs": {
+    "name": "or-later-jobs",
+    "version": "1.17.0",
+    "license": "LGPL-3.0-or-later"
+  },
+  "/fixture/node_modules/.pnpm/dual-licensed@3.1.0/node_modules/dual-licensed": {
+    "name": "dual-licensed",
+    "version": "3.1.0",
+    "license": "(MIT OR GPL-2.0-only)"
+  },
+  "/fixture/node_modules/.pnpm/shipped-data@1.0.30001700/node_modules/shipped-data": {
+    "name": "shipped-data",
+    "version": "1.0.30001700",
+    "license": "CC-BY-4.0"
+  },
+  "/fixture/node_modules/.pnpm/gpl-two@2.0.0/node_modules/gpl-two": {
+    "name": "gpl-two",
+    "version": "2.0.0",
+    "license": "GPL-2.0-only"
+  },
+  "/fixture/node_modules/.pnpm/server-side@7.0.0/node_modules/server-side": {
+    "name": "server-side",
+    "version": "7.0.0",
+    "license": "SSPL-1.0"
+  },
+  "/fixture/node_modules/.pnpm/unreviewed@0.1.0/node_modules/unreviewed": {
+    "name": "unreviewed",
+    "version": "0.1.0"
+  },
+  "/fixture/node_modules/.pnpm/caniuse-lite@1.0.30001700/node_modules/caniuse-lite": {
+    "name": "caniuse-lite",
+    "version": "1.0.30001700",
+    "license": "CC-BY-4.0"
+  },
+  "/fixture/node_modules/.pnpm/magic-string@0.30.21/node_modules/magic-string": {
+    "name": "magic-string",
+    "version": "0.30.21",
+    "license": "MIT"
+  },
+  "/fixture/node_modules/.pnpm/magic-string@1.4.5/node_modules/magic-string": {
+    "name": "magic-string",
+    "version": "1.4.5",
+    "license": "MIT"
+  },
+  "/fixture/node_modules/.pnpm/business-source@1.0.0/node_modules/business-source": {
+    "name": "business-source",
+    "version": "1.0.0",
+    "license": "BUSL-1.1"
+  },
+  "/fixture/node_modules/.pnpm/non-commercial@2.2.0/node_modules/non-commercial": {
+    "name": "non-commercial",
+    "version": "2.2.0",
+    "license": "CC-BY-NC-4.0"
+  },
+  "/fixture/node_modules/.pnpm/commons-clause-lib@1.0.0/node_modules/commons-clause-lib": {
+    "name": "commons-clause-lib",
+    "version": "1.0.0",
+    "license": "SEE LICENSE IN LICENSE"
+  },
+  "/fixture/node_modules/.pnpm/proprietary-lib@2.0.0/node_modules/proprietary-lib": {
+    "name": "proprietary-lib",
+    "version": "2.0.0",
+    "license": "UNLICENSED"
+  },
+  "/fixture/node_modules/.pnpm/with-commons-clause@1.0.0/node_modules/with-commons-clause": {
+    "name": "with-commons-clause",
+    "version": "1.0.0",
+    "license": "Apache-2.0 WITH Commons-Clause"
+  },
+  "/fixture/node_modules/.pnpm/with-llvm-exception@17.0.0/node_modules/with-llvm-exception": {
+    "name": "with-llvm-exception",
+    "version": "17.0.0",
+    "license": "Apache-2.0 WITH LLVM-exception"
+  },
+  "/fixture/node_modules/.pnpm/legacy-list@0.5.0/node_modules/legacy-list": {
+    "name": "legacy-list",
+    "version": "0.5.0",
+    "licenses": [
+      {
+        "type": "MIT",
+        "url": "https://example.com/mit"
+      },
+      {
+        "type": "GPL-2.0"
+      }
+    ]
+  },
+  "/fixture/node_modules/.pnpm/empty-legacy-list@0.1.0/node_modules/empty-legacy-list": {
+    "name": "empty-legacy-list",
+    "version": "0.1.0",
+    "licenses": [{}]
+  },
+  "/fixture/node_modules/.pnpm/vite@8.3.5/node_modules/vite": {
+    "name": "vite",
+    "version": "8.3.5",
+    "license": "MIT"
+  },
+  "/fixture/node_modules/.pnpm/rolldown@1.2.16/node_modules/rolldown": {
+    "name": "rolldown",
+    "version": "1.2.16",
+    "license": "CC-BY-4.0"
+  }
+}

@@ -1,0 +1,31 @@
+# The CI secret scan (scripts/secret-scan.sh) starts from gitleaks' default rules.
+# A test fixture that must look like a secret uses an obviously fake value. Allowlist it here
+# by its path and its value together, so a real secret in a fixture folder is still caught:
+#   [[allowlists]]
+#   condition = "AND"
+#   paths = ['''^scripts/fixtures/''']
+#   regexes = ['''access-sandbox-0{8}-0{4}-0{4}-0{4}-0{12}''']
+# CI ignores inline gitleaks:allow comments and refuses any .gitleaksignore file.
+title = "Family Finance Tracker"
+
+[extend]
+useDefault = true
+
+# The default Plaid rule needs the word "plaid" near the value. Plaid tokens are this app's
+# most valuable secret, so this rule matches the token on its own, even with letters, digits,
+# or "_" right before or after it.
+[[rules]]
+id = "plaid-token-any-context"
+description = "A Plaid access, public, or link token, with or without the word plaid nearby"
+regex = '''(?:access|public|link)-(?:production|development|sandbox)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+keywords = [
+  "access-production",
+  "access-development",
+  "access-sandbox",
+  "public-production",
+  "public-development",
+  "public-sandbox",
+  "link-production",
+  "link-development",
+  "link-sandbox",
+]

@@ -1,0 +1,55 @@
+{
+  "CC-BY-4.0": [
+    {
+      "name": "caniuse-lite",
+      "versions": ["1.0.30001700"],
+      "paths": ["/fixture/node_modules/.pnpm/caniuse-lite@1.0.30001700/node_modules/caniuse-lite"],
+      "license": "CC-BY-4.0"
+    },
+    {
+      "name": "rolldown",
+      "versions": ["1.2.16"],
+      "paths": ["/fixture/node_modules/.pnpm/rolldown@1.2.16/node_modules/rolldown"],
+      "license": "CC-BY-4.0"
+    }
+  ],
+  "MIT": [
+    {
+      "name": "magic-string",
+      "versions": ["0.30.21", "1.4.5"],
+      "paths": [
+        "/fixture/node_modules/.pnpm/magic-string@0.30.21/node_modules/magic-string",
+        "/fixture/node_modules/.pnpm/magic-string@1.4.5/node_modules/magic-string"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "react",
+      "versions": ["19.3.1"],
+      "paths": ["/fixture/node_modules/.pnpm/react@19.3.1/node_modules/react"],
+      "license": "MIT"
+    },
+    {
+      "name": "vite",
+      "versions": ["8.3.5"],
+      "paths": ["/fixture/node_modules/.pnpm/vite@8.3.5/node_modules/vite"],
+      "license": "MIT"
+    }
+  ],
+  "BUSL-1.1": [
+    {
+      "name": "business-source",
+      "versions": ["1.0.0"],
+      "paths": ["/fixture/node_modules/.pnpm/business-source@1.0.0/node_modules/business-source"],
+      "license": "BUSL-1.1"
+    }
+  ],
+  "CC-BY-NC-4.0": [
+    {
+      "name": "non-commercial",
+      "versions": ["2.2.0"],
+      "paths": ["/fixture/node_modules/.pnpm/non-commercial@2.2.0/node_modules/non-commercial"],
+      "license": "CC-BY-NC-4.0"
+    }
+  ]
+}

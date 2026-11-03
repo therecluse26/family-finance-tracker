@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hc } from "hono/client";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
+import { BROWSER_NOTICES } from "../../scripts/browser-notices.ts";
 import type { Api } from "./api.ts";
 import { type RunningServer, startServer } from "./server.ts";
 
 const INDEX_HTML = "<!doctype html><title>Family Finance Tracker</title>";
 const ASSET_JS = "console.log('asset');";
+const NOTICES = "Third-party notices for the Family Finance Tracker web app\n";
 
 describe("the server", () => {
   let webRoot: string;
@@ -19,6 +21,7 @@ describe("the server", () => {
     writeFileSync(join(webRoot, "index.html"), INDEX_HTML);
     mkdirSync(join(webRoot, "assets"));
     writeFileSync(join(webRoot, "assets", "app.js"), ASSET_JS);
+    writeFileSync(join(webRoot, BROWSER_NOTICES), NOTICES);
     server = await startServer({ port: 0, webRoot });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -58,6 +61,14 @@ describe("the server", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/javascript/);
     expect(await res.text()).toBe(ASSET_JS);
+  });
+
+  it("serves the browser bundle's notices at /third-party-notices.txt as plain text", async () => {
+    const res = await fetch(`${base}/third-party-notices.txt`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^text\/plain/);
+    expect(await res.text()).toBe(NOTICES);
   });
 
   it.each(["/", "/transactions", "/settings/backups"])(

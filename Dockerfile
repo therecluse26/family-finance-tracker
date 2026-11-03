@@ -18,6 +18,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json LICENSE ./
 COPY --from=prod-deps /app/node_modules ./node_modules
+# dist holds server.js, the web app, and the image's THIRD-PARTY-NOTICES.txt.
 COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 3000

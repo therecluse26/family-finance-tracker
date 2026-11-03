@@ -1,0 +1,86 @@
+{
+  "advisories": {
+    "1101851": {
+      "findings": [
+        { "version": "2.0.1", "paths": [".>ip"], "dev": false, "optional": false, "bundled": false }
+      ],
+      "id": 1101851,
+      "title": "ip SSRF improper categorization in isPublic",
+      "module_name": "ip",
+      "vulnerable_versions": "<=2.0.1",
+      "patched_versions": null,
+      "patched_versions_unpublished": true,
+      "severity": "high",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-2p57-rm9w-gvfp",
+      "url": "https://github.com/advisories/GHSA-2p57-rm9w-gvfp"
+    },
+    "1106913": {
+      "findings": [
+        {
+          "version": "4.17.15",
+          "paths": [".>lodash"],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1106913,
+      "title": "Command Injection in lodash",
+      "module_name": "lodash",
+      "vulnerable_versions": "<4.17.21",
+      "patched_versions": ">=4.17.21",
+      "severity": "high",
+      "cwe": "CWE-77, CWE-94",
+      "github_advisory_id": "GHSA-35jh-r3h4-6jhm",
+      "url": "https://github.com/advisories/GHSA-35jh-r3h4-6jhm"
+    },
+    "1179": {
+      "findings": [
+        {
+          "version": "1.2.5",
+          "paths": [".>minimist"],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1179,
+      "title": "Prototype Pollution in minimist",
+      "module_name": "minimist",
+      "vulnerable_versions": "<1.2.6",
+      "patched_versions": ">=1.2.6",
+      "severity": "critical",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-xvch-5gv4-984h",
+      "url": "https://github.com/advisories/GHSA-xvch-5gv4-984h"
+    },
+    "1096366": {
+      "findings": [
+        {
+          "version": "2.88.2",
+          "paths": [".>request"],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1096366,
+      "title": "Server-Side Request Forgery in Request",
+      "module_name": "request",
+      "vulnerable_versions": "<=2.88.2",
+      "patched_versions": "<0.0.0",
+      "severity": "moderate",
+      "cwe": "CWE-918",
+      "github_advisory_id": "GHSA-p8p7-x288-28g6",
+      "url": "https://github.com/advisories/GHSA-p8p7-x288-28g6"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": { "info": 0, "low": 0, "moderate": 1, "high": 2, "critical": 1 },
+    "dependencies": 4,
+    "devDependencies": 0,
+    "optionalDependencies": 0,
+    "totalDependencies": 4
+  }
+}

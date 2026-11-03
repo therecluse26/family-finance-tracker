@@ -211,16 +211,19 @@ CI checks every dependency's license. A license outside the allowlist fails the 
 - A dual license passes when one of its options is on the list.
 - **Build-time tools** may also use CC-BY-4.0.
 - **Blocked examples:** GPL-2.0-only (it cannot combine with AGPL-3.0), SSPL, BUSL, non-commercial licenses, and paid licenses.
-- **No license field:** the package passes only after a person reads its files and records the result in `licenses/reviewed.json`. Each record has the package, version, license found, reviewer, and date.
+- **No license field, `UNLICENSED`, or `SEE LICENSE IN …`:** the package passes only after a person reads its files and records the result in `licenses/reviewed.json`. Each record has the package, version, license found, reviewer, and date.
+  - A record for a package whose license field names a license must give that same license.
   - The first record: `express-ejs-layouts`, from Sidequest's dashboard, ships an MIT LICENSE file.
 - A script in `scripts/` reads `pnpm licenses list --json` and applies these rules.
 - Shipped code is the `dependencies` tree. Build-time tools are the `devDependencies` tree.
 - Every package whose code ends up in the image or the browser bundle goes in `dependencies`.
+- Exception: Vite and Rolldown add small helpers to the browser bundle. They stay in `devDependencies`, but the license check treats them as shipped code, and the browser notices list them.
 
 ### Third-party notices
 
 - The build generates a notices file for the Docker image and another for the browser bundle.
 - Each lists every shipped package with its name, version, license, and license text.
+- A package in the production tree or the browser bundle that ships no license file needs a record in `licenses/reviewed.json` whose `licenseText` names a `.txt` file in `licenses/texts/` with its license text. Otherwise the build fails. A `NOTICE` file alone is not a license file.
 - The image's file covers the production tree. The browser file covers the packages in the Vite bundle, and the app serves it at `/third-party-notices.txt`.
 
 ### LGPL and MPL packages

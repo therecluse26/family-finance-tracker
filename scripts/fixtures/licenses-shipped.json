@@ -1,0 +1,121 @@
+{
+  "MIT": [
+    {
+      "name": "react",
+      "versions": ["19.3.1"],
+      "paths": ["/fixture/node_modules/.pnpm/react@19.3.1/node_modules/react"],
+      "license": "MIT",
+      "author": "Meta",
+      "homepage": "https://react.dev/",
+      "description": "React is a JavaScript library for building user interfaces."
+    },
+    {
+      "name": "express-ejs-layouts",
+      "versions": ["2.5.1"],
+      "paths": [
+        "/fixture/node_modules/.pnpm/express-ejs-layouts@2.5.1/node_modules/express-ejs-layouts"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "commons-clause-lib",
+      "versions": ["1.0.0"],
+      "paths": [
+        "/fixture/node_modules/.pnpm/commons-clause-lib@1.0.0/node_modules/commons-clause-lib"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "empty-legacy-list",
+      "versions": ["0.1.0"],
+      "paths": [
+        "/fixture/node_modules/.pnpm/empty-legacy-list@0.1.0/node_modules/empty-legacy-list"
+      ],
+      "license": "MIT"
+    }
+  ],
+  "LGPL-3.0-or-later": [
+    {
+      "name": "or-later-jobs",
+      "versions": ["1.17.0"],
+      "paths": ["/fixture/node_modules/.pnpm/or-later-jobs@1.17.0/node_modules/or-later-jobs"],
+      "license": "LGPL-3.0-or-later"
+    }
+  ],
+  "(MIT OR GPL-2.0-only)": [
+    {
+      "name": "dual-licensed",
+      "versions": ["3.1.0"],
+      "paths": ["/fixture/node_modules/.pnpm/dual-licensed@3.1.0/node_modules/dual-licensed"],
+      "license": "(MIT OR GPL-2.0-only)"
+    }
+  ],
+  "CC-BY-4.0": [
+    {
+      "name": "shipped-data",
+      "versions": ["1.0.30001700"],
+      "paths": ["/fixture/node_modules/.pnpm/shipped-data@1.0.30001700/node_modules/shipped-data"],
+      "license": "CC-BY-4.0"
+    }
+  ],
+  "GPL-2.0-only": [
+    {
+      "name": "gpl-two",
+      "versions": ["2.0.0"],
+      "paths": ["/fixture/node_modules/.pnpm/gpl-two@2.0.0/node_modules/gpl-two"],
+      "license": "GPL-2.0-only"
+    }
+  ],
+  "SSPL-1.0": [
+    {
+      "name": "server-side",
+      "versions": ["7.0.0"],
+      "paths": ["/fixture/node_modules/.pnpm/server-side@7.0.0/node_modules/server-side"],
+      "license": "SSPL-1.0"
+    }
+  ],
+  "Unknown": [
+    {
+      "name": "unreviewed",
+      "versions": ["0.1.0"],
+      "paths": ["/fixture/node_modules/.pnpm/unreviewed@0.1.0/node_modules/unreviewed"],
+      "license": "Unknown"
+    }
+  ],
+  "UNLICENSED": [
+    {
+      "name": "proprietary-lib",
+      "versions": ["2.0.0"],
+      "paths": ["/fixture/node_modules/.pnpm/proprietary-lib@2.0.0/node_modules/proprietary-lib"],
+      "license": "UNLICENSED"
+    }
+  ],
+  "Apache-2.0 WITH Commons-Clause": [
+    {
+      "name": "with-commons-clause",
+      "versions": ["1.0.0"],
+      "paths": [
+        "/fixture/node_modules/.pnpm/with-commons-clause@1.0.0/node_modules/with-commons-clause"
+      ],
+      "license": "Apache-2.0 WITH Commons-Clause"
+    }
+  ],
+  "Apache-2.0 WITH LLVM-exception": [
+    {
+      "name": "with-llvm-exception",
+      "versions": ["17.0.0"],
+      "paths": [
+        "/fixture/node_modules/.pnpm/with-llvm-exception@17.0.0/node_modules/with-llvm-exception"
+      ],
+      "license": "Apache-2.0 WITH LLVM-exception"
+    }
+  ],
+  "MIT OR GPL-2.0": [
+    {
+      "name": "legacy-list",
+      "versions": ["0.5.0"],
+      "paths": ["/fixture/node_modules/.pnpm/legacy-list@0.5.0/node_modules/legacy-list"],
+      "license": "MIT OR GPL-2.0"
+    }
+  ]
+}
