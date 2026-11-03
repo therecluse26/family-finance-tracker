@@ -1,0 +1,17 @@
+# App-level envelope encryption; no full-database encryption
+
+The app stores four kinds of secret that unlock outside services. They are the Bank-data provider secrets, the AI keys, the web push VAPID keys, and the SMTP password. On a one-box home server, any at-rest key usually sits on the same disk as the data. So at-rest encryption mainly protects a leaked copy, such as a backup. It never protects a compromised running host or app.
+
+We encrypt those secrets inside the app, with AES-256-GCM envelope encryption from Node's built-in crypto module. A random data key encrypts each secret. The AAD binds each ciphertext to its row and column, and each ciphertext starts with a key ID. The Master key encrypts the data key. It lives outside the data volume, in a secret file or an environment variable. v1 has no full-database encryption and no Master key rotation. Backups are plain SQLite files, with the secrets still encrypted inside. The setup guide tells self-hosters to encrypt the host's disk. Whole-database encryption adds little while its key shares the disk, and a lost key would lose all history. With app-level encryption, a lost Master key loses only the secrets. Firefly III, Immich, and Actual also leave disk protection to the host.
+
+A lost Master key still costs a lot. Plaid's update mode needs the old access token, so every Connection must be made again as a new Plaid Item. Plaid's Trial plan allows 10 Items for life, and a removed Item keeps its slot. With all its banks connected, a Household with the example institutions has spent 6 Items. Connecting its 5 banks again needs 5 more, 1 bank over the 10. That bank stays unconnected until file import ships. Members also enter the AI keys and the SMTP password again, and turn Alerts on again on each device. So setup makes the first Member paste the Master key back, and settings offer "Check my master key". The rules are in [Members, login, and security](../spec/09-members-login-security.md#the-master-key) and [Backup, restore, and data export](../spec/11-backup-restore-export.md#without-the-master-key).
+
+## Considered options
+
+- **SQLite whole-file encryption (SQLCipher and its forks).** It is mature, but it replaces the database driver, and a lost key loses everything. It may come back later as an opt-in setting.
+- **libSQL's built-in encryption.** It uses AES-256-CBC with no HMAC, so it cannot detect tampering.
+- **PostgreSQL options.** `pgcrypto` sends the key through the server. Percona's `pg_tde` needs a patched server build and a key server. Both are too heavy for non-experts.
+- **A passphrase entered at each restart.** The key would never touch the disk. But sync and Alerts would stop after every power cut until a Member unlocks the app. That breaks hands-off use.
+- **Encrypted backup files.** Any SQLite tool can open a plain backup, and the secrets inside stay encrypted.
+
+Sources: [Encrypting a self-hosted database at rest](https://github.com/therecluse26/family-finance-tracker-private/issues/8), [Stack and storage](https://github.com/therecluse26/family-finance-tracker-private/issues/12), [Backup, restore, and data export](https://github.com/therecluse26/family-finance-tracker-private/issues/22), [Install and first-run setup](https://github.com/therecluse26/family-finance-tracker-private/issues/21). Research: [Database encryption at rest](https://github.com/therecluse26/family-finance-tracker-private/blob/research/database-encryption/docs/research/database-encryption.md).

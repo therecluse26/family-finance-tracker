@@ -23,7 +23,7 @@ One link to one bank, through one Bank-data provider. It brings in one or more A
 _Avoid_: Item, link, enrollment, login
 
 **Unconnected account**:
-An Account that holds the Household's money but does not sync, such as an HSA. Money sent to it counts as a Transfer. A loan is never an Unconnected account.
+An Account that holds the Household's money but does not sync, such as an HSA. Money sent to it counts as a Transfer, or as Saving when it is an investment or retirement account. A loan is never an Unconnected account, and neither is a payment app such as Venmo.
 _Avoid_: External account, manual account
 
 **Manual loan**:
@@ -63,7 +63,7 @@ Money moved from an Account into an investment or retirement account. Not Spendi
 _Avoid_: Contribution
 
 **Refund**:
-Money a merchant returns for an earlier purchase. It reduces Spending in that purchase's Category and month.
+Money a merchant returns for an earlier purchase. It reduces Spending in that purchase's Category and month. An unlinked Refund reduces its Merchant's Category, in the month it arrives.
 _Avoid_: Return, credit
 
 **Reimbursement**:
@@ -99,8 +99,8 @@ A plain-English statement of intent by a Member, such as "I want to spend less o
 _Avoid_: Resolution, rule, objective
 
 **Overspending**:
-Spending in a Category above its Budget, or on pace to pass it. The Budget is the only baseline.
-_Avoid_: Over budget, excess
+Spending in a Category above its Budget, or on pace to pass it. The Budget is the only baseline. It has two states: Over Budget, when Spending has passed the Budget, and On pace, when Spending is on course to pass it.
+_Avoid_: Excess
 
 **Recurring charge**:
 Spending with one Merchant that repeats at a steady interval and a similar amount, such as a subscription or a utility bill.
@@ -115,19 +115,19 @@ A notice sent to Members' phones or email about Overspending or an Anomaly.
 _Avoid_: Notification, warning
 
 **System notice**:
-A notice to Members about the app itself, such as a failed backup. It is never about money.
+A notice to Members about the app itself, such as a failed backup or the AI cost cap. It is never about the Household's Spending.
 _Avoid_: Error, warning
 
 ## Review
 
 **Review list**:
-An optional list of the app's uncertain decisions, such as a guessed Transfer or Category. A Member may check it; nothing waits for it.
+An optional list of the app's uncertain decisions, and things it cannot settle alone, such as a guessed Transfer or a missing loan payment. A Member may check it; nothing waits for it.
 _Avoid_: Inbox, queue, triage
 
 ## Security
 
 **Master key**:
-The secret that locks the bank and AI keys the app stores. The Household keeps a copy outside the app. Without it, every Connection must be made again.
+The secret that locks the other secrets the app stores, such as bank and AI keys. The Household keeps a copy outside the app. Without it, every Connection must be made again.
 _Avoid_: Encryption key, recovery key, password
 
 ## Outside services

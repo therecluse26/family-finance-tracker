@@ -1,0 +1,12 @@
+# 0007: A fixed Category list
+
+Every analysis in the app works per Category: Budgets, Overspending, Benchmarks, Category rules, the graphs, and the AI's advice. The app must also categorize every Transaction with no help from a Member ([Scope and product principles](https://github.com/therecluse26/family-finance-tracker-private/issues/2)). None of the open-source trackers we reviewed does this. Actual learns a Merchant's Category only after a person sets it. Sure runs its Bayes model and its LLM only through rules a person creates ([Prior art: Transfer matching and categorization](https://github.com/therecluse26/family-finance-tracker-private/issues/7)).
+
+**Decision.** v1 ships one fixed list of 30 Categories in 6 Category groups ([Categorization](../spec/04-categorization.md#categories-and-category-groups)). Members cannot add, rename, or remove Categories. Each Bank-data provider adapter maps its provider's categories onto this list. The list is the [research's](https://github.com/therecluse26/family-finance-tracker-private/blob/research/transaction-categorization/docs/research/transaction-categorization.md) 28 Categories plus two ([Hands-off categorization](https://github.com/therecluse26/family-finance-tracker-private/issues/14)). Superstores holds stores that sell groceries and general goods together, such as Walmart and Costco. A Transaction there cannot show which of the two it paid for. Hobbies takes sporting goods, toys, and crafts out of General goods.
+
+**Why.** A fixed list lets every step of the categorization cascade work on the first day, with no setup. Each Category has a provider mapping, a Benchmark mapping, a Budget formula, and a definition the AI receives. The AI answers from a closed set, so the app can check its output, and the prompts stay short. A custom Category would have none of these. No provider category maps to it, no Benchmark covers it, and only a Member's corrections could fill it. That is manual upkeep, which the hands-off principle forbids.
+
+## Considered options
+
+- **Custom Categories** (add, rename, remove): rejected for v1 for the reasons above. They are in [Out of scope](../spec/13-out-of-scope.md).
+- **Plaid's own categories as the list:** rejected. PFCv2 has 18 primary and 127 detailed codes, which is too many for Budgets. Its codes also mix Transfers, Income, and loans with Spending. And the list would tie every Budget to one Bank-data provider.
