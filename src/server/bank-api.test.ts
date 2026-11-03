@@ -8,7 +8,7 @@ import { startBank, syncConnection } from "../bank/index.ts";
 import { addConnection } from "../db/index.ts";
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
-import type { AccountView, ConnectionView, TransactionView } from "./bank-views.ts";
+import type { AccountView, BalancesView, ConnectionView, TransactionView } from "./bank-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
@@ -86,7 +86,7 @@ describe("the bank routes", () => {
       origin: "linked",
       syncMinute: 7,
     });
-    await syncConnection(connectionId);
+    await syncConnection(connectionId, () => new Date("2026-10-05T15:00:00.000Z"));
     const [row] = (
       await test.database.$client.execute(
         "SELECT id FROM household_accounts WHERE provider_account_id = 'acc-checking'",
@@ -109,8 +109,22 @@ describe("the bank routes", () => {
   it("answers 401 to a browser with no session, on every route", async () => {
     const tab = new TestBrowser(app, APP_URL, "192.168.1.21");
 
-    for (const path of ["/api/accounts", "/api/transactions", "/api/connections"]) {
+    for (const path of [
+      "/api/accounts",
+      "/api/transactions",
+      "/api/connections",
+      `/api/accounts/${checkingId}/balances`,
+    ]) {
       const res = await tab.get(path);
+      expect(res.status).toBe(401);
+      expect(await res.text()).not.toContain("Everyday Checking");
+    }
+    // The routes that change data, from the app's own origin.
+    for (const path of [
+      `/api/accounts/${checkingId}/close`,
+      `/api/accounts/${checkingId}/reopen`,
+    ]) {
+      const res = await tab.post(path);
       expect(res.status).toBe(401);
       expect(await res.text()).not.toContain("Everyday Checking");
     }
@@ -165,6 +179,111 @@ describe("the bank routes", () => {
     const res = await (await signedIn()).get("/api/transactions?from=October");
 
     expect(res.status).toBe(400);
+  });
+
+  it("returns an Account's daily balances, with estimated days marked, and month ends", async () => {
+    const res = await (await signedIn()).get(
+      `/api/accounts/${checkingId}/balances?from=2026-10-02&to=2026-10-05`,
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as BalancesView).toEqual({
+      points: [
+        { date: "2026-10-02", currentBalance: 252_500, availableBalance: null, estimated: true },
+        { date: "2026-10-03", currentBalance: 248_000, availableBalance: null, estimated: true },
+        { date: "2026-10-04", currentBalance: 248_000, availableBalance: null, estimated: true },
+        { date: "2026-10-05", currentBalance: 248_000, availableBalance: null, estimated: false },
+      ],
+      monthEnds: [
+        { month: "2026-10", date: "2026-10-05", currentBalance: 248_000, estimated: false },
+      ],
+    });
+  });
+
+  it("answers 404 for an Account that does not exist, and 400 for a bad date", async () => {
+    const tab = await signedIn();
+
+    expect((await tab.get("/api/accounts/no-such-account/balances")).status).toBe(404);
+    expect((await tab.get(`/api/accounts/${checkingId}/balances?to=soon`)).status).toBe(400);
+  });
+
+  it("lets a Member close an Account, which drops its balance but keeps its Transactions", async () => {
+    const tab = await signedIn();
+
+    const res = await tab.post(`/api/accounts/${checkingId}/close`);
+
+    expect(res.status).toBe(200);
+    const { account } = (await res.json()) as { account: AccountView };
+    expect(account).toMatchObject({
+      id: checkingId,
+      closed: true,
+      currentBalance: null,
+      availableBalance: null,
+    });
+    expect(Date.parse(account.closedAt ?? "")).not.toBeNaN();
+    const listed = await tab.get(`/api/transactions?account=${checkingId}`);
+    expect(
+      ((await listed.json()) as { transactions: TransactionView[] }).transactions,
+    ).toHaveLength(2);
+  });
+
+  it("lets a Member reopen a Closed Account", async () => {
+    const tab = await signedIn();
+    await tab.post(`/api/accounts/${checkingId}/close`);
+
+    const res = await tab.post(`/api/accounts/${checkingId}/reopen`);
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { account: AccountView }).account).toMatchObject({
+      closed: false,
+      closedAt: null,
+      currentBalance: 248_000,
+    });
+  });
+
+  it("answers 404 when closing an Account that does not exist", async () => {
+    const tab = await signedIn();
+
+    expect((await tab.post("/api/accounts/no-such-account/close")).status).toBe(404);
+    expect((await tab.post("/api/accounts/no-such-account/reopen")).status).toBe(404);
+  });
+
+  // Origins that are not APP_URL's: another port, another site, a look-alike that starts with
+  // APP_URL's origin, an empty one, and none at all.
+  const WRONG_ORIGINS = [
+    "http://nas.local:9090",
+    "http://evil.example",
+    `${APP_URL}.evil.example`,
+    "",
+    undefined,
+  ];
+
+  async function isClosed(tab: TestBrowser): Promise<boolean | undefined> {
+    const { accounts } = (await (await tab.get("/api/accounts")).json()) as {
+      accounts: AccountView[];
+    };
+    return accounts.find((account) => account.id === checkingId)?.closed;
+  }
+
+  it("refuses to close an Account from any origin but APP_URL's, and changes nothing", async () => {
+    const tab = await signedIn();
+
+    for (const origin of WRONG_ORIGINS) {
+      const res = await tab.send("POST", `/api/accounts/${checkingId}/close`, {}, { origin });
+      expect(res.status, `origin ${origin}`).toBe(403);
+    }
+    expect(await isClosed(tab)).toBe(false);
+  });
+
+  it("refuses to reopen an Account from any origin but APP_URL's, and changes nothing", async () => {
+    const tab = await signedIn();
+    await tab.post(`/api/accounts/${checkingId}/close`);
+
+    for (const origin of WRONG_ORIGINS) {
+      const res = await tab.send("POST", `/api/accounts/${checkingId}/reopen`, {}, { origin });
+      expect(res.status, `origin ${origin}`).toBe(403);
+    }
+    expect(await isClosed(tab)).toBe(true);
   });
 
   it("lists the Connections with their adapter's actions, and never a credential", async () => {

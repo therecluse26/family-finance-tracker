@@ -80,6 +80,19 @@ function plaidRoutes(
   };
 }
 
+// A route that changes data answers only the app's own pages: the request's Origin must be
+// APP_URL's. The session cookie is SameSite=Lax, which still lets a page on another port or
+// subdomain of the same site send it.
+function sameOriginChanges(appOrigin: string): MiddlewareHandler<ServerEnv> {
+  return async (c, next) => {
+    const reads = c.req.method === "GET" || c.req.method === "HEAD";
+    if (!reads && c.req.header("origin") !== appOrigin) {
+      return c.json({ error: "Cross-site request refused" }, 403);
+    }
+    await next();
+  };
+}
+
 export function createApp(
   webRoot: string,
   security: Security,
@@ -99,6 +112,7 @@ export function createApp(
       // which step comes next.
       .get("/api/setup", async (c) => c.json(await readSetupState(database)))
       .use("/api/*", requireSession(auth))
+      .use("/api/*", sameOriginChanges(security.appUrl.origin))
       .use("/api/*", async (c, next) => {
         c.set("bank", bank);
         await next();

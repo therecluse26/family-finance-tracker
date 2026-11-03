@@ -17,6 +17,13 @@ export type {
   TxnRecord,
 } from "./adapter.ts";
 export { BankDataError } from "./adapter.ts";
+export {
+  type AccountBalances,
+  accountBalances,
+  type BalancePoint,
+  type BalanceRange,
+  type MonthEndBalance,
+} from "./balances.ts";
 export { SyncConnectionJob, startSync } from "./job.ts";
 export {
   type PlaidClientMaker,

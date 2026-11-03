@@ -55,7 +55,9 @@ export type LoanDetails = {
 };
 
 // One Account, with its balances and optional card or loan details. Optional data is an empty
-// field; there are no per-adapter data flags.
+// field; there are no per-adapter data flags. Balances use the Transaction sign: money owed on a
+// card or loan is negative, in the current balance and the statement balance. Plaid sends money
+// owed as a positive number, so the Plaid adapter flips Plaid's sign for credit and loan Accounts.
 export type AccountSnapshot = {
   // The provider's stable account ID.
   id: string;

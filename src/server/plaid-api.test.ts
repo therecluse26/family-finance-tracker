@@ -244,6 +244,22 @@ describe("the Plaid routes", () => {
     expect(stub.calls).toEqual([]);
   });
 
+  it("takes changes only from APP_URL's origin", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const keys = newPlaidKeys();
+    stub.accepted = keys;
+    const body = { ...keys, code: await alice.totpCode() };
+
+    for (const origin of ["http://evil.example", `${APP_URL}.evil.example`, undefined]) {
+      expect((await tab.send("POST", "/api/plaid/keys", body, { origin })).status).toBe(403);
+      expect(
+        (await tab.send("POST", "/api/plaid/items-used", { itemsUsed: 3 }, { origin })).status,
+      ).toBe(403);
+    }
+    expect(stub.calls).toEqual([]);
+  });
+
   it("shows N, lets a Member raise it, and never lets it fall below the app's own count", async () => {
     await finishWizard();
     const tab = await signedIn();

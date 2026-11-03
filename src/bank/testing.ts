@@ -24,12 +24,17 @@ export type TestBank = {
   close(): void;
 };
 
-export async function newTestBank(): Promise<TestBank> {
+export async function newTestBank(options: { timeZone?: string } = {}): Promise<TestBank> {
   const db = await newTestDatabase();
   const quiet = createLogger(() => {}, { throwOnSecretField: true });
   const secrets = await unlockSecrets(db.database, newMasterKey().masterKey, { logger: quiet });
   const fake = new FakeBankAdapter();
-  const bank = startBank({ database: db.database, secrets, adapters: [fake] });
+  const bank = startBank({
+    database: db.database,
+    secrets,
+    adapters: [fake],
+    timeZone: async () => options.timeZone,
+  });
   return {
     database: db.database,
     secrets,

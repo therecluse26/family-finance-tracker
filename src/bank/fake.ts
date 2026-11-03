@@ -15,7 +15,8 @@ import {
 
 // The in-memory fake adapter (spec 02, The bank-data adapter). It makes the seam real and keeps
 // tests offline. Each test scripts it per bank: pages of Accounts and of added, changed, and
-// removed records, whether history is loaded, and errors of each kind. It never touches a network.
+// removed records, whether history is loaded, and errors of each kind. A script added under a
+// Connection's ID wins over its bank's, for a bank linked twice. It never touches a network.
 
 export type FakePage = {
   // The Accounts this page returns. A page without them returns the last ones given.
@@ -28,8 +29,8 @@ export type FakePage = {
 
 type Script = { pages: FakePage[]; failures: Map<number, BankErrorKind> };
 
-// The cursor after page `index` of a bank, such as "fake-chase:2".
-const cursorOf = (bankId: string, index: number) => `${bankId}:${index}`;
+// The cursor after page `index` of a script, such as "fake-chase:2".
+const cursorOf = (key: string, index: number) => `${key}:${index}`;
 
 export class FakeBankAdapter implements BankDataAdapter {
   readonly provider = "fake";
@@ -41,28 +42,30 @@ export class FakeBankAdapter implements BankDataAdapter {
 
   private readonly scripts = new Map<string, Script>();
 
-  private script(bankId: string): Script {
-    let script = this.scripts.get(bankId);
+  // A bank's ID, or a Connection's ID.
+  private script(key: string): Script {
+    let script = this.scripts.get(key);
     if (script === undefined) {
       script = { pages: [], failures: new Map() };
-      this.scripts.set(bankId, script);
+      this.scripts.set(key, script);
     }
     return script;
   }
 
-  // Adds pages to a bank's script, after the ones it has.
-  addPages(bankId: string, ...pages: FakePage[]): void {
-    this.script(bankId).pages.push(...pages);
+  // Adds pages to the script of a bank, or of one Connection, after the ones it has.
+  addPages(key: string, ...pages: FakePage[]): void {
+    this.script(key).pages.push(...pages);
   }
 
-  // The next request for page `index` of the bank throws an error of this kind, once.
-  failAt(bankId: string, index: number, kind: BankErrorKind): void {
-    this.script(bankId).failures.set(index, kind);
+  // The next request for page `index` of the script throws an error of this kind, once.
+  failAt(key: string, index: number, kind: BankErrorKind): void {
+    this.script(key).failures.set(index, kind);
   }
 
   async sync(connection: BankConnection, cursor: string | null): Promise<SyncResult> {
     this.calls.push({ connectionId: connection.id, cursor });
-    const { pages, failures } = this.script(connection.bankId);
+    const key = this.scripts.has(connection.id) ? connection.id : connection.bankId;
+    const { pages, failures } = this.script(key);
     const index = cursor === null ? 0 : Number(cursor.slice(cursor.lastIndexOf(":") + 1));
     if (!Number.isSafeInteger(index) || index < 0) throw new Error(`Unknown cursor "${cursor}".`);
     const failure = failures.get(index);
@@ -80,7 +83,7 @@ export class FakeBankAdapter implements BankDataAdapter {
         added: [],
         changed: [],
         removed: [],
-        nextCursor: cursor ?? cursorOf(connection.bankId, 0),
+        nextCursor: cursor ?? cursorOf(key, 0),
         historyLoaded: last?.historyLoaded ?? false,
       };
     }
@@ -92,7 +95,7 @@ export class FakeBankAdapter implements BankDataAdapter {
         id,
         reason: reason ?? "removed by provider",
       })),
-      nextCursor: cursorOf(connection.bankId, index + 1),
+      nextCursor: cursorOf(key, index + 1),
       historyLoaded: page.historyLoaded ?? false,
     };
   }

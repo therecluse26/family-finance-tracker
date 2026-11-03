@@ -18,25 +18,29 @@ export class TestBrowser {
     this.client = client;
   }
 
-  // `headers` adds to the browser's own headers, or replaces them.
+  // `headers` replace the browser's own, such as an Origin from another site. A header set to
+  // undefined is not sent at all.
   async send(
     method: string,
     path: string,
     body?: unknown,
-    headers: Record<string, string> = {},
+    headers: Record<string, string | undefined> = {},
   ): Promise<Response> {
     const cookie = [...this.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+    const sent: Record<string, string | undefined> = {
+      host: this.appUrl.host,
+      origin: this.appUrl.origin,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...(cookie === "" ? {} : { cookie }),
+      ...headers,
+    };
     const res = await this.app.request(
       `${this.appUrl.origin}${path}`,
       {
         method,
-        headers: {
-          host: this.appUrl.host,
-          origin: this.appUrl.origin,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
-          ...(cookie === "" ? {} : { cookie }),
-          ...headers,
-        },
+        headers: Object.fromEntries(
+          Object.entries(sent).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
         body: body === undefined ? undefined : JSON.stringify(body),
       },
       { incoming: { socket: { remoteAddress: this.client } } },

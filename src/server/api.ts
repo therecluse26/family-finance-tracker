@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import * as z from "zod";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
-import type { TransactionQuery } from "./bank-views.ts";
+import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -40,10 +40,38 @@ async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unkno
   }
 }
 
+// The range of GET /api/accounts/:id/balances.
+function balanceQuery(query: Record<string, string>): BalanceQuery | undefined {
+  const { from, to } = query;
+  for (const date of [from, to]) {
+    if (date !== undefined && !CALENDAR_DATE.test(date)) return undefined;
+  }
+  return { ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) };
+}
+
 export const api = new Hono<ServerEnv>()
   .get("/ping", (c) => c.json({ ok: true }))
   .get("/security-mode", (c) => c.json({ mode: c.var.appUrl.mode, appUrl: c.var.appUrl.origin }))
   .get("/accounts", async (c) => c.json({ accounts: await c.var.bank.accounts() }))
+  // Daily balances, with estimated days marked, and month-end balances, for graphs.
+  .get("/accounts/:id/balances", async (c) => {
+    const query = balanceQuery(c.req.query());
+    if (query === undefined) return c.json({ error: "Write dates as YYYY-MM-DD." }, 400);
+    const balances = await c.var.bank.balances(c.req.param("id"), query);
+    if (balances === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json(balances);
+  })
+  // A Member closes or reopens any Account (spec 02, Closed Accounts).
+  .post("/accounts/:id/close", async (c) => {
+    const account = await c.var.bank.closeAccount(c.req.param("id"));
+    if (account === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ account });
+  })
+  .post("/accounts/:id/reopen", async (c) => {
+    const account = await c.var.bank.reopenAccount(c.req.param("id"));
+    if (account === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ account });
+  })
   .get("/transactions", async (c) => {
     const query = transactionQuery(c.req.query());
     if (query === undefined) return c.json({ error: "Write dates as YYYY-MM-DD." }, 400);

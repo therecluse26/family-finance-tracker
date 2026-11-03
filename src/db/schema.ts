@@ -4,6 +4,7 @@ import {
   check,
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -239,8 +240,17 @@ export const householdAccounts = sqliteTable(
     // An APR a Member typed, for a loan.
     memberApr: real("member_apr"),
     excluded: integer("excluded", { mode: "boolean" }).notNull().default(false),
-    // Set when the Account is Closed.
+    // Set when the Account is Closed (spec 02, Closed Accounts), with the reason.
     closedAt: moment("closed_at"),
+    closedReason: text("closed_reason", {
+      enum: ["vanished", "connection removed", "paid off", "closed by a member"],
+    }),
+    // True while the Account's provider no longer returns it. The sync that sees it go closes it
+    // once, so a Member's reopening holds.
+    providerMissing: integer("provider_missing", { mode: "boolean" }).notNull().default(false),
+    // Day D of the last carry-over from another Connection (spec 02, Carrying Accounts over). The
+    // current Connection's Transactions dated before it are hidden as "replaced by re-link".
+    historySplitDate: calendarDate("history_split_date"),
     // The provider's original data for the Account, from the last sync.
     raw: text("raw", { mode: "json" }),
   },
@@ -302,4 +312,34 @@ export const transactions = sqliteTable(
     ),
     index("transactions_account_posted_date").on(table.accountId, table.postedDate),
   ],
+);
+
+// One balance per Account per day, from the first sync on (spec 02, Balances). Each sync writes
+// the day's row again, so the day's last sync wins. Card and loan details are saved with it.
+// Balances use the Transaction sign: money owed on a card or loan is negative.
+export const dailyBalances = sqliteTable(
+  "daily_balances",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => householdAccounts.id),
+    // The day of the sync in the Household's time zone.
+    date: calendarDate("date").notNull(),
+    currentBalance: cents("current_balance"),
+    availableBalance: cents("available_balance"),
+    creditLimit: cents("credit_limit"),
+    // Card details.
+    cardAprs: text("card_aprs", { mode: "json" }).$type<{ type: string; apr: number }[]>(),
+    statementBalance: cents("statement_balance"),
+    // Card and loan details.
+    minimumPayment: cents("minimum_payment"),
+    paymentDueDate: calendarDate("payment_due_date"),
+    // Loan details. An APR is a percent, such as 6.5.
+    loanApr: real("loan_apr"),
+    loanPrincipal: cents("loan_principal"),
+    interestPaidThisYear: cents("interest_paid_this_year"),
+    // The sync that wrote the row.
+    syncedAt: moment("synced_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.accountId, table.date] })],
 );

@@ -1,12 +1,20 @@
 // The db module's interface. Other modules import from here.
 export {
+  listDailyBalances,
+  listPostedDayTotals,
+  type StoredDailyBalance,
+} from "./balances.ts";
+export {
   addConnection,
+  closeAccount,
   finishSync,
   listAccounts,
   listConnections,
   listTransactions,
   type PageCounts,
+  readAccount,
   readConnection,
+  reopenAccount,
   type StoredConnection,
   setHandSetFields,
   storeSyncPage,
