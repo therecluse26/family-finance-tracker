@@ -77,6 +77,7 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
   - `TRUSTED_PROXIES` is a comma-separated list of IP addresses, CIDR ranges, and Compose service names.
   - `*` trusts every source. Only platform services use it, because their proxy is the only way in.
   - In HTTPS mode with an empty `TRUSTED_PROXIES`, the app logs at start that it will refuse every request.
+  - Routes see only the request headers on the security check's allow list, plus `Host`, `X-Forwarded-For`, and `X-Forwarded-Proto` as the check sets them. A later ticket that needs another header adds it to that list, and that change gets a security review. Routes see no request trailers.
 - `GET /healthz` answers in both modes, from any source and with any `Host`. It shows only health. This lets the Compose health check run from inside the container.
 - Every address the app makes, such as setup, invite, and reset links and the links in emails, starts with `APP_URL`.
 

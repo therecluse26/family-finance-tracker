@@ -100,7 +100,8 @@ jobs:
         run: docker build --tag family-finance-tracker:ci .
       - name: GET /healthz answers 200
         run: |
-          docker run --detach --name app --env PORT=8080 --publish 8080:8080 family-finance-tracker:ci
+          docker run --detach --name app --env PORT=8080 --env APP_URL=http://127.0.0.1:8080 \
+            --publish 8080:8080 family-finance-tracker:ci
           for _ in $(seq 1 30); do
             if curl --fail --silent --show-error http://127.0.0.1:8080/healthz; then exit 0; fi
             sleep 1
