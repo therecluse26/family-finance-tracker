@@ -3,7 +3,7 @@ import { type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { AiSettings } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
-import type { PlaidSettings } from "../bank/index.ts";
+import { bankConnecting, connectionRemoving, type PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
@@ -126,6 +126,8 @@ export function createApp(
   const reviewList = reviewRoutes(database);
   const household = householdRoutes(database);
   const moneyMovement = moneyMovementRoutes(database);
+  const plaidConnecting = bankConnecting("plaid");
+  const removing = connectionRemoving();
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
@@ -145,6 +147,8 @@ export function createApp(
         c.set("reviewList", reviewList);
         c.set("household", household);
         c.set("moneyMovement", moneyMovement);
+        c.set("plaidConnecting", plaidConnecting);
+        c.set("removing", removing);
         await next();
       })
       .use("/api/*", masterKeyFirst)

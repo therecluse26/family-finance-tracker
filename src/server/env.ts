@@ -1,4 +1,5 @@
 import type { AiSettings } from "../ai/ai-view.ts";
+import type { BankConnecting, ConnectionRemoving } from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
@@ -25,6 +26,10 @@ export type ServerEnv = {
     checkFreshCode: (code: string) => Promise<"fresh" | "wrong" | "too many tries">;
     // The Plaid keys and the count of Plaid Items, for the routes under /api/plaid/.
     plaid: PlaidSettings;
+    // Linking a new bank through Plaid, for the routes under /api/plaid/.
+    plaidConnecting: BankConnecting;
+    // Removing a Connection and deleting its history, for the routes under /api/connections/.
+    removing: ConnectionRemoving;
     // The wizard's step 3 and "Check my master key".
     masterKey: MasterKeyRoutes;
     // The open System notices.

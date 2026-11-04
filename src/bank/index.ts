@@ -7,6 +7,7 @@ export type {
   BankDataAdapter,
   BankErrorKind,
   CardDetails,
+  LinkedAccount,
   LinkResult,
   LinkSession,
   LoanDetails,
@@ -24,6 +25,20 @@ export {
   type BalanceRange,
   type MonthEndBalance,
 } from "./balances.ts";
+export { bankConnecting } from "./connect.ts";
+export {
+  type BankConnecting,
+  CONFIRM_ITEMS_FROM,
+  type ConnectionRemoving,
+  type CoveringConnection,
+  type DeleteHistoryOutcome,
+  type ImportFinish,
+  type ImportPreview,
+  type LinkFinish,
+  type LinkOptions,
+  type LinkStart,
+  type RemoveOutcome,
+} from "./connect-view.ts";
 export { connectionToRepair, type Health } from "./health.ts";
 export {
   catchUpSyncs,
@@ -54,6 +69,7 @@ export {
   type PlaidSettings,
   type PlaidView,
 } from "./plaid-view.ts";
+export { connectionRemoving } from "./remove.ts";
 export {
   adapterActions,
   runSyncJob,

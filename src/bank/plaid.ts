@@ -1,8 +1,10 @@
 import {
   type AccountBase,
+  CountryCode,
   type LiabilitiesObject,
   PersonalFinanceCategoryVersion,
   PlaidApi,
+  Products,
   type RemovedTransaction,
   type Transaction,
   TransactionsUpdateStatus,
@@ -23,17 +25,27 @@ import {
 import { plaidConfiguration, plaidError, readPlaidKeys } from "./plaid-keys.ts";
 import type { PlaidKeys } from "./plaid-view.ts";
 
-// The Plaid adapter (spec 02, The Plaid adapter, What a Plaid sync calls, and Plaid errors). It
-// reads a Connection through /transactions/sync, /accounts/get, and /liabilities/get, and maps
+// The Plaid adapter (spec 02, The Plaid adapter, Linking a new bank, What a Plaid sync calls, and
+// Plaid errors). It links a bank through /link/token/create and /item/public_token/exchange,
+// imports one through /item/get, and removes one through /item/remove. It reads a Connection
+// through /transactions/sync, /accounts/get, and /liabilities/get, and maps
 // Plaid's fields into the app's records. It sorts every Plaid error into an error kind. Its errors
 // name only Plaid's error code and type, or the HTTP status: Plaid's own error also holds the
-// request, with the keys and the access token. No access token, Item ID, or account number goes
-// into an error, and the raw data it returns holds no account number.
+// request, with the keys and the access token. No token, Item ID, or account number goes into an
+// error, and the raw data it returns holds no account number. Each token is registered with the
+// logger before any call, so no log line can hold it.
 
 // The parts of Plaid's client that the adapter uses. Tests point it at a fake Plaid server.
 export type PlaidClient = Pick<
   PlaidApi,
-  "transactionsSync" | "accountsGet" | "liabilitiesGet" | "itemGet" | "transactionsRefresh"
+  | "transactionsSync"
+  | "accountsGet"
+  | "liabilitiesGet"
+  | "itemGet"
+  | "transactionsRefresh"
+  | "linkTokenCreate"
+  | "itemPublicTokenExchange"
+  | "itemRemove"
 >;
 export type PlaidClientFor = (keys: PlaidKeys) => PlaidClient;
 
@@ -60,13 +72,26 @@ const KIND_OF_CODE = new Map<string, BankErrorKind>([
 ]);
 
 // The /liabilities/get errors that mean Plaid has no Liabilities data for the Connection. The card
-// and loan details stay empty, and that is not an error.
+// and loan details stay empty, and that is not an error. INVALID_PRODUCT means the Plaid team has
+// no Liabilities access: as an error, it would fail every sync of a Connection with a card or loan.
 const NO_LIABILITIES_DATA = new Set([
   "NO_LIABILITY_ACCOUNTS",
   "PRODUCTS_NOT_SUPPORTED",
   "PRODUCT_NOT_READY",
   "ADDITIONAL_CONSENT_REQUIRED",
+  "INVALID_PRODUCT",
 ]);
+
+// The link token's settings (spec 02, Linking a new bank). Plaid fixes days_requested when the bank
+// is linked, and the app never asks to raise it. The token has no webhook (ADR 0004) and no
+// redirect URI, so OAuth banks open in a pop-up.
+const CLIENT_NAME = "Family Finance Tracker";
+const DAYS_REQUESTED = 730;
+
+// A sync asks for a second page from the cursor the first one returned, and that page has no
+// changes. Its Accounts come from the first page when it came this recently, so one sync calls
+// /accounts/get and /liabilities/get once.
+const ACCOUNTS_REUSE_MS = 5 * 60_000;
 
 // Plaid's error codes and types are upper-case names. Anything else is not written into a message.
 const PLAID_NAME = /^[A-Z0-9_]{1,80}$/;
@@ -229,6 +254,13 @@ export function plaidAdapter(options: {
     clientFor = (keys) => new PlaidApi(plaidConfiguration(keys)),
   } = options;
 
+  // The Plaid client, with the saved keys.
+  async function plaidClient(): Promise<PlaidClient> {
+    const keys = await readPlaidKeys(database, secrets);
+    if (keys === undefined) throw new BankDataError("temporary", "The Plaid keys are not set.");
+    return clientFor(keys);
+  }
+
   // The Plaid client and the Connection's access token. The token is registered with the logger
   // before any call, so no log line can hold it.
   async function open(connection: BankConnection) {
@@ -236,10 +268,15 @@ export function plaidAdapter(options: {
     if (accessToken === null)
       throw new BankDataError("gone", "The Connection has no Plaid access.");
     registerSecretValue(accessToken);
-    const keys = await readPlaidKeys(database, secrets);
-    if (keys === undefined) throw new BankDataError("temporary", "The Plaid keys are not set.");
-    return { client: clientFor(keys), access_token: accessToken };
+    return { client: await plaidClient(), access_token: accessToken };
   }
+
+  // The Accounts of each Connection's last sync page that had changes, with the cursor it handed
+  // out, by Connection ID.
+  const lastAccounts = new Map<
+    string,
+    { cursor: string; accounts: AccountSnapshot[]; at: number }
+  >();
 
   // One run of /transactions/sync pages, from `cursor` until has_more is false.
   async function pullRun(
@@ -322,12 +359,27 @@ export function plaidAdapter(options: {
     // The adapter pages through Plaid inside one call, and hands the core one page. The core
     // stores it, then asks again from its cursor, and ends when a page returns the cursor it was
     // asked with. A run with no changes returns the cursor it was asked with, so the sync ends even
-    // when Plaid hands out a new cursor with nothing new.
+    // when Plaid hands out a new cursor with nothing new. That last page reuses the Accounts of the
+    // page before it, so a sync calls /accounts/get and /liabilities/get once.
     async sync(connection, cursor): Promise<SyncResult> {
       const { client, access_token } = await open(connection);
       const run = await pullTransactions(client, access_token, cursor);
-      const snapshots = await accounts(client, access_token);
       const changes = run.added.length + run.modified.length + run.removed.length;
+      const last = lastAccounts.get(connection.id);
+      lastAccounts.delete(connection.id);
+      const reuse =
+        last !== undefined &&
+        changes === 0 &&
+        last.cursor === cursor &&
+        Date.now() - last.at < ACCOUNTS_REUSE_MS;
+      const snapshots = reuse ? last.accounts : await accounts(client, access_token);
+      if (changes > 0) {
+        lastAccounts.set(connection.id, {
+          cursor: run.nextCursor,
+          accounts: snapshots,
+          at: Date.now(),
+        });
+      }
       return {
         accounts: snapshots,
         added: run.added.map(txnRecord),
@@ -359,15 +411,72 @@ export function plaidAdapter(options: {
       await call(() => client.transactionsRefresh({ access_token }));
     },
 
-    // Linking, import, repair, and removal are not built yet.
+    // A link token for a new bank (spec 02, Linking a new bank). The only detail about the Household
+    // that Plaid gets is client_user_id, which Plaid requires: a random ID made for this token, so
+    // it names no Member.
     async startLink() {
-      throw new Error("Linking a bank through Plaid is not built yet.");
+      const client = await plaidClient();
+      const { link_token } = await call(() =>
+        client.linkTokenCreate({
+          client_name: CLIENT_NAME,
+          user: { client_user_id: crypto.randomUUID() },
+          products: [Products.Transactions],
+          required_if_supported_products: [Products.Liabilities],
+          transactions: { days_requested: DAYS_REQUESTED },
+          country_codes: [CountryCode.Us],
+          language: "en",
+        }),
+      );
+      registerSecretValue(link_token);
+      return { linkToken: link_token };
     },
-    async finishLink() {
-      throw new Error("Linking a bank through Plaid is not built yet.");
+
+    // Exchanges Link's public token for the access token. The bank is the one Link's metadata
+    // named, which the core already checked. The first sync brings the Accounts.
+    async finishLink(result) {
+      registerSecretValue(result.publicToken);
+      const client = await plaidClient();
+      const exchanged = await call(() =>
+        client.itemPublicTokenExchange({ public_token: result.publicToken }),
+      );
+      registerSecretValue(exchanged.access_token);
+      registerSecretValue(exchanged.item_id);
+      return {
+        bankId: result.bankId,
+        bankName: result.bankName,
+        credential: exchanged.access_token,
+        accounts: [],
+      };
     },
-    async remove() {
-      throw new Error("Removing a Plaid Connection is not built yet.");
+
+    // Adopts an access token made outside the app (spec 02, Import Plaid Connection). One /item/get
+    // checks the token and names the bank; /accounts/get lists its Accounts for the preview. A
+    // token Plaid refuses throws a sorted error that names no token.
+    async importExisting(credential) {
+      registerSecretValue(credential);
+      const client = await plaidClient();
+      const { item } = await call(() => client.itemGet({ access_token: credential }));
+      registerSecretValue(item.item_id);
+      const { accounts: found } = await call(() =>
+        client.accountsGet({ access_token: credential }),
+      );
+      const bankId = item.institution_id ?? null;
+      if (bankId === null) {
+        throw new BankDataError("gone", "Plaid named no bank for this access token.");
+      }
+      return {
+        bankId,
+        bankName: item.institution_name ?? bankId,
+        credential,
+        accounts: found.map((account) => accountSnapshot(account, null)),
+      };
+    },
+
+    // Ends the Item at Plaid (spec 02, Removing a Connection). Plaid's slot stays spent.
+    async remove(connection) {
+      const { client, access_token } = await open(connection);
+      await call(() => client.itemRemove({ access_token }));
+      lastAccounts.delete(connection.id);
     },
   };
 }

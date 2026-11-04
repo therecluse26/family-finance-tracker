@@ -22,8 +22,25 @@ export type BankConnection = {
 // What the browser needs to start linking a bank, such as a Plaid link token.
 export type LinkSession = { linkToken: string };
 
-// What the browser hands back when linking is done, such as a Plaid public token.
-export type LinkResult = { publicToken: string };
+// One Account the Member picked while linking, as the provider's link screen reports it.
+export type LinkedAccount = {
+  name: string;
+  // Such as "depository" or "credit", with a subtype such as "checking".
+  type: string;
+  subtype: string | null;
+  // The last 4 digits.
+  mask: string | null;
+};
+
+// What the browser hands back when linking is done: a one-use token, such as a Plaid public token,
+// and the bank and Accounts the Member picked. The core checks the bank and the Accounts for a
+// duplicate bank before the adapter exchanges the token.
+export type LinkResult = {
+  publicToken: string;
+  bankId: string;
+  bankName: string;
+  accounts: LinkedAccount[];
+};
 
 // A new Connection, before the app stores it.
 export type NewConnection = {
@@ -133,7 +150,8 @@ export interface BankDataAdapter {
   readonly actions: AdapterActions;
 
   startLink(): Promise<LinkSession>;
-  // Checks for a duplicate bank before the token exchange.
+  // Exchanges the token for the provider credential. The core checks for a duplicate bank before
+  // it calls this, so a blocked bank never reaches the exchange.
   finishLink(result: LinkResult): Promise<NewConnection>;
   importExisting?(credential: string): Promise<NewConnection>;
   // Plaid's update mode.

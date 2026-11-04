@@ -54,6 +54,8 @@ type BankServices = {
   secrets: Secrets;
   adapters: ReadonlyMap<Provider, BankDataAdapter>;
   timeZone: () => Promise<string | undefined>;
+  // Starts a Connection's sync job. Unset in the app, which starts the job itself.
+  startSync?: (connectionId: string) => Promise<void>;
 };
 
 let services: BankServices | undefined;
@@ -65,6 +67,8 @@ export function startBank(options: {
   adapters: readonly BankDataAdapter[];
   // The Household time zone, an IANA name such as America/New_York, or undefined until one is set.
   timeZone?: () => Promise<string | undefined>;
+  // Only tests give it, to see which sync jobs start without a job queue.
+  startSync?: (connectionId: string) => Promise<void>;
 }): { stop(): void } {
   if (services !== undefined) throw new Error("The bank module is already running.");
   const adapters = new Map(options.adapters.map((adapter) => [adapter.provider, adapter]));
@@ -117,8 +121,14 @@ export function syncConnection(
   now: () => Date = () => new Date(),
   options: SyncOptions = {},
 ): Promise<SyncReport> {
+  return oneAtATimeFor(connectionId, () => syncOnce(connectionId, now, options));
+}
+
+// Runs `work` once the Connection's running sync, or other work on it, ends. Removing a Connection
+// waits this way, so no sync stores a page after it.
+export function oneAtATimeFor<T>(connectionId: string, work: () => Promise<T>): Promise<T> {
   const before = syncing.get(connectionId) ?? Promise.resolve();
-  const run = before.catch(() => {}).then(() => syncOnce(connectionId, now, options));
+  const run = before.catch(() => {}).then(work);
   const settled = run.catch(() => {});
   syncing.set(connectionId, settled);
   void settled.then(() => {
@@ -126,6 +136,8 @@ export function syncConnection(
   });
   return run;
 }
+
+const NOTHING_SYNCED: SyncReport = { added: 0, changed: 0, removed: 0, changedTransactions: false };
 
 type LoadedConnection = {
   stored: StoredConnection;
@@ -168,6 +180,8 @@ async function syncOnce(
   options: SyncOptions,
 ): Promise<SyncReport> {
   const loaded = await loadConnection(connectionId);
+  // A removed Connection has no credential, and never syncs.
+  if (loaded.stored.removedAt !== null) return NOTHING_SYNCED;
   const startedAt = now();
   let pulled: { report: SyncReport; historyLoaded: boolean };
   try {
@@ -237,8 +251,13 @@ export async function runSyncJob(
   now: () => Date = () => new Date(),
   options: SyncOptions = {},
 ): Promise<SyncJobOutcome> {
+  // A job started before the Connection was removed finds it removed, or its history deleted, and
+  // does nothing.
+  if ((await readConnection(runningBank().database, connectionId)) === undefined) {
+    return "not polled";
+  }
   const { stored, adapter, connection, context } = await loadConnection(connectionId);
-  if (stored.health === "broken") return "not polled";
+  if (stored.health === "broken" || stored.removedAt !== null) return "not polled";
   if (stored.health === "needs a member") {
     const at = now();
     try {

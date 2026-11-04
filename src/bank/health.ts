@@ -95,7 +95,8 @@ export async function recordCheckPassed(
   await endConditions(connection.id);
 }
 
-async function endConditions(id: string): Promise<void> {
+// Ends every System notice condition about the Connection.
+export async function endConditions(id: string): Promise<void> {
   await endCondition(condition.notSyncing(id));
   await endCondition(condition.needsAMember(id));
   await endCondition(condition.broken(id));

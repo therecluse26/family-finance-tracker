@@ -107,10 +107,12 @@ export function bankViews(database: Database): BankViews {
         health: connection.health,
         historyLoaded: connection.historyLoaded,
         lastSyncedAt: connection.lastSyncedAt?.toISOString() ?? null,
-        nextSyncAt: polls(connection.health)
-          ? (connection.nextSyncAt?.toISOString() ?? null)
-          : null,
+        nextSyncAt:
+          polls(connection.health) && connection.removedAt === null
+            ? (connection.nextSyncAt?.toISOString() ?? null)
+            : null,
         actions: adapterActions(connection.provider),
+        removed: connection.removedAt !== null,
       }));
     },
   };

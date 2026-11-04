@@ -29,6 +29,8 @@ export type TestBank = {
   // How many times the app asked for a follow-up job outside a sync. No job runs: a test calls
   // runFollowUp itself.
   followUpsAsked(): number;
+  // The Connection of each sync job the bank module started, in order. No job runs.
+  syncsStarted: string[];
   close(): void;
 };
 
@@ -43,12 +45,16 @@ export async function newTestBank(
   const quiet = createLogger(() => {}, { throwOnSecretField: true });
   const secrets = await unlockSecrets(db.database, newMasterKey().masterKey, { logger: quiet });
   const fake = new FakeBankAdapter();
+  const syncsStarted: string[] = [];
   const others = options.adapters?.({ database: db.database, secrets }) ?? [];
   const bank = startBank({
     database: db.database,
     secrets,
     adapters: [fake, ...others],
     timeZone: async () => options.timeZone,
+    startSync: async (connectionId) => {
+      syncsStarted.push(connectionId);
+    },
   });
   const notify = startNotify({ database: db.database });
   let asked = 0;
@@ -71,6 +77,7 @@ export async function newTestBank(
         syncMinute: 7,
       }),
     followUpsAsked: () => asked,
+    syncsStarted,
     close() {
       followUp.stop();
       notify.stop();

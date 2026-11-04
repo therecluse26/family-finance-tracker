@@ -64,6 +64,7 @@ export async function catchUpSyncs(
   const { database } = runningBank();
   for (const connection of await listConnections(database)) {
     if (connection.health !== "healthy" && connection.health !== "retrying") continue;
+    if (connection.removedAt !== null) continue;
     const attempt = connection.lastSyncAttemptAt;
     if (attempt === null || now.getTime() - attempt.getTime() > CATCH_UP_AFTER_MS) {
       await saveSyncState(database, connection.id, { nextSyncAt: now });

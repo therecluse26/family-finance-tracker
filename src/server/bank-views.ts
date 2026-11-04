@@ -47,6 +47,9 @@ export type ConnectionView = {
   nextSyncAt: string | null;
   // The adapter's actions, so a screen hides the button for each missing one.
   actions: AdapterActions;
+  // A Member removed it: it has no credential and never syncs. Its Closed Accounts keep their
+  // history until a Member deletes it.
+  removed: boolean;
 };
 
 // Calendar dates are written YYYY-MM-DD.

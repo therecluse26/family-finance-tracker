@@ -1,7 +1,8 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD, TextField } from "../../components/Fields.tsx";
+import { Connections } from "./Connections.tsx";
 import { UnconnectedAccounts } from "./UnconnectedAccounts.tsx";
 
 // Settings, Banks: the Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10
@@ -136,7 +137,7 @@ export function Banks() {
   const [plaid, setPlaid] = useState<PlaidView | undefined>();
   const [error, setError] = useState<string | undefined>();
 
-  useEffect(() => {
+  const loadPlaid = useCallback(() => {
     api.plaid.settings
       .$get()
       .then(async (res) => {
@@ -146,6 +147,8 @@ export function Banks() {
       .catch(() => setError("The server did not answer."));
   }, []);
 
+  useEffect(loadPlaid, [loadPlaid]);
+
   return (
     <>
       <h2 className="text-xl font-semibold">Banks</h2>
@@ -154,6 +157,7 @@ export function Banks() {
         <>
           <PlaidKeysForm plaid={plaid} onSaved={setPlaid} />
           <ItemsUsedForm plaid={plaid} onSaved={setPlaid} />
+          <Connections plaid={plaid} onChanged={loadPlaid} />
         </>
       )}
       <UnconnectedAccounts />

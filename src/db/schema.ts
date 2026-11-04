@@ -377,6 +377,10 @@ export const connections = sqliteTable(
     retryingSince: moment("retrying_since"),
     failedSyncs: integer("failed_syncs").notNull().default(0),
     createdAt: moment("created_at").notNull(),
+    // When a Member removed the Connection (spec 02, Removing a Connection). A removed Connection
+    // has no credential, never syncs, and blocks no new link. Its Closed Accounts keep their
+    // history until a Member deletes it.
+    removedAt: moment("removed_at"),
   },
   (table) => [index("connections_bank_id").on(table.bankId)],
 );

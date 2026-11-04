@@ -274,5 +274,22 @@
       "has_more": false,
       "request_id": "req-sync-2"
     }
-  ]
+  ],
+  "itemGet": {
+    "item": {
+      "available_products": ["balance"],
+      "billed_products": ["liabilities", "transactions"],
+      "products": ["liabilities", "transactions"],
+      "consented_products": ["liabilities", "transactions"],
+      "consent_expiration_time": null,
+      "error": null,
+      "institution_id": "ins_fake",
+      "institution_name": "Fake Plaid Bank",
+      "update_type": "background",
+      "webhook": null
+    },
+    "status": { "transactions": null, "last_webhook": null },
+    "request_id": "req-item"
+  },
+  "itemRemove": { "request_id": "req-remove" }
 }

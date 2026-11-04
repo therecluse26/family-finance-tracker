@@ -1,6 +1,7 @@
 import { type Context, Hono } from "hono";
 import * as z from "zod";
 import { AI_PROVIDERS, baseUrlProblem, MAX_COST_CAP_CENTS, onGateway } from "../ai/ai-view.ts";
+import type { CoveringConnection, LinkRefusal, ProviderFailure } from "../bank/connect-view.ts";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { HAND_SET_TYPES } from "../money-movement/types.ts";
@@ -66,6 +67,12 @@ const plaidKeysBody = z.object({
   code: z.string().trim().min(1).max(64),
 });
 
+// A TOTP code or a backup code, asked again for a sensitive action (spec 09).
+const codeBody = z.object({ code: z.string().trim().min(1).max(64) });
+
+// Delete history's own confirmation.
+const deleteHistoryBody = z.object({ confirmed: z.literal(true) });
+
 // The Household facts (spec 05): the ZIP code, each person's age, people without a login
 // included, and rent or own. No one is asked their sex.
 const MAX_PEOPLE = 20;
@@ -112,6 +119,76 @@ const UNCONNECTED_REFUSED =
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
 
 const itemsUsedBody = z.object({ itemsUsed: z.number().int().min(0).max(PLAID_ITEM_LIMIT) });
+
+// Linking a new bank (spec 02, Linking a new bank). `confirmed` is the second confirmation at N of
+// 8 or more; `replaces` is the Broken Connection that Link again replaces.
+const linkOptionsBody = z.object({
+  confirmed: z.boolean().optional(),
+  replaces: z.string().trim().min(1).max(100).optional(),
+});
+
+// A Plaid public token as Link hands it out, such as public-production- and an ID.
+const PUBLIC_TOKEN = /^public-[a-z]+-[A-Za-z0-9-]{8,200}$/;
+
+// Link's public token, with the institution and the Accounts the Member picked from Link's
+// metadata, which the app checks for a duplicate bank before it exchanges the token.
+const linkResultBody = linkOptionsBody.extend({
+  publicToken: z.string().regex(PUBLIC_TOKEN),
+  bankId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
+  bankName: z.string().trim().min(1).max(200),
+  accounts: z
+    .array(
+      z.object({
+        name: z.string().trim().max(200),
+        type: z.string().trim().min(1).max(50),
+        subtype: z.string().trim().max(50).nullable(),
+        mask: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9]{1,8}$/)
+          .nullable(),
+      }),
+    )
+    .max(100),
+});
+
+// A Plaid access token pasted for Import Plaid Connection, such as access-production- and an ID.
+// The answer to it never holds it.
+const importBody = z.object({
+  accessToken: z
+    .string()
+    .trim()
+    .regex(/^access-[a-z]+-[A-Za-z0-9-]{8,200}$/),
+});
+
+// The answer to a duplicate bank: it names the Connection that covers it.
+function duplicateBank(c: Context<ServerEnv>, coveredBy: CoveringConnection) {
+  return c.json(
+    {
+      coveredBy,
+      error: `This bank is already connected as ${coveredBy.bankName}. A bank has one Connection, so the app did not link it again.`,
+    },
+    409,
+  );
+}
+
+// The answer when the app refuses to link or import a bank, or Plaid refuses. Nothing was saved.
+function connectRefusal(c: Context<ServerEnv>, refused: LinkRefusal | ProviderFailure) {
+  switch (refused.outcome) {
+    case "item limit":
+      return c.json(
+        {
+          itemsUsed: refused.itemsUsed,
+          error: `At least ${refused.itemsUsed} of Plaid's ${PLAID_ITEM_LIMIT} lifetime Items are used, so the app cannot link a new bank.`,
+        },
+        409,
+      );
+    case "not broken":
+      return c.json({ error: "Link again works only for a Broken Connection." }, 400);
+    case "provider error":
+      return c.json({ error: `${refused.message} Nothing was saved.` }, 502);
+  }
+}
 
 // An AI API key, gateway token, or model ID: visible ASCII with no spaces, so it fits in a header
 // and a JSON body as written.
@@ -250,6 +327,39 @@ export const api = new Hono<ServerEnv>()
   // only.
   .get("/totals", async (c) => c.json({ months: await c.var.moneyMovement.totals() }))
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
+  // Removing a Connection asks for a TOTP code or a backup code again (spec 09, Sensitive
+  // actions). The Accounts become Closed, and their history stays.
+  .post("/connections/:id/remove", async (c) => {
+    const body = codeBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    const fresh = await c.var.checkFreshCode(body.data.code);
+    if (fresh === "too many tries") {
+      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    }
+    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+    const removed = await c.var.removing.remove(c.req.param("id"));
+    if (removed.outcome === "not found") return c.json({ error: "Not found" }, 404);
+    if (removed.outcome === "provider error") {
+      return c.json(
+        {
+          error: `The bank's provider did not remove the Connection: ${removed.message} Nothing changed. Try again.`,
+        },
+        502,
+      );
+    }
+    return c.json({ removed: true }, 200);
+  })
+  // Delete history: a separate action, with its own confirmation, for a removed Connection.
+  .post("/connections/:id/delete-history", async (c) => {
+    const body = deleteHistoryBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Confirm that the history goes for good." }, 400);
+    const deleted = await c.var.removing.deleteHistory(c.req.param("id"));
+    if (deleted.outcome === "not found") return c.json({ error: "Not found" }, 404);
+    if (deleted.outcome === "not removed") {
+      return c.json({ error: "Remove the Connection before you delete its history." }, 409);
+    }
+    return c.json({ accounts: deleted.accounts, transactions: deleted.transactions }, 200);
+  })
   // Unconnected accounts: any Member adds and edits one at any time (spec 02).
   .get("/unconnected-accounts", async (c) =>
     c.json({ accounts: await c.var.bank.unconnectedAccounts() }),
@@ -304,6 +414,61 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: `The app itself has used ${appItems}, so N cannot be lower.` }, 400);
     }
     return c.json({ plaid });
+  })
+  // A link token for Plaid Link, after the Item count's gates (spec 02, The 10 lifetime Items).
+  .post("/plaid/link-token", async (c) => {
+    const body = linkOptionsBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "That request is not one the app makes." }, 400);
+    const started = await c.var.plaidConnecting.startLink(body.data);
+    if (started.outcome === "ready") {
+      c.header("Cache-Control", "no-store");
+      return c.json({ linkToken: started.linkToken, itemsUsed: started.itemsUsed }, 200);
+    }
+    if (started.outcome === "confirm") {
+      return c.json(
+        {
+          confirm: true,
+          itemsUsed: started.itemsUsed,
+          error: `At least ${started.itemsUsed} of ${PLAID_ITEM_LIMIT} Plaid Items are used. Confirm a second time to link a new bank.`,
+        },
+        409,
+      );
+    }
+    return connectRefusal(c, started);
+  })
+  // Link's onSuccess: a duplicate bank is blocked before the token exchange.
+  .post("/plaid/link", async (c) => {
+    const body = linkResultBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "That request is not one the app makes." }, 400);
+    const { confirmed, replaces, ...result } = body.data;
+    const linked = await c.var.plaidConnecting.finishLink(result, { confirmed, replaces });
+    if (linked.outcome === "linked") {
+      return c.json({ connection: { id: linked.connectionId, bankName: linked.bankName } }, 200);
+    }
+    if (linked.outcome === "duplicate") return duplicateBank(c, linked.coveredBy);
+    return connectRefusal(c, linked);
+  })
+  // Import Plaid Connection (spec 02): the bank and its Accounts, before anything is saved.
+  .post("/plaid/import/preview", async (c) => {
+    const body = importBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "That is not a Plaid access token." }, 400);
+    const preview = await c.var.plaidConnecting.previewImport(body.data.accessToken);
+    if (preview.outcome === "preview") {
+      return c.json({ bankName: preview.bankName, accounts: preview.accounts }, 200);
+    }
+    if (preview.outcome === "duplicate") return duplicateBank(c, preview.coveredBy);
+    return connectRefusal(c, preview);
+  })
+  // Saves the imported Connection, which syncs from an empty cursor. The answer has no token.
+  .post("/plaid/import", async (c) => {
+    const body = importBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "That is not a Plaid access token." }, 400);
+    const saved = await c.var.plaidConnecting.importConnection(body.data.accessToken);
+    if (saved.outcome === "imported") {
+      return c.json({ connection: { id: saved.connectionId, bankName: saved.bankName } }, 200);
+    }
+    if (saved.outcome === "duplicate") return duplicateBank(c, saved.coveredBy);
+    return connectRefusal(c, saved);
   })
   // The wizard's step 3 (spec 12): the Master key on each visit, until the paste-back succeeds.
   .get("/setup/master-key", async (c) => {

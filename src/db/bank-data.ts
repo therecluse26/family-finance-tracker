@@ -1,4 +1,17 @@
-import { and, asc, desc, eq, gte, isNotNull, isNull, lte, ne, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  or,
+  type SQL,
+} from "drizzle-orm";
 import type {
   AccountSnapshot,
   Provider,
@@ -9,8 +22,18 @@ import type {
 import { calendarDateIn } from "../format.ts";
 import { saveDailyBalance } from "./balances.ts";
 import type { Database, Queries } from "./client.ts";
+import { markTransactionsUnhandled } from "./follow-up.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
-import { connections, followUpMarks, householdAccounts, transactions } from "./schema.ts";
+import {
+  connections,
+  dailyBalances,
+  followUpMarks,
+  householdAccounts,
+  reviewItems,
+  transactions,
+  transferLinks,
+  typedBalances,
+} from "./schema.ts";
 
 // Connections, Accounts, and Transactions in app.db (spec 02). The bank module decides; these
 // functions store and read.
@@ -28,14 +51,18 @@ export async function addConnection(
     origin: "linked" | "imported";
     // The minute past the hour of each scheduled sync, 0 to 59. Picked at random when not given.
     syncMinute?: number;
+    // The provider credential's ciphertext, sealed for the new row's ID, which it is bound to.
+    sealCredential?: (id: string) => string;
   },
   at = new Date(),
 ): Promise<string> {
   const id = crypto.randomUUID();
+  const { sealCredential, ...fields } = connection;
+  const credential = sealCredential?.(id) ?? null;
   // A random minute spreads the Connections' syncs over the hour (spec 02, Sync schedule).
   const syncMinute = connection.syncMinute ?? Math.floor(Math.random() * 60);
   await database.transaction(async (tx) => {
-    await tx.insert(connections).values({ id, ...connection, syncMinute, createdAt: at });
+    await tx.insert(connections).values({ id, ...fields, credential, syncMinute, createdAt: at });
     // N counts every Plaid Connection the app created or imported (spec 02, The 10 lifetime Items).
     if (connection.provider === "plaid") await countPlaidItem(tx);
   });
@@ -66,8 +93,8 @@ export async function saveSyncState(
   await database.update(connections).set(state).where(eq(connections.id, id));
 }
 
-// Each Connection whose sync job is due at `now`: every one that is not Broken and has no next
-// sync time, or one that has come.
+// Each Connection whose sync job is due at `now`: every one that is not Broken or removed and has
+// no next sync time, or one that has come.
 export async function listDueConnections(
   database: Database,
   now: Date,
@@ -78,6 +105,7 @@ export async function listDueConnections(
     .where(
       and(
         ne(connections.health, "broken"),
+        isNull(connections.removedAt),
         or(isNull(connections.nextSyncAt), lte(connections.nextSyncAt, now)),
       ),
     )
@@ -543,6 +571,105 @@ export async function reopenAccount(database: Database, id: string): Promise<boo
     .set({ closedAt: null, closedReason: null })
     .where(eq(householdAccounts.id, id));
   return true;
+}
+
+// Removes a Connection (spec 02, Removing a Connection), in one transaction: it deletes the
+// credential, stops the syncs, and closes the open Accounts with the reason "connection removed".
+// Their history stays. N does not fall: it counts each Plaid Connection once, when it was added.
+// Returns false when no Connection has the ID, or it was already removed.
+export async function markConnectionRemoved(
+  database: Database,
+  id: string,
+  at = new Date(),
+): Promise<boolean> {
+  return database.transaction(async (tx) => {
+    const removed = await tx
+      .update(connections)
+      .set({ credential: null, removedAt: at, nextSyncAt: null })
+      .where(and(eq(connections.id, id), isNull(connections.removedAt)))
+      .returning({ id: connections.id });
+    if (removed.length === 0) return false;
+    await tx
+      .update(householdAccounts)
+      .set({ closedAt: at, closedReason: "connection removed" })
+      .where(and(eq(householdAccounts.connectionId, id), isNull(householdAccounts.closedAt)));
+    return true;
+  });
+}
+
+// What Delete history removed.
+export type DeletedHistory = { accounts: number; transactions: number };
+
+// Deletes a removed Connection's history (spec 02, Removing a Connection), in one transaction: its
+// Accounts and their Transactions. The daily balances go first, since their foreign key has no
+// cascade. The links and decisions on the Transactions go with them by cascade. The other side of
+// each undone Transfer link is marked for the follow-up job, so matching runs on it again. Each
+// open Review list item about the deleted rows closes. The Connection's row goes too, unless an
+// Account carried over to a newer Connection still holds some of its old Transactions. Returns
+// undefined when no removed Connection has the ID.
+export async function deleteRemovedConnection(
+  database: Database,
+  id: string,
+  at = new Date(),
+): Promise<DeletedHistory | undefined> {
+  return database.transaction(async (tx) => {
+    const [connection] = await tx
+      .select({ removedAt: connections.removedAt })
+      .from(connections)
+      .where(eq(connections.id, id));
+    if (connection === undefined || connection.removedAt === null) return undefined;
+    const accountIds = (
+      await tx
+        .select({ id: householdAccounts.id })
+        .from(householdAccounts)
+        .where(eq(householdAccounts.connectionId, id))
+    ).map((row) => row.id);
+    const onAccounts = inArray(transactions.accountId, accountIds);
+    const transactionIds = new Set(
+      (await tx.select({ id: transactions.id }).from(transactions).where(onAccounts)).map(
+        (row) => row.id,
+      ),
+    );
+    const deleted = tx.select({ id: transactions.id }).from(transactions).where(onAccounts);
+    const partners = (
+      await tx
+        .select({ out: transferLinks.outTransactionId, in: transferLinks.inTransactionId })
+        .from(transferLinks)
+        .where(
+          or(
+            inArray(transferLinks.outTransactionId, deleted),
+            inArray(transferLinks.inTransactionId, deleted),
+          ),
+        )
+    )
+      .flatMap((link) => [link.out, link.in])
+      .filter((transactionId) => !transactionIds.has(transactionId));
+    await markTransactionsUnhandled(tx, partners);
+    const subjects = new Set([...accountIds, ...transactionIds]);
+    for (const item of await tx
+      .select({ id: reviewItems.id, subjectIds: reviewItems.subjectIds })
+      .from(reviewItems)
+      .where(isNull(reviewItems.closedAt))) {
+      if (!item.subjectIds.some((subject) => subjects.has(subject))) continue;
+      await tx
+        .update(reviewItems)
+        .set({ closedAt: at, closedReason: "history deleted" })
+        .where(eq(reviewItems.id, item.id));
+    }
+    if (accountIds.length > 0) {
+      await tx.delete(dailyBalances).where(inArray(dailyBalances.accountId, accountIds));
+      await tx.delete(typedBalances).where(inArray(typedBalances.accountId, accountIds));
+    }
+    await tx.delete(transactions).where(onAccounts);
+    await tx.delete(householdAccounts).where(eq(householdAccounts.connectionId, id));
+    const [carried] = await tx
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(eq(transactions.connectionId, id))
+      .limit(1);
+    if (carried === undefined) await tx.delete(connections).where(eq(connections.id, id));
+    return { accounts: accountIds.length, transactions: transactionIds.size };
+  });
 }
 
 export async function listConnections(database: Database): Promise<StoredConnection[]> {

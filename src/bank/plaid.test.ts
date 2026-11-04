@@ -1,10 +1,7 @@
-import { readFileSync } from "node:fs";
-import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { PlaidApi } from "plaid";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addConnection, PLAID_SETTINGS_ROW, storePlaidKeys } from "../db/index.ts";
 import { holdsSecretValue } from "../log.ts";
+import { FakePlaid, plaidFailure, RECORDED } from "./fake-plaid.ts";
 import {
   type BankConnection,
   type BankDataAdapter,
@@ -13,84 +10,11 @@ import {
   plaidAdapter,
   syncConnection,
 } from "./index.ts";
-import { plaidConfiguration } from "./plaid-keys.ts";
 import { newPlaidKeys, newTestBank, type TestBank } from "./testing.ts";
 
 // The Plaid adapter (spec 02, What a Plaid sync calls and Plaid errors), on Plaid's real client
 // pointed at a fake Plaid server on 127.0.0.1. The fake answers with responses written by hand in
 // Plaid's shape. No test calls Plaid. Every token and key is made when the test runs.
-
-const RECORDED = JSON.parse(
-  readFileSync(new URL("./plaid-recorded.json", import.meta.url), "utf8"),
-) as {
-  accountsGet: { accounts: Record<string, unknown>[] };
-  liabilitiesGet: unknown;
-  transactionsSync: Record<string, unknown>[];
-};
-
-// A fake Plaid answer: a JSON body with a status, a redirect, or a dropped connection.
-type Answer = { status?: number; body: unknown } | { redirect: string } | "hang up";
-
-type PlaidRequest = { path: string; headers: IncomingHttpHeaders; body: Record<string, unknown> };
-
-// A fake Plaid server. Each path answers from its queue in order; its last answer repeats.
-class FakePlaid {
-  readonly requests: PlaidRequest[] = [];
-  private readonly answers = new Map<string, Answer[]>();
-  private readonly server: Server = createServer((req, res) => {
-    let text = "";
-    req.on("data", (chunk) => {
-      text += chunk;
-    });
-    req.on("end", () => {
-      const path = req.url ?? "";
-      this.requests.push({ path, headers: req.headers, body: JSON.parse(text || "{}") });
-      const queue = this.answers.get(path) ?? [];
-      const answer = (queue.length > 1 ? queue.shift() : queue[0]) ?? {
-        status: 400,
-        body: plaidFailure("INVALID_REQUEST", "UNKNOWN_FIELDS"),
-      };
-      if (answer === "hang up") {
-        req.socket.destroy();
-      } else if ("redirect" in answer) {
-        res.writeHead(307, { location: answer.redirect });
-        res.end();
-      } else {
-        res.writeHead(answer.status ?? 200, { "content-type": "application/json" });
-        res.end(JSON.stringify(answer.body));
-      }
-    });
-  });
-
-  answer(path: string, ...answers: Answer[]): void {
-    this.answers.set(path, answers);
-  }
-
-  // The requests to one path.
-  to(path: string): PlaidRequest[] {
-    return this.requests.filter((request) => request.path === path);
-  }
-
-  async start(): Promise<string> {
-    await new Promise<void>((resolve) => this.server.listen(0, "127.0.0.1", resolve));
-    return `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
-  }
-
-  close(): Promise<unknown> {
-    return new Promise((resolve) => this.server.close(resolve));
-  }
-}
-
-// Plaid's error body.
-function plaidFailure(type: string, code: string, message = "Plaid's message.") {
-  return {
-    error_type: type,
-    error_code: code,
-    error_message: message,
-    display_message: null,
-    request_id: "req-failed",
-  };
-}
 
 // A /transactions/sync page.
 function syncPage(fields: {
@@ -136,19 +60,10 @@ describe("the Plaid adapter", () => {
 
   beforeEach(async () => {
     plaid = new FakePlaid();
-    const url = await plaid.start();
+    await plaid.start();
     bank = await newTestBank({
       adapters: ({ database, secrets }) => {
-        adapter = plaidAdapter({
-          database,
-          secrets,
-          clientFor: (given) => {
-            const configuration = plaidConfiguration(given);
-            // Only here: the fake Plaid server in place of Plaid, so the test stays offline.
-            configuration.basePath = url;
-            return new PlaidApi(configuration);
-          },
-        });
+        adapter = plaidAdapter({ database, secrets, clientFor: plaid.clientFor });
         return [adapter];
       },
     });
@@ -387,6 +302,8 @@ describe("the Plaid adapter", () => {
     ["PRODUCTS_NOT_SUPPORTED", "ITEM_ERROR"],
     ["PRODUCT_NOT_READY", "ITEM_ERROR"],
     ["ADDITIONAL_CONSENT_REQUIRED", "ITEM_ERROR"],
+    // The Plaid team has no Liabilities access.
+    ["INVALID_PRODUCT", "INVALID_INPUT"],
   ])("leaves the details empty when Plaid has no Liabilities data (%s)", async (code, type) => {
     plaid.answer(SYNC, syncPage({ next_cursor: "cursor-1" }));
     plaid.answer(LIABILITIES, { status: 400, body: plaidFailure(type, code) });
@@ -515,6 +432,38 @@ describe("the Plaid adapter", () => {
         "c2",
       ]);
       expect(await rows("SELECT count(*) AS n FROM transactions")).toEqual([{ n: 2 }]);
+    });
+
+    // The recorded run, then a page with no changes for the sync's second ask.
+    const recordedThenNothing = () =>
+      plaid.answer(
+        SYNC,
+        ...RECORDED.transactionsSync.map((body) => ({ body })),
+        syncPage({ next_cursor: "cursor-3" }),
+      );
+
+    it("calls /accounts/get and /liabilities/get once per sync with changes", async () => {
+      recordedThenNothing();
+
+      await syncConnection(connectionId);
+
+      expect(plaid.to(SYNC).map((page) => page.body.cursor)).toEqual([
+        undefined,
+        "cursor-1",
+        "cursor-2",
+      ]);
+      expect(plaid.to(ACCOUNTS)).toHaveLength(1);
+      expect(plaid.to(LIABILITIES)).toHaveLength(1);
+      expect(await rows("SELECT count(*) AS n FROM daily_balances")).toEqual([{ n: 4 }]);
+    });
+
+    it("fetches the Accounts again for the next sync", async () => {
+      recordedThenNothing();
+      await syncConnection(connectionId);
+
+      await syncConnection(connectionId);
+
+      expect(plaid.to(ACCOUNTS)).toHaveLength(2);
     });
 
     it("stores the card's statement issue date with its details", async () => {
