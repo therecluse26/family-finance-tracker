@@ -141,13 +141,18 @@ function holdsSecret(argument: JobArgument): boolean {
   );
 }
 
+// When a job starts: not before `at`, when given. maxAttempts caps how often Sidequest runs it in
+// all, retries included, for a job whose work may cost money, such as an AI call. Without it
+// Sidequest's default applies.
+export type StartOptions = { at?: Date; maxAttempts?: number };
+
 // Starts a job. Sidequest runs it when no other job runs, and not before `at` when given.
 // It refuses an argument that holds a registered secret value, since jobs.db stores arguments as
 // plain text.
 export async function startJob<Args extends JobArgument[]>(
   job: JobClass<Args>,
   args: Args,
-  options: { at?: Date } = {},
+  options: StartOptions = {},
 ): Promise<void> {
   if (running === undefined) throw new Error("The jobs module is not running.");
   refusePerformOverride(job);
@@ -159,6 +164,12 @@ export async function startJob<Args extends JobArgument[]>(
   }
   const builder = Sidequest.build(job);
   if (options.at !== undefined) builder.availableAt(options.at);
+  if (options.maxAttempts !== undefined) {
+    if (!Number.isInteger(options.maxAttempts) || options.maxAttempts < 1) {
+      throw new Error(`${job.name} needs a whole number of attempts, 1 or more.`);
+    }
+    builder.maxAttempts(options.maxAttempts);
+  }
   await builder.enqueue(...args);
 }
 
@@ -166,6 +177,19 @@ export async function startJob<Args extends JobArgument[]>(
 export async function countWaitingJobs(job: JobClass): Promise<number> {
   if (running === undefined) throw new Error("The jobs module is not running.");
   return (await Sidequest.job.list({ jobClass: job.name, state: "waiting" })).length;
+}
+
+// Each job of this class in jobs.db: its state, such as "waiting" or "failed", and its attempts so
+// far out of its most.
+export async function listJobAttempts(
+  job: JobClass,
+): Promise<{ state: string; attempt: number; maxAttempts: number }[]> {
+  if (running === undefined) throw new Error("The jobs module is not running.");
+  return (await Sidequest.job.list({ jobClass: job.name })).map((data) => ({
+    state: data.state,
+    attempt: data.attempt,
+    maxAttempts: data.max_attempts,
+  }));
 }
 
 // startJob calls that skip a job already waiting run one at a time, so two calls at once start one
@@ -177,7 +201,7 @@ let waitingCheck: Promise<unknown> = Promise.resolve();
 export function startJobUnlessWaiting<Args extends JobArgument[]>(
   job: JobClass<Args>,
   args: Args,
-  options: { at?: Date } = {},
+  options: StartOptions = {},
 ): Promise<boolean> {
   const run = waitingCheck.then(async () => {
     if ((await countWaitingJobs(job)) > 0) return false;

@@ -16,7 +16,9 @@ import { startBank } from "./sync.ts";
 
 export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "../jobs/sidequest.ts";
+export { FirstRunJob } from "./first-run.ts";
 export { SyncConnectionJob, SyncScheduleJob } from "./job.ts";
+export { BankAddedLaterJob } from "./later-hooks.ts";
 
 export const TEST_BANK_JOB_LIST = import.meta.url;
 

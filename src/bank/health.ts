@@ -153,7 +153,8 @@ async function recordTemporaryError(
 }
 
 // Needs a Member: polling stops, and a check runs once a day. Gone: the Connection is Broken, and
-// polling stops. Either way every Member gets one System notice, with a Repair button.
+// polling stops. Either way every Member gets one System notice, with a Repair button. A Connection
+// whose history has not loaded stops holding back AI for good (spec 02, First history load).
 async function stopPolling(
   context: SyncContext,
   connection: StoredConnection,
@@ -168,6 +169,9 @@ async function stopPolling(
     nextSyncAt: broken ? null : new Date(at.getTime() + CHECK_GAP_MS),
     retryingSince: null,
     failedSyncs: 0,
+    ...(connection.historyLoaded || connection.historyWaitReleasedAt !== null
+      ? {}
+      : { historyWaitReleasedAt: at }),
   });
   // A Connection that needs a Member is not merely late, and one that is Broken needs no daily
   // check: the newer notice replaces the older one.

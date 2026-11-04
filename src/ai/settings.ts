@@ -1,9 +1,9 @@
 import { APICallError, generateText, type LanguageModel, RetryError } from "ai";
+import { aiMayRun } from "../bank/index.ts";
 import {
   AI_SETTINGS_ROW,
   type AiUseName,
   type Database,
-  listConnections,
   readAiSettings,
   readAiSettingsVersion,
   readMemberPrice,
@@ -57,18 +57,18 @@ const CALL_TIMEOUT_MS = 120_000;
 
 const TIERS = ["quick", "writer"] as const;
 
-// What stops AI besides the key. T20 (#46) brings the gate on loaded history.
+// What stops AI besides the key.
 export type AiGates = {
+  // False while the first history load holds back AI (spec 08, When AI does not run).
   historyLoaded(): Promise<boolean>;
   // The date background AI starts again, YYYY-MM-DD, while the month's cost is at the AI cost cap.
   costCapPausedUntil(): Promise<string | undefined>;
 };
 
-// Until T20's gate: AI waits while any Connection's history is loading.
+// AI waits until every Connection's history has loaded, through the bank module's gate.
 export function defaultGates(database: Database, cost: AiCost): AiGates {
   return {
-    historyLoaded: async () =>
-      (await listConnections(database)).every((connection) => connection.historyLoaded),
+    historyLoaded: () => aiMayRun(database),
     costCapPausedUntil: () => cost.pausedUntil(),
   };
 }

@@ -376,6 +376,18 @@ export const connections = sqliteTable(
     // (spec 02, Back-off).
     retryingSince: moment("retrying_since"),
     failedSyncs: integer("failed_syncs").notNull().default(0),
+    // When Sync now last asked the provider to Refresh, so it asks at most once an hour (spec 02,
+    // Sync now).
+    lastRefreshAt: moment("last_refresh_at"),
+    // When the Connection became Needs a Member or Broken before its history loaded. From then on
+    // it no longer holds back AI, even once repaired (spec 02, First history load).
+    historyWaitReleasedAt: moment("history_wait_released_at"),
+    // Set when the history of a bank added later has loaded, and cleared once the bank-added-later
+    // job has run its hooks (spec 02, A bank added later). It is the time that job last started.
+    laterHooksStartedAt: moment("later_hooks_started_at"),
+    // How often that job was started again after it was lost or used up its retries. At the cap it
+    // stops, until a Member presses Retry.
+    laterHooksRestarts: integer("later_hooks_restarts").notNull().default(0),
     createdAt: moment("created_at").notNull(),
     // When a Member removed the Connection (spec 02, Removing a Connection). A removed Connection
     // has no credential, never syncs, and blocks no new link. Its Closed Accounts keep their
@@ -387,6 +399,27 @@ export const connections = sqliteTable(
     syncHeld: integer("sync_held", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [index("connections_bank_id").on(table.bankId)],
+);
+
+// The wait for the first history load (spec 02, First history load). It has at most one row,
+// whose ID is 1. With no row, the wait has not ended.
+export const historyWait = sqliteTable(
+  "history_wait",
+  {
+    id: integer("id").primaryKey(),
+    // When every Connection's history had loaded, or stopped holding back AI. A Connection made
+    // after this never holds back AI.
+    endedAt: moment("ended_at"),
+    // When the First run job last started. A First run job lost to a stop, or one that used up its
+    // retries, starts again an hour later, at most twice.
+    firstRunStartedAt: moment("first_run_started_at"),
+    // How often the First run job was started again. At the cap it stops, until a Member presses
+    // Retry.
+    firstRunRestarts: integer("first_run_restarts").notNull().default(0),
+    // When the First run job finished its steps and sent "Your history is ready".
+    firstRunDoneAt: moment("first_run_done_at"),
+  },
+  (table) => [check("history_wait_one_row", sql`${table.id} = 1`)],
 );
 
 // The Household's Accounts (spec 02, Account fields). Better Auth's credential table already has
@@ -498,6 +531,9 @@ export const transactions = sqliteTable(
       enum: ["posted", "removed by provider", "replaced by re-link"],
     }),
     hiddenAt: moment("hidden_at"),
+    // The "history load" mark: the Transaction arrived while its Connection's history loaded, for
+    // a bank added later too. An Anomaly it fires is "found in history" (spec 06, When checks run).
+    historyLoad: integer("history_load", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [
     uniqueIndex("transactions_connection_provider_id").on(

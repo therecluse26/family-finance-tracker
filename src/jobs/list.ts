@@ -6,7 +6,7 @@ import { ProvisionalResultsJob } from "../money-movement/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
 import type { ScheduledTask } from "./scheduler.ts";
 
-export { SyncConnectionJob } from "../bank/index.ts";
+export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "./sidequest.ts";
 export { ProvisionalResultsJob, SyncScheduleJob };

@@ -1,13 +1,15 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
+import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
+import type { SyncNowView } from "../../../server/bank-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD, TextField } from "../../components/Fields.tsx";
 import { Connections } from "./Connections.tsx";
 import { UnconnectedAccounts } from "./UnconnectedAccounts.tsx";
 
-// Settings, Banks: the Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10
-// lifetime Items), and the Unconnected accounts. The app never shows the secret again, only that it
-// is set. Connections come with their own tickets.
+// Settings, Banks: Sync now (spec 02, Sync now), the Plaid keys and the count of Plaid Items
+// (spec 02, Plaid keys and The 10 lifetime Items), and the Unconnected accounts. The app never
+// shows the secret again, only that it is set. Connections come with their own tickets.
 
 const CODE_LABEL = "A code from your authenticator app, or a backup code";
 
@@ -133,6 +135,68 @@ export function ItemsUsedForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
   );
 }
 
+// What Sync now did with one Connection. Times show in this browser's time zone.
+export function syncNowLine(result: SyncNowView, now = new Date()): string {
+  if (result.outcome === "syncing") {
+    return result.refreshed
+      ? `${result.bankName}: syncing now, and again in 5 minutes for the bank's fresh data.`
+      : `${result.bankName}: syncing now.`;
+  }
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const at = new Date(result.canSyncAt);
+  const day = calendarDateIn(at, zone);
+  const today = calendarDateIn(now, zone);
+  const time = timeLabel(at, zone);
+  const when = day === today ? `at ${time}` : `on ${dateLabel(day, today)} at ${time}`;
+  return `${result.bankName} synced a short while ago. It can sync again ${when}.`;
+}
+
+export function SyncNowResults(props: { results: SyncNowView[] }) {
+  if (props.results.length === 0) return <p className="mt-3">No bank is ready to sync.</p>;
+  return (
+    <ul className="mt-3">
+      {props.results.map((result) => (
+        <li key={result.connectionId}>{syncNowLine(result)}</li>
+      ))}
+    </ul>
+  );
+}
+
+// Any Member may press Sync now. It syncs every Healthy or Retrying Connection.
+export function SyncNow() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [results, setResults] = useState<SyncNowView[] | undefined>();
+
+  async function press() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const res = await api["sync-now"].$post();
+      if (!res.ok) return setError(await refusal(res));
+      setResults(((await res.json()) as { connections: SyncNowView[] }).connections);
+    } catch {
+      setError("The server did not answer.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mt-4">
+      <h3 className="font-semibold">Sync now</h3>
+      <p className="mt-2 text-gray-600">
+        Each bank syncs by itself every 6 hours. Sync now syncs every working bank at once.
+      </p>
+      <button className={BUTTON} type="button" disabled={busy} onClick={press}>
+        Sync now
+      </button>
+      <ErrorLine error={error} />
+      {results === undefined ? null : <SyncNowResults results={results} />}
+    </section>
+  );
+}
+
 export function Banks() {
   const [plaid, setPlaid] = useState<PlaidView | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -152,6 +216,7 @@ export function Banks() {
   return (
     <>
       <h2 className="text-xl font-semibold">Banks</h2>
+      <SyncNow />
       <ErrorLine error={error} />
       {plaid === undefined ? null : (
         <>

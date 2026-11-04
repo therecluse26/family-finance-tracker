@@ -5,10 +5,21 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
-import { addConnection, markSetupStep, saveSyncState } from "../db/index.ts";
+import { TEST_BANK_JOB_LIST } from "../bank/testing.ts";
+import { addConnection, markSetupStep, readHistoryWait, saveSyncState } from "../db/index.ts";
+import { startJobs } from "../jobs/index.ts";
+import { waitFor } from "../jobs/testing.ts";
 import { createLogger } from "../log.ts";
+import { startNotify } from "../notify/index.ts";
 import { createApp } from "./app.ts";
-import type { AccountView, BalancesView, ConnectionView, TransactionView } from "./bank-views.ts";
+import type {
+  AccountView,
+  BalancesView,
+  ConnectionView,
+  HistoryStatusView,
+  SyncNowView,
+  TransactionView,
+} from "./bank-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
@@ -117,6 +128,7 @@ describe("the bank routes", () => {
       "/api/accounts",
       "/api/transactions",
       "/api/connections",
+      "/api/history-status",
       `/api/accounts/${checkingId}/balances`,
     ]) {
       const res = await tab.get(path);
@@ -366,6 +378,43 @@ describe("the bank routes", () => {
     expect(Object.keys(body.connections[0] ?? {})).not.toContain("credential");
   });
 
+  it("returns the history load's progress for each Connection still loading", async () => {
+    const loading = await addConnection(test.database, {
+      provider: "fake",
+      bankId: "fake-second-bank",
+      bankName: "Second Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
+    const savings = fakeAccount({ id: "acc-savings" });
+    fake.addPages("fake-second-bank", {
+      accounts: [savings],
+      added: [
+        fakeTxn({ id: "s1", accountId: savings.id, amount: 1_000, postedDate: "2025-07-01" }),
+        fakeTxn({ id: "s2", accountId: savings.id, amount: 2_000, postedDate: "2025-08-01" }),
+      ],
+      historyLoaded: false,
+    });
+    await syncConnection(loading);
+
+    const res = await (await signedIn()).get("/api/history-status");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as HistoryStatusView).toEqual({
+      waitEnded: false,
+      aiMayRun: false,
+      loading: [
+        {
+          connectionId: loading,
+          bankName: "Second Fake Bank",
+          transactions: 2,
+          oldestDate: "2025-07-01",
+          holdsBackAi: true,
+        },
+      ],
+    });
+  });
+
   it("gives no next sync time for a Connection that does not poll", async () => {
     const nextSyncAt = new Date("2026-10-06T15:00:00.000Z");
     const tab = await signedIn();
@@ -384,5 +433,141 @@ describe("the bank routes", () => {
         }),
       ]);
     }
+  });
+});
+
+describe("Sync now", () => {
+  let test: TestAuth;
+  let app: App;
+  let fake: FakeBankAdapter;
+  let stopBank: () => void;
+  let stopJobs: () => Promise<void>;
+  let dir: string;
+  let connectionId: string;
+
+  beforeEach(async () => {
+    const quiet = createLogger(() => {}, { throwOnSecretField: true });
+    test = await newTestAuth(APP_URL, quiet);
+    app = createApp(
+      webRoot,
+      await loadSecurity({ APP_URL }, { logger: quiet }),
+      test.auth,
+      test.database,
+      test.secrets,
+    );
+    fake = new FakeBankAdapter();
+    fake.addPages(BANK, { accounts: [fakeAccount({ id: "acc-checking" })], historyLoaded: true });
+    stopBank = startBank({ database: test.database, secrets: test.secrets, adapters: [fake] }).stop;
+    dir = mkdtempSync(join(tmpdir(), "fft-sync-now-"));
+    const jobs = await startJobs({
+      jobsDb: join(dir, "jobs.db"),
+      jobList: TEST_BANK_JOB_LIST,
+      tasks: [],
+      database: test.database,
+    });
+    stopJobs = jobs.stop;
+    await markSetupStep(test.database, "master key", "done");
+    connectionId = await addConnection(test.database, {
+      provider: "fake",
+      bankId: BANK,
+      bankName: "First Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
+  });
+
+  afterEach(async () => {
+    await stopJobs();
+    stopBank();
+    test.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lets any Member sync every Connection through its sync job", async () => {
+    const member = await addMember(test.auth, { name: "Bob", email: "bob@example.com" });
+    const tab = new TestBrowser(app, APP_URL, "192.168.1.22");
+    await tab.signIn(member);
+
+    const res = await tab.post("/api/sync-now");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { connections: SyncNowView[] };
+    expect(body.connections).toEqual([
+      { connectionId, bankName: "First Fake Bank", outcome: "syncing", refreshed: false },
+    ]);
+    await waitFor(() => fake.calls.length > 0);
+  });
+
+  it("lets any Member retry a stopped First run job, which then runs", async () => {
+    const notify = startNotify({ database: test.database });
+    try {
+      // The First run started again twice, then stopped.
+      await test.database.$client.execute(
+        "INSERT INTO history_wait (id, ended_at, first_run_started_at, first_run_restarts) " +
+          "VALUES (1, '2026-11-01T12:00:00.000Z', '2026-11-01T14:00:00.000Z', 3)",
+      );
+      const member = await addMember(test.auth, { name: "Bob", email: "bob@example.com" });
+      const tab = new TestBrowser(app, APP_URL, "192.168.1.22");
+      await tab.signIn(member);
+
+      const res = await tab.post("/api/history-jobs/retry");
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ firstRun: true, banksAddedLater: false });
+      let done = false;
+      for (let tries = 0; tries < 500 && !done; tries += 1) {
+        done = (await readHistoryWait(test.database)).firstRunDoneAt !== null;
+        if (!done) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(done).toBe(true);
+      // Nothing is stopped now, so a second press starts nothing.
+      expect(await (await tab.post("/api/history-jobs/retry")).json()).toEqual({
+        firstRun: false,
+        banksAddedLater: false,
+      });
+    } finally {
+      notify.stop();
+    }
+  });
+
+  it("answers 403 to Sync now and Retry from another origin or none, and changes nothing", async () => {
+    // A stopped First run job, which a Retry would start again.
+    await test.database.$client.execute(
+      "INSERT INTO history_wait (id, ended_at, first_run_started_at, first_run_restarts) " +
+        "VALUES (1, '2026-11-01T12:00:00.000Z', '2026-11-01T14:00:00.000Z', 3)",
+    );
+    const member = await addMember(test.auth, { name: "Bob", email: "bob@example.com" });
+    const tab = new TestBrowser(app, APP_URL, "192.168.1.22");
+    await tab.signIn(member);
+
+    for (const path of ["/api/sync-now", "/api/history-jobs/retry"]) {
+      expect((await tab.send("POST", path, {}, { origin: "http://evil.example" })).status).toBe(
+        403,
+      );
+      expect((await tab.send("POST", path, {}, { origin: undefined })).status).toBe(403);
+    }
+
+    // Sidequest polls for jobs on real timers: give a started job time to run.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fake.calls).toEqual([]);
+    const [wait] = (
+      await test.database.$client.execute("SELECT first_run_restarts FROM history_wait")
+    ).rows;
+    expect(wait?.first_run_restarts).toBe(3);
+  });
+
+  it("answers 401 to a Retry with no session", async () => {
+    const res = await new TestBrowser(app, APP_URL, "192.168.1.23").post("/api/history-jobs/retry");
+
+    expect(res.status).toBe(401);
+  });
+
+  it("answers 401 to a browser with no session, and syncs nothing", async () => {
+    const res = await new TestBrowser(app, APP_URL, "192.168.1.23").post("/api/sync-now");
+
+    expect(res.status).toBe(401);
+    // Sidequest polls for jobs on real timers: give a started job time to run.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(fake.calls).toEqual([]);
   });
 });

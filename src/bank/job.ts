@@ -7,7 +7,9 @@ import {
 import { requestFollowUp } from "../follow-up/index.ts";
 import { Job, type JobArgument, startJob } from "../jobs/index.ts";
 import { log } from "../log.ts";
-import { runningBank, runSyncJob } from "./sync.ts";
+import { endHistoryWait, restartLostFirstRun } from "./first-run.ts";
+import { restartLostLaterHooks, startLaterHooks } from "./later-hooks.ts";
+import { runningBank, runSyncJob, type SyncReport } from "./sync.ts";
 import { CATCH_UP_AFTER_MS, CHECK_GAP_MS, STARTED_SYNC_GAP_MS } from "./sync-times.ts";
 
 // Each Connection syncs as its own job (spec 02, Sync schedule). Its argument is the Connection's
@@ -15,7 +17,11 @@ import { CATCH_UP_AFTER_MS, CHECK_GAP_MS, STARTED_SYNC_GAP_MS } from "./sync-tim
 // cursor is saved only at the end. A sync that adds, changes, or removes Transactions starts one
 // follow-up job, unless one already waits (spec 02, After a sync). So does a sync that fails after
 // storing a page that changed Transactions: its retry finds those records stored, and would start
-// none. A sync with no changes starts nothing, so it never leads to an AI call.
+// none. A sync with no changes starts nothing, so it never leads to an AI call. A sync that loaded
+// the history of a bank added later then starts the bank-added-later job. Then, when every
+// Connection's history has loaded, the wait for the first history load ends, and the First run job
+// starts. Both start after the follow-up job, and jobs run one at a time, so they see the new
+// Transactions handled.
 export class SyncConnectionJob extends Job {
   override async run(...args: JobArgument[]): Promise<void> {
     const [connectionId] = args;
@@ -25,17 +31,26 @@ export class SyncConnectionJob extends Job {
     const onPageStored = (counts: PageCounts) => {
       if (counts.added + counts.changed + counts.removed > 0) changedTransactions = true;
     };
+    // Only the sync that made the hooks due starts their job. Any later start goes through the
+    // capped restart or a Member's Retry.
+    let laterHooksDue = false;
+    const onSynced = (report: SyncReport) => {
+      laterHooksDue = report.laterHooksDue;
+    };
     try {
-      const outcome = await runSyncJob(connectionId, undefined, { onPageStored });
+      const outcome = await runSyncJob(connectionId, undefined, { onPageStored, onSynced });
       log.info("Ran a Connection's sync job", { connectionId, outcome, changedTransactions });
     } finally {
       if (changedTransactions) await requestFollowUp();
     }
+    if (laterHooksDue) await startLaterHooks();
+    await endHistoryWait();
   }
 }
 
-export function startSync(connectionId: string): Promise<void> {
-  return startJob(SyncConnectionJob, [connectionId]);
+// Starts a Connection's sync job, at once or not before `at`.
+export function startSync(connectionId: string, at?: Date): Promise<void> {
+  return startJob(SyncConnectionJob, [connectionId], at === undefined ? {} : { at });
 }
 
 // Starts the sync job of each Connection that is due, and returns their IDs. Each one's next sync
@@ -75,9 +90,14 @@ export async function catchUpSyncs(
 }
 
 // The sync schedule's job. The scheduler starts it every minute, and it starts each due sync job.
+// It also ends the wait for the first history load once the last Connection holding it back has
+// been made 24 hours ago, and starts again a First run job or a bank-added-later job that was lost.
 export class SyncScheduleJob extends Job {
   override async run(): Promise<void> {
     const started = await startDueSyncs();
     if (started.length > 0) log.info("Started due sync jobs", { count: started.length });
+    await endHistoryWait();
+    await restartLostFirstRun();
+    await restartLostLaterHooks();
   }
 }

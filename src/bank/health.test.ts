@@ -14,6 +14,7 @@ import { waitFor } from "../jobs/testing.ts";
 import { fakeAccount, fakeTxn } from "./fake.ts";
 import {
   catchUpSyncs,
+  connectionRemoving,
   connectionToRepair,
   runSyncJob,
   startDueSyncs,
@@ -279,6 +280,34 @@ describe("a Connection's sync schedule and health", () => {
       expect(connection.health).toBe("needs a member");
       expect(connection.nextSyncAt).toEqual(later(START, 48));
       expect(await notices()).toHaveLength(1);
+    });
+
+    // The check runs in the Connection's queue, so a Remove waits for it, and a check that fails
+    // after the Remove cannot bring back the notice the Remove ended.
+    it("finishes the check before a Remove pressed during it", async () => {
+      bank.fake.setCheckError(BANK, "gone");
+      let checking = false;
+      let release = () => {};
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const check = bank.fake.check.bind(bank.fake);
+      bank.fake.check = async (connection) => {
+        checking = true;
+        await released;
+        return check(connection);
+      };
+
+      const job = runSyncJob(id, clock(later(START, 24)));
+      while (!checking) await new Promise((resolve) => setTimeout(resolve, 1));
+      const removed = connectionRemoving().remove(id);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      release();
+
+      expect(await job).toBe("still needs a member");
+      expect(await removed).toEqual({ outcome: "removed" });
+      expect((await notices()).filter((notice) => notice.open)).toEqual([]);
+      expect(await stored()).toMatchObject({ removedAt: expect.any(Date), nextSyncAt: null });
     });
 
     it("becomes Healthy and syncs when the check finds no error", async () => {

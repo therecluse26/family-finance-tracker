@@ -29,6 +29,26 @@ export const CHECK_GAP_MS = 24 * HOUR_MS;
 // replaces it, so it only matters when the job never ran: then the sync is tried again.
 export const STARTED_SYNC_GAP_MS = HOUR_MS;
 
+// A Connection whose history has not loaded this long after it was made stops holding back AI
+// (spec 02, First history load).
+export const HISTORY_WAIT_RELEASE_MS = 24 * HOUR_MS;
+
+// A First run job, or a bank-added-later job, that has not finished this long after it started is
+// started again: a stop lost it, or it used up its retries.
+export const LOST_HISTORY_JOB_MS = HOUR_MS;
+
+// Those jobs may call the AI, which costs money, so they never retry without end. Each start gets
+// this many attempts, and a lost job starts again at most this many times. Then it stops, and a
+// System notice asks a Member to press Retry.
+export const HISTORY_JOB_ATTEMPTS = 3;
+export const HISTORY_JOB_RESTARTS = 2;
+
+// Sync now asks a Connection's provider to Refresh at most this often (spec 02, Sync now).
+export const REFRESH_GAP_MS = HOUR_MS;
+
+// Refresh makes the bank fetch fresh data, which arrives later: a second sync follows this long
+// after the first.
+export const SECOND_SYNC_AFTER_MS = 5 * MINUTE_MS;
 // After Repair or Add accounts, the sync starts at once unless one started less than this long ago,
 // or less than minSyncGapHours if longer. Then the sync schedule starts it when the gap has passed.
 // So a Member cannot start syncs without limit.

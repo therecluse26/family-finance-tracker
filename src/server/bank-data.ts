@@ -4,7 +4,11 @@ import {
   addUnconnectedAccount,
   editUnconnectedAccount,
   type Health,
+  historyStatus,
   listUnconnectedAccounts,
+  retryFirstRun,
+  retryLaterHooks,
+  syncNow,
   type TypedBalanceInput,
 } from "../bank/index.ts";
 import {
@@ -139,6 +143,22 @@ export function bankViews(database: Database): BankViews {
         removed: connection.removedAt !== null,
         held: connection.syncHeld,
       }));
+    },
+
+    historyStatus() {
+      return historyStatus(database);
+    },
+
+    async retryHistoryJobs() {
+      return { firstRun: await retryFirstRun(), banksAddedLater: await retryLaterHooks() };
+    },
+
+    async syncNow() {
+      return (await syncNow()).map((result) =>
+        result.outcome === "skipped"
+          ? { ...result, canSyncAt: result.canSyncAt.toISOString() }
+          : result,
+      );
     },
   };
 }

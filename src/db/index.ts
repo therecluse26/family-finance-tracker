@@ -32,10 +32,13 @@ export {
 export {
   type ArrivingTxn,
   addConnection,
+  claimRefresh,
   closeAccount,
   type DeletedHistory,
   deleteRemovedConnection,
+  type FinishedSync,
   finishSync,
+  historyProgress,
   listAccounts,
   listConnections,
   listDueConnections,
@@ -95,6 +98,20 @@ export {
   markTransactionsHandled,
   markTransactionsUnhandled,
 } from "./follow-up.ts";
+export {
+  claimFirstRunDone,
+  claimFirstRunRestart,
+  claimFirstRunRetry,
+  claimFirstRunStop,
+  claimHistoryWaitEnd,
+  claimLaterHooksRestart,
+  claimLaterHooksStop,
+  clearLaterHooks,
+  type HistoryWait,
+  listLaterHooksDue,
+  readHistoryWait,
+  retryStoppedLaterHooks,
+} from "./history-wait.ts";
 export {
   readHouseholdFacts,
   type StoredHouseholdFacts,

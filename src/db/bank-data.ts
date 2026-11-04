@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   gte,
@@ -8,7 +9,9 @@ import {
   isNotNull,
   isNull,
   lte,
+  min,
   ne,
+  notExists,
   or,
   type SQL,
 } from "drizzle-orm";
@@ -28,6 +31,7 @@ import {
   connections,
   dailyBalances,
   followUpMarks,
+  historyWait,
   householdAccounts,
   reviewItems,
   systemNotices,
@@ -99,11 +103,17 @@ export async function readConnection(
   return row;
 }
 
-// A Connection's health and sync schedule (spec 02, Sync schedule and Back-off).
+// A Connection's health and sync schedule (spec 02, Sync schedule and Back-off), and when it
+// stopped holding back AI (spec 02, First history load).
 export type SyncState = Partial<
   Pick<
     StoredConnection,
-    "health" | "lastSyncAttemptAt" | "nextSyncAt" | "retryingSince" | "failedSyncs"
+    | "health"
+    | "lastSyncAttemptAt"
+    | "nextSyncAt"
+    | "retryingSince"
+    | "failedSyncs"
+    | "historyWaitReleasedAt"
   >
 >;
 
@@ -113,6 +123,27 @@ export async function saveSyncState(
   state: SyncState,
 ): Promise<void> {
   await database.update(connections).set(state).where(eq(connections.id, id));
+}
+
+// Records a Refresh of the Connection at `at`, unless one came after `after`. True when it records
+// one: then the caller may ask the provider. Two Sync now presses at once record one Refresh.
+export async function claimRefresh(
+  database: Database,
+  id: string,
+  at: Date,
+  after: Date,
+): Promise<boolean> {
+  const claimed = await database
+    .update(connections)
+    .set({ lastRefreshAt: at })
+    .where(
+      and(
+        eq(connections.id, id),
+        or(isNull(connections.lastRefreshAt), lte(connections.lastRefreshAt, after)),
+      ),
+    )
+    .returning({ id: connections.id });
+  return claimed.length === 1;
 }
 
 // Each Connection whose sync job is due at `now`: every one that is not Broken, held or removed and
@@ -402,7 +433,8 @@ export type StoredPage = PageCounts & { newAccounts: NewAccount[] };
 // its stable ID, then each removal. A page stored twice, as after a restarted sync, changes
 // nothing the second time. A Member's own fields are never written. `timeZone` is the Household's,
 // for day D of a carry-over. A changed or hidden Transaction loses its follow-up marks, so every
-// follow-up step handles it again.
+// follow-up step handles it again. A Transaction that arrives before the Connection's history has
+// loaded gets the "history load" mark (spec 06, When checks run).
 export async function storeSyncPage(
   database: Database,
   connectionId: string,
@@ -469,6 +501,7 @@ export async function storeSyncPage(
           providerTransactionId: record.id,
           ...fields,
           handSet,
+          historyLoad: !connection.historyLoaded,
           ...(replaced ? { hiddenReason: "replaced by re-link" as const, hiddenAt: at } : {}),
         });
         counts.added += 1;
@@ -494,8 +527,14 @@ export async function storeSyncPage(
   });
 }
 
+// What finishSync stored about the history load: whether it has loaded, and whether this sync
+// loaded the history of a bank added later, whose hooks are now due.
+export type FinishedSync = { historyLoaded: boolean; laterHooksDue: boolean };
+
 // Ends a sync that stored every record, in one transaction: saves each returned Account's balance
-// for the day, closes each Account the provider stopped returning, then saves the cursor.
+// for the day, closes each Account the provider stopped returning, then saves the cursor. A history
+// that has loaded stays loaded. When it loads for a Connection made after the wait for the first
+// history load ended, the bank-added-later hooks become due, in the same transaction.
 export async function finishSync(
   database: Database,
   connectionId: string,
@@ -508,8 +547,8 @@ export async function finishSync(
     day: string;
     at: Date;
   },
-): Promise<void> {
-  await database.transaction(async (tx) => {
+): Promise<FinishedSync> {
+  return database.transaction(async (tx) => {
     const stored = await tx
       .select({
         id: householdAccounts.id,
@@ -550,11 +589,52 @@ export async function finishSync(
           .where(eq(householdAccounts.id, account.id));
       }
     }
+    const [before] = await tx
+      .select({ historyLoaded: connections.historyLoaded, createdAt: connections.createdAt })
+      .from(connections)
+      .where(eq(connections.id, connectionId));
+    const loadedBefore = before?.historyLoaded ?? false;
+    const historyLoaded = loadedBefore || done.historyLoaded;
+    const [wait] = await tx.select({ endedAt: historyWait.endedAt }).from(historyWait);
+    const laterHooksDue =
+      historyLoaded &&
+      !loadedBefore &&
+      before !== undefined &&
+      wait?.endedAt != null &&
+      before.createdAt.getTime() > wait.endedAt.getTime();
     await tx
       .update(connections)
-      .set({ syncCursor: done.cursor, historyLoaded: done.historyLoaded, lastSyncedAt: done.at })
+      .set({
+        syncCursor: done.cursor,
+        historyLoaded,
+        lastSyncedAt: done.at,
+        ...(laterHooksDue ? { laterHooksStartedAt: done.at, laterHooksRestarts: 0 } : {}),
+      })
       .where(eq(connections.id, connectionId));
+    return { historyLoaded, laterHooksDue };
   });
+}
+
+// How far each Connection's history has come: its Transactions so far, hidden ones left out, and
+// the posted date of the oldest, by Connection ID.
+export async function historyProgress(
+  database: Database,
+): Promise<Map<string, { transactions: number; oldestDate: string | null }>> {
+  const rows = await database
+    .select({
+      connectionId: transactions.connectionId,
+      transactions: count(),
+      oldestDate: min(transactions.postedDate),
+    })
+    .from(transactions)
+    .where(isNull(transactions.hiddenReason))
+    .groupBy(transactions.connectionId);
+  return new Map(
+    rows.map((row) => [
+      row.connectionId,
+      { transactions: row.transactions, oldestDate: row.oldestDate ?? null },
+    ]),
+  );
 }
 
 export async function readAccount(database: Database, id: string) {
@@ -737,6 +817,27 @@ export async function deleteRemovedConnection(
       .where(eq(transactions.connectionId, id))
       .limit(1);
     if (carried === undefined) await tx.delete(connections).where(eq(connections.id, id));
+    // A removed Connection whose last Transaction or Account went with this history, such as one
+    // whose Transactions it carried, goes too: no row is left that holds nothing.
+    await tx
+      .delete(connections)
+      .where(
+        and(
+          isNotNull(connections.removedAt),
+          notExists(
+            tx
+              .select({ id: transactions.id })
+              .from(transactions)
+              .where(eq(transactions.connectionId, connections.id)),
+          ),
+          notExists(
+            tx
+              .select({ id: householdAccounts.id })
+              .from(householdAccounts)
+              .where(eq(householdAccounts.connectionId, connections.id)),
+          ),
+        ),
+      );
     return { accounts: accountIds.length, transactions: transactionIds.size };
   });
 }

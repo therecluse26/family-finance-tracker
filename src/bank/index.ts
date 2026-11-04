@@ -42,7 +42,28 @@ export {
   type UpdateModeFinish,
   type UpdateModeStart,
 } from "./connect-view.ts";
+export {
+  endHistoryWait,
+  FIRST_RUN_STEPS,
+  FIRST_RUN_STOPPED_TEXT,
+  FirstRunJob,
+  type FirstRunStep,
+  type FirstRunStepName,
+  HISTORY_READY,
+  type LostJobOutcome,
+  registerFirstRunStep,
+  restartLostFirstRun,
+  retryFirstRun,
+  runFirstRun,
+} from "./first-run.ts";
 export { connectionToRepair, type Health } from "./health.ts";
+export {
+  aiMayRun,
+  type HistoryLoading,
+  type HistoryStatus,
+  historyJobToRetry,
+  historyStatus,
+} from "./history-load.ts";
 export {
   catchUpSyncs,
   SyncConnectionJob,
@@ -50,6 +71,15 @@ export {
   startDueSyncs,
   startSync,
 } from "./job.ts";
+export {
+  type BankAddedLaterHook,
+  BankAddedLaterJob,
+  LATER_HOOKS_STOPPED_TEXT,
+  registerBankAddedLaterHook,
+  restartLostLaterHooks,
+  retryLaterHooks,
+  runLaterHooks,
+} from "./later-hooks.ts";
 export { type PlaidClient, type PlaidClientFor, plaidAdapter } from "./plaid.ts";
 export {
   mapPlaidCategory,
@@ -82,6 +112,7 @@ export {
   startBank,
   syncConnection,
 } from "./sync.ts";
+export { type SyncNowResult, syncNow } from "./sync-now.ts";
 export {
   addUnconnectedAccount,
   type BalanceEstimate,

@@ -45,6 +45,8 @@ export class FakeBankAdapter implements BankDataAdapter {
   readonly calls: { connectionId: string; cursor: string | null }[] = [];
   // Each check, by Connection ID, in order.
   readonly checks: string[] = [];
+  // Each Refresh, by Connection ID, in order. The app asks for one only when actions.refresh is set.
+  readonly refreshes: string[] = [];
   // Each update-mode link session asked for, in order.
   readonly repairs: { connectionId: string; addAccounts: boolean }[] = [];
 
@@ -87,6 +89,10 @@ export class FakeBankAdapter implements BankDataAdapter {
     if (failure !== undefined) {
       throw new BankDataError(failure, `The fake bank's check found ${failure}.`);
     }
+  }
+
+  async refresh(connection: BankConnection): Promise<void> {
+    this.refreshes.push(connection.id);
   }
 
   async sync(connection: BankConnection, cursor: string | null): Promise<SyncResult> {

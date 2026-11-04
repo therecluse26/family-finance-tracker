@@ -9,6 +9,9 @@ export type NoticeView = {
   closable: boolean;
   // The Connection whose Repair button the notice shows, while it needs a Member or is Broken.
   repairConnectionId: string | null;
+  // True when the notice is about a stopped First run or bank-added-later job. Its Retry button
+  // posts to /api/history-jobs/retry.
+  retryHistoryJob: boolean;
 };
 
 export type NoticeRoutes = {

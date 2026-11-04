@@ -82,6 +82,7 @@ describe("System notices", () => {
         text: "Your history is ready",
         closable: true,
         repairConnectionId: null,
+        retryHistoryJob: false,
       }),
     ];
     expect(await openNotices(alice)).toEqual(expected);
@@ -115,6 +116,18 @@ describe("System notices", () => {
 
     await endCondition("connection needs a member:c1");
     expect(await openNotices(bob)).toEqual([]);
+  });
+
+  it("shows a Retry button on the notice of a stopped history job", async () => {
+    const id = await raiseNotice({
+      kind: "condition",
+      text: "The first run on your history did not finish. Press Retry to try it again",
+      condition: "history job stopped:first run",
+    });
+
+    expect(await openNotices(bob)).toEqual([
+      expect.objectContaining({ id, closable: false, retryHistoryJob: true }),
+    ]);
   });
 
   it("keeps one notice for a condition raised twice, and a new one after it ends", async () => {

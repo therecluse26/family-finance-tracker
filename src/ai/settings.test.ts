@@ -420,4 +420,20 @@ describe("the gate on loaded history, until T20", () => {
     expect(await gates.historyLoaded()).toBe(true);
     expect(await gates.costCapPausedUntil()).toBeUndefined();
   });
+
+  it("lets AI run once a loading Connection was made 24 hours ago", async () => {
+    const gates = defaultGates(test.database, aiCost({ database: test.database }));
+    const connection = {
+      provider: "fake",
+      bankId: "fake-bank",
+      bankName: "Fake bank",
+      origin: "linked",
+      syncMinute: 7,
+    } as const;
+    await addConnection(test.database, connection, new Date(Date.now() - 25 * 60 * 60 * 1000));
+    expect(await gates.historyLoaded()).toBe(true);
+
+    await addConnection(test.database, { ...connection, bankId: "fake-new" });
+    expect(await gates.historyLoaded()).toBe(false);
+  });
 });

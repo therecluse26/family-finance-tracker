@@ -1,6 +1,7 @@
 import {
   type ArrivingTxn,
   type Database,
+  type FinishedSync,
   finishSync,
   type NewAccount,
   type PageCounts,
@@ -134,6 +135,8 @@ export type SyncReport = {
   removed: number;
   // True when the sync added, changed, or removed any Transaction.
   changedTransactions: boolean;
+  // True when this sync loaded the history of a bank added later, so its hooks became due.
+  laterHooksDue: boolean;
 };
 
 // The sync running for each Connection, so one Connection runs one sync at a time.
@@ -143,6 +146,8 @@ export type SyncOptions = {
   // Called after each page is stored, with what it did to the Transactions. A sync that fails
   // later keeps the pages it stored, so a caller can act on them, such as starting a follow-up job.
   onPageStored?: (counts: PageCounts) => void;
+  // Called once the sync has stored everything and recorded its success, with its report.
+  onSynced?: (report: SyncReport) => void;
 };
 
 // Syncs one Connection, and sets its health from the outcome. A failed sync throws its error once
@@ -168,9 +173,15 @@ export function oneAtATimeFor<T>(connectionId: string, work: () => Promise<T>): 
   return run;
 }
 
-const NOTHING_SYNCED: SyncReport = { added: 0, changed: 0, removed: 0, changedTransactions: false };
+const NOTHING_SYNCED: SyncReport = {
+  added: 0,
+  changed: 0,
+  removed: 0,
+  changedTransactions: false,
+  laterHooksDue: false,
+};
 
-type LoadedConnection = {
+export type LoadedConnection = {
   stored: StoredConnection;
   adapter: BankDataAdapter;
   // The Connection as its adapter sees it, with its credential decrypted.
@@ -197,7 +208,7 @@ export function adapterConnection(stored: StoredConnection): BankConnection {
   };
 }
 
-async function loadConnection(connectionId: string): Promise<LoadedConnection> {
+export async function loadConnection(connectionId: string): Promise<LoadedConnection> {
   const { database, adapters, timeZone } = runningBank();
   const stored = await readConnection(database, connectionId);
   if (stored === undefined) throw new Error(`No Connection has the ID ${connectionId}.`);
@@ -221,7 +232,7 @@ async function syncOnce(
   // A removed Connection has no credential, and never syncs; nor does a held one.
   if (loaded.stored.removedAt !== null || loaded.stored.syncHeld) return NOTHING_SYNCED;
   const startedAt = now();
-  let pulled: { report: SyncReport; historyLoaded: boolean };
+  let pulled: { report: SyncReport; finished: FinishedSync };
   try {
     pulled = await pullPages(loaded, now, options);
   } catch (error) {
@@ -235,8 +246,9 @@ async function syncOnce(
   await recordSyncSuccess(loaded.context, loaded.stored, {
     startedAt,
     endedAt: now(),
-    historyLoaded: pulled.historyLoaded,
+    historyLoaded: pulled.finished.historyLoaded,
   });
+  options.onSynced?.(pulled.report);
   return pulled.report;
 }
 
@@ -244,9 +256,15 @@ async function pullPages(
   { stored, adapter, connection, context }: LoadedConnection,
   now: () => Date,
   options: SyncOptions,
-): Promise<{ report: SyncReport; historyLoaded: boolean }> {
+): Promise<{ report: SyncReport; finished: FinishedSync }> {
   const { database, timeZone: zone } = context;
-  const report: SyncReport = { added: 0, changed: 0, removed: 0, changedTransactions: false };
+  const report: SyncReport = {
+    added: 0,
+    changed: 0,
+    removed: 0,
+    changedTransactions: false,
+    laterHooksDue: false,
+  };
   let cursor = stored.syncCursor;
   for (let pages = 0; pages < MAX_PAGES; pages += 1) {
     const page = await adapter.sync(connection, cursor);
@@ -264,7 +282,7 @@ async function pullPages(
     report.removed += counts.removed;
     if (page.nextCursor === cursor) {
       const at = now();
-      await finishSync(database, connection.id, {
+      const finished = await finishSync(database, connection.id, {
         cursor: page.nextCursor,
         historyLoaded: page.historyLoaded,
         accounts: page.accounts,
@@ -272,7 +290,8 @@ async function pullPages(
         at,
       });
       report.changedTransactions = report.added + report.changed + report.removed > 0;
-      return { report, historyLoaded: page.historyLoaded };
+      report.laterHooksDue = finished.laterHooksDue;
+      return { report, finished };
     }
     cursor = page.nextCursor;
   }
@@ -290,31 +309,35 @@ export async function runSyncJob(
   now: () => Date = () => new Date(),
   options: SyncOptions = {},
 ): Promise<SyncJobOutcome> {
-  // A job started before the Connection was removed finds it removed, or its history deleted, and
-  // does nothing.
-  if ((await readConnection(runningBank().database, connectionId)) === undefined) {
-    return "not polled";
-  }
-  const { stored, adapter, connection, context } = await loadConnection(connectionId);
-  if (stored.health === "broken" || stored.removedAt !== null || stored.syncHeld) {
-    return "not polled";
-  }
-  if (stored.health === "needs a member") {
-    const at = now();
-    try {
-      await adapter.check(connection);
-    } catch (error) {
-      log.warn("A Connection's check failed", { connectionId, kind: errorKind(error), error });
-      await recordCheckFailed(context, stored, error, at);
-      return "still needs a member";
+  // The check runs in the Connection's queue too, so a Remove waits for it, and a check that ends
+  // after a Remove cannot bring back its notice.
+  return oneAtATimeFor(connectionId, async () => {
+    // A job started before the Connection was removed finds it removed, or its history deleted,
+    // and does nothing.
+    if ((await readConnection(runningBank().database, connectionId)) === undefined) {
+      return "not polled";
     }
-    await recordCheckPassed(context, stored);
-  }
-  try {
-    await syncConnection(connectionId, now, options);
-    return "synced";
-  } catch (error) {
-    log.warn("A sync failed", { connectionId, kind: errorKind(error), error });
-    return "failed";
-  }
+    const { stored, adapter, connection, context } = await loadConnection(connectionId);
+    if (stored.health === "broken" || stored.removedAt !== null || stored.syncHeld) {
+      return "not polled";
+    }
+    if (stored.health === "needs a member") {
+      const at = now();
+      try {
+        await adapter.check(connection);
+      } catch (error) {
+        log.warn("A Connection's check failed", { connectionId, kind: errorKind(error), error });
+        await recordCheckFailed(context, stored, error, at);
+        return "still needs a member";
+      }
+      await recordCheckPassed(context, stored);
+    }
+    try {
+      await syncOnce(connectionId, now, options);
+      return "synced";
+    } catch (error) {
+      log.warn("A sync failed", { connectionId, kind: errorKind(error), error });
+      return "failed";
+    }
+  });
 }

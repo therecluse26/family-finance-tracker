@@ -420,6 +420,13 @@ export const api = new Hono<ServerEnv>()
   // only.
   .get("/totals", async (c) => c.json({ months: await c.var.moneyMovement.totals() }))
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
+  // Progress per Connection while its history loads (spec 02, First history load).
+  .get("/history-status", async (c) => c.json(await c.var.bank.historyStatus()))
+  // Retry on the notice of a stopped First run or bank-added-later job (spec 08, When AI does not
+  // run): any Member starts it again, with its restart count reset.
+  .post("/history-jobs/retry", async (c) => c.json(await c.var.bank.retryHistoryJobs()))
+  // Sync now: any Member syncs every Healthy or Retrying Connection (spec 02, Sync now).
+  .post("/sync-now", async (c) => c.json({ connections: await c.var.bank.syncNow() }))
   // Removing a Connection asks for a TOTP code or a backup code again (spec 09, Sensitive
   // actions). The Accounts become Closed, and their history stays.
   .post("/connections/:id/remove", async (c) => {

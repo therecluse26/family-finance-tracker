@@ -169,6 +169,20 @@
       "when": 1793814236108,
       "tag": "0023_held_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1793816062291,
+      "tag": "0024_sync_now",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1793816069113,
+      "tag": "0025_history_load",
+      "breakpoints": true
     }
   ]
 }

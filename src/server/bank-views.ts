@@ -56,6 +56,33 @@ export type ConnectionView = {
   held: boolean;
 };
 
+// What Sync now did with one Healthy or Retrying Connection (spec 02, Sync now). A skipped one
+// synced less than its adapter's minSyncGapHours ago, and says when it may sync again, in UTC.
+// refreshed: the provider was asked for fresh data, so a second sync follows in 5 minutes.
+export type SyncNowView = {
+  connectionId: string;
+  bankName: string;
+} & ({ outcome: "syncing"; refreshed: boolean } | { outcome: "skipped"; canSyncAt: string });
+
+// The first history load (spec 02, First history load): one row per Healthy or Retrying
+// Connection whose history is still loading, for "loading history for <bank>".
+export type HistoryStatusView = {
+  // True once every Connection's history has loaded, or stopped holding back AI. The First run
+  // job then runs once.
+  waitEnded: boolean;
+  // False while the first history load holds back every AI use.
+  aiMayRun: boolean;
+  loading: {
+    connectionId: string;
+    bankName: string;
+    // Progress: the Transactions brought in so far, and the posted date of the oldest.
+    transactions: number;
+    oldestDate: string | null;
+    // False once it stopped holding back AI, such as 24 hours after it was made.
+    holdsBackAi: boolean;
+  }[];
+};
+
 // Calendar dates are written YYYY-MM-DD.
 export type TransactionQuery = { accountId?: string; from?: string; to?: string };
 
@@ -122,6 +149,11 @@ export type BankViews = {
   // Undefined when no Account has the ID.
   balances(accountId: string, query: BalanceQuery): Promise<BalancesView | undefined>;
   connections(): Promise<ConnectionView[]>;
+  // Any Member presses Sync now.
+  syncNow(): Promise<SyncNowView[]>;
+  historyStatus(): Promise<HistoryStatusView>;
+  // A Member pressed Retry on a stopped history job's notice. True for each kind that had stopped.
+  retryHistoryJobs(): Promise<{ firstRun: boolean; banksAddedLater: boolean }>;
   unconnectedAccounts(): Promise<UnconnectedAccountView[]>;
   addUnconnectedAccount(
     body: UnconnectedAccountBody,

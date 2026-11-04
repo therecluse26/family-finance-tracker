@@ -85,6 +85,7 @@ const report = (added: number, changed: number, removed: number): SyncReport => 
   changed,
   removed,
   changedTransactions: added + changed + removed > 0,
+  laterHooksDue: false,
 });
 
 describe("syncing a fake Connection", () => {
