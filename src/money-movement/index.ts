@@ -1,7 +1,15 @@
 // The money-movement module's interface (spec 03, Money movement). Other modules import from here.
 
 export { addBusinessDays, federalReserveHolidays, isBusinessDay } from "./business-days.ts";
+export { type HandLink, type HandLinkResult, linkByHand, undoLink } from "./hand-links.ts";
 export { type LoanSettings, readLoanSettings } from "./loans.ts";
+export {
+  addManualLoan,
+  editManualLoan,
+  listManualLoanViews,
+  type ManualLoan,
+  type ManualLoanInput,
+} from "./manual-loans.ts";
 export {
   type DecidedAgain,
   decideOneSidedAgain,

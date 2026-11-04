@@ -9,6 +9,7 @@ import { addDays } from "./business-days.ts";
 import {
   addBusinessDays,
   federalReserveHolidays,
+  linkByHand,
   PAIR_GUESS_KIND,
   readTransactionDetail,
   registerDecidedAgain,
@@ -17,6 +18,7 @@ import {
   startMoneyMovement,
   UNCLEAR_PAIR_KIND,
   type UnclearPairAnswer,
+  undoLink,
 } from "./index.ts";
 
 // Transfer pairing between two of the Household's Accounts (spec 03, Transfers), through the
@@ -626,6 +628,161 @@ describe("Transfer pairing", () => {
         await idOf("maple-out-middle"),
         await idOf("maple-out-late"),
       ]);
+    });
+  });
+
+  describe("undo, hand links, and changes", () => {
+    const move = { code: "TRANSFER_OUT_ACCOUNT_TRANSFER" };
+    const linkIdOf = async (providerId: string) =>
+      (await readTransactionDetail(bank.database, await idOf(providerId)))?.transferLink?.id ?? "";
+
+    it("never makes an undone pair again, and matches both sides again without it", async () => {
+      await sync({
+        added: [
+          txn("maple-out", CHECKING, -7_000, "2026-10-05", move),
+          txn("elm-in", ELM, 7_000, "2026-10-06"),
+        ],
+      });
+      expect(await pairs()).toEqual(["maple-out → elm-in"]);
+      await addMember();
+
+      expect(await undoLink(bank.database, await linkIdOf("maple-out"), "member-1", NOW())).toBe(
+        true,
+      );
+      await runFollowUp(NOW);
+      expect(await pairs()).toEqual([]);
+      // The one-sided rules apply: transfer wording on the money out, Income on the money in.
+      expect(await typeOf("maple-out")).toBe("Transfer");
+      expect(await typeOf("elm-in")).toBe("Income");
+
+      await sync({
+        changed: [txn("elm-in", ELM, 7_000, "2026-10-06", { description: "DEPOSIT" })],
+      });
+      expect(await pairs()).toEqual([]);
+      expect(await undoLink(bank.database, "no-such-link", "member-1", NOW())).toBe(false);
+    });
+
+    it("keeps a hand link, outside the window, through re-matching", async () => {
+      await sync({
+        added: [
+          txn("maple-out", CHECKING, -8_000, "2026-10-05", move),
+          txn("elm-in-late", ELM, 8_000, "2026-11-02"),
+        ],
+      });
+      await addMember();
+      const linked = await linkByHand(
+        bank.database,
+        {
+          kind: "Transfer",
+          outTransactionId: await idOf("maple-out"),
+          inTransactionId: await idOf("elm-in-late"),
+        },
+        "member-1",
+        NOW(),
+      );
+      expect(linked).toEqual({ outcome: "linked", linkId: expect.any(String) });
+      await runFollowUp(NOW);
+
+      // A better candidate arrives inside the window, and the provider changes the hand link's side.
+      await sync({
+        added: [txn("elm-in-near", ELM, 8_000, "2026-10-06")],
+        changed: [txn("maple-out", CHECKING, -8_000, "2026-10-05", { description: "XFER" })],
+      });
+
+      expect(await links()).toMatchObject([
+        { pair: "maple-out → elm-in-late", madeBy: "Member", tier: "Unclear" },
+      ]);
+      expect(await typeOf("elm-in-late")).toBe("Transfer");
+      expect(await typeOf("elm-in-near")).toBe("Income");
+    });
+
+    it("refuses a hand Transfer on one Account, in one direction, or between unequal amounts", async () => {
+      await sync({
+        added: [
+          txn("maple-out", CHECKING, -8_000, "2026-10-05"),
+          txn("maple-out-2", CHECKING, -8_000, "2026-10-05"),
+          txn("maple-in", CHECKING, 8_000, "2026-10-05"),
+          txn("elm-in", ELM, 8_001, "2026-10-05"),
+        ],
+      });
+      await addMember();
+      const tryLink = async (out: string, into: string) =>
+        (
+          await linkByHand(
+            bank.database,
+            {
+              kind: "Transfer",
+              outTransactionId: await idOf(out),
+              inTransactionId: await idOf(into),
+            },
+            "member-1",
+            NOW(),
+          )
+        ).outcome;
+
+      expect(await tryLink("maple-out", "maple-in")).toBe("refused");
+      expect(await tryLink("maple-out", "maple-out-2")).toBe("refused");
+      expect(await tryLink("maple-out", "elm-in")).toBe("refused");
+      expect(await links()).toEqual([]);
+    });
+
+    it("ends a hand link when an amount change breaks its hard filters, and matches again", async () => {
+      await sync({
+        added: [
+          txn("maple-out", CHECKING, -6_000, "2026-10-05", move),
+          txn("elm-in", ELM, 6_000, "2026-10-06"),
+        ],
+      });
+      await addMember();
+      await linkByHand(
+        bank.database,
+        {
+          kind: "Transfer",
+          outTransactionId: await idOf("maple-out"),
+          inTransactionId: await idOf("elm-in"),
+        },
+        "member-1",
+        NOW(),
+      );
+      await runFollowUp(NOW);
+      expect(await links()).toMatchObject([{ madeBy: "Member" }]);
+
+      await sync({ changed: [txn("elm-in", ELM, 6_500, "2026-10-06")] });
+
+      expect(await links()).toEqual([]);
+      expect(await typeOf("elm-in")).toBe("Income");
+    });
+
+    it("ends the AI's link when a date change takes it out of the window", async () => {
+      stops.push(registerUnclearPairJudge(async () => ({ answer: "yes", confidence: "high" })));
+      await sync({
+        added: [
+          txn("maple-out", CHECKING, -4_400, "2026-10-05"),
+          txn("elm-in", ELM, 4_400, "2026-10-06"),
+        ],
+      });
+      expect(await links()).toMatchObject([{ madeBy: "AI" }]);
+
+      await sync({ changed: [txn("elm-in", ELM, 4_400, "2026-11-20")] });
+
+      expect(await links()).toEqual([]);
+    });
+
+    it("reads past a settled pair, so a new Transaction can take its place", async () => {
+      // Y pairs with X. A later sync adds S, which only X can take; Y then pairs with Z.
+      await sync({
+        added: [
+          txn("elm-x", ELM, 10_000, "2026-09-18"),
+          txn("maple-y", CHECKING, -10_000, "2026-09-24", move),
+          txn("elm-z", ELM, 10_000, "2026-10-01"),
+        ],
+      });
+      expect(await pairs()).toEqual(["maple-y → elm-x"]);
+
+      await sync({ added: [txn("maple-s", CHECKING, -10_000, "2026-09-14", move)] });
+
+      expect(await pairs()).toEqual(["maple-s → elm-x", "maple-y → elm-z"]);
+      expect(await typeOf("elm-z")).toBe("Transfer");
     });
   });
 

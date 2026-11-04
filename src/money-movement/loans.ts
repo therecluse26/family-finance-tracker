@@ -86,9 +86,21 @@ function measured(history: LoanHistory, date: string, payment: number): number |
   if (before === undefined || after === undefined) return undefined;
   const [was, now] = [before.interestPaidThisYear, after.interestPaidThisYear];
   if (was !== null && now !== null) return clamp(now >= was ? now - was : now, payment);
-  if (before.currentBalance === null || after.currentBalance === null) return undefined;
+  const owedBefore = before.currentBalance;
+  if (owedBefore === null) return undefined;
+  // The lender's balance may lag the payment, so the drop counts from the first saved balance
+  // after it that moved, before the next payment. Until one has, nothing is measured.
+  const next = history.payments.find((each) => each.postedDate > date)?.postedDate;
+  const moved = history.balances.find(
+    (row) =>
+      row.date > date &&
+      (next === undefined || row.date < next) &&
+      row.currentBalance !== null &&
+      row.currentBalance !== owedBefore,
+  )?.currentBalance;
+  if (moved === undefined || moved === null) return undefined;
   // Owed money is negative, so a payment raises the balance by its principal.
-  return clamp(payment - (after.currentBalance - before.currentBalance), payment);
+  return clamp(payment - (moved - owedBefore), payment);
 }
 
 export async function readLoanFacts(
@@ -133,14 +145,21 @@ export function loanFactsReader(
   };
 }
 
+// How long a payment's interest waits for the data to measure it.
+export const PROVISIONAL_INTEREST_DAYS = 45;
+
 // The interest in a payment that landed on the loan on `date` (spec 02, Connected loans), first
 // from the rise in interest paid this year, then from an APR a Member typed, then from the drop in
-// what is owed. It is provisional while the sync after the payment has not run, and while a
-// payment from before the first saved balance has no measured share to use.
+// what is owed. It is provisional while the sync after the payment has not run, while the lender's
+// balance has not moved, and while a payment from before the first saved balance has no measured
+// share to use. Once the next payment has landed, or 45 days have passed (from the first saved
+// balance, for a payment before it), the wait ends: the interest is decided once from the best
+// data, the share of the first measured payment or else none, and is not decided again each day.
 function interestIn(
   facts: LoanFacts,
   apr: number | null,
   payment: { date: string; amount: number },
+  today: string,
 ): { interest: number; provisional: boolean } {
   const { before, after } = around(facts, payment.date);
   const known = (interest: number) => ({
@@ -165,9 +184,16 @@ function interestIn(
   if (before === undefined && facts.firstShare !== undefined) {
     return known(facts.firstShare * payment.amount);
   }
+  // A payment from before the first saved balance waits for a later payment to be measured, so its
+  // days count from that balance, and the next payment does not end its wait.
+  const firstSaved = facts.balances[0]?.date;
+  const early = before === undefined && firstSaved !== undefined && firstSaved > payment.date;
+  const nextLanded = !early && facts.payments.some((each) => each.postedDate > payment.date);
+  const from = early ? firstSaved : payment.date;
+  const waited = daysBetween(from, today) > PROVISIONAL_INTEREST_DAYS;
   return {
     interest: clamp((facts.firstShare ?? 0) * payment.amount, payment.amount),
-    provisional: true,
+    provisional: !nextLanded && !waited,
   };
 }
 
@@ -181,7 +207,7 @@ async function paymentParts(
 ): Promise<Decision> {
   const loan = txn.accounts.get(loanId);
   const facts = await txn.loanFacts(loanId);
-  const { interest, provisional } = interestIn(facts, loan?.memberApr ?? null, payment);
+  const { interest, provisional } = interestIn(facts, loan?.memberApr ?? null, payment, txn.today);
   const principal = payment.amount - interest;
   const parts: Part[] = [];
   if (interest > 0) {

@@ -85,8 +85,14 @@ export type LoanPayouts = {
   // The loans that are the money-out side of a Transfer pair into an Account that is not a loan.
   pairedLoanIds: string[];
   // Each shown money-in Transaction under a LOAN_DISBURSEMENTS_* code, on an Account that is not
-  // a loan, with what may name its lender.
-  disbursements: { description: string; counterparties: { name: string; type: string }[] }[];
+  // a loan, with what may name its lender, oldest first.
+  disbursements: {
+    id: string;
+    description: string;
+    counterparties: { name: string; type: string }[];
+    // The Merchant, cleaned when cleanup has run.
+    merchant: string | null;
+  }[];
 };
 
 // The loan payouts the app has seen land in an Account (spec 03, Loan payouts).
@@ -102,8 +108,14 @@ export async function listLoanPayouts(database: Database): Promise<LoanPayouts> 
     .innerJoin(into, eq(into.id, transferLinks.inTransactionId))
     .innerJoin(intoAccount, eq(intoAccount.id, into.accountId))
     .where(and(eq(loan.kind, "loan"), ne(intoAccount.kind, "loan")));
-  const disbursements = await database
-    .select({ description: transactions.description, counterparties: transactions.counterparties })
+  const lines = await database
+    .select({
+      id: transactions.id,
+      description: transactions.description,
+      counterparties: transactions.counterparties,
+      merchantName: transactions.merchantName,
+      merchantCleanName: transactions.merchantCleanName,
+    })
     .from(transactions)
     .innerJoin(householdAccounts, eq(householdAccounts.id, transactions.accountId))
     .where(
@@ -113,7 +125,12 @@ export async function listLoanPayouts(database: Database): Promise<LoanPayouts> 
         ne(householdAccounts.kind, "loan"),
         counts,
       ),
-    );
+    )
+    .orderBy(asc(transactions.postedDate), asc(transactions.id));
+  const disbursements = lines.map(({ merchantName, merchantCleanName, ...line }) => ({
+    ...line,
+    merchant: merchantCleanName ?? merchantName,
+  }));
   return { pairedLoanIds: paired.map((row) => row.loanId), disbursements };
 }
 

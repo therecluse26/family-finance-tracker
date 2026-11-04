@@ -108,6 +108,7 @@ export {
   listUnhandledTransactions,
   markTransactionsHandled,
   markTransactionsUnhandled,
+  readLastFollowUpChange,
 } from "./follow-up.ts";
 export {
   claimFirstRunDone,
@@ -129,17 +130,33 @@ export {
   storeHouseholdFacts,
 } from "./household-facts.ts";
 export {
+  type AnyLink,
+  endOtherLinks,
+  isOtherLinkRefused,
+  type LinkEvidence,
+  type LinkMaker,
   linkTransferByHand,
+  listLinkedOtherwise,
+  listLoanLinkedTransactions,
+  listLoanLinksOf,
   listRefusedTransferLinks,
+  listSpendingLinksOf,
   listTransferCandidates,
   listTransferLinkDates,
   listTransferLinksOf,
   listUnlinkedTransferDecisions,
   type NewTransferLink,
+  type OtherLink,
+  readLink,
   readTransferLink,
+  refuseOtherLink,
   refuseTransferLink,
+  type SpendingLinkKind,
+  type StoredLoanLink,
+  type StoredSpendingLink,
   type StoredTransferLink,
   saveTransferLinks,
+  storeOtherLink,
   type TransferCandidate,
   type TransferCandidateFilter,
   type TransferLinkMaker,
@@ -157,6 +174,17 @@ export {
   storeLoanFields,
 } from "./loans.ts";
 export { loginTables } from "./login-tables.ts";
+export {
+  addManualLoan,
+  listManualLoans,
+  listUnlinkedLoanPayouts,
+  MANUAL_LOAN_TYPES,
+  type ManualLoanFields,
+  type ManualLoanType,
+  type StoredManualLoan,
+  type TypedLoanBalance,
+  updateManualLoan,
+} from "./manual-loans.ts";
 export {
   type MasterKeyCheck,
   readLastMasterKeyCheck,
@@ -201,6 +229,7 @@ export {
   countOpenReviewItems,
   listOpenReviewItems,
   listOpenReviewItemsOfKind,
+  listReviewItemSubjects,
   type NewReviewItem,
   readReviewItem,
   type StoredReviewItem,

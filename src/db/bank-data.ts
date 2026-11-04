@@ -33,8 +33,10 @@ import {
   followUpMarks,
   historyWait,
   householdAccounts,
+  loanLinks,
   recurringCharges,
   reviewItems,
+  spendingLinks,
   systemNotices,
   transactions,
   transferLinks,
@@ -783,6 +785,32 @@ export async function deleteRemovedConnection(
     )
       .flatMap((link) => [link.out, link.in])
       .filter((transactionId) => !transactionIds.has(transactionId));
+    // The other side of a Refund or Reimbursement link, and the other Transactions linked to a
+    // Manual loan, whose interest counts from the payment before, are matched again too.
+    const spendingPartners = (
+      await tx
+        .select({ money: spendingLinks.transactionId, spent: spendingLinks.spendingTransactionId })
+        .from(spendingLinks)
+        .where(
+          or(
+            inArray(spendingLinks.transactionId, deleted),
+            inArray(spendingLinks.spendingTransactionId, deleted),
+          ),
+        )
+    ).flatMap((link) => [link.money, link.spent]);
+    const loansLeft = tx
+      .select({ id: loanLinks.loanAccountId })
+      .from(loanLinks)
+      .where(inArray(loanLinks.transactionId, deleted));
+    const loanPartners = (
+      await tx
+        .select({ id: loanLinks.transactionId })
+        .from(loanLinks)
+        .where(inArray(loanLinks.loanAccountId, loansLeft))
+    ).map((link) => link.id);
+    partners.push(
+      ...[...spendingPartners, ...loanPartners].filter((other) => !transactionIds.has(other)),
+    );
     // A one-sided Transfer on another Connection's Account may be tied to one of these Accounts,
     // such as an excluded one. It is decided again, with no account.
     const tiedHere = (
@@ -796,7 +824,7 @@ export async function deleteRemovedConnection(
     await tx
       .delete(unconnectedAssignments)
       .where(inArray(unconnectedAssignments.accountId, accountIds));
-    await markTransactionsUnhandled(tx, [...partners, ...tiedHere]);
+    await markTransactionsUnhandled(tx, [...new Set([...partners, ...tiedHere])]);
     const subjects = new Set([...accountIds, ...transactionIds]);
     for (const item of await tx
       .select({ id: reviewItems.id, subjectIds: reviewItems.subjectIds })

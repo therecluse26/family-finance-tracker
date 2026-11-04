@@ -1,5 +1,6 @@
 import {
   type Database,
+  type DecisionAccount,
   type DecisionRecord,
   type LoanFields,
   linkTransferByHand,
@@ -41,6 +42,7 @@ import {
   settleReviewItems,
 } from "../review/index.ts";
 import { isLoan, type LoanSettings, loanFactsReader, readLoanSettings } from "./loans.ts";
+import { linkManualLoanPayouts, manualLoanFactsReader } from "./manual-loans.ts";
 import { ONE_SIDED_KIND, ONE_SIDED_STEPS, oneSidedKind } from "./one-sided.ts";
 import {
   type Decision,
@@ -49,8 +51,15 @@ import {
   decide,
   type Part,
 } from "./order.ts";
+import { endBrokenOtherLinks, readOtherLinkEvidence } from "./other-links.ts";
 import { type PairingResult, pairTransfers, type TransferSignal } from "./transfers.ts";
 import type { HandSetType } from "./types.ts";
+import {
+  loanPayoutsReader,
+  UNTRACKED_LOAN_KIND,
+  untrackedLoanKind,
+  updateUntrackedLoanItems,
+} from "./untracked-loans.ts";
 
 // The Matching follow-up step, the daily task for provisional results, a hand-set type, and the
 // Review list items for Transfer pairs.
@@ -61,14 +70,56 @@ async function householdToday(database: Database, now: Date): Promise<string> {
   return calendarDateIn(now, (await householdTimeZone(database)) ?? "UTC");
 }
 
-// What the order reads besides each Transaction, read once a run.
-async function decisionContext(database: Database, now: Date): Promise<DecisionContext> {
+// The paying sides of Unclear pairs with a connected loan: those this run's pairing asks about,
+// and those open on the Review list whose Transactions it did not look at.
+async function unclearLoanPayments(
+  database: Database,
+  accounts: ReadonlyMap<string, DecisionAccount>,
+  pairing: PairingResult | undefined,
+): Promise<Set<string>> {
+  if (![...accounts.values()].some(isLoan)) return new Set();
+  const pairs: TransferPair[] = (pairing?.items ?? [])
+    .filter((item) => item.kind === "unclear")
+    .map((item) => item.pair);
+  for (const item of await openReviewItems(database)) {
+    if (item.kind !== UNCLEAR_PAIR_KIND || item.subject.type !== "transactions") continue;
+    const [outTransactionId, inTransactionId] = item.subject.transactionIds;
+    if (outTransactionId === undefined || inTransactionId === undefined) continue;
+    if (pairing?.looked.has(outTransactionId) || pairing?.looked.has(inTransactionId)) continue;
+    pairs.push({ outTransactionId, inTransactionId });
+  }
+  if (pairs.length === 0) return new Set();
+  const onLoan = new Set(
+    (await readDecisionRecords(database, [...new Set(pairs.map((pair) => pair.inTransactionId))]))
+      .filter((record) => !record.hidden && isLoan(accounts.get(record.accountId)))
+      .map((record) => record.id),
+  );
+  return new Set(
+    pairs.filter((pair) => onLoan.has(pair.inTransactionId)).map((pair) => pair.outTransactionId),
+  );
+}
+
+// What the order reads besides each Transaction, read once a run. A Matching run passes its
+// pairing, which the Review list does not show yet.
+async function decisionContext(
+  database: Database,
+  now: Date,
+  pairing?: PairingResult,
+): Promise<DecisionContext> {
   const today = await householdToday(database, now);
   const accounts = new Map(
     (await listDecisionAccounts(database)).map((account) => [account.id, account]),
   );
   const members = await listMemberNames(database);
-  return { today, accounts, members, loanFacts: loanFactsReader(database, accounts) };
+  return {
+    today,
+    accounts,
+    members,
+    loanFacts: loanFactsReader(database, accounts),
+    manualLoanFacts: manualLoanFactsReader(database),
+    loanPayouts: loanPayoutsReader(database),
+    unclearLoanPayments: await unclearLoanPayments(database, accounts, pairing),
+  };
 }
 
 // A result to store, with the Unconnected account it goes to and the Review list item it asks
@@ -77,20 +128,23 @@ type Decided = {
   stored: StoredDecision;
   unconnectedAccountId: string | null;
   asks: Decision["asks"];
+  offersManualLoan: Decision["offersManualLoan"];
 };
 
 async function decideAll(
   database: Database,
   records: readonly DecisionRecord[],
   now: Date,
+  pairing?: PairingResult,
 ): Promise<Decided[]> {
-  const context = await decisionContext(database, now);
+  const context = await decisionContext(database, now, pairing);
   const decided: Decided[] = [];
   for (const { hidden, ...record } of records) {
-    const { step, parts, provisionalUntil, unconnectedAccountId, asks } = await decide({
-      ...record,
-      ...context,
-    });
+    const { step, parts, provisionalUntil, unconnectedAccountId, asks, offersManualLoan } =
+      await decide({
+        ...record,
+        ...context,
+      });
     decided.push({
       stored: {
         transactionId: record.id,
@@ -101,6 +155,7 @@ async function decideAll(
       },
       unconnectedAccountId: unconnectedAccountId ?? null,
       asks,
+      offersManualLoan,
     });
   }
   return decided;
@@ -166,6 +221,12 @@ async function storeResults(
     now,
   );
   await updateOneSidedItems(database, decided, gone);
+  await updateUntrackedLoanItems(
+    database,
+    decided.flatMap((result) => (result.offersManualLoan ? [result.offersManualLoan] : [])),
+    decided.map((result) => result.stored.transactionId),
+    gone,
+  );
 }
 
 // Transactions the order decided again outside the Matching step's own list: a type set by hand, a
@@ -236,29 +297,28 @@ const NOT_THIS: ReviewChoice = { value: "not this", label: "No, they are not a T
 
 // Opens an item for each pair that pairing asks about, and settles each open item about a
 // Transaction it looked at that it no longer asks about.
-async function updatePairItems(database: Database, pairing: PairingResult): Promise<void> {
+// Returns the paying side of each Unclear pair item it settled.
+async function updatePairItems(database: Database, pairing: PairingResult): Promise<string[]> {
   const wanted = new Map(
     pairing.items.map((item) => [
       `${PAIR_KINDS[item.kind]} ${item.pair.outTransactionId} ${item.pair.inTransactionId}`,
       item,
     ]),
   );
-  const kinds = new Set<string>(Object.values(PAIR_KINDS));
   const open = new Set<string>();
-  // The items to settle, by kind, settled in one batch for each kind.
-  const settled = new Map<string, string[]>();
+  const settled = new Map<string, string[]>(Object.values(PAIR_KINDS).map((kind) => [kind, []]));
   for (const item of await openReviewItems(database)) {
-    if (!kinds.has(item.kind) || item.subject.type !== "transactions") continue;
+    const settling = settled.get(item.kind);
+    if (settling === undefined || item.subject.type !== "transactions") continue;
     const ids = item.subject.transactionIds;
     const key = `${item.kind} ${ids.join(" ")}`;
     if (wanted.has(key)) open.add(key);
-    else if (ids.some((id) => pairing.looked.has(id))) {
-      settled.set(item.kind, [...(settled.get(item.kind) ?? []), ids[0] ?? ""]);
-    }
+    else if (ids.some((id) => pairing.looked.has(id))) settling.push(ids[0] ?? "");
   }
   for (const [kind, subjectIds] of settled) {
     await settleReviewItems(database, { kind, subjectIds }, "Transfer pairing changed");
   }
+  const unclear = settled.get(UNCLEAR_PAIR_KIND) ?? [];
   for (const [key, item] of wanted) {
     if (open.has(key)) continue;
     await openReviewItem(database, {
@@ -271,6 +331,7 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
       bestAnswer: LINK,
     });
   }
+  return unclear;
 }
 
 // The Matching step: pairs Transfers around each added or changed Transaction, then runs the order
@@ -286,9 +347,20 @@ export async function runMatching(
   now = new Date(),
 ): Promise<void> {
   const unlinked = await listUnlinkedTransferDecisions(database);
-  const pairing = await pairTransfers(database, [...unhandled, ...unlinked], now);
+  const relinked = [
+    ...(await endBrokenOtherLinks(database, unhandled)),
+    ...(await linkManualLoanPayouts(database, unhandled, now)),
+  ];
+  const pairing = await pairTransfers(database, [...unhandled, ...unlinked, ...relinked], now);
   const handled = new Set(unhandled);
-  const others = [...new Set([...pairing.changed, ...unlinked])].filter((id) => !handled.has(id));
+  // The paying side of an Unclear pair counts nowhere while the pair waits, when the other side is
+  // a connected loan, so it is decided again too.
+  const asked = pairing.items
+    .filter((item) => item.kind === "unclear")
+    .map((item) => item.pair.outTransactionId);
+  const others = [...new Set([...pairing.changed, ...unlinked, ...relinked, ...asked])].filter(
+    (id) => !handled.has(id),
+  );
   const records = await readDecisionRecords(database, [...unhandled, ...others]);
   const shown = records.filter((record) => !record.hidden);
   const pending = await readPendingParts(
@@ -297,7 +369,7 @@ export async function runMatching(
   );
   const gone = records.filter((record) => record.hidden).map((record) => record.id);
   await removeDecisions(database, gone);
-  const decided = await decideAll(database, shown, now);
+  const decided = await decideAll(database, shown, now, pairing);
   await storeResults(
     database,
     decided.map((result) => ({
@@ -307,9 +379,27 @@ export async function runMatching(
     now,
     gone,
   );
-  await updatePairItems(database, pairing);
+  const settled = await updatePairItems(database, pairing);
   await tellDecidedAgain(shown.filter((record) => !handled.has(record.id)));
+  await decideSettledPairsAgain(
+    database,
+    settled.filter((id) => !shown.some((record) => record.id === id)),
+    now,
+  );
   await decideLoanPaymentsAgain(database, shown, now);
+}
+
+// An Unclear pair that settled without a link leaves its paying side to count again on its own.
+async function decideSettledPairsAgain(
+  database: Database,
+  ids: readonly string[],
+  now: Date,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const again = (await readDecisionRecords(database, ids)).filter((record) => !record.hidden);
+  if (again.length === 0) return;
+  await storeResults(database, await decideAll(database, again, now), now);
+  await tellDecidedAgain(again);
 }
 
 // A payout the app sees for the first time may make a loan a Cash loan (spec 02, Connected loans),
@@ -358,6 +448,7 @@ export async function decideProvisionalAgain(
 
 // A Transfer link's evidence (spec 03, Evidence).
 export type TransferLinkEvidence = {
+  id: string;
   otherTransactionId: string;
   tier: "Strong" | "Unclear";
   signals: TransferSignal[];
@@ -375,6 +466,7 @@ async function readTransferEvidence(
   const link = await readTransferLink(database, transactionId);
   if (link === undefined) return null;
   return {
+    id: link.id,
     otherTransactionId:
       link.outTransactionId === transactionId ? link.inTransactionId : link.outTransactionId,
     tier: link.tier,
@@ -409,7 +501,7 @@ export async function readTransactionDecision(
 
 // Starts a follow-up job for Transactions a Member's change made unhandled. If that fails, the app
 // logs it: the change is stored, and the next follow-up job handles them.
-async function followUpSoon(): Promise<void> {
+export async function followUpSoon(): Promise<void> {
   try {
     await askForFollowUp();
   } catch (error) {
@@ -537,11 +629,13 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
       answering: { memberId: string; database: Queries },
     ) {
       const at = new Date();
+      const ended: string[] = [];
       if (choice.value === LINK.value) {
-        await linkTransferByHand(answering.database, pairOf(item), {
+        const made = await linkTransferByHand(answering.database, pairOf(item), {
           memberId: answering.memberId,
           at,
         });
+        ended.push(...made.ended);
       } else {
         await refuseTransferLink(answering.database, pairOf(item), {
           refusedBy: "Member",
@@ -550,7 +644,11 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
         });
       }
       const pair = pairOf(item);
-      await followUpAgain(answering.database, [pair.outTransactionId, pair.inTransactionId]);
+      await followUpAgain(answering.database, [
+        pair.outTransactionId,
+        pair.inTransactionId,
+        ...ended,
+      ]);
     },
     afterAnswer: () => askForFollowUp(),
   };
@@ -562,6 +660,7 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
     registerReviewKind(UNCLEAR_PAIR_KIND, pairKind),
     registerReviewKind(PAIR_GUESS_KIND, pairKind),
     registerReviewKind(ONE_SIDED_KIND, oneSidedKind(started.database)),
+    registerReviewKind(UNTRACKED_LOAN_KIND, untrackedLoanKind),
   ];
   return {
     stop() {
@@ -571,8 +670,8 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
   };
 }
 
-// One Transaction that shows, with its last result and its Transfer link's evidence (spec 03,
-// Evidence). Undefined when no Transaction that shows has the ID.
+// One Transaction that shows, with its last result and its links' evidence (spec 03, Evidence).
+// Undefined when no Transaction that shows has the ID.
 export async function readTransactionDetail(database: Database, transactionId: string) {
   const [record] = await readDecisionRecords(database, [transactionId]);
   if (record === undefined || record.hidden) return undefined;
@@ -589,5 +688,6 @@ export async function readTransactionDetail(database: Database, transactionId: s
     },
     decision: (await readTransactionDecision(database, transactionId)) ?? null,
     transferLink: await readTransferEvidence(database, transactionId),
+    otherLinks: await readOtherLinkEvidence(database, transactionId),
   };
 }

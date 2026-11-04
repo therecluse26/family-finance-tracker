@@ -34,6 +34,8 @@ export type MonthTotalsView = {
 
 // A Transfer link's evidence (spec 03, Evidence).
 export type TransferLinkView = {
+  // The link's ID, for Undo.
+  id: string;
   // The Transaction on the other side of the pair.
   otherTransactionId: string;
   // Strong when at least one strong signal matched, else Unclear.
@@ -48,7 +50,23 @@ export type TransferLinkView = {
   uncertain: boolean;
 };
 
-// One Transaction, with its type and its Transfer link's evidence.
+// A Refund, Reimbursement, or Manual loan link's evidence (spec 03, Evidence).
+export type OtherLinkView = {
+  // The link's ID, for Undo.
+  id: string;
+  kind: "Refund" | "Reimbursement" | "loan";
+  // The Transaction on the other side, for a Refund or a Reimbursement; else null.
+  otherTransactionId: string | null;
+  // The Manual loan, for a loan link; else null.
+  loanAccountId: string | null;
+  tier: "Strong" | "Unclear";
+  signals: string[];
+  aiAnswer: "yes" | "no" | null;
+  aiConfidence: "high" | "medium" | "low" | null;
+  madeBy: "app" | "AI" | "Member";
+};
+
+// One Transaction, with its type and its links' evidence.
 export type TransactionDetailView = {
   transaction: {
     id: string;
@@ -65,7 +83,22 @@ export type TransactionDetailView = {
   decision: TransactionDecisionView | null;
   // Null when no Transfer link uses it.
   transferLink: TransferLinkView | null;
+  // The Refund, Reimbursement, and Manual loan links that use it.
+  otherLinks: OtherLinkView[];
 };
+
+// A link a Member makes by hand (spec 03, Undo and hand links).
+export type HandLinkBody =
+  | { kind: "Transfer"; outTransactionId: string; inTransactionId: string }
+  | { kind: "Refund" | "Reimbursement"; transactionId: string; spendingTransactionId: string }
+  | { kind: "loan"; transactionId: string; loanAccountId: string };
+
+// The answer to a hand link: its ID, or why the app refused it. "not found" when a Transaction
+// that shows, or the Manual loan, has no such ID.
+export type HandLinkOutcome =
+  | { outcome: "linked"; linkId: string }
+  | { outcome: "not found" }
+  | { outcome: "refused"; reason: string };
 
 // A connected loan's type as it counts, and the APR a Member typed (spec 02, Account fields).
 export type LoanView = {
@@ -84,6 +117,37 @@ export type LoanBody = {
   apr?: number | null;
 };
 
+// A Manual loan's type, as a Member picks it (spec 02, Manual loans).
+export const MANUAL_LOAN_KINDS = [
+  "personal",
+  "car",
+  "student",
+  "mortgage",
+  "buy now pay later",
+] as const;
+export type ManualLoanKind = (typeof MANUAL_LOAN_KINDS)[number];
+
+// What a Member types for a Manual loan. Money is whole cents; the balance is what is owed, on
+// its date. An APR is a percent, such as 7.3. Escrow is for a mortgage only. A null loanType lets
+// the app decide Cash loan or Purchase loan.
+export type ManualLoanBody = {
+  lender: string;
+  kind: ManualLoanKind;
+  balance: number;
+  balanceDate: string;
+  apr: number;
+  regularPayment: number | null;
+  escrow: number | null;
+  loanType: "cash loan" | "purchase loan" | null;
+};
+
+// A Manual loan, with its type as it counts and who set it.
+export type ManualLoanView = Omit<ManualLoanBody, "loanType"> & {
+  id: string;
+  loanType: "cash loan" | "purchase loan";
+  setBy: "Member" | "app";
+};
+
 export type MoneyMovementRoutes = {
   // Undefined when no Transaction that shows has the ID.
   transaction(transactionId: string): Promise<TransactionDetailView | undefined>;
@@ -98,4 +162,16 @@ export type MoneyMovementRoutes = {
   loan(accountId: string): Promise<LoanView | undefined>;
   // Undefined when no connected loan has the ID.
   setLoan(accountId: string, body: LoanBody): Promise<LoanView | undefined>;
+  // A Member links Transactions by hand.
+  link(body: HandLinkBody, memberId: string): Promise<HandLinkOutcome>;
+  // A Member undoes a link of any kind. False when no link has the ID.
+  undoLink(linkId: string, memberId: string): Promise<boolean>;
+  manualLoans(): Promise<ManualLoanView[]>;
+  addManualLoan(body: ManualLoanBody, memberId: string): Promise<ManualLoanView>;
+  // Undefined when no Manual loan has the ID.
+  editManualLoan(
+    id: string,
+    body: ManualLoanBody,
+    memberId: string,
+  ): Promise<ManualLoanView | undefined>;
 };

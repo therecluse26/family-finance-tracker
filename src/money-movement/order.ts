@@ -1,7 +1,8 @@
 import type { Category } from "../categories/index.ts";
-import type { DecisionAccount, DecisionRecord } from "../db/index.ts";
+import type { DecisionAccount, DecisionRecord, LoanPayouts } from "../db/index.ts";
 import { cardPayment, cardPaymentReceived, cardRewards } from "./card-payments.ts";
 import { type LoanFacts, loanPayout } from "./loans.ts";
+import { type ManualLoanFacts, manualLoanTreatment } from "./manual-loans.ts";
 import { oneSidedTransfer } from "./one-sided.ts";
 import { accountsTreatment, isExcluded, pairTreatment } from "./pairs.ts";
 import {
@@ -11,12 +12,13 @@ import {
   zelleWithMember,
 } from "./payment-apps.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";
+import { type ManualLoanOffer, untrackedLoanPayment } from "./untracked-loans.ts";
 
 // The order of decisions (spec 03, Order of decisions): each Transaction's type comes from an
 // ordered list of steps, and the first step that fits wins. Steps 1 to 4 apply to every
-// Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Steps 1, 2, 3,
-// 5.1, 5.3 to 5.7, 6.1 to 6.3, 6.5 to 6.7, and 6.9 are built in; later tickets register their
-// rules in the other steps. An empty step is skipped.
+// Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Steps 1 to 4,
+// 5.1 to 5.7, 6.1 to 6.3, 6.5 to 6.7, and 6.9 are built in; later tickets register their rules in
+// the other steps. An empty step is skipped.
 
 export const DECISION_STEPS = [
   { step: "1", name: "a type a Member set by hand" },
@@ -73,15 +75,24 @@ export type Decision = {
   unconnectedAccountId?: string;
   asks?: { decided: string; bestAnswer: { value: string; label: string } };
   paidFromOutside?: boolean;
+  // An untracked loan whose payout the app saw: the Review list offers to add it as a Manual loan.
+  offersManualLoan?: ManualLoanOffer;
 };
 
 // What a rule reads besides the Transaction: the Household's date, its Accounts by ID, its
-// Members' names, and the facts of a connected loan, read once a run when a rule first needs them.
+// Members' names, and the facts of a connected loan or a Manual loan, read once a run when a rule
+// first needs them.
 export type DecisionContext = {
   today: string;
   accounts: ReadonlyMap<string, DecisionAccount>;
   members: readonly string[];
   loanFacts(loanId: string): Promise<LoanFacts>;
+  // Undefined when no Manual loan has the ID.
+  manualLoanFacts(loanId: string): Promise<ManualLoanFacts | undefined>;
+  // The loan payouts the app has seen land in an Account.
+  loanPayouts(): Promise<LoanPayouts>;
+  // Money out on the paying side of an Unclear pair with a connected loan, open on the Review list.
+  unclearLoanPayments: ReadonlySet<string>;
 };
 
 // What a rule reads: the Transaction, and its context.
@@ -110,25 +121,44 @@ const ownExcluded = (txn: DecisionInput) => isExcluded(txn.accounts.get(txn.acco
 const handSetType: DecisionRule = (txn) =>
   isHandSetType(txn.handSet.type) && !ownExcluded(txn) ? whole(txn, txn.handSet.type) : undefined;
 
-// Step 2. A Transfer link a Member made by hand. Other kinds of hand link come with their tickets.
-// The Accounts on its two sides decide how it counts.
-const handLink: DecisionRule = (txn) =>
-  txn.transferLink === "Member" && !ownExcluded(txn) ? pairTreatment(txn) : undefined;
+// A payment or payout linked to a Manual loan: a payout is a Transfer from the loan, and a payment
+// divides into the parts of a tracked loan (spec 03, Payments on a tracked loan).
+const loanLinkTreatment = (txn: DecisionInput, loanId: string): Promise<Decision> =>
+  manualLoanTreatment(txn, loanId);
+
+// Step 2. A Transfer or Manual loan link a Member made by hand. The Accounts on a Transfer's two
+// sides decide how it counts. A Refund or Reimbursement link counts once its ticket adds them. A
+// Transaction on an excluded Account goes on to step 3.
+const handLink: DecisionRule = (txn) => {
+  if (ownExcluded(txn)) return undefined;
+  if (txn.transferLink === "Member") return pairTreatment(txn);
+  if (txn.loanLink?.madeBy === "Member") return loanLinkTreatment(txn, txn.loanLink.loanAccountId);
+  return undefined;
+};
 
 // Step 3. A Transfer pair that pairing or the AI linked (spec 03, Transfers). The Accounts on its
 // two sides decide how it counts. A Transaction with no pair, on an Account whose own Transactions
 // count only through pairs, an investment Account, a loan, or an excluded Account, is decided here
-// too.
-const transferPair: DecisionRule = (txn) =>
-  (txn.transferLink === "app" || txn.transferLink === "AI") && !ownExcluded(txn)
-    ? pairTreatment(txn)
-    : accountsTreatment(txn);
+// too. A payment in an Unclear pair with a connected loan counts nowhere while the pair waits: the
+// loan's own Transaction carries the payment's parts, so it counts once.
+const transferPair: DecisionRule = (txn) => {
+  if (ownExcluded(txn)) return accountsTreatment(txn);
+  if (txn.transferLink === "app" || txn.transferLink === "AI") return pairTreatment(txn);
+  if (txn.unclearLoanPayments.has(txn.id)) return whole(txn, "Transfer");
+  return accountsTreatment(txn);
+};
+
+// Step 4. A link to a Manual loan that the app or the AI made (spec 03, Loans).
+const manualLoanLink: DecisionRule = (txn) =>
+  txn.loanLink !== null ? loanLinkTreatment(txn, txn.loanLink.loanAccountId) : undefined;
 
 const BUILT_IN = new Map<DecisionStep, DecisionRule>([
   ["1", handSetType],
   ["2", handLink],
   ["3", transferPair],
+  ["4", manualLoanLink],
   ["5.1", cardPayment],
+  ["5.2", untrackedLoanPayment],
   ["5.3", cashWithdrawal],
   ["5.4", zelleWithMember],
   ["5.5", paymentToPerson],

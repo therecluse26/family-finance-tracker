@@ -2,6 +2,7 @@
 export {
   answerReviewItem,
   countReviewItems,
+  everAskedAbout,
   openReviewItem,
   openReviewItemBatch,
   openReviewItems,

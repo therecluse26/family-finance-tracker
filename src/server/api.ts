@@ -1,4 +1,4 @@
-import { type Context, Hono } from "hono";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
 import * as z from "zod";
 import { AI_PROVIDERS, baseUrlProblem, MAX_COST_CAP_CENTS, onGateway } from "../ai/ai-view.ts";
 import type {
@@ -15,6 +15,7 @@ import { HAND_SET_TYPES } from "../money-movement/types.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
+import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -122,9 +123,68 @@ const unconnectedAccountBody = z.object({
 const UNCONNECTED_REFUSED =
   "Enter a name and a kind. The last 4 digits are 4 digits, and the balance is in dollars and cents.";
 
+// A Manual loan (spec 02, Manual loans). Money is whole cents, and the balance is what is owed on
+// its date. Escrow is for a mortgage only. A credit card or a line of credit is never one.
+const realDate = (date: string) =>
+  CALENDAR_DATE.test(date) && new Date(`${date}T00:00:00.000Z`).toISOString().startsWith(date);
+const manualLoanBody = z.object({
+  lender: z.string().trim().min(1).max(100),
+  kind: z.enum(MANUAL_LOAN_KINDS),
+  balance: z.number().int().min(0).max(MAX_BALANCE_CENTS),
+  balanceDate: z.string().refine(realDate),
+  apr: z.number().min(0).max(100),
+  regularPayment: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_BALANCE_CENTS)
+    .nullish()
+    .transform((amount) => amount ?? null),
+  escrow: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_BALANCE_CENTS)
+    .nullish()
+    .transform((amount) => amount ?? null),
+  loanType: z
+    .enum(["cash loan", "purchase loan"])
+    .nullish()
+    .transform((type) => type ?? null),
+});
+const MANUAL_LOAN_REFUSED =
+  "Enter the lender, the loan type, the balance and its date, and an APR from 0 to 100. Amounts are in dollars and cents.";
+const NOT_A_MANUAL_LOAN =
+  "A credit card or a line of credit can't be a Manual loan: its balance moves with purchases the app cannot see.";
+const ESCROW_REFUSED = "Escrow is for mortgages only.";
+
+// Why the app refuses a Manual loan body, or the loan.
+function manualLoanOrRefusal(
+  raw: unknown,
+): { loan: z.infer<typeof manualLoanBody> } | { error: string } {
+  const kind = typeof raw === "object" && raw !== null && "kind" in raw ? raw.kind : undefined;
+  if (kind === "credit card" || kind === "line of credit") return { error: NOT_A_MANUAL_LOAN };
+  const body = manualLoanBody.safeParse(raw);
+  if (!body.success) return { error: MANUAL_LOAN_REFUSED };
+  if (body.data.kind !== "mortgage" && body.data.escrow !== null) return { error: ESCROW_REFUSED };
+  return { loan: body.data };
+}
+
 // The types a Member may set by hand.
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
 
+// A link a Member makes by hand (spec 03, Undo and hand links), by the IDs of its Transactions, or
+// of its Transaction and Manual loan.
+const ID = z.string().min(1).max(100);
+const handLinkBody = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("Transfer"), outTransactionId: ID, inTransactionId: ID }),
+  z.object({
+    kind: z.enum(["Refund", "Reimbursement"]),
+    transactionId: ID,
+    spendingTransactionId: ID,
+  }),
+  z.object({ kind: z.literal("loan"), transactionId: ID, loanAccountId: ID }),
+]);
 // A Member's Category for one Transaction. Without "only this Transaction", it also makes a
 // Category rule for the Transaction's Merchant (spec 04, Category rules).
 const CATEGORY_NAMES = new Set<string>(CATEGORIES.map((category) => category.name));
@@ -345,6 +405,15 @@ async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unkno
   }
 }
 
+// A route that takes a JSON body refuses any other content type, so a form on another site cannot
+// post to it.
+const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
+  if (c.req.header("content-type")?.split(";")[0]?.trim() !== "application/json") {
+    return c.json({ error: "Send JSON." }, 415);
+  }
+  await next();
+};
+
 // The range of GET /api/accounts/:id/balances.
 function balanceQuery(query: Record<string, string>): BalanceQuery | undefined {
   const { from, to } = query;
@@ -462,6 +531,25 @@ export const api = new Hono<ServerEnv>()
     if (loan === undefined) return c.json({ error: "Not found" }, 404);
     return c.json({ loan });
   })
+  // A Member links Transactions by hand, of any kind (spec 03, Undo and hand links). Re-matching
+  // never breaks it.
+  .post("/links", jsonOnly, async (c) => {
+    const body = handLinkBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json({ error: "Name the link's kind and the IDs of what it links." }, 400);
+    }
+    const linked = await c.var.moneyMovement.link(body.data, c.var.member.id);
+    if (linked.outcome === "not found") return c.json({ error: "Not found" }, 404);
+    if (linked.outcome === "refused") return c.json({ error: linked.reason }, 400);
+    return c.json({ linkId: linked.linkId }, 200);
+  })
+  // A Member undoes any link. The app never makes that same link again.
+  .delete("/links/:id", async (c) => {
+    if (!(await c.var.moneyMovement.undoLink(c.req.param("id"), c.var.member.id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    return c.json({ undone: true }, 200);
+  })
   // Spending, Income, and Saving by month, by Category, and by Category group. Posted Transactions
   // only.
   .get("/totals", async (c) => c.json({ months: await c.var.moneyMovement.totals() }))
@@ -546,6 +634,25 @@ export const api = new Hono<ServerEnv>()
     );
     if (account === undefined) return c.json({ error: "Not found" }, 404);
     return c.json({ account }, 200);
+  })
+  // Manual loans: any Member adds and edits one at any time (spec 02, Manual loans).
+  .get("/manual-loans", async (c) => c.json({ loans: await c.var.moneyMovement.manualLoans() }))
+  .post("/manual-loans", jsonOnly, async (c) => {
+    const body = manualLoanOrRefusal(await jsonBody(c));
+    if ("error" in body) return c.json({ error: body.error }, 400);
+    const loan = await c.var.moneyMovement.addManualLoan(body.loan, c.var.member.id);
+    return c.json({ loan }, 200);
+  })
+  .put("/manual-loans/:id", jsonOnly, async (c) => {
+    const body = manualLoanOrRefusal(await jsonBody(c));
+    if ("error" in body) return c.json({ error: body.error }, 400);
+    const loan = await c.var.moneyMovement.editManualLoan(
+      c.req.param("id"),
+      body.loan,
+      c.var.member.id,
+    );
+    if (loan === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ loan }, 200);
   })
   // The Plaid secret is never in an answer: only whether it is set.
   .get("/plaid/settings", async (c) => c.json({ plaid: await c.var.plaid.view() }))

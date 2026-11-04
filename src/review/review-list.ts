@@ -7,6 +7,7 @@ import {
   type Database,
   listOpenReviewItems,
   listOpenReviewItemsOfKind,
+  listReviewItemSubjects,
   type Queries,
   readReviewItem,
   type StoredReviewItem,
@@ -235,4 +236,10 @@ export async function settleReviewItems(
       { reason, at: new Date() },
     );
   });
+}
+
+// Whether an item of the kind was ever opened about each subject, open or closed now. A kind that
+// asks only once reads it before it opens another.
+export async function everAskedAbout(database: Database, kind: string): Promise<Set<string>> {
+  return new Set((await listReviewItemSubjects(database, kind)).flat());
 }

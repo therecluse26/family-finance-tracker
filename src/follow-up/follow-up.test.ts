@@ -11,6 +11,7 @@ import {
   FOLLOW_UP_STEPS,
   type FollowUpStep,
   type FollowUpStepName,
+  followUpAgain,
   registerFollowUpStep,
   requestFollowUp,
   runFollowUp,
@@ -139,6 +140,32 @@ describe("the follow-up pipeline", () => {
       await runFollowUp();
 
       expect(runs).toEqual(FOLLOW_UP_STEPS.map((step) => ({ step, given: ["t1", "t2"] })));
+    });
+
+    it("leaves a Transaction unhandled when a Member's change comes while the step runs", async () => {
+      let answered = false;
+      register("matching", async (unhandled) => {
+        if (answered) return undefined;
+        answered = true;
+        // A Member answers about t1 while the step handles it.
+        const t1 = await bank.database.$client.execute(
+          "SELECT id FROM transactions WHERE provider_transaction_id = 't1'",
+        );
+        expect(unhandled).toContain(String(t1.rows[0]?.id));
+        await followUpAgain(bank.database, [String(t1.rows[0]?.id)]);
+        return undefined;
+      });
+      await syncedConnection("fake-a", "t1", "t2");
+
+      await runFollowUp();
+      await runFollowUp();
+
+      expect(runs).toEqual([
+        { step: "matching", given: ["t1", "t2"] },
+        { step: "matching", given: ["t1"] },
+      ]);
+      const changes = await bank.database.$client.execute("SELECT * FROM follow_up_changes");
+      expect(changes.rows).toEqual([]);
     });
 
     it("refuses a step registered twice", () => {

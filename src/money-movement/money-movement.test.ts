@@ -79,7 +79,8 @@ describe("money movement", () => {
       );
       // Except the Transfer pairs that step 3 links, card payments at steps 5.1 and 6.6, cash at
       // step 5.3, payment-app lines at steps 5.5 and 6.5, the one-sided Transfers at steps 5.6 and
-      // 6.7, and the loan payout at step 6.2. The demo has no Member, so no Zelle line names one.
+      // 6.7, the loan payout at step 6.2, and the untracked loan payments at step 5.2. The demo has
+      // no Member, so no Zelle line names one.
       const transferWording = `(t.description LIKE '%transfer%' OR t.description LIKE '%xfer%'
         OR coalesce(t.provider_category, '') GLOB 'TRANSFER_IN_*'
         OR coalesce(t.provider_category, '') GLOB 'TRANSFER_OUT_*')`;
@@ -108,7 +109,9 @@ describe("money movement", () => {
               OR (d.step IN ('5.6', '6.7') AND p.type IN ('Transfer', 'Saving')
                 AND ${transferWording} AND NOT ${paymentApp} AND NOT ${linked})
               OR (d.step = '6.2' AND p.type = 'Transfer'
-                AND t.provider_category GLOB 'LOAN_DISBURSEMENTS_*')`,
+                AND t.provider_category GLOB 'LOAN_DISBURSEMENTS_*')
+              OR (d.step = '5.2' AND t.amount < 0 AND NOT ${linked}
+                AND t.provider_category GLOB 'LOAN_PAYMENTS_*')`,
         ),
       ).toBe(await count(`SELECT count(*) AS n ${shown}`));
       expect(await count("SELECT count(*) AS n FROM transfer_links")).toBeGreaterThan(0);
@@ -128,19 +131,19 @@ describe("money movement", () => {
     });
 
     it("lets the first step that fits win, and skips an empty step", async () => {
-      // Step 5.2 comes before the built-in cash rule at step 5.3, and claims every withdrawal.
-      register("5.2", (txn) =>
-        txn.providerCategory === "TRANSFER_OUT_WITHDRAWAL" ? whole(txn, "Saving") : undefined,
+      // Step 6.4 comes before the built-in payment-app rule at step 6.5, and claims every
+      // payment-app line of money in.
+      register("6.4", (txn) =>
+        /venmo|zelle|paypal|cash app/i.test(txn.description) ? whole(txn, "Saving") : undefined,
       );
 
       await runFollowUp(NOW);
 
       const at = (step: string) =>
         count(`SELECT count(*) AS n FROM transaction_decisions WHERE step = '${step}'`);
-      expect(await at("5.2")).toBeGreaterThan(0);
-      expect(await at("5.3")).toBe(0);
-      // Steps 6.4 and 6.8 are empty, so money in passes them by.
-      expect(await at("6.4")).toBe(0);
+      expect(await at("6.4")).toBeGreaterThan(0);
+      expect(await at("6.5")).toBe(0);
+      // Step 6.8 is empty, so money in passes it by.
       expect(await at("6.8")).toBe(0);
       expect(await at("6.9")).toBeGreaterThan(0);
       // Steps 5.x never see money in, and steps 6.x never see money out.
@@ -152,6 +155,7 @@ describe("money movement", () => {
       ).toBe(0);
       expect(() => register("5.7", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
       expect(() => register("5.3", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
+      expect(() => register("5.2", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
     });
 
     it("keeps a hand-set type through every re-run, even when a sync changes the Transaction", async () => {
@@ -173,9 +177,22 @@ describe("money movement", () => {
       await runFollowUp(NOW);
       expect(await decisionOf(dinner.id)).toEqual(set);
 
-      // A rule that would claim it, and a sync that changes its description and then its amount.
-      register("5.2", (txn) => whole(txn, "Saving"));
-      await syncMore("fake-chase", { changed: [{ ...dinner, description: "CHANGED" }] });
+      // A sync that makes it a cash withdrawal, which step 5.3 would claim, and then changes its
+      // amount.
+      await syncMore("fake-chase", {
+        changed: [
+          {
+            ...dinner,
+            description: "ATM WITHDRAWAL",
+            category: {
+              name: "TRANSFER_OUT_WITHDRAWAL",
+              confidence: "VERY_HIGH",
+              version: "v2",
+              mcc: null,
+            },
+          },
+        ],
+      });
       expect(await decisionOf(dinner.id)).toEqual(set);
 
       await syncMore("fake-chase", { changed: [{ ...dinner, amount: dinner.amount - 100 }] });
@@ -251,7 +268,7 @@ describe("money movement", () => {
     };
 
     it("decides a provisional result again once its window has passed, with no sync", async () => {
-      register("5.2", oneSided);
+      register("6.4", oneSided);
       const connectionId = await bank.connect("fake-first-bank");
       bank.fake.addPages("fake-first-bank", {
         accounts: [CHECKING],
@@ -259,9 +276,9 @@ describe("money movement", () => {
           fakeTxn({
             id: "xfer",
             accountId: CHECKING.id,
-            amount: -20_000,
+            amount: 20_000,
             postedDate: "2026-10-09",
-            description: "SWEEP TO SAVINGS",
+            description: "SWEEP FROM SAVINGS",
           }),
         ],
       });
@@ -269,20 +286,20 @@ describe("money movement", () => {
       // Matching, on the day after the Transfer posted.
       await runMatching(bank.database, [await idOf("xfer")], new Date("2026-10-10T15:00:00Z"));
       expect(await decisionOf("xfer")).toEqual({
-        step: "5.2",
+        step: "6.4",
         provisionalUntil: "2026-10-12",
-        parts: [{ type: "Transfer", amount: -20_000, category: null }],
+        parts: [{ type: "Transfer", amount: 20_000, category: null }],
       });
 
       // On the window's last day it stays.
       expect(await decideProvisionalAgain(bank.database, new Date("2026-10-12T23:00:00Z"))).toBe(0);
-      expect((await decisionOf("xfer"))?.step).toBe("5.2");
+      expect((await decisionOf("xfer"))?.step).toBe("6.4");
 
       expect(await decideProvisionalAgain(bank.database, new Date("2026-10-13T12:00:00Z"))).toBe(1);
       expect(await decisionOf("xfer")).toEqual({
-        step: "5.7",
+        step: "6.9",
         provisionalUntil: null,
-        parts: [{ type: "Spending", amount: -20_000, category: null }],
+        parts: [{ type: "Income", amount: 20_000, category: null }],
       });
       // Nothing is left to decide again.
       expect(await decideProvisionalAgain(bank.database, new Date("2026-10-14T12:00:00Z"))).toBe(0);
@@ -297,16 +314,11 @@ describe("money movement", () => {
     const CHECKING = fakeAccount({ id: "acc-checking", name: "Everyday Checking" });
 
     it("sums Spending, Income, and Saving by month, by Category, and by Category group", async () => {
-      // Rules for the test, keyed on the description: what later tickets will decide.
-      register("5.2", (txn) => {
-        if (txn.description === "BROKERAGE") return whole(txn, "Saving");
-        return txn.description === "GROCER"
-          ? { parts: [{ type: "Spending", amount: txn.amount, category: "Groceries" }] }
-          : undefined;
-      });
+      // Rules for the test, keyed on the description: what later tickets will decide. A buy now pay
+      // later payment is Spending in General goods at step 5.2.
       register("6.4", (txn) =>
-        txn.description === "GROCER REFUND"
-          ? { parts: [{ type: "Refund", amount: txn.amount, category: "Groceries" }] }
+        txn.description === "PAY IN 4 REFUND"
+          ? { parts: [{ type: "Refund", amount: txn.amount, category: "General goods" }] }
           : undefined,
       );
       register("6.8", (txn) =>
@@ -319,8 +331,11 @@ describe("money movement", () => {
         accounts: [CHECKING],
         added: [
           txn("pay", 300_000, "2026-09-01", "PAYROLL"),
-          txn("grocer", -10_000, "2026-09-03", "GROCER"),
-          txn("refund", 2_000, "2026-09-05", "GROCER REFUND"),
+          {
+            ...txn("bnpl", -10_000, "2026-09-03", "PAY IN 4"),
+            category: { name: "LOAN_PAYMENTS_BNPL", confidence: "HIGH", version: "v2", mcc: null },
+          },
+          txn("refund", 2_000, "2026-09-05", "PAY IN 4 REFUND"),
           txn("other", -4_000, "2026-09-06", "SOMETHING"),
           txn("save", -50_000, "2026-09-10", "BROKERAGE"),
           txn("take-out", 80_000, "2026-09-20", "BROKERAGE"),
@@ -330,6 +345,7 @@ describe("money movement", () => {
       await syncConnection(connectionId, () => new Date("2026-10-02T15:00:00Z"));
       await runFollowUp(() => new Date("2026-10-02T15:00:00Z"));
       await setTransactionType(bank.database, await idOf("move"), "Transfer");
+      await setTransactionType(bank.database, await idOf("save"), "Saving");
       await runFollowUp(() => new Date("2026-10-02T15:00:00Z"));
 
       const totals = await totalsByMonth(bank.database);
@@ -342,7 +358,7 @@ describe("money movement", () => {
         income: 300_000,
         // 50,000 in, 80,000 taken back out.
         saving: -30_000,
-        byCategory: { Groceries: 8_000 },
+        byCategory: { "General goods": 8_000 },
       });
       expect(totals[0]?.byCategoryGroup.Shopping).toBe(8_000);
       // A Transfer counts in nothing.

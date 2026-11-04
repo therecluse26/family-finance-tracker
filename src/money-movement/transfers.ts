@@ -1,6 +1,7 @@
 import { munkres } from "munkres";
 import {
   type Database,
+  listLinkedOtherwise,
   listRefusedTransferLinks,
   listTransferCandidates,
   listTransferLinkDates,
@@ -22,8 +23,8 @@ import { isHandSetType } from "./order.ts";
 //   most strong signals, then the smallest total date gap.
 // - A Strong pair applies at once. An Unclear pair goes to the AI when one is registered (T81),
 //   else on the Review list; it is not linked meanwhile.
-// - The app keeps only its own links up to date. A link the AI or a Member made stays while both
-//   sides still show with equal amounts.
+// - The app keeps only its own links up to date. A link the AI made stays while it passes every
+//   hard filter; a Member's link stays while it passes every hard filter but the window.
 // - Pairing reads only the Transactions near the ones that changed, so a sync never solves all of
 //   history again. A link wholly outside them stays as it is.
 
@@ -93,6 +94,16 @@ function passesHardFilters(out: TransferCandidate, into: TransferCandidate): boo
     out.amount === -into.amount &&
     insideWindow(out, into)
   );
+}
+
+// The hard filters a Member's link must pass: two different Accounts, money out and money in, and
+// the same amount to the cent. A Member may link across any span of days (spec 03, Undo and hand
+// links).
+export function passesHandFilters(
+  out: Pick<TransferCandidate, "accountId" | "amount">,
+  into: Pick<TransferCandidate, "accountId" | "amount">,
+): boolean {
+  return out.accountId !== into.accountId && out.amount < 0 && out.amount === -into.amount;
 }
 
 // Lowercase words, with a bank's name endings dropped, so "Synchrony Bank" names "SYNCHRONY".
@@ -449,13 +460,14 @@ export async function pairTransfers(
   const byId = new Map(found.map((candidate) => [candidate.id, candidate]));
   const result: PairingResult = { changed: new Set(), looked: new Set(seeds), items: [] };
 
-  // A link ends when a side no longer shows or is pending, or the amounts differ: it no longer
-  // passes its hard filters (spec 03, Undo and hand links). A side on an excluded Account still
+  // A link ends when a side no longer shows or is pending, or it fails a hard filter; a Member's
+  // link skips the window (spec 03, Undo and hand links). A side on an excluded Account still
   // counts. Otherwise a link the AI or a Member made stays, and its sides stay out of pairing.
   const ended = touching.filter((link) => {
     const out = byId.get(link.outTransactionId);
     const into = byId.get(link.inTransactionId);
-    return out === undefined || into === undefined || out.amount !== -into.amount;
+    if (out === undefined || into === undefined) return true;
+    return link.madeBy === "Member" ? !passesHandFilters(out, into) : !passesHardFilters(out, into);
   });
   await saveTransferLinks(database, { remove: ended.map((link) => link.id), update: [], add: [] });
   for (const link of ended) {
@@ -492,23 +504,54 @@ function nearGroupsOf(oldestFirst: readonly TransferCandidate[]): TransferCandid
   return groups;
 }
 
-// Pairs around one run of seeds: the Transactions of their amounts, posted within REACH business
-// days of them.
+// Pairing reads past REACH, out to the far side of an app link that reaches outside, but never
+// more than this many days from the run of seeds.
+const CHAIN_DAYS = 60;
+
+// The Transactions of the seeds' amounts posted within REACH business days of them, and their
+// links. While an app link has one side read and one not, the read reaches on to its far side and
+// REACH beyond, so a new Transaction can take a settled one's place and the settled one can pair
+// further on. It stops at CHAIN_DAYS; a link that still reaches outside then stays as it is.
+async function readNear(database: Database, near: readonly TransferCandidate[]) {
+  const amounts = [...new Set(near.map((candidate) => Math.abs(candidate.amount)))];
+  const first = near[0]?.postedDate ?? "";
+  const last = near.at(-1)?.postedDate ?? "";
+  const [floor, ceiling] = [addDays(first, -CHAIN_DAYS), addDays(last, CHAIN_DAYS)];
+  let from = addBusinessDays(first, -REACH);
+  let to = addBusinessDays(last, REACH);
+  for (;;) {
+    const candidates = await listTransferCandidates(database, { amounts, from, to });
+    const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+    const links = await listTransferLinksOf(database, [...byId.keys()]);
+    const farSides = links.flatMap((link) =>
+      link.madeBy !== "app" || byId.has(link.outTransactionId) === byId.has(link.inTransactionId)
+        ? []
+        : [byId.has(link.outTransactionId) ? link.inTransactionId : link.outTransactionId],
+    );
+    const far =
+      farSides.length === 0 ? [] : await listTransferCandidates(database, { ids: farSides });
+    let [wideFrom, wideTo] = [from, to];
+    for (const { postedDate } of far) {
+      wideFrom = firstOf(wideFrom, addBusinessDays(postedDate, -REACH));
+      wideTo = lastOf(wideTo, addBusinessDays(postedDate, REACH));
+    }
+    wideFrom = lastOf(wideFrom, floor);
+    wideTo = firstOf(wideTo, ceiling);
+    if (wideFrom === from && wideTo === to) return { candidates, byId, links };
+    [from, to] = [wideFrom, wideTo];
+  }
+}
+
+// Pairs around one run of seeds: the Transactions of their amounts, posted near them.
 async function pairNear(
   database: Database,
   near: readonly TransferCandidate[],
   now: Date,
 ): Promise<PairingResult> {
   const seeds = new Set(near.map((candidate) => candidate.id));
-  const first = near[0]?.postedDate ?? "";
-  const last = near.at(-1)?.postedDate ?? "";
-  const candidates = await listTransferCandidates(database, {
-    amounts: [...new Set(near.map((candidate) => Math.abs(candidate.amount)))],
-    from: addBusinessDays(first, -REACH),
-    to: addBusinessDays(last, REACH),
-  });
-  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const links = await listTransferLinksOf(database, [...byId.keys()]);
+  const { candidates, byId, links } = await readNear(database, near);
+  // A Refund, Reimbursement, or loan link's Transactions never pair.
+  const linkedOtherwise = await listLinkedOtherwise(database, [...byId.keys()]);
 
   // The sides of a link the AI or a Member made, and of an app link that reaches outside the
   // Transactions read here, stay as they are.
@@ -521,10 +564,14 @@ async function pairNear(
     }
   }
 
-  // A Transaction with a hand-set type, card rewards, and a held link's sides never pair.
+  // A Transaction with a hand-set type, card rewards, a held link's sides, and a Transaction
+  // with a Refund, Reimbursement, or loan link never pair.
   const free = candidates.filter(
     (candidate) =>
-      !isHandSetType(candidate.handSet.type) && !isCardReward(candidate) && !held.has(candidate.id),
+      !isHandSetType(candidate.handSet.type) &&
+      !isCardReward(candidate) &&
+      !held.has(candidate.id) &&
+      !linkedOtherwise.has(candidate.id),
   );
   const refused = await listRefusedTransferLinks(
     database,

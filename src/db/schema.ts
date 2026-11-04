@@ -460,6 +460,10 @@ export const householdAccounts = sqliteTable(
     loanType: text("loan_type", { enum: ["cash loan", "purchase loan"] }),
     // An APR a Member typed, for a loan.
     memberApr: real("member_apr"),
+    // A Manual loan's regular payment and, on a mortgage, its escrow per payment, as a Member
+    // typed them.
+    regularPayment: cents("regular_payment"),
+    escrow: cents("escrow"),
     excluded: integer("excluded", { mode: "boolean" }).notNull().default(false),
     // Set when the Account is Closed (spec 02, Closed Accounts), with the reason.
     closedAt: moment("closed_at"),
@@ -667,6 +671,81 @@ export const refusedTransferLinks = sqliteTable(
   ],
 );
 
+// A Refund or a Reimbursement and the Spending it reduces (spec 03, Links, Refunds,
+// Reimbursements). Several may reduce one Spending, and each links to at most one. A link ends
+// when either Transaction is deleted.
+export const spendingLinks = sqliteTable(
+  "spending_links",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: ["Refund", "Reimbursement"] }).notNull(),
+    // The money in: the Refund or the Reimbursement.
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    // The Spending it reduces.
+    spendingTransactionId: text("spending_transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    tier: text("tier", { enum: ["Strong", "Unclear"] }).notNull(),
+    signals: text("signals", { mode: "json" }).$type<string[]>().notNull(),
+    aiAnswer: text("ai_answer", { enum: ["yes", "no"] }),
+    aiConfidence: text("ai_confidence", { enum: ["high", "medium", "low"] }),
+    madeBy: text("made_by", { enum: ["app", "AI", "Member"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    createdAt: moment("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("spending_links_transaction_id").on(table.transactionId),
+    index("spending_links_spending_transaction_id").on(table.spendingTransactionId),
+  ],
+);
+
+// A Manual loan and its payment or its payout (spec 03, Links, Loans). Each Transaction links to
+// at most one loan. A link ends when its Transaction is deleted.
+export const loanLinks = sqliteTable(
+  "loan_links",
+  {
+    id: text("id").primaryKey(),
+    // The payment, money out of a Household Account, or the payout, money into one.
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    loanAccountId: text("loan_account_id")
+      .notNull()
+      .references(() => householdAccounts.id, { onDelete: "cascade" }),
+    tier: text("tier", { enum: ["Strong", "Unclear"] }).notNull(),
+    signals: text("signals", { mode: "json" }).$type<string[]>().notNull(),
+    aiAnswer: text("ai_answer", { enum: ["yes", "no"] }),
+    aiConfidence: text("ai_confidence", { enum: ["high", "medium", "low"] }),
+    madeBy: text("made_by", { enum: ["app", "AI", "Member"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    createdAt: moment("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("loan_links_transaction_id").on(table.transactionId),
+    index("loan_links_loan_account_id").on(table.loanAccountId),
+  ],
+);
+
+// Refund, Reimbursement, and loan links that a Member undid, or the AI rejected with high
+// confidence. The app never makes them again (spec 03, Undo and hand links). `otherId` is the
+// Spending's Transaction ID, or the loan's Account ID.
+export const refusedLinks = sqliteTable(
+  "refused_links",
+  {
+    kind: text("kind", { enum: ["Refund", "Reimbursement", "loan"] }).notNull(),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    otherId: text("other_id").notNull(),
+    refusedBy: text("refused_by", { enum: ["AI", "Member"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    refusedAt: moment("refused_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.kind, table.transactionId, table.otherId] })],
+);
+
 // Each Transaction's type, as the order of decisions last decided it (spec 03, Order of
 // decisions). Its parts are in transaction_parts. A hidden Transaction has none.
 export const transactionDecisions = sqliteTable(
@@ -685,7 +764,9 @@ export const transactionDecisions = sqliteTable(
 );
 
 // The parts of each decided Transaction: one part, or several that add up to its amount (spec 03,
-// Transaction types). Each has one type and, for Spending, one Category.
+// Transaction types). A payment on a tracked loan that no Household Account sent is the exception:
+// its parts sit on the loan's own Transaction with the paying side's sign, so they add up to minus
+// its amount. Each has one type and, for Spending, one Category.
 export const transactionParts = sqliteTable(
   "transaction_parts",
   {
@@ -743,6 +824,20 @@ export const followUpMarks = sqliteTable(
     primaryKey({ columns: [table.step, table.transactionId] }),
     index("follow_up_marks_transaction_id").on(table.transactionId),
   ],
+);
+
+// Each time a Member's change made a Transaction unhandled again, in order. A follow-up step that
+// was already running does not mark a Transaction handled when it changed after the step began, so
+// the next job handles it again. A step drops the rows it no longer needs.
+export const followUpChanges = sqliteTable(
+  "follow_up_changes",
+  {
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+  },
+  (table) => [index("follow_up_changes_transaction_id").on(table.transactionId)],
 );
 
 // The Review list: the app's uncertain decisions, and things it cannot settle alone (spec 07,

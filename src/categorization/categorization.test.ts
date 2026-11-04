@@ -8,6 +8,8 @@ import { setHandSetFields, storeCategoryRule } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { merchantKey } from "../merchants/index.ts";
 import {
+  addManualLoan,
+  linkByHand,
   registerDecisionRule,
   setTransactionType,
   startMoneyMovement,
@@ -437,24 +439,6 @@ describe("the categorization cascade", () => {
       });
 
     beforeEach(async () => {
-      // A tracked loan payment: $10 of interest, the rest principal on a Cash loan.
-      register(
-        registerDecisionRule("5.2", (txn) =>
-          txn.description.startsWith("LOAN")
-            ? {
-                parts: [
-                  {
-                    type: "Spending",
-                    amount: -1_000,
-                    category: "Interest and fees",
-                    keepsCategory: true,
-                  },
-                  { type: "Transfer", amount: txn.amount + 1_000, category: null },
-                ],
-              }
-            : undefined,
-        ),
-      );
       await addRule("Ruled Lender", "Services");
       await addRule("Ruled ATM", "Services");
     });
@@ -475,6 +459,34 @@ describe("the categorization cascade", () => {
         merchantName: "Ruled Lender",
       });
       await sync({ added: [loan] });
+      // A tracked loan payment: interest, then the principal of a Cash loan.
+      await bank.database.$client.execute(
+        `INSERT INTO members (id, name, email, created_at, updated_at)
+         VALUES ('member-1', 'Jamie', 'jamie@example.com', '2026-10-01T00:00:00.000Z',
+           '2026-10-01T00:00:00.000Z')`,
+      );
+      const personal = await addManualLoan(
+        bank.database,
+        {
+          lender: "Ruled Lender",
+          kind: "personal",
+          balance: 1_000_000,
+          balanceDate: "2026-09-01",
+          apr: 7.3,
+          regularPayment: null,
+          escrow: null,
+          loanType: null,
+        },
+        "member-1",
+      );
+      const linked = await linkByHand(
+        bank.database,
+        { kind: "loan", transactionId: await idOf("loan"), loanAccountId: personal.id },
+        "member-1",
+        NOW(),
+      );
+      expect(linked.outcome).toBe("linked");
+      await runFollowUp(NOW);
 
       expect(await partsOf("loan")).toEqual([
         {

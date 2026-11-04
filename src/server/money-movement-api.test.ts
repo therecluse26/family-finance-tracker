@@ -184,6 +184,7 @@ describe("the money-movement routes", () => {
         parts: [{ type: "Transfer", amount: 50_000, category: null }],
       },
       transferLink: {
+        id: expect.any(String),
         otherTransactionId: ids.get("save-out") ?? "",
         tier: "Strong",
         signals: ["last 4 digits"],
@@ -192,6 +193,7 @@ describe("the money-movement routes", () => {
         madeBy: "app",
         uncertain: false,
       },
+      otherLinks: [],
     } satisfies TransactionDetailView);
     const rent = (await (
       await browser.get(`/api/transactions/${ids.get("rent")}`)
@@ -274,8 +276,19 @@ describe("the money-movement routes", () => {
     );
     expect((await browser.get(`/api/accounts/${checking.rows[0]?.id}/loan`)).status).toBe(404);
     expect(
-      (await browser.send("PUT", `/api/accounts/${checking.rows[0]?.id}/loan`, { apr: 5 })).status,
+      (
+        await browser.send("PUT", `/api/accounts/${checking.rows[0]?.id}/loan`, {
+          loanType: "cash loan",
+          apr: 5,
+        })
+      ).status,
     ).toBe(404);
+    // The refused PUT wrote nothing on the checking Account.
+    const unchanged = await test.database.$client.execute({
+      sql: "SELECT loan_type, member_apr FROM household_accounts WHERE id = ?",
+      args: [String(checking.rows[0]?.id)],
+    });
+    expect({ ...unchanged.rows[0] }).toEqual({ loan_type: null, member_apr: null });
     expect((await browser.send("PUT", "/api/accounts/no-such-id/loan", { apr: 5 })).status).toBe(
       404,
     );

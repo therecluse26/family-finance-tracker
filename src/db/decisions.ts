@@ -1,9 +1,10 @@
 import { aliasedTable, and, asc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import type { Database, Queries } from "./client.ts";
-import type { TransferLinkMaker } from "./links.ts";
+import type { LinkMaker, TransferLinkMaker } from "./links.ts";
 import {
   householdAccounts,
+  loanLinks,
   members,
   transactionDecisions,
   transactionParts,
@@ -57,6 +58,8 @@ export type DecisionRecord = {
   transferLink: TransferLinkMaker | null;
   // The other side of that link, or null.
   otherSide: { transactionId: string; accountId: string; postedDate: string } | null;
+  // The Manual loan it links to, as its payment or payout, and who made the link; or null.
+  loanLink: { loanAccountId: string; madeBy: LinkMaker } | null;
   hidden: boolean;
 };
 
@@ -160,6 +163,8 @@ export async function readDecisionRecords(
         otherId: other.id,
         otherAccountId: other.accountId,
         otherPostedDate: other.postedDate,
+        loanAccountId: loanLinks.loanAccountId,
+        loanLinkMadeBy: loanLinks.madeBy,
         hiddenReason: transactions.hiddenReason,
       })
       .from(transactions)
@@ -183,13 +188,26 @@ export async function readDecisionRecords(
           ),
         ),
       )
+      .leftJoin(loanLinks, eq(loanLinks.transactionId, transactions.id))
       .where(inArray(transactions.id, chunk));
-    for (const { hiddenReason, otherId, otherAccountId, otherPostedDate, ...row } of rows) {
+    for (const {
+      hiddenReason,
+      otherId,
+      otherAccountId,
+      otherPostedDate,
+      loanAccountId,
+      loanLinkMadeBy,
+      ...row
+    } of rows) {
       const otherSide =
         otherId === null || otherAccountId === null || otherPostedDate === null
           ? null
           : { transactionId: otherId, accountId: otherAccountId, postedDate: otherPostedDate };
-      found.set(row.id, { ...row, otherSide, hidden: hiddenReason !== null });
+      const loanLink =
+        loanAccountId === null || loanLinkMadeBy === null
+          ? null
+          : { loanAccountId, madeBy: loanLinkMadeBy };
+      found.set(row.id, { ...row, otherSide, loanLink, hidden: hiddenReason !== null });
     }
   }
   return ids.flatMap((id) => found.get(id) ?? []);

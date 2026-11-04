@@ -265,6 +265,69 @@ describe("removing a Connection", () => {
       expect(await rows("SELECT id FROM transactions")).toEqual([{ id: otherIn?.id }]);
     });
 
+    it("ends Refund and Manual loan links, keeps the Manual loan, and matches the others again", async () => {
+      const other = await bank.connect("fake-other", "Other Bank");
+      bank.fake.addPages("fake-other", {
+        accounts: [fakeAccount({ id: "other-checking" })],
+        added: [
+          fakeTxn({ id: "other-in", accountId: "other-checking", amount: 5000 }),
+          fakeTxn({ id: "other-pay", accountId: "other-checking", amount: -9000 }),
+        ],
+        historyLoaded: true,
+      });
+      await syncConnection(other);
+      const [plaidOut] = await rows("SELECT id FROM transactions WHERE connection_id = ? LIMIT 1", [
+        connectionId,
+      ]);
+      const otherIds = await rows(
+        "SELECT id FROM transactions WHERE connection_id = ? ORDER BY amount DESC",
+        [other],
+      );
+      const [otherIn, otherPay] = otherIds.map((row) => String(row.id));
+      const at = new Date().toISOString();
+      await bank.database.$client.execute(
+        "INSERT INTO household_accounts (id, kind, subtype, name) VALUES ('manual-loan', 'loan', 'car', 'Lakeside Auto')",
+      );
+      await bank.database.$client.execute({
+        sql: `INSERT INTO spending_links (id, kind, transaction_id, spending_transaction_id, tier, signals, made_by, created_at)
+              VALUES ('refund-1', 'Refund', ?, ?, 'Unclear', '[]', 'Member', ?)`,
+        args: [String(otherIn), String(plaidOut?.id), at],
+      });
+      for (const [linkId, transactionId] of [
+        ["loan-1", String(plaidOut?.id)],
+        ["loan-2", String(otherPay)],
+      ]) {
+        await bank.database.$client.execute({
+          sql: `INSERT INTO loan_links (id, transaction_id, loan_account_id, tier, signals, made_by, created_at)
+                VALUES (?, ?, 'manual-loan', 'Unclear', '[]', 'Member', ?)`,
+          args: [linkId ?? "", transactionId ?? "", at],
+        });
+      }
+      await bank.database.$client.execute({
+        sql: `INSERT INTO refused_links (kind, transaction_id, other_id, refused_by, refused_at)
+              VALUES ('loan', ?, 'manual-loan', 'Member', ?)`,
+        args: [String(plaidOut?.id), at],
+      });
+      for (const transactionId of [otherIn, otherPay]) {
+        await bank.database.$client.execute({
+          sql: "INSERT INTO follow_up_marks (step, transaction_id, handled_at) VALUES ('matching', ?, ?)",
+          args: [transactionId ?? "", at],
+        });
+      }
+      plaid.answer(ITEM_REMOVE, { body: RECORDED.itemRemove });
+      await removing.remove(connectionId);
+
+      await removing.deleteHistory(connectionId);
+
+      expect(await count("SELECT count(*) AS n FROM spending_links")).toBe(0);
+      expect(await count("SELECT count(*) AS n FROM refused_links")).toBe(0);
+      expect(await rows("SELECT id FROM loan_links")).toEqual([{ id: "loan-2" }]);
+      expect(await rows("SELECT id FROM household_accounts WHERE id = 'manual-loan'")).toEqual([
+        { id: "manual-loan" },
+      ]);
+      expect(await count("SELECT count(*) AS n FROM follow_up_marks")).toBe(0);
+    });
+
     it("unties a one-sided Transfer on another Connection from a deleted Account, such as an excluded one, and marks it for matching again", async () => {
       const other = await bank.connect("fake-other", "Other Bank");
       bank.fake.addPages("fake-other", {

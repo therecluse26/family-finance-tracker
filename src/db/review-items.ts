@@ -43,6 +43,18 @@ export async function readReviewItem(
   return row;
 }
 
+// The subjects of every item of a kind, open or closed.
+export async function listReviewItemSubjects(
+  database: Database,
+  kind: string,
+): Promise<string[][]> {
+  const rows = await database
+    .select({ subjectIds: reviewItems.subjectIds })
+    .from(reviewItems)
+    .where(eq(reviewItems.kind, kind));
+  return rows.map((row) => row.subjectIds);
+}
+
 // Every open item, newest first.
 export async function listOpenReviewItems(database: Database): Promise<StoredReviewItem[]> {
   return database

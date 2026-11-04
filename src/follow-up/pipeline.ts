@@ -4,6 +4,7 @@ import {
   markTransactionsHandled,
   markTransactionsUnhandled,
   type Queries,
+  readLastFollowUpChange,
 } from "../db/index.ts";
 import { log } from "../log.ts";
 
@@ -79,24 +80,27 @@ export async function askForFollowUp(): Promise<void> {
 export type FollowUpRun = { stoppedAt: FollowUpStepName; again: Date } | undefined;
 
 // Runs each registered step in order, on the Transactions it has not handled yet. A step with
-// nothing to handle is skipped. Safe to run twice: each step's marks say what it has handled.
+// nothing to handle is skipped. Safe to run twice: each step's marks say what it has handled. A
+// Member's answer or edit during a step leaves its Transactions unhandled, so the job it starts
+// handles them again.
 export async function runFollowUp(now = () => new Date()): Promise<FollowUpRun> {
   if (services === undefined) throw new Error("The follow-up pipeline is not running.");
   const { database } = services;
   for (const name of FOLLOW_UP_STEPS) {
     const step = steps.get(name);
     if (step === undefined) continue;
+    const began = await readLastFollowUpChange(database);
     const unhandled = await listUnhandledTransactions(database, name);
     if (unhandled.length === 0) continue;
     const result = await step(unhandled);
     if (result === undefined) {
-      await markTransactionsHandled(database, name, unhandled, now());
+      await markTransactionsHandled(database, name, unhandled, now(), began);
       continue;
     }
     // Only Transactions the step was given can be marked, so a step cannot mark others.
     const given = new Set(unhandled);
     const handled = result.handled.filter((id) => given.has(id));
-    await markTransactionsHandled(database, name, handled, now());
+    await markTransactionsHandled(database, name, handled, now(), began);
     log.info("A follow-up step stopped the follow-up job", {
       step: name,
       left: unhandled.length - handled.length,

@@ -2,14 +2,18 @@ import { aliasedTable, and, eq, gte, inArray, isNull, lte, ne, or, sql } from "d
 import type { Database, Queries } from "./client.ts";
 import {
   householdAccounts,
+  loanLinks,
+  refusedLinks,
   refusedTransferLinks,
+  spendingLinks,
   transactionDecisions,
   transactions,
   transferLinks,
 } from "./schema.ts";
 
-// Transfer pairs in app.db (spec 03, Links, Evidence, Transfers). The money-movement module pairs;
-// these functions store and read.
+// Links in app.db (spec 03, Links, Evidence, Undo and hand links): Transfer pairs, a Refund or a
+// Reimbursement and its Spending, and a Manual loan and its payment or payout. The money-movement
+// module decides; these functions store and read.
 
 // SQLite takes at most 32,766 values in one statement.
 const IDS_PER_QUERY = 500;
@@ -202,25 +206,25 @@ const isPair = (pair: TransferPair) =>
   );
 
 // A Member links the pair by hand. It takes the place of any other link either side had. Writes
-// only through `database`, so it may run inside a Review list answer's transaction.
+// only through `database`, so it may run inside a Review list answer's transaction. Returns the
+// link's ID, and the Transactions whose other links ended with it.
 export async function linkTransferByHand(
   database: Queries,
   pair: TransferPair,
   by: { memberId: string; at: Date },
-): Promise<void> {
+): Promise<{ id: string; ended: string[] }> {
   const [existing] = await database.select().from(transferLinks).where(isPair(pair));
   if (existing !== undefined) {
     await database
       .update(transferLinks)
       .set({ madeBy: "Member", memberId: by.memberId, uncertain: false })
       .where(eq(transferLinks.id, existing.id));
-    return;
+    return { id: existing.id, ended: [] };
   }
-  await database
-    .delete(transferLinks)
-    .where(touching([pair.outTransactionId, pair.inTransactionId]));
+  const ended = await endLinksUsing(database, [pair.outTransactionId, pair.inTransactionId]);
+  const id = crypto.randomUUID();
   await database.insert(transferLinks).values({
-    id: crypto.randomUUID(),
+    id,
     ...pair,
     tier: "Unclear",
     signals: [],
@@ -228,6 +232,7 @@ export async function linkTransferByHand(
     memberId: by.memberId,
     createdAt: by.at,
   });
+  return { id, ended };
 }
 
 // Ends the pair's link, if it has one, and records that the app never makes it again. Writes only
@@ -253,20 +258,264 @@ export async function readTransferLink(
   return link;
 }
 
-// Transactions the order decided as linked Transfers, at steps 2 and 3, whose link has ended since.
+// Transactions the order decided by a link, at steps 2, 3, and 4, whose link has ended since.
 export async function listUnlinkedTransferDecisions(database: Database): Promise<string[]> {
   const rows = await database
     .select({ id: transactionDecisions.transactionId })
     .from(transactionDecisions)
     .where(
       and(
-        inArray(transactionDecisions.step, ["2", "3"]),
+        inArray(transactionDecisions.step, ["2", "3", "4"]),
         sql`NOT EXISTS (
           SELECT 1 FROM ${transferLinks}
           WHERE ${sql.identifier("out_transaction_id")} = "transaction_decisions"."transaction_id"
              OR ${sql.identifier("in_transaction_id")} = "transaction_decisions"."transaction_id"
         )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${loanLinks}
+          WHERE ${loanLinks.transactionId} = "transaction_decisions"."transaction_id"
+        )`,
       ),
     );
   return rows.map((row) => row.id);
+}
+
+export type StoredSpendingLink = typeof spendingLinks.$inferSelect;
+export type StoredLoanLink = typeof loanLinks.$inferSelect;
+export type SpendingLinkKind = StoredSpendingLink["kind"];
+export type LinkMaker = StoredLoanLink["madeBy"];
+
+// What a link stores besides its Transactions (spec 03, Evidence).
+export type LinkEvidence = Pick<
+  StoredLoanLink,
+  "tier" | "signals" | "aiAnswer" | "aiConfidence" | "madeBy" | "memberId" | "createdAt"
+>;
+
+// Ends every link of any kind that uses one of these Transactions, on either side. Returns the
+// Transactions on the other sides.
+async function endLinksUsing(database: Queries, ids: readonly string[]): Promise<string[]> {
+  const others = new Set<string>();
+  for (const link of await listTransferLinksOf(database, ids)) {
+    others.add(link.outTransactionId).add(link.inTransactionId);
+  }
+  for (const link of await listSpendingLinksOf(database, ids)) {
+    others.add(link.transactionId).add(link.spendingTransactionId);
+  }
+  for (const chunk of chunks(ids)) {
+    await database.delete(transferLinks).where(touching(chunk));
+    await database.delete(spendingLinks).where(spendingTouching(chunk));
+    await database.delete(loanLinks).where(inArray(loanLinks.transactionId, chunk));
+  }
+  for (const id of ids) others.delete(id);
+  return [...others];
+}
+
+const spendingTouching = (ids: string[]) =>
+  or(inArray(spendingLinks.transactionId, ids), inArray(spendingLinks.spendingTransactionId, ids));
+
+// The Refund and Reimbursement links that use any of these Transactions, on either side.
+export async function listSpendingLinksOf(
+  database: Queries,
+  transactionIds: readonly string[],
+): Promise<StoredSpendingLink[]> {
+  const found = new Map<string, StoredSpendingLink>();
+  for (const chunk of chunks(transactionIds)) {
+    for (const link of await database.select().from(spendingLinks).where(spendingTouching(chunk))) {
+      found.set(link.id, link);
+    }
+  }
+  return [...found.values()];
+}
+
+// The Manual loan links of these Transactions.
+export async function listLoanLinksOf(
+  database: Queries,
+  transactionIds: readonly string[],
+): Promise<StoredLoanLink[]> {
+  const found: StoredLoanLink[] = [];
+  for (const chunk of chunks(transactionIds)) {
+    found.push(
+      ...(await database.select().from(loanLinks).where(inArray(loanLinks.transactionId, chunk))),
+    );
+  }
+  return found;
+}
+
+// The Transactions among these that a Refund, Reimbursement, or loan link uses, so Transfer
+// pairing leaves them out.
+export async function listLinkedOtherwise(
+  database: Database,
+  transactionIds: readonly string[],
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (const link of await listSpendingLinksOf(database, transactionIds)) {
+    found.add(link.transactionId).add(link.spendingTransactionId);
+  }
+  for (const link of await listLoanLinksOf(database, transactionIds)) found.add(link.transactionId);
+  return found;
+}
+
+// Each shown Transaction linked to one of these Manual loans, with its date and amount, oldest
+// first.
+export async function listLoanLinkedTransactions(
+  database: Database,
+  loanAccountIds: readonly string[],
+) {
+  if (loanAccountIds.length === 0) return [];
+  return database
+    .select({
+      loanAccountId: loanLinks.loanAccountId,
+      transactionId: loanLinks.transactionId,
+      madeBy: loanLinks.madeBy,
+      amount: transactions.amount,
+      postedDate: transactions.postedDate,
+    })
+    .from(loanLinks)
+    .innerJoin(transactions, eq(transactions.id, loanLinks.transactionId))
+    .where(
+      and(inArray(loanLinks.loanAccountId, [...loanAccountIds]), isNull(transactions.hiddenReason)),
+    )
+    .orderBy(transactions.postedDate, transactions.id);
+}
+
+// A link of any kind, by its ID.
+export type AnyLink =
+  | { kind: "Transfer"; link: StoredTransferLink }
+  | { kind: SpendingLinkKind; link: StoredSpendingLink }
+  | { kind: "loan"; link: StoredLoanLink };
+
+export async function readLink(database: Queries, id: string): Promise<AnyLink | undefined> {
+  const [transfer] = await database.select().from(transferLinks).where(eq(transferLinks.id, id));
+  if (transfer !== undefined) return { kind: "Transfer", link: transfer };
+  const [spending] = await database.select().from(spendingLinks).where(eq(spendingLinks.id, id));
+  if (spending !== undefined) return { kind: spending.kind, link: spending };
+  const [loan] = await database.select().from(loanLinks).where(eq(loanLinks.id, id));
+  return loan === undefined ? undefined : { kind: "loan", link: loan };
+}
+
+// A Refund or Reimbursement and its Spending, or a Manual loan and its payment or payout.
+export type OtherLink =
+  | { kind: SpendingLinkKind; transactionId: string; spendingTransactionId: string }
+  | { kind: "loan"; transactionId: string; loanAccountId: string };
+
+const otherIdOf = (link: OtherLink) =>
+  link.kind === "loan" ? link.loanAccountId : link.spendingTransactionId;
+
+// Makes a Refund, Reimbursement, or loan link, or gives the same link new evidence. It takes the
+// place of every other link its Transaction had, and of the Spending's Transfer pair or loan link;
+// the Spending keeps its other Refunds and Reimbursements. Writes only through `database`, so it
+// may run inside a transaction. Returns the link's ID, and the Transactions whose other links
+// ended with it.
+export async function storeOtherLink(
+  database: Queries,
+  link: OtherLink,
+  evidence: LinkEvidence,
+): Promise<{ id: string; ended: string[] }> {
+  if (link.kind === "loan") {
+    const [existing] = await database
+      .select()
+      .from(loanLinks)
+      .where(eq(loanLinks.transactionId, link.transactionId));
+    if (existing?.loanAccountId === link.loanAccountId) {
+      await database.update(loanLinks).set(evidence).where(eq(loanLinks.id, existing.id));
+      return { id: existing.id, ended: [] };
+    }
+    const ended = await endLinksUsing(database, [link.transactionId]);
+    const id = crypto.randomUUID();
+    await database.insert(loanLinks).values({ id, ...link, ...evidence });
+    return { id, ended };
+  }
+  const { kind, transactionId, spendingTransactionId } = link;
+  const [existing] = await database
+    .select()
+    .from(spendingLinks)
+    .where(eq(spendingLinks.transactionId, transactionId));
+  if (existing?.spendingTransactionId === spendingTransactionId && existing.kind === kind) {
+    await database.update(spendingLinks).set(evidence).where(eq(spendingLinks.id, existing.id));
+    return { id: existing.id, ended: [] };
+  }
+  const ended = await endLinksUsing(database, [transactionId]);
+  for (const pair of await listTransferLinksOf(database, [spendingTransactionId])) {
+    ended.push(pair.outTransactionId, pair.inTransactionId);
+    await database.delete(transferLinks).where(eq(transferLinks.id, pair.id));
+  }
+  await database.delete(loanLinks).where(eq(loanLinks.transactionId, spendingTransactionId));
+  await database
+    .delete(spendingLinks)
+    .where(eq(spendingLinks.transactionId, spendingTransactionId));
+  const id = crypto.randomUUID();
+  await database
+    .insert(spendingLinks)
+    .values({ id, kind, transactionId, spendingTransactionId, ...evidence });
+  return { id, ended: ended.filter((other) => other !== spendingTransactionId) };
+}
+
+// Ends a Refund, Reimbursement, or loan link, and records that the app never makes it again.
+// Writes only through `database`.
+export async function refuseOtherLink(
+  database: Queries,
+  link: OtherLink,
+  by: { refusedBy: "AI" | "Member"; memberId?: string; at: Date },
+): Promise<void> {
+  if (link.kind === "loan") {
+    await database
+      .delete(loanLinks)
+      .where(
+        and(
+          eq(loanLinks.transactionId, link.transactionId),
+          eq(loanLinks.loanAccountId, link.loanAccountId),
+        ),
+      );
+  } else {
+    await database
+      .delete(spendingLinks)
+      .where(
+        and(
+          eq(spendingLinks.transactionId, link.transactionId),
+          eq(spendingLinks.spendingTransactionId, link.spendingTransactionId),
+        ),
+      );
+  }
+  await database
+    .insert(refusedLinks)
+    .values({
+      kind: link.kind,
+      transactionId: link.transactionId,
+      otherId: otherIdOf(link),
+      refusedBy: by.refusedBy,
+      memberId: by.memberId ?? null,
+      refusedAt: by.at,
+    })
+    .onConflictDoNothing();
+}
+
+// Whether someone refused this Refund, Reimbursement, or loan link, so the app never makes it.
+export async function isOtherLinkRefused(database: Queries, link: OtherLink): Promise<boolean> {
+  const [row] = await database
+    .select({ kind: refusedLinks.kind })
+    .from(refusedLinks)
+    .where(
+      and(
+        eq(refusedLinks.kind, link.kind),
+        eq(refusedLinks.transactionId, link.transactionId),
+        eq(refusedLinks.otherId, otherIdOf(link)),
+      ),
+    );
+  return row !== undefined;
+}
+
+// Ends these Refund, Reimbursement, and loan links, by ID. The app may make them again.
+export async function endOtherLinks(
+  database: Database,
+  ended: { spending: readonly string[]; loan: readonly string[] },
+): Promise<void> {
+  if (ended.spending.length === 0 && ended.loan.length === 0) return;
+  await database.transaction(async (tx) => {
+    for (const chunk of chunks(ended.spending)) {
+      await tx.delete(spendingLinks).where(inArray(spendingLinks.id, chunk));
+    }
+    for (const chunk of chunks(ended.loan)) {
+      await tx.delete(loanLinks).where(inArray(loanLinks.id, chunk));
+    }
+  });
 }

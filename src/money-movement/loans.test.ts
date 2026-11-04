@@ -190,6 +190,116 @@ describe("connected loans", () => {
     expect(await partsOf(september.id)).toEqual(measured);
   });
 
+  it("waits for a lender's lagging balance to move before it measures the interest from the drop", async () => {
+    const loan = LARKSPUR?.id ?? "";
+    const owed = await owedAtSeed();
+    await runFollowUp(NOW);
+    await syncOn("2026-11-10", { "fake-larkspur": { accounts: [larkspurWith(owed)] } });
+
+    // The sync after the payment still shows what was owed before it.
+    await syncOn("2026-11-17", {
+      "fake-ally": {
+        added: [
+          inChecking("ally-nov", -PAYMENT, "2026-11-16", {
+            description: "LARKSPUR LOAN PMT WEB ID: 9900213344",
+            category: code("LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT"),
+          }),
+        ],
+      },
+      "fake-larkspur": {
+        accounts: [larkspurWith(owed)],
+        added: [intoLoan("ls-nov", loan, PAYMENT, "2026-11-16")],
+      },
+    });
+    expect((await decisionOf("ally-nov"))?.provisionalUntil).toBe("2026-11-17");
+
+    // The next day's balance moved: $331.18 of the $452.18 was principal.
+    await syncOn("2026-11-18", {
+      "fake-larkspur": { accounts: [larkspurWith(owed + 33_118)] },
+    });
+    await decideProvisionalAgain(bank.database, at("2026-11-19")());
+    expect(await decisionOf("ally-nov")).toEqual({
+      step: "3",
+      provisionalUntil: null,
+      parts: [
+        { type: "Spending", amount: -12_100, category: "Interest and fees" },
+        { type: "Transfer", amount: -33_118, category: null },
+      ],
+    });
+  });
+
+  describe("a balance that never moves", () => {
+    const lagging = async () => {
+      const loan = LARKSPUR?.id ?? "";
+      const owed = await owedAtSeed();
+      await runFollowUp(NOW);
+      await syncOn("2026-11-10", { "fake-larkspur": { accounts: [larkspurWith(owed)] } });
+      await syncOn("2026-11-17", {
+        "fake-ally": {
+          added: [
+            inChecking("ally-nov", -PAYMENT, "2026-11-16", {
+              description: "LARKSPUR LOAN PMT WEB ID: 9900213344",
+              category: code("LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT"),
+            }),
+          ],
+        },
+        "fake-larkspur": {
+          accounts: [larkspurWith(owed)],
+          added: [intoLoan("ls-nov", loan, PAYMENT, "2026-11-16")],
+        },
+      });
+      expect((await decisionOf("ally-nov"))?.provisionalUntil).toBe("2026-11-17");
+      return { loan, owed };
+    };
+    const total = (parts: { amount: number }[] | undefined) =>
+      (parts ?? []).reduce((sum, part) => sum + part.amount, 0);
+
+    it("decides the interest once after 45 days, and no longer each day", async () => {
+      await lagging();
+
+      // On day 45 it still waits, and is decided again each day.
+      expect(await decideProvisionalAgain(bank.database, at("2026-12-31")())).toBe(1);
+      expect((await decisionOf("ally-nov"))?.provisionalUntil).toBe("2026-12-31");
+
+      // On day 46 it is decided once, and the whole payment still counts once.
+      expect(await decideProvisionalAgain(bank.database, at("2027-01-01")())).toBe(1);
+      const final = await decisionOf("ally-nov");
+      expect(final?.provisionalUntil).toBeNull();
+      expect(total(final?.parts)).toBe(-PAYMENT);
+      expect(await decideProvisionalAgain(bank.database, at("2027-01-02")())).toBe(0);
+      expect(await decideProvisionalAgain(bank.database, at("2027-03-01")())).toBe(0);
+      expect(await decisionOf("ally-nov")).toEqual(final);
+    });
+
+    it("decides the interest once the next payment lands", async () => {
+      const { loan, owed } = await lagging();
+
+      await syncOn("2026-12-17", {
+        "fake-ally": {
+          added: [
+            inChecking("ally-dec", -PAYMENT, "2026-12-16", {
+              description: "LARKSPUR LOAN PMT WEB ID: 9900213345",
+              category: code("LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT"),
+            }),
+          ],
+        },
+        "fake-larkspur": {
+          accounts: [larkspurWith(owed)],
+          added: [intoLoan("ls-dec", loan, PAYMENT, "2026-12-16")],
+        },
+      });
+      await decideProvisionalAgain(bank.database, at("2026-12-18")());
+
+      const november = await decisionOf("ally-nov");
+      expect(november?.provisionalUntil).toBeNull();
+      expect(total(november?.parts)).toBe(-PAYMENT);
+      // The December payment still waits for its own data.
+      expect((await decisionOf("ally-dec"))?.provisionalUntil).toBe("2026-12-18");
+      await decideProvisionalAgain(bank.database, at("2026-12-19")());
+      expect(await decisionOf("ally-nov")).toEqual(november);
+    });
+  });
+
   it("takes a mortgage's interest from the rise in interest paid this year, and the new value when a new year starts", async () => {
     const mortgage = (currentBalance: number, interestPaidThisYear: number) =>
       fakeAccount({

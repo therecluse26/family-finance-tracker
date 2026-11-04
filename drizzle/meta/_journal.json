@@ -197,6 +197,20 @@
       "when": 1793817607181,
       "tag": "0027_recurring_charges",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1793818219408,
+      "tag": "0028_hand_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1793818220355,
+      "tag": "0029_manual_loans",
+      "breakpoints": true
     }
   ]
 }

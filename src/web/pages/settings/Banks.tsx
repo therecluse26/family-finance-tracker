@@ -5,6 +5,7 @@ import type { SyncNowView } from "../../../server/bank-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD, TextField } from "../../components/Fields.tsx";
 import { Connections } from "./Connections.tsx";
+import { ManualLoans } from "./ManualLoans.tsx";
 import { UnconnectedAccounts } from "./UnconnectedAccounts.tsx";
 
 // Settings, Banks: Sync now (spec 02, Sync now), the Plaid keys and the count of Plaid Items
@@ -226,6 +227,7 @@ export function Banks() {
         </>
       )}
       <UnconnectedAccounts />
+      <ManualLoans />
     </>
   );
 }
