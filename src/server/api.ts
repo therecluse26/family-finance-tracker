@@ -94,6 +94,12 @@ const householdFactsBody = z.object({
   rentOrOwn: z.enum(["rent", "own"]),
 });
 
+// A Steady Income figure a Member typed, in whole cents per month, or null to clear it.
+const MAX_STEADY_INCOME_CENTS = 10_000_000_000;
+const steadyIncomeBody = z
+  .object({ typed: z.number().int().min(0).max(MAX_STEADY_INCOME_CENTS).nullable() })
+  .strict();
+
 // An Unconnected account (spec 02, Unconnected accounts). An empty institution name or last 4
 // digits is none. A balance is whole cents.
 const MAX_BALANCE_CENTS = 100_000_000_000;
@@ -517,6 +523,21 @@ export const api = new Hono<ServerEnv>()
     if (ended === undefined) return c.json({ error: "No Recurring charge has this ID." }, 404);
     return c.json({ charge: ended }, 200);
   })
+  // Steady Income (spec 05): the detected figure, and the one a Member typed in Settings,
+  // Household, which replaces it until a Member clears it with null.
+  .get("/steady-income", async (c) =>
+    c.json({ steadyIncome: await c.var.recurring.steadyIncome() }),
+  )
+  .put("/steady-income", async (c) => {
+    const body = steadyIncomeBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json({ error: "Enter Steady Income in dollars and cents per month." }, 400);
+    }
+    const typed = await c.var.recurring.typeSteadyIncome(body.data.typed, c.var.member.id);
+    return c.json({ steadyIncome: typed }, 200);
+  })
+  // Each counted Income series' next payday, at its latest amount, by date.
+  .get("/paydays", async (c) => c.json({ paydays: await c.var.recurring.paydays() }))
   // A connected loan's type and the APR a Member typed (spec 02, Account fields). A Member's type
   // wins over the subtype and the payout. Its payments are decided again.
   .get("/accounts/:id/loan", async (c) => {

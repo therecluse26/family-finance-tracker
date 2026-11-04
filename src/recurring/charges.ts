@@ -7,12 +7,18 @@ import {
   type StoredRecurringCharge,
 } from "../db/index.ts";
 import { registerFollowUpStep } from "../follow-up/index.ts";
-import { calendarDateIn } from "../format.ts";
-import { householdTimeZone } from "../household/index.ts";
 import { log } from "../log.ts";
 import { type Merchant, merchantKey } from "../merchants/index.ts";
+import { findIncomeSeries } from "./income.ts";
+import { groupOf, householdToday } from "./merchant-days.ts";
 import { lastActiveDay, type Schedule } from "./schedules.ts";
-import { factsOf, replayMerchant, type SpendingTxn, type Status } from "./series.ts";
+import {
+  factsOf,
+  RECURRING_CHARGE_RULE,
+  replayMerchant,
+  type SeriesTxn,
+  type Status,
+} from "./series.ts";
 
 // The Recurring charge checks (spec 06, Recurring charges; When checks run). They run in the
 // follow-up job's checks step, after Matching and Categorization, on posted Transactions only. Each
@@ -35,17 +41,6 @@ export type RecurringCharge = {
   status: Status;
 };
 
-// The Household's date. Until the wizard's step 4 sets the Household time zone, it is the date in
-// UTC.
-async function householdToday(database: Database, now: Date): Promise<string> {
-  return calendarDateIn(now, (await householdTimeZone(database)) ?? "UTC");
-}
-
-// The Transactions of one Merchant, as identity knows it: by the provider's Merchant ID when the
-// Transaction has one, else by clean name.
-const groupOf = (merchant: Merchant) =>
-  merchant.id === null ? `name ${merchantKey(merchant.name)}` : `id ${merchant.id}`;
-
 // Finds every Recurring charge again, and stores them in place of the ones not marked ended. A
 // Recurring charge that keeps one of its Transactions keeps its ID.
 export async function findRecurringCharges(database: Database, now = new Date()): Promise<void> {
@@ -61,7 +56,7 @@ export async function findRecurringCharges(database: Database, now = new Date())
     for (const entry of charge.priceHistory) earlier.set(entry.transactionId, charge);
   }
 
-  const merchants = new Map<string, { merchant: Merchant; txns: SpendingTxn[] }>();
+  const merchants = new Map<string, { merchant: Merchant; txns: SeriesTxn[] }>();
   for (const row of await listPostedSpending(database)) {
     if (row.merchantCleanName === null || row.spending >= 0) continue;
     const merchant = { id: row.merchantId, name: row.merchantCleanName };
@@ -82,7 +77,7 @@ export async function findRecurringCharges(database: Database, now = new Date())
   const kept = new Set<string>();
   const charges: StoredRecurringCharge[] = [];
   for (const { merchant, txns } of merchants.values()) {
-    for (const series of replayMerchant(txns, claimed, today)) {
+    for (const series of replayMerchant(txns, claimed, today, RECURRING_CHARGE_RULE)) {
       const previous = series.txns
         .map((txn) => earlier.get(txn.id))
         .find((charge) => charge !== undefined && !kept.has(charge.id));
@@ -157,13 +152,15 @@ export async function endCharge(
   return chargeOf(ended, await householdToday(database, now));
 }
 
-// Registers the checks step. The start calls it before jobs run.
+// Registers the checks step, which finds the Recurring charges, then the Income series behind
+// Steady Income, after each sync (spec 05, Steady Income). The start calls it before jobs run.
 export function startRecurringCharges(options: { database: Database; now?: () => Date }): {
   stop(): void;
 } {
   const { database, now = () => new Date() } = options;
   const stop = registerFollowUpStep("recurring charge and anomaly checks", async () => {
     await findRecurringCharges(database, now());
+    await findIncomeSeries(database, now());
     return undefined;
   });
   return { stop };

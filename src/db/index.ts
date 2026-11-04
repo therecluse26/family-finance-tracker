@@ -252,6 +252,17 @@ export {
   removeSignInTries,
   removeSignInTriesUpTo,
 } from "./sign-in-tries.ts";
+export {
+  listIncomeSeries,
+  listPostedIncome,
+  type PostedIncomeRow,
+  readTypedSteadyIncome,
+  replaceIncomeSeries,
+  type StoredIncomeSeries,
+  storeTypedSteadyIncome,
+  sumIncomeByMonth,
+  type TypedSteadyIncome,
+} from "./steady-income.ts";
 export { claimTotpStep } from "./totp-steps.ts";
 export {
   addUnconnectedAccount,

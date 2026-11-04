@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { SteadyIncome } from "./SteadyIncome.tsx";
 
 // The Household facts (spec 05, Household facts): the wizard's step 4, and Settings, Household,
 // where any Member edits them at any time. No one is asked their sex.
@@ -168,6 +169,7 @@ export function Household() {
           {done === undefined ? null : <p className="mt-3">{done}</p>}
         </>
       )}
+      <SteadyIncome />
     </>
   );
 }

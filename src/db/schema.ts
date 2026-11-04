@@ -976,3 +976,47 @@ export const recurringCharges = sqliteTable("recurring_charges", {
   endedAt: moment("ended_at"),
   endedBy: text("ended_by").references(() => members.id, { onDelete: "set null" }),
 });
+
+// Income series (spec 05, Steady Income): Income from one payer that repeats on a schedule at a
+// similar amount, on checking and savings Accounts. The checks after each sync find them again
+// from posted Income. Yearly series never count, so none is stored.
+export const incomeSeries = sqliteTable("income_series", {
+  id: text("id").primaryKey(),
+  // The payer: the Merchant on the Income Transactions, by the provider's Merchant ID when it has
+  // one, and the clean name.
+  merchantId: text("merchant_id"),
+  merchantName: text("merchant_name").notNull(),
+  schedule: text("schedule", {
+    enum: ["weekly", "every 2 weeks", "twice a month", "monthly"],
+  }).notNull(),
+  // A twice-a-month series' two fixed days of the month, the earlier first, as JSON. 31 is the last
+  // day of every month.
+  fixedDays: text("fixed_days", { mode: "json" }).$type<[number, number]>(),
+  nextExpectedDate: calendarDate("next_expected_date").notNull(),
+  // The amount of its last Transaction, in whole cents received.
+  latestAmount: cents("latest_amount").notNull(),
+  // Each Transaction's ID, posted date, and amount in whole cents received, oldest first, as JSON.
+  history: text("history", { mode: "json" })
+    .$type<{ transactionId: string; date: string; amount: number }[]>()
+    .notNull(),
+  // The Account its last Transaction landed on. Delete history deletes the series with it.
+  accountId: text("account_id")
+    .notNull()
+    .references(() => householdAccounts.id, { onDelete: "cascade" }),
+  status: text("status", { enum: ["active", "inactive"] }).notNull(),
+});
+
+// The Steady Income figure a Member typed in Settings, Household (spec 05, Steady Income). It
+// replaces the detected one until a Member clears it, which deletes the row. It has at most one
+// row, whose ID is 1.
+export const typedSteadyIncome = sqliteTable(
+  "typed_steady_income",
+  {
+    id: integer("id").primaryKey(),
+    // Whole cents per month.
+    amount: cents("amount").notNull(),
+    typedAt: moment("typed_at").notNull(),
+    typedBy: text("typed_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [check("typed_steady_income_one_row", sql`${table.id} = 1`)],
+);

@@ -232,6 +232,13 @@
       "when": 1793820443456,
       "tag": "0032_delete_history_speed",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1793822422498,
+      "tag": "0033_steady_income",
+      "breakpoints": true
     }
   ]
 }

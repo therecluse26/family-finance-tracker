@@ -181,6 +181,8 @@ export function createApp(
       .use("/api/connections/*", jsonOnly)
       // A Member's Category for a Transaction takes only a JSON body.
       .use("/api/transactions/:id/category", jsonOnly)
+      // So does a typed Steady Income figure.
+      .use("/api/steady-income", jsonOnly)
       .use("/api/plaid/*", secretRoutes(database, "plaid", services.plaid))
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .route("/api", api)
