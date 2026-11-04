@@ -4,6 +4,7 @@ import { Accounts } from "./pages/Accounts.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
+import { ReviewList } from "./pages/ReviewList.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { About } from "./pages/settings/About.tsx";
@@ -39,7 +40,10 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
-const BUILT_PAGES: Record<string, () => React.JSX.Element> = { "/accounts": Accounts };
+const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
+  "/accounts": Accounts,
+  "/review-list": ReviewList,
+};
 
 const pages: RouteObject[] = [...MAIN_MENU, ...MORE_MENU]
   .filter((item) => item.path !== "/settings")

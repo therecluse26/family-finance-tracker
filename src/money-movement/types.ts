@@ -15,3 +15,7 @@ export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 export const HAND_SET_TYPES = ["Spending", "Transfer", "Income", "Saving"] as const;
 
 export type HandSetType = (typeof HAND_SET_TYPES)[number];
+
+// How many parts a split has (spec 04, Splits).
+export const MIN_SPLIT_PARTS = 2;
+export const MAX_SPLIT_PARTS = 20;

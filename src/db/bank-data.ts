@@ -910,6 +910,36 @@ export async function listAccounts(database: Database) {
     .orderBy(asc(householdAccounts.institutionName), asc(householdAccounts.name));
 }
 
+// The Transactions that are not hidden with these IDs, 500 IDs a statement. An unknown or hidden ID
+// is left out.
+export async function readShownTransactions(database: Database, ids: readonly string[]) {
+  const unique = [...new Set(ids)];
+  const rows = [];
+  for (let start = 0; start < unique.length; start += 500) {
+    rows.push(
+      ...(await database
+        .select({
+          id: transactions.id,
+          accountId: transactions.accountId,
+          amount: transactions.amount,
+          postedDate: transactions.postedDate,
+          authorizedDate: transactions.authorizedDate,
+          pending: transactions.pending,
+          description: transactions.description,
+          merchantName: transactions.merchantName,
+        })
+        .from(transactions)
+        .where(
+          and(
+            inArray(transactions.id, unique.slice(start, start + 500)),
+            isNull(transactions.hiddenReason),
+          ),
+        )),
+    );
+  }
+  return rows;
+}
+
 export type TransactionFilter = { accountId?: string; from?: string; to?: string };
 
 // The Transactions that are not hidden, newest first.

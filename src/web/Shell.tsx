@@ -28,6 +28,10 @@ function MenuLink(props: { item: MenuItem; count?: number | undefined }) {
   );
 }
 
+// What the shell gives each page: the Review list page sets the menu's open count after each
+// answer.
+export type ShellContext = { setReviewListOpenCount(count: number): void };
+
 export function Shell(props: { reviewListOpenCount?: number }) {
   const navigate = useNavigate();
   const [openCount, setOpenCount] = useState(props.reviewListOpenCount);
@@ -69,7 +73,7 @@ export function Shell(props: { reviewListOpenCount?: number }) {
         </ul>
       </nav>
       <div className="min-w-0 p-4 min-[900px]:p-6">
-        <Outlet />
+        <Outlet context={{ setReviewListOpenCount: setOpenCount } satisfies ShellContext} />
       </div>
     </div>
   );

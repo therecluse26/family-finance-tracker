@@ -66,6 +66,7 @@ import {
   moneyFromPersonKind,
   updateMoneyFromPersonItems,
 } from "./reimbursements.ts";
+import { isSplit, readSplit, type SplitPart } from "./splits.ts";
 import { type PairingResult, pairTransfers, type TransferSignal } from "./transfers.ts";
 import type { HandSetType } from "./types.ts";
 import {
@@ -291,6 +292,8 @@ function carryOver(decision: StoredDecision, pending: StoredPart[] | undefined):
   }
   const parts = decision.parts.map((part, index) => {
     const before = pending[index];
+    // A split part's Category is the Member's own.
+    if (part.categorySource !== undefined && part.categorySource !== null) return part;
     if (before === undefined || before.categorySource === null) return part;
     return {
       ...part,
@@ -657,6 +660,65 @@ export async function setTransactionType(
     ...(await decisionContext(database, now, [record])),
   });
   return { step, parts, provisionalUntil: provisionalUntil ?? null };
+}
+
+export type SplitResult =
+  | { outcome: "split"; decision: TransactionDecision }
+  | { outcome: "not found" }
+  | { outcome: "not Spending" }
+  | { outcome: "wrong total" };
+
+// A Member splits a Spending Transaction by amount across Categories (spec 04, Splits). The parts,
+// in whole cents spent, add up to the Transaction's amount. The split replaces any earlier one. It
+// makes no Category rule. The follow-up job stores the result, as for a type set by hand, and the
+// links that use the Transaction stay as they are. Returns the result the job stores. "Not found"
+// when no Transaction that shows has the ID; "not Spending" when the Transaction is not Spending
+// now, such as a Transfer or money in.
+export async function splitTransaction(
+  database: Database,
+  transactionId: string,
+  split: readonly SplitPart[],
+  now = new Date(),
+): Promise<SplitResult> {
+  const [record] = await readDecisionRecords(database, [transactionId]);
+  if (record === undefined || record.hidden) return { outcome: "not found" };
+  const parts = split.map(({ amount, category }) => ({ amount, category }));
+  const { hidden, ...updated } = { ...record, handSet: { ...record.handSet, split: parts } };
+  const decided = await decide({
+    ...updated,
+    ...(await decisionContext(database, now, [record])),
+  });
+  if (!isSplit(decided)) return { outcome: "not Spending" };
+  if (parts.reduce((sum, part) => sum + part.amount, 0) !== -record.amount) {
+    return { outcome: "wrong total" };
+  }
+  await database.transaction(async (tx) => {
+    await setHandSetFields(tx, transactionId, { split: parts });
+    await followUpAgain(tx, [transactionId]);
+  });
+  await followUpSoon();
+  log.info("A Member split a Transaction", { parts: parts.length });
+  const { step, parts: decidedParts, provisionalUntil } = decided;
+  return {
+    outcome: "split",
+    decision: { step, parts: decidedParts, provisionalUntil: provisionalUntil ?? null },
+  };
+}
+
+// A Member removes a split. The Transaction goes back to the cascade. Returns false when no
+// Transaction that shows has the ID and a split.
+export async function removeSplit(database: Database, transactionId: string): Promise<boolean> {
+  const [record] = await readDecisionRecords(database, [transactionId]);
+  if (record === undefined || record.hidden || readSplit(record.handSet) === undefined) {
+    return false;
+  }
+  await database.transaction(async (tx) => {
+    await setHandSetFields(tx, transactionId, { split: undefined });
+    await followUpAgain(tx, [transactionId]);
+  });
+  await followUpSoon();
+  log.info("A Member removed a split");
+  return true;
 }
 
 let running: { database: Database } | undefined;

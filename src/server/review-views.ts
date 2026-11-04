@@ -3,10 +3,27 @@
 
 export type ReviewChoiceView = { value: string; label: string };
 
+// One Transaction an item is about, as the page shows it.
+export type ReviewTransactionView = {
+  id: string;
+  // Whole cents. Money into the Account is positive.
+  amount: number;
+  postedDate: string;
+  authorizedDate: string | null;
+  description: string;
+  merchantName: string | null;
+  // Its Account's name, or null when the Account is gone.
+  accountName: string | null;
+};
+
 export type ReviewItemView = {
   id: string;
   kind: string;
   subject: { type: "transactions"; transactionIds: string[] } | { type: "loan"; accountId: string };
+  // The Transactions it is about that still show, in the subject's order. Empty for a loan.
+  transactions: ReviewTransactionView[];
+  // The loan's name, for an item about a loan; else null.
+  loanName: string | null;
   decided: string;
   bestAnswer: ReviewChoiceView;
   createdAt: string;

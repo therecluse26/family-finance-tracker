@@ -1,3 +1,4 @@
+import { isCategory } from "../categories/index.ts";
 import type { Database } from "../db/index.ts";
 import {
   addManualLoan,
@@ -6,8 +7,10 @@ import {
   listManualLoanViews,
   readLoanSettings,
   readTransactionDetail,
+  removeSplit,
   setLoanSettings,
   setTransactionType,
+  splitTransaction,
   totalsByMonth,
   undoLink,
 } from "../money-movement/index.ts";
@@ -22,6 +25,18 @@ export function moneyMovementRoutes(database: Database): MoneyMovementRoutes {
 
     setType(transactionId, type) {
       return setTransactionType(database, transactionId, type);
+    },
+
+    split(transactionId, body) {
+      const parts = body.parts.map(({ amount, category }) => {
+        if (!isCategory(category)) throw new Error("The route takes only a Category.");
+        return { amount, category };
+      });
+      return splitTransaction(database, transactionId, parts);
+    },
+
+    removeSplit(transactionId) {
+      return removeSplit(database, transactionId);
     },
 
     totals() {

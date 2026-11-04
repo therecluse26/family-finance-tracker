@@ -143,8 +143,9 @@ async function followUpSoon(): Promise<void> {
 // A Member gives a Transaction a Category (spec 04, Category rules). The Category becomes the
 // Transaction's hand-set Category, and, unless the Member picks "only this Transaction", the app
 // makes a Category rule for its Merchant. Giving a Category to a Transfer, Income, or Saving also
-// sets its type to Spending by hand. Writes only through `database`, so it may run inside a Review
-// list answer's transaction. Call askForFollowUp after it commits.
+// sets its type to Spending by hand. One Category for the whole Transaction ends any split (spec 04,
+// Splits). Writes only through `database`, so it may run inside a Review list answer's transaction.
+// Call askForFollowUp after it commits.
 export async function applyCorrection(
   database: Queries,
   record: { id: string; merchant: Merchant | null; takesCategory: boolean },
@@ -154,6 +155,7 @@ export async function applyCorrection(
   const setSpending = !record.takesCategory;
   await setHandSetFields(database, record.id, {
     category,
+    split: undefined,
     ...(setSpending ? { type: "Spending" } : {}),
   });
   await followUpAgain(database, [record.id]);

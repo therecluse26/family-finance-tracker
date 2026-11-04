@@ -28,9 +28,12 @@ export {
   readTransactionDecision,
   readTransactionDetail,
   registerDecidedAgain,
+  removeSplit,
   runMatching,
+  type SplitResult,
   setLoanSettings,
   setTransactionType,
+  splitTransaction,
   startMoneyMovement,
   switchExclude,
   type TransactionDecision,
@@ -51,6 +54,7 @@ export {
   type ReimbursementPicker,
   registerReimbursementPicker,
 } from "./reimbursements.ts";
+export { readSplit, type SplitPart } from "./splits.ts";
 export { type MonthTotals, monthOf, totalsByMonth } from "./totals.ts";
 export {
   isCardReward,
@@ -63,6 +67,8 @@ export {
 export {
   HAND_SET_TYPES,
   type HandSetType,
+  MAX_SPLIT_PARTS,
+  MIN_SPLIT_PARTS,
   TRANSACTION_TYPES,
   type TransactionType,
 } from "./types.ts";

@@ -12,6 +12,7 @@ import {
   zelleWithMember,
 } from "./payment-apps.ts";
 import { linkedTreatment, refundLink, unlinkedRefund } from "./refunds.ts";
+import { withSplit } from "./splits.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";
 import { type ManualLoanOffer, untrackedLoanPayment } from "./untracked-loans.ts";
 
@@ -59,6 +60,10 @@ export type Part = {
   category: Category | null;
   keepsCategory?: boolean;
   linked?: boolean;
+  // A part of a split a Member made (spec 04, Splits): its Category is hand-set, so the cascade
+  // never changes it.
+  categorySource?: "hand-set";
+  categoryConfidence?: "certain";
 };
 
 // A rule's answer. The parts add up to the Transaction's amount. A one-sided result may be
@@ -209,17 +214,22 @@ function checkDecision(step: DecisionStep, txn: DecisionInput, decision: Decisio
     ) {
       throw new Error(`Step ${step} linked a part that no link reduces.`);
     }
+    if (part.categorySource !== undefined && (part.type !== "Spending" || part.category === null)) {
+      throw new Error(`Step ${step} set a hand-set Category on a part that takes none.`);
+    }
   }
 }
 
-// Runs the order on one Transaction. The first step that fits wins.
+// Runs the order on one Transaction. The first step that fits wins. A Member's split then divides
+// a Spending answer into its parts (spec 04, Splits).
 export async function decide(txn: DecisionInput): Promise<Decision & { step: DecisionStep }> {
   for (const { step } of DECISION_STEPS) {
     if (!appliesTo(step, txn.amount)) continue;
     const rule = RULES.get(step);
     if (rule === undefined) continue;
-    const decision = await rule(txn);
-    if (decision === undefined) continue;
+    const answer = await rule(txn);
+    if (answer === undefined) continue;
+    const decision = withSplit(txn, answer);
     checkDecision(step, txn, decision);
     return { ...decision, step };
   }

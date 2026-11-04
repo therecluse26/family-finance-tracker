@@ -364,10 +364,63 @@ async function readLinkedSpending(
   return new Map(rows.map(({ moneyId, ...spending }) => [moneyId, spending]));
 }
 
+// Divides `total` in proportion to `weights`, in whole cents. The shares add up to `total`: each
+// takes its whole cents, and the cents left over go to the largest remainders, the earlier one
+// first on a tie. Weights that add up to 0 or less give the whole total to the first.
+export function inProportion(total: number, weights: readonly number[]): number[] {
+  const sum = weights.reduce((all, weight) => all + weight, 0);
+  if (weights.length === 0) return [];
+  if (sum <= 0) return weights.map((_, index) => (index === 0 ? total : 0));
+  const exact = weights.map((weight) => (total * weight) / sum);
+  const shares = exact.map(Math.trunc);
+  let left = total - shares.reduce((all, share) => all + share, 0);
+  const step = Math.sign(left);
+  const byRemainder = exact
+    .map((value, index) => ({ index, remainder: Math.abs(value - Math.trunc(value)) }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  for (const { index } of byRemainder) {
+    if (left === 0) break;
+    shares[index] = (shares[index] ?? 0) + step;
+    left -= step;
+  }
+  return shares;
+}
+
+// The Spending parts of the Spending that each linked Refund or Reimbursement reduces, by the money
+// in's ID, in part order: one statement for every link.
+async function readLinkedSpendingParts(
+  database: Queries,
+): Promise<Map<string, { category: string | null; amount: number }[]>> {
+  const rows = await database
+    .select({
+      moneyId: spendingLinks.transactionId,
+      category: transactionParts.category,
+      amount: transactionParts.amount,
+    })
+    .from(spendingLinks)
+    .innerJoin(
+      transactionParts,
+      and(
+        eq(transactionParts.transactionId, spendingLinks.spendingTransactionId),
+        eq(transactionParts.type, "Spending"),
+      ),
+    )
+    .orderBy(asc(spendingLinks.transactionId), asc(transactionParts.part));
+  const parts = new Map<string, { category: string | null; amount: number }[]>();
+  for (const { moneyId, ...part } of rows) {
+    const found = parts.get(moneyId);
+    if (found === undefined) parts.set(moneyId, [part]);
+    else found.push(part);
+  }
+  return parts;
+}
+
 // Every part of every posted Transaction that is not hidden, with the dates its month comes from.
 // A linked Refund or Reimbursement part has its Spending's ID, dates, and Category instead (spec 03,
-// Which month a link changes); every other part has a null spendingTransactionId. While its link is gone, before Matching decides it again, it keeps
-// its own.
+// Which month a link changes); every other part has a null spendingTransactionId. While its link is
+// gone, before Matching decides it again, it keeps its own. When its Spending has several Spending
+// parts, such as a split (spec 04, Splits), the linked part becomes one part for each of them, in
+// proportion to their amounts, each with that part's Category.
 export async function listPostedParts(database: Database) {
   const rows = await database
     .select({
@@ -382,13 +435,32 @@ export async function listPostedParts(database: Database) {
     .from(transactionParts)
     .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))
     .where(and(eq(transactions.pending, false), isNull(transactions.hiddenReason)));
-  const spending = rows.some((row) => row.linked)
+  const anyLinked = rows.some((row) => row.linked);
+  const spending = anyLinked
     ? await readLinkedSpending(database)
     : new Map<string, LinkedSpending>();
-  return rows.map((row) => {
-    const found = row.linked ? spending.get(row.transactionId) : undefined;
-    return found === undefined ? { ...row, spendingTransactionId: null } : { ...row, ...found };
-  });
+  const spendingParts = anyLinked
+    ? await readLinkedSpendingParts(database)
+    : new Map<string, { category: string | null; amount: number }[]>();
+  return rows.flatMap(
+    (row): ((typeof rows)[number] & { spendingTransactionId: string | null })[] => {
+      const found = row.linked ? spending.get(row.transactionId) : undefined;
+      if (found === undefined) return [{ ...row, spendingTransactionId: null }];
+      const parts = spendingParts.get(row.transactionId) ?? [];
+      if (parts.length < 2) return [{ ...row, ...found }];
+      // Spending is money out, so each part's amount is negative.
+      const shares = inProportion(
+        row.amount,
+        parts.map((part) => -part.amount),
+      );
+      return parts.map((part, index) => ({
+        ...row,
+        ...found,
+        amount: shares[index] ?? 0,
+        category: part.category,
+      }));
+    },
+  );
 }
 
 // The parts of the pending Transaction that each posted one replaces, with their Categories' provenance,

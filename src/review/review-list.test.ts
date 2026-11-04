@@ -167,7 +167,7 @@ describe("the Review list", () => {
     test.close();
   });
 
-  it("opens an item with its kind, subject, what the app decided, best answer, and time", async () => {
+  it("opens an item with its kind, subject, the Transaction it is about, what the app decided, best answer, and time", async () => {
     const id = await guess("t1");
 
     expect(await openItems()).toEqual([
@@ -175,12 +175,31 @@ describe("the Review list", () => {
         id,
         kind: KIND,
         subject: { type: "transactions", transactionIds: [txns.t1] },
+        transactions: [
+          {
+            id: txns.t1,
+            amount: -1_250,
+            postedDate: "2026-10-09",
+            authorizedDate: null,
+            description: "FAKE t1",
+            merchantName: null,
+            accountName: "Everyday Checking",
+          },
+        ],
+        loanName: null,
         decided: "The AI guessed Restaurants, with medium confidence.",
         bestAnswer: { value: "restaurants", label: "Yes, Restaurants" },
         createdAt: "2026-11-03T14:00:00.000Z",
         needsAi: false,
       },
     ]);
+  });
+
+  it("leaves out a Transaction that no longer shows", async () => {
+    await guess("t1");
+    await query("UPDATE transactions SET hidden_reason = 'removed by provider'");
+
+    expect((await openItems())[0]?.transactions).toEqual([]);
   });
 
   it("holds an item about a loan", async () => {
@@ -195,7 +214,23 @@ describe("the Review list", () => {
       bestAnswer: { value: "link", label: "Yes, link it" },
     });
 
-    expect((await openItems())[0]?.subject).toEqual({ type: "loan", accountId: "loan-account" });
+    expect((await openItems())[0]).toMatchObject({
+      subject: { type: "loan", accountId: "loan-account" },
+      transactions: [],
+      loanName: null,
+    });
+
+    // An item about an Account the Household has shows its name.
+    const [account] = await query("SELECT id FROM household_accounts");
+    vi.setSystemTime(new Date("2026-11-03T15:00:00.000Z"));
+    await openReviewItem(test.database, {
+      kind: "link to this loan",
+      subject: { type: "loan", accountId: String(account?.id) },
+      decided: "No payment has linked for 2 months.",
+      bestAnswer: { value: "keep", label: "Keep the loan open" },
+    });
+
+    expect((await openItems()).map((item) => item.loanName)).toEqual(["Everyday Checking", null]);
   });
 
   it("lists open items newest first, and counts them", async () => {
@@ -401,6 +436,27 @@ describe("the Review list", () => {
       }),
     ).rejects.toThrow("needs its Transactions or its loan");
     expect(() => registerReviewKind(KIND, categoryGuess)).toThrow("already registered");
+  });
+
+  it("answers 403 to an answer from another site or with no Origin, and 415 to one not sent as JSON, and answers nothing", async () => {
+    const id = await guess("t1");
+    const path = `/api/review-list/${id}/answer`;
+
+    for (const origin of ["http://evil.example", undefined]) {
+      const res = await tab.send("POST", path, { value: "restaurants" }, { origin });
+      expect(res.status, `origin ${origin}`).toBe(403);
+    }
+    const text = await tab.send(
+      "POST",
+      path,
+      { value: "restaurants" },
+      { "content-type": "text/plain" },
+    );
+    expect(text.status).toBe(415);
+
+    expect(answers).toEqual([]);
+    expect(await openCount()).toBe(1);
+    expect((await handSet()).t1).toEqual({});
   });
 
   it("needs a session for every Review list route", async () => {

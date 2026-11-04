@@ -148,6 +148,16 @@ export type ManualLoanView = Omit<ManualLoanBody, "loanType"> & {
   setBy: "Member" | "app";
 };
 
+// A split's parts: whole cents spent, and a Category each. They add up to the Transaction's
+// amount.
+export type SplitBody = { parts: { amount: number; category: string }[] };
+
+export type SplitAnswer =
+  | { outcome: "split"; decision: TransactionDecisionView }
+  | { outcome: "not found" }
+  | { outcome: "not Spending" }
+  | { outcome: "wrong total" };
+
 export type MoneyMovementRoutes = {
   // Undefined when no Transaction that shows has the ID.
   transaction(transactionId: string): Promise<TransactionDetailView | undefined>;
@@ -156,6 +166,10 @@ export type MoneyMovementRoutes = {
     transactionId: string,
     type: "Spending" | "Transfer" | "Income" | "Saving",
   ): Promise<TransactionDecisionView | undefined>;
+  // A Member splits a Spending Transaction by amount across Categories (spec 04, Splits).
+  split(transactionId: string, body: SplitBody): Promise<SplitAnswer>;
+  // False when no Transaction that shows has the ID and a split.
+  removeSplit(transactionId: string): Promise<boolean>;
   // Every month with a posted Transaction, oldest first.
   totals(): Promise<MonthTotalsView[]>;
   // Undefined when no connected loan has the ID.

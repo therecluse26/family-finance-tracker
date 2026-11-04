@@ -11,7 +11,7 @@ import type {
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { CATEGORIES } from "../categories/list.ts";
-import { HAND_SET_TYPES } from "../money-movement/types.ts";
+import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
@@ -201,6 +201,20 @@ const transactionCategoryBody = z.object({
   category: z.string().refine((name) => CATEGORY_NAMES.has(name)),
   onlyThisTransaction: z.boolean().optional(),
 });
+
+// A split (spec 04, Splits): its parts, in whole cents spent, each with a Category.
+const splitBody = z.object({
+  parts: z
+    .array(
+      z.object({
+        amount: z.number().int().positive(),
+        category: z.string().refine((name) => CATEGORY_NAMES.has(name)),
+      }),
+    )
+    .min(MIN_SPLIT_PARTS)
+    .max(MAX_SPLIT_PARTS),
+});
+const SPLIT_REFUSED = `Split it into ${MIN_SPLIT_PARTS} to ${MAX_SPLIT_PARTS} parts, each with an amount in cents and a Category.`;
 
 // An Account's Exclude switch.
 const excludeBody = z.object({ excluded: z.boolean() }).strict();
@@ -508,6 +522,27 @@ export const api = new Hono<ServerEnv>()
       );
     }
     return c.json(corrected, 200);
+  })
+  // A Member splits a Spending Transaction by amount across Categories, or removes the split (spec
+  // 04, Splits). The parts add up to the Transaction's amount.
+  .put("/transactions/:id/split", jsonOnly, async (c) => {
+    const body = splitBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: SPLIT_REFUSED }, 400);
+    const split = await c.var.moneyMovement.split(c.req.param("id"), body.data);
+    if (split.outcome === "not found") return c.json({ error: "Not found" }, 404);
+    if (split.outcome === "not Spending") {
+      return c.json({ error: "Only a Spending Transaction can be split." }, 409);
+    }
+    if (split.outcome === "wrong total") {
+      return c.json({ error: "The parts must add up to the Transaction's amount." }, 400);
+    }
+    return c.json({ decision: split.decision }, 200);
+  })
+  .delete("/transactions/:id/split", async (c) => {
+    if (!(await c.var.moneyMovement.removeSplit(c.req.param("id")))) {
+      return c.json({ error: "No split on a Transaction with this ID." }, 404);
+    }
+    return c.json({ removed: true }, 200);
   })
   // Settings → Categories: every Category rule, with Delete. Deleting one runs the cascade again on
   // its Merchant's Transactions not set by hand.
@@ -886,7 +921,7 @@ export const api = new Hono<ServerEnv>()
     return c.json({ choices }, 200);
   })
   // A Member's answer: {"value": ...}, the best answer's value or another choice's.
-  .post("/review-list/:id/answer", async (c) => {
+  .post("/review-list/:id/answer", jsonOnly, async (c) => {
     const body: unknown = await c.req.json().catch(() => undefined);
     const value =
       typeof body === "object" && body !== null && "value" in body ? body.value : undefined;
