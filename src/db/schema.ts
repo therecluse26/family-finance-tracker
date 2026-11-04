@@ -404,9 +404,10 @@ export const householdAccounts = sqliteTable(
     currentBalance: cents("current_balance"),
     availableBalance: cents("available_balance"),
     creditLimit: cents("credit_limit"),
-    // Card details: each APR, as JSON, then the statement balance.
+    // Card details: each APR, as JSON, then the statement balance and the day it was issued.
     cardAprs: text("card_aprs", { mode: "json" }).$type<{ type: string; apr: number }[]>(),
     statementBalance: cents("statement_balance"),
+    statementIssueDate: calendarDate("statement_issue_date"),
     // Card and loan details.
     minimumPayment: cents("minimum_payment"),
     paymentDueDate: calendarDate("payment_due_date"),
@@ -518,6 +519,7 @@ export const dailyBalances = sqliteTable(
     // Card details.
     cardAprs: text("card_aprs", { mode: "json" }).$type<{ type: string; apr: number }[]>(),
     statementBalance: cents("statement_balance"),
+    statementIssueDate: calendarDate("statement_issue_date"),
     // Card and loan details.
     minimumPayment: cents("minimum_payment"),
     paymentDueDate: calendarDate("payment_due_date"),

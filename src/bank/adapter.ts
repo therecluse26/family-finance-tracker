@@ -42,6 +42,9 @@ export type CardDetails = {
   minimumPayment: Cents | null;
   // YYYY-MM-DD.
   dueDate: string | null;
+  // The day the last statement was issued, YYYY-MM-DD. Payments on or after it pay the statement
+  // balance.
+  statementIssueDate: string | null;
 };
 
 export type LoanDetails = {

@@ -1,0 +1,278 @@
+{
+  "about": "Plaid answers in the shape Plaid's API sends, written by hand for the Plaid adapter's tests. No real bank data, token, or ID.",
+  "accountsGet": {
+    "accounts": [
+      {
+        "account_id": "acct-checking",
+        "balances": {
+          "available": 2400.5,
+          "current": 2480.25,
+          "limit": null,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null
+        },
+        "mask": "0000",
+        "name": "Plaid Checking",
+        "official_name": "Plaid Gold Standard 0% Interest Checking",
+        "type": "depository",
+        "subtype": "checking"
+      },
+      {
+        "account_id": "acct-card",
+        "balances": {
+          "available": 4589.45,
+          "current": 410.55,
+          "limit": 5000,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null
+        },
+        "mask": "3333",
+        "name": "Plaid Credit Card",
+        "official_name": "Plaid Diamond 12.5% APR Interest Credit Card",
+        "type": "credit",
+        "subtype": "credit card"
+      },
+      {
+        "account_id": "acct-student",
+        "balances": {
+          "available": null,
+          "current": 65262,
+          "limit": null,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null
+        },
+        "mask": "7777",
+        "name": "Plaid Student Loan",
+        "official_name": null,
+        "type": "loan",
+        "subtype": "student"
+      },
+      {
+        "account_id": "acct-personal",
+        "balances": {
+          "available": null,
+          "current": 12000.01,
+          "limit": null,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null
+        },
+        "mask": "8888",
+        "name": "Personal Loan",
+        "official_name": null,
+        "type": "loan",
+        "subtype": "personal"
+      }
+    ],
+    "request_id": "req-accounts"
+  },
+  "liabilitiesGet": {
+    "accounts": [],
+    "liabilities": {
+      "credit": [
+        {
+          "account_id": "acct-card",
+          "aprs": [
+            {
+              "apr_percentage": 15.24,
+              "apr_type": "balance_transfer_apr",
+              "balance_subject_to_apr": 1562.32,
+              "interest_charge_amount": 130.22
+            },
+            {
+              "apr_percentage": 27.95,
+              "apr_type": "purchase_apr",
+              "balance_subject_to_apr": 56.22,
+              "interest_charge_amount": 14.81
+            }
+          ],
+          "is_overdue": false,
+          "last_payment_amount": 168.25,
+          "last_payment_date": "2026-10-01",
+          "last_statement_issue_date": "2026-10-04",
+          "last_statement_balance": 1708.77,
+          "minimum_payment_amount": 20,
+          "next_payment_due_date": "2026-11-01"
+        }
+      ],
+      "mortgage": null,
+      "student": [
+        {
+          "account_id": "acct-student",
+          "account_number": "9000000001",
+          "disbursement_dates": ["2018-08-30"],
+          "expected_payoff_date": "2032-07-28",
+          "guarantor": "DEPT OF ED",
+          "interest_rate_percentage": 5.25,
+          "is_overdue": false,
+          "last_payment_amount": 138.05,
+          "last_payment_date": "2026-10-02",
+          "last_statement_balance": 1955.55,
+          "last_statement_issue_date": "2026-10-01",
+          "loan_name": "Consolidation",
+          "loan_status": { "end_date": "2032-07-28", "type": "repayment" },
+          "minimum_payment_amount": 25,
+          "next_payment_due_date": "2026-11-01",
+          "origination_date": "2018-08-30",
+          "origination_principal_amount": 25000,
+          "outstanding_interest_amount": 6227.36,
+          "payment_reference_number": "9000000002",
+          "pslf_status": {
+            "estimated_eligibility_date": null,
+            "payments_made": null,
+            "payments_remaining": null
+          },
+          "repayment_plan": { "description": "Standard Repayment", "type": "standard" },
+          "sequence_number": "1",
+          "servicer_address": {
+            "city": "Springfield",
+            "country": "US",
+            "postal_code": "00000",
+            "region": "XX",
+            "street": "1 Example St"
+          },
+          "ytd_interest_paid": 280.55,
+          "ytd_principal_paid": 1240.25
+        }
+      ]
+    },
+    "request_id": "req-liabilities"
+  },
+  "transactionsSync": [
+    {
+      "transactions_update_status": "INITIAL_UPDATE_COMPLETE",
+      "accounts": [],
+      "added": [
+        {
+          "transaction_id": "txn-coffee",
+          "account_id": "acct-card",
+          "amount": 12.34,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null,
+          "date": "2026-10-03",
+          "authorized_date": "2026-10-02",
+          "datetime": null,
+          "authorized_datetime": null,
+          "pending": false,
+          "pending_transaction_id": "txn-coffee-pending",
+          "name": "Starbucks",
+          "original_description": "STARBUCKS STORE 00000 SPRINGFIELD",
+          "merchant_name": "Starbucks",
+          "merchant_entity_id": "merchant-starbucks",
+          "logo_url": null,
+          "website": "starbucks.com",
+          "payment_channel": "in store",
+          "account_owner": null,
+          "transaction_code": null,
+          "counterparties": [
+            {
+              "name": "Starbucks",
+              "type": "merchant",
+              "entity_id": "merchant-starbucks",
+              "website": "starbucks.com",
+              "logo_url": null,
+              "confidence_level": "VERY_HIGH"
+            },
+            {
+              "name": "Square",
+              "type": "payment_terminal",
+              "entity_id": null,
+              "website": null,
+              "logo_url": null,
+              "confidence_level": "HIGH",
+              "account_numbers": {
+                "bacs": { "account": "90000003", "sort_code": "000000" },
+                "international": null
+              }
+            }
+          ],
+          "personal_finance_category": {
+            "primary": "FOOD_AND_DRINK",
+            "detailed": "FOOD_AND_DRINK_COFFEE",
+            "confidence_level": "VERY_HIGH",
+            "version": "v2"
+          }
+        },
+        {
+          "transaction_id": "txn-pay",
+          "account_id": "acct-checking",
+          "amount": -2500,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null,
+          "date": "2026-10-01",
+          "authorized_date": null,
+          "pending": false,
+          "pending_transaction_id": null,
+          "name": "Payroll",
+          "original_description": "EXAMPLE CO PAYROLL PPD",
+          "merchant_name": null,
+          "merchant_entity_id": null,
+          "payment_channel": "other",
+          "counterparties": [],
+          "personal_finance_category": {
+            "primary": "INCOME",
+            "detailed": "INCOME_SALARY",
+            "confidence_level": "HIGH",
+            "version": "v2"
+          }
+        }
+      ],
+      "modified": [],
+      "removed": [],
+      "next_cursor": "cursor-1",
+      "has_more": true,
+      "request_id": "req-sync-1"
+    },
+    {
+      "transactions_update_status": "HISTORICAL_UPDATE_COMPLETE",
+      "accounts": [],
+      "added": [
+        {
+          "transaction_id": "txn-zero",
+          "account_id": "acct-checking",
+          "amount": 0,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null,
+          "date": "2026-10-05",
+          "authorized_date": null,
+          "pending": true,
+          "pending_transaction_id": null,
+          "name": "Card check",
+          "original_description": null,
+          "merchant_name": null,
+          "merchant_entity_id": null,
+          "payment_channel": "online",
+          "personal_finance_category": null
+        }
+      ],
+      "modified": [
+        {
+          "transaction_id": "txn-older",
+          "account_id": "acct-checking",
+          "amount": 45.6,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null,
+          "date": "2026-09-20",
+          "authorized_date": null,
+          "pending": false,
+          "pending_transaction_id": null,
+          "name": "Grocer",
+          "original_description": "GROCER 0001",
+          "merchant_name": "Grocer",
+          "merchant_entity_id": null,
+          "payment_channel": "in store",
+          "counterparties": [],
+          "personal_finance_category": {
+            "primary": "FOOD_AND_DRINK",
+            "detailed": "FOOD_AND_DRINK_GROCERIES",
+            "confidence_level": "MEDIUM",
+            "version": "v2"
+          }
+        }
+      ],
+      "removed": [{ "transaction_id": "txn-gone", "account_id": "acct-checking" }],
+      "next_cursor": "cursor-2",
+      "has_more": false,
+      "request_id": "req-sync-2"
+    }
+  ]
+}

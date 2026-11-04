@@ -32,6 +32,7 @@ export {
   startDueSyncs,
   startSync,
 } from "./job.ts";
+export { type PlaidClient, type PlaidClientFor, plaidAdapter } from "./plaid.ts";
 export {
   mapPlaidCategory,
   PLAID_V2_CODES,

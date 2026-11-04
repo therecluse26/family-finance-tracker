@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { CountryCode, PlaidApi, PlaidEnvironments } from "plaid";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addConnection } from "../db/index.ts";
 import { createLogger, holdsSecretValue } from "../log.ts";
 import { SecretDecryptError } from "../secrets/index.ts";
@@ -11,7 +11,7 @@ import {
   productionPlaidClient,
   readPlaidKeys,
 } from "./index.ts";
-import { plaidConfiguration } from "./plaid-keys.ts";
+import { plaidBasePath, plaidConfiguration } from "./plaid-keys.ts";
 import { newPlaidKeys, newTestBank, StubPlaid, type TestBank } from "./testing.ts";
 
 // The Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10 lifetime Items), on a
@@ -91,6 +91,22 @@ describe("the Plaid keys", () => {
       "PLAID-CLIENT-ID": keys.clientId,
       "PLAID-SECRET": keys.secret,
     });
+  });
+
+  it("uses Plaid's sandbox only when unbuilt code is given FFT_DEV_PLAID_ENV=sandbox", () => {
+    const sandbox = { FFT_DEV_PLAID_ENV: "sandbox" };
+
+    // The tests run unbuilt, as `pnpm dev` does.
+    expect(plaidBasePath(sandbox)).toBe(PlaidEnvironments.sandbox);
+    expect(plaidBasePath({})).toBe(PlaidEnvironments.production);
+    expect(plaidBasePath({ FFT_DEV_PLAID_ENV: "development" })).toBe(PlaidEnvironments.production);
+    // The build sets import.meta.env.DEV to false, so the built image ignores it.
+    vi.stubEnv("DEV", false);
+    try {
+      expect(plaidBasePath(sandbox)).toBe(PlaidEnvironments.production);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("tests the keys with /institutions/get, then saves the secret encrypted", async () => {

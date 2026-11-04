@@ -28,12 +28,25 @@ const PLAID_TIMEOUT_MS = 15_000;
 export type PlaidKeysClient = Pick<PlaidApi, "institutionsGet">;
 export type PlaidClientMaker = (keys: PlaidKeys) => PlaidKeysClient;
 
-// Plaid's Production environment, and no other. The app never asks for a sandbox secret. Plaid's
-// API never redirects, and a redirect to another host would carry the PLAID-SECRET header, so the
-// client follows none.
+// Plaid's Production environment, and no other in the built app. The app never asks for a sandbox
+// secret. For manual checks with sandbox keys, a developer may set FFT_DEV_PLAID_ENV=sandbox. Only
+// unbuilt code, under `pnpm dev` or the tests, reads it: the build sets import.meta.env.DEV to
+// false and drops the branch, so the built image has no sandbox. No screen offers it. Plain Node
+// has no import.meta.env.
+export function plaidBasePath(
+  env: { FFT_DEV_PLAID_ENV?: string } = process.env,
+): string | undefined {
+  if (import.meta.env?.DEV && env.FFT_DEV_PLAID_ENV === "sandbox") {
+    return PlaidEnvironments.sandbox;
+  }
+  return PlaidEnvironments.production;
+}
+
+// Plaid's API never redirects, and a redirect to another host would carry the PLAID-SECRET header,
+// so the client follows none.
 export function plaidConfiguration(keys: PlaidKeys): Configuration {
   return new Configuration({
-    basePath: PlaidEnvironments.production,
+    basePath: plaidBasePath(),
     baseOptions: {
       timeout: PLAID_TIMEOUT_MS,
       maxRedirects: 0,
@@ -48,7 +61,7 @@ export const productionPlaidClient: PlaidClientMaker = (keys) =>
 // Plaid's error from a failed request, such as { error_type: "INVALID_INPUT", error_code:
 // "INVALID_API_KEYS" }. Only these two fields are read: the error also holds the request, with the
 // keys in its headers.
-function plaidError(error: unknown): { type: unknown; code: unknown; status: unknown } {
+export function plaidError(error: unknown): { type: unknown; code: unknown; status: unknown } {
   const response =
     typeof error === "object" && error !== null && "response" in error
       ? (error.response as {

@@ -96,6 +96,7 @@ function accountFields(snapshot: AccountSnapshot) {
     creditLimit: snapshot.creditLimit,
     cardAprs: snapshot.card?.aprs ?? null,
     statementBalance: snapshot.card?.statementBalance ?? null,
+    statementIssueDate: snapshot.card?.statementIssueDate ?? null,
     minimumPayment: snapshot.card?.minimumPayment ?? snapshot.loan?.minimumPayment ?? null,
     paymentDueDate: snapshot.card?.dueDate ?? snapshot.loan?.dueDate ?? null,
     loanApr: snapshot.loan?.apr ?? null,

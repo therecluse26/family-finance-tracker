@@ -8,6 +8,7 @@ import { createLogger } from "../log.ts";
 import { startNotify } from "../notify/index.ts";
 import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
+import type { BankDataAdapter } from "./adapter.ts";
 import { FakeBankAdapter } from "./fake.ts";
 import type { PlaidClientMaker, PlaidKeysClient } from "./plaid-keys.ts";
 import type { PlaidKeys } from "./plaid-view.ts";
@@ -31,15 +32,22 @@ export type TestBank = {
   close(): void;
 };
 
-export async function newTestBank(options: { timeZone?: string } = {}): Promise<TestBank> {
+export async function newTestBank(
+  options: {
+    timeZone?: string;
+    // Adapters that run beside the fake one, such as the Plaid adapter on a fake Plaid server.
+    adapters?: (services: { database: Database; secrets: Secrets }) => BankDataAdapter[];
+  } = {},
+): Promise<TestBank> {
   const db = await newTestDatabase();
   const quiet = createLogger(() => {}, { throwOnSecretField: true });
   const secrets = await unlockSecrets(db.database, newMasterKey().masterKey, { logger: quiet });
   const fake = new FakeBankAdapter();
+  const others = options.adapters?.({ database: db.database, secrets }) ?? [];
   const bank = startBank({
     database: db.database,
     secrets,
-    adapters: [fake],
+    adapters: [fake, ...others],
     timeZone: async () => options.timeZone,
   });
   const notify = startNotify({ database: db.database });

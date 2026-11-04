@@ -31,6 +31,7 @@ const CARD = fakeAccount({
     statementBalance: -48_000,
     minimumPayment: 3_500,
     dueDate: "2026-11-21",
+    statementIssueDate: "2026-10-27",
   },
 });
 

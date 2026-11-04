@@ -1,6 +1,12 @@
 import { aiCost, aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
-import { type BankDataAdapter, catchUpSyncs, plaidSettings, startBank } from "../bank/index.ts";
+import {
+  type BankDataAdapter,
+  catchUpSyncs,
+  plaidAdapter,
+  plaidSettings,
+  startBank,
+} from "../bank/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
@@ -22,7 +28,7 @@ export type StartOptions = {
   port: number;
   webRoot: string;
   security: Security;
-  // The Bank-data adapters. Tests give the fake adapter.
+  // The Bank-data adapters: the Plaid adapter unless given. Tests give the fake adapter.
   bankAdapters?: readonly BankDataAdapter[];
 };
 
@@ -52,7 +58,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // the bank module and the scheduler use UTC.
     const timeZone = () => householdTimeZone(database);
     const notify = startNotify({ database });
-    const bank = startBank({ database, secrets, adapters: options.bankAdapters ?? [], timeZone });
+    const adapters = options.bankAdapters ?? [plaidAdapter({ database, secrets })];
+    const bank = startBank({ database, secrets, adapters, timeZone });
     const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });
     const moneyMovement = startMoneyMovement({ database });
     const categorization = startCategorization({ database });

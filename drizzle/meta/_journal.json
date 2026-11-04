@@ -148,6 +148,13 @@
       "when": 1793809512722,
       "tag": "0020_transfer_links",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1793809759272,
+      "tag": "0021_card_statement_issue_date",
+      "breakpoints": true
     }
   ]
 }

@@ -34,6 +34,7 @@ const CARD = fakeAccount({
     statementBalance: -48_000,
     minimumPayment: 3_500,
     dueDate: "2026-11-21",
+    statementIssueDate: "2026-10-27",
   },
 });
 
@@ -377,6 +378,20 @@ describe("syncing a fake Connection", () => {
     await syncConnection(connectionId);
 
     expect(await syncConnection(connectionId)).toEqual(report(0, 0, 0));
+  });
+
+  it.each([
+    [
+      "a Transaction amount",
+      { added: [fakeTxn({ id: "t1", accountId: CHECKING.id, amount: 12.5 })] },
+    ],
+    ["a balance", { accounts: [{ ...CHECKING, currentBalance: 248_000.4 }] }],
+  ])("refuses %s that is not whole cents, and stores nothing", async (_name, page) => {
+    bank.fake.addPages(BANK, { accounts: [CHECKING], ...page });
+
+    await expect(syncConnection(connectionId)).rejects.toThrow("An amount must be whole cents");
+    expect(await rows("SELECT id FROM transactions")).toEqual([]);
+    expect(await rows("SELECT id FROM household_accounts")).toEqual([]);
   });
 
   it("runs one sync at a time for each Connection", async () => {

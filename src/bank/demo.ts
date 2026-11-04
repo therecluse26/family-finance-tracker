@@ -878,6 +878,7 @@ function withCard(
       statementBalance: owedAt(snapshot, "2026-09-30"),
       minimumPayment: details.minimum,
       dueDate: details.dueDate,
+      statementIssueDate: "2026-09-30",
     },
   };
 }
