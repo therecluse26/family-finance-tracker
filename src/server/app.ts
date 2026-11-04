@@ -15,6 +15,7 @@ import type { Secrets } from "../secrets/index.ts";
 import { aboutRoutes } from "./about.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
+import { benchmarkRoutes } from "./benchmarks.ts";
 import { categoryRoutes } from "./categories.ts";
 import type { ServerEnv } from "./env.ts";
 import { householdRoutes } from "./household.ts";
@@ -147,6 +148,7 @@ export function createApp(
   const categories = categoryRoutes(database);
   const recurring = recurringRoutes(database);
   const about = aboutRoutes(database);
+  const benchmarks = benchmarkRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -172,6 +174,7 @@ export function createApp(
         c.set("categories", categories);
         c.set("recurring", recurring);
         c.set("about", about);
+        c.set("benchmarks", benchmarks);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

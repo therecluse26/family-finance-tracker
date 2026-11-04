@@ -8,6 +8,7 @@ import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
+import type { BenchmarkRoutes } from "./benchmarks-views.ts";
 import type { CategoryRoutes } from "./category-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
@@ -55,6 +56,8 @@ export type ServerEnv = {
     recurring: RecurringRoutes;
     // Settings, About: the version, the Source code link, and the Update check.
     about: AboutRoutes;
+    // Each Category's Benchmark.
+    benchmarks: BenchmarkRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
   };

@@ -1,4 +1,16 @@
 // The benchmarks module's interface (spec 05, Benchmarks). Other modules import from here.
+
+export {
+  type BenchmarkInputs,
+  benchmarkContextLine,
+  type CategoryBenchmark,
+  type CategoryBenchmarks,
+  CE_NOTES,
+  type CeColumnPick,
+  categoryBenchmarks,
+  computeCategoryBenchmarks,
+  foodPlanCost,
+} from "./category-benchmarks.ts";
 export {
   B_GS_CE_LINES,
   BENCHMARK_ROLES,

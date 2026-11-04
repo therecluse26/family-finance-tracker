@@ -852,6 +852,9 @@ export const api = new Hono<ServerEnv>()
     if (!body.success) return c.json({ error: "Say whether to check for updates." }, 400);
     return c.json({ updateCheck: await c.var.about.switchUpdateCheck(body.data.on) }, 200);
   })
+  // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
+  // snapshot is the sample.
+  .get("/benchmarks", async (c) => c.json(await c.var.benchmarks.benchmarks()))
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))
   .post("/notices/:id/close", async (c) => {
