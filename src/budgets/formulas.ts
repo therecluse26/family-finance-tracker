@@ -29,6 +29,9 @@ export type CategoryTerms = {
   y: number;
   // The part of k from tracked loan payments expected in m. Part of k.
   kLoans: number;
+  // Each active yearly Recurring charge in c at its latest amount, per year, whatever month it is
+  // expected in. The "must fit" total counts it at 1/12 (spec 05, The total must fit).
+  yearlyCharges: number;
 };
 
 export type DraftTerms = {

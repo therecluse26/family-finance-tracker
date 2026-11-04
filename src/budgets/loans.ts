@@ -28,9 +28,12 @@ export type TrackedLoanPayment = {
   authorizedDate: string | null;
   // The payment's Spending parts, with the Transaction's sign.
   spending: { category: string | null; amount: number }[];
+  // False when the paying side of a connected loan's Transfer pair is hidden while the pair is
+  // still live: the payment's parts are then not known until Matching ends the pair.
+  partsKnown: boolean;
 };
 
-type Held = Omit<TrackedLoanPayment, "loanId" | "closed" | "transactionId">;
+type Held = Omit<TrackedLoanPayment, "loanId" | "closed" | "transactionId" | "partsKnown">;
 
 // Every shown, posted payment on a tracked loan, oldest first. One loan-history read for each
 // connected loan, and a fixed number of others.
@@ -72,10 +75,11 @@ export async function listTrackedLoanPayments(
     const payingId = paying.get(id);
     const payingSide = payingId === undefined ? undefined : held.get(payingId);
     if (payingId !== undefined && payingSide !== undefined) {
-      payments.push({ loanId, closed, transactionId: payingId, ...payingSide });
+      payments.push({ loanId, closed, transactionId: payingId, ...payingSide, partsKnown: true });
     } else {
       const own = held.get(id) ?? { postedDate, authorizedDate: null, spending: [] };
-      payments.push({ loanId, closed, transactionId: id, ...own });
+      const partsKnown = payingId === undefined && held.has(id);
+      payments.push({ loanId, closed, transactionId: id, ...own, partsKnown });
     }
   }
 
@@ -95,6 +99,7 @@ export async function listTrackedLoanPayments(
       closed: closed.get(txn.loanAccountId) ?? false,
       transactionId: txn.transactionId,
       ...found,
+      partsKnown: true,
     });
   }
   return payments.sort(

@@ -16,7 +16,17 @@ function terms(given: Given = {}): DraftTerms {
   const categories = Object.fromEntries(
     CATEGORIES.map(({ name }) => [
       name,
-      { spent: 0, a: 0, aOther: 0, aFlex: 0, k: 0, y: 0, kLoans: 0, ...given.categories?.[name] },
+      {
+        spent: 0,
+        a: 0,
+        aOther: 0,
+        aFlex: 0,
+        k: 0,
+        y: 0,
+        kLoans: 0,
+        yearlyCharges: 0,
+        ...given.categories?.[name],
+      },
     ]),
   ) as Record<Category, CategoryTerms>;
   return {

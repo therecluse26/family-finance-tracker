@@ -96,6 +96,12 @@ export const APP_MODULES: readonly AppModule[] = [
   {
     name: "startBudgets",
     start: ({ database }) => startBudgets({ database, now: HISTORY_NOW }),
+    // Before the first draft, the step finds no Budget to set: the Budget draft case times it.
+    step: {
+      name: "Bills Budgets",
+      path: "Bills Budgets follow-up on the full history",
+      buildLimitMs: 10_000,
+    },
   },
   {
     name: "startCpiFetch",

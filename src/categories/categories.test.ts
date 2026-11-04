@@ -97,11 +97,14 @@ describe("the Category list", () => {
     const changes = api.routes.filter(
       (route) => route.method !== "GET" && /categor/i.test(route.path),
     );
-    // A Member's Category for one Transaction, and deleting a Category rule, leave the list as it
-    // is.
-    expect(changes.map((route) => `${route.method} ${route.path}`)).toEqual([
+    // A Member's Category for one Transaction, deleting a Category rule, and a Category's Budget
+    // leave the list as it is.
+    // A route with its own middleware is listed once per handler.
+    expect([...new Set(changes.map((route) => `${route.method} ${route.path}`))]).toEqual([
       "PUT /transactions/:id/category",
       "DELETE /category-rules/:id",
+      "PUT /budgets/:category",
+      "POST /budgets/:category/follow-the-bill",
     ]);
   });
 });

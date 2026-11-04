@@ -4,6 +4,7 @@
 import { AiRetryJob } from "../ai/index.ts";
 import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
+import { MonthStartJob } from "../budgets/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
 import { UpdateCheckJob } from "../updates/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
@@ -12,7 +13,14 @@ import type { ScheduledTask } from "./scheduler.ts";
 export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "./sidequest.ts";
-export { AiRetryJob, CpiFetchJob, ProvisionalResultsJob, SyncScheduleJob, UpdateCheckJob };
+export {
+  AiRetryJob,
+  CpiFetchJob,
+  MonthStartJob,
+  ProvisionalResultsJob,
+  SyncScheduleJob,
+  UpdateCheckJob,
+};
 
 // Every scheduled task. Each task's job is in the list above.
 export const scheduledTasks: readonly ScheduledTask[] = [
@@ -29,6 +37,10 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // Fetches the CPI on the 20th, Household time, and on each later day of the round until a fetch
   // succeeds or the round stops at its cap (spec 05, CPI). On other days its job makes no request.
   { name: "cpi fetch", schedule: daily("06:00"), job: CpiFetchJob },
+  // Sets the month's Bills Budgets, and each qualified Category's first Budget, on the 1st,
+  // Household time (spec 05, When the app drafts). A failed run tries again the next day, up to its
+  // cap. On other days its job finds the month done.
+  { name: "month start", schedule: daily("00:10"), job: MonthStartJob },
   // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no
   // request.
   { name: "update check", schedule: daily("05:00"), job: UpdateCheckJob },

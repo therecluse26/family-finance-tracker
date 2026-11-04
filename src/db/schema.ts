@@ -1078,7 +1078,34 @@ export const budgetInputs = sqliteTable(
     sampleBenchmarks: integer("sample_benchmarks", { mode: "boolean" }).notNull(),
     // The month the first draft took effect, written YYYY-MM.
     firstDraftMonth: text("first_draft_month").notNull(),
+    // True when the draft stayed above Steady Income after the "must fit" cuts: its note says the
+    // fixed costs pass Steady Income (spec 05, The total must fit).
+    fixedCostsPassIncome: integer("fixed_costs_pass_income", { mode: "boolean" })
+      .notNull()
+      .default(false),
     recordedAt: moment("recorded_at").notNull(),
   },
   (table) => [check("budget_inputs_one_row", sql`${table.id} = 1`)],
 );
+
+// A Member's "Accept all" of the draft (spec 05, When the app drafts): when, and who. The draft is
+// active whether or not anyone accepts it. It has at most one row, whose ID is 1.
+export const budgetDraftAcceptance = sqliteTable(
+  "budget_draft_acceptance",
+  {
+    id: integer("id").primaryKey(),
+    acceptedAt: moment("accepted_at").notNull(),
+    acceptedBy: text("accepted_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [check("budget_draft_acceptance_one_row", sql`${table.id} = 1`)],
+);
+
+// The Month start job's work for each month (spec 05, When the app drafts; spec 10, Jobs): that
+// month's Bills Budgets, and a first Budget for each Category that has qualified. A month is done
+// once; a failed run counts a try, and the job stops for that month at its cap.
+export const budgetMonthStarts = sqliteTable("budget_month_starts", {
+  // The month, written YYYY-MM.
+  month: text("month").primaryKey(),
+  doneAt: moment("done_at"),
+  failedTries: integer("failed_tries").notNull().default(0),
+});

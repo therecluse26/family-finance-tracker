@@ -16,6 +16,9 @@ export const FOLLOW_UP_STEPS = [
   "matching",
   "categorization",
   "recurring charge and anomaly checks",
+  // This month's Bills Budgets, which follow the Recurring charges and loan payments the checks
+  // found, before the Alerts read them (spec 05, Bills group).
+  "Bills Budgets",
   "alerts",
   "insight card check",
 ] as const;

@@ -18,6 +18,7 @@ import { findRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
 import {
   budgetsForMonth,
   draftFirstBudgets,
+  FIXED_COSTS_PASS_INCOME,
   historyWindow,
   readDraftTerms,
   startBudgets,
@@ -475,6 +476,14 @@ describe("Budget drafts", () => {
       expect((await terms("2026-12")).categories["Interest and fees"].kLoans).toBe($(98));
     });
 
+    it("expects the last known parts while a payment's paying side is hidden and its pair is still live", async () => {
+      // The re-link hid October's paying side; its Transfer pair stays until Matching ends it.
+      await hide("larkspur-1");
+
+      // September's $102, not $0, until the pair ends; and the mortgage's $900.
+      expect((await terms()).categories["Interest and fees"].kLoans).toBe($(102 + 900));
+    });
+
     it("leaves out a loan payment that a re-link hid", async () => {
       await load([
         {
@@ -597,6 +606,21 @@ describe("Budget drafts", () => {
       // Months before the first draft have no Budget; later months keep it.
       expect((await budgetsForMonth(bank.database, "2026-10")).budgets).toEqual([]);
       expect((await budgetsForMonth(bank.database, "2027-02")).budgets).toHaveLength(6);
+      expect((await budgetsForMonth(bank.database, "2026-11")).fitNote).toBeUndefined();
+    });
+
+    it("keeps the draft as cut, with its note, when the fixed costs pass Steady Income", async () => {
+      // Bills alone pass $1,000, and only Superstores is left, which is never cut.
+      await typeSteadyIncome(bank.database, $(1_000), MEMBER);
+
+      await draftFirstBudgets(bank.database, now);
+
+      const { budgets, fitNote } = await budgetsForMonth(bank.database, "2026-11");
+      expect(fitNote).toBe(FIXED_COSTS_PASS_INCOME);
+      expect(fitNote).toBe("The fixed costs pass Steady Income.");
+      expect(budgets.find((budget) => budget.category === "Superstores")?.amount).toBe($(20));
+      const inputs = await bank.database.$client.execute("SELECT * FROM budget_inputs");
+      expect(inputs.rows[0]).toMatchObject({ fixed_costs_pass_income: 1 });
     });
   });
 

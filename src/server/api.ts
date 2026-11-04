@@ -101,6 +101,13 @@ const steadyIncomeBody = z
   .object({ typed: z.number().int().min(0).max(MAX_STEADY_INCOME_CENTS).nullable() })
   .strict();
 
+// A Member's Budget (spec 05, Changing Budgets), in whole cents: per month, or per year for a
+// yearly Budget.
+const MAX_BUDGET_CENTS = 100_000_000_000;
+const budgetEditBody = z.object({ amount: z.number().int().min(0).max(MAX_BUDGET_CENTS) }).strict();
+
+const NO_BUDGET = "This Category has no Budget to change.";
+
 // An Unconnected account (spec 02, Unconnected accounts). An empty institution name or last 4
 // digits is none. A balance is whole cents.
 const MAX_BALANCE_CENTS = 100_000_000_000;
@@ -901,6 +908,34 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Write the month as YYYY-MM." }, 400);
     }
     return c.json(await c.var.budgets.budgets(month));
+  })
+  // A Member's edit of any Budget (spec 05, Changing Budgets): it takes effect this month, or for a
+  // yearly Budget the whole current year. An edited Bills Budget is pinned.
+  .put("/budgets/:category", jsonOnly, async (c) => {
+    const body = budgetEditBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Enter the Budget in dollars and cents." }, 400);
+    const budget = await c.var.budgets.edit(
+      c.req.param("category"),
+      body.data.amount,
+      c.var.member.id,
+    );
+    if (budget === undefined) return c.json({ error: NO_BUDGET }, 404);
+    return c.json({ budget }, 200);
+  })
+  // "Follow the bill" puts a pinned Bills Budget back on the formula from the next month.
+  .post("/budgets/:category/follow-the-bill", jsonOnly, async (c) => {
+    const result = await c.var.budgets.followTheBill(c.req.param("category"), c.var.member.id);
+    if (result === "no Budget") return c.json({ error: NO_BUDGET }, 404);
+    if (result === "not pinned") {
+      return c.json({ error: "Only a pinned Bills Budget can follow the bill." }, 409);
+    }
+    return c.json({ budget: result }, 200);
+  })
+  // "Accept all" accepts the whole draft with one click (spec 05, When the app drafts).
+  .post("/budgets/accept-all", jsonOnly, async (c) => {
+    const accepted = await c.var.budgets.acceptAll(c.var.member.id);
+    if (accepted === undefined) return c.json({ error: "There is no draft to accept yet." }, 404);
+    return c.json({ accepted }, 200);
   })
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))

@@ -70,12 +70,24 @@ export {
 } from "./bank-data.ts";
 export {
   type BudgetInputs,
+  countMonthStartFailure,
+  type DraftAcceptance,
   listBudgetsInEffect,
+  listSpendingTransactions,
+  type MonthBudget,
+  type MonthStart,
+  markMonthStartDone,
   type NewBudget,
   readBudgetInputs,
+  readDraftAcceptance,
   readHistoryStart,
+  readMonthStart,
   type StoredBudget,
+  storeBudgetEdit,
+  storeDraftAcceptance,
   storeFirstDraft,
+  storeFollowTheBill,
+  storeMonthBudgets,
 } from "./budgets.ts";
 export {
   listCategoryRules,
