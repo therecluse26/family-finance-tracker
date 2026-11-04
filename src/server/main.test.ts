@@ -3,10 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { newMasterKeyHex } from "../secrets/testing.ts";
 
 const MAIN = fileURLToPath(new URL("./main.ts", import.meta.url));
+
+// Each test starts a new Node process, which can take seconds on a busy machine. The limit stays
+// above the process limit below, so a slow start fails as a slow start, not as a test timeout.
+vi.setConfig({ testTimeout: 20_000 });
 
 const dir = mkdtempSync(join(tmpdir(), "fft-main-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
