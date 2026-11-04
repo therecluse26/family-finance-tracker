@@ -46,6 +46,7 @@ Each item was a blocking review finding at least once, and each cost a full revi
 - **K10. Never decide on data the browser sends when the server can learn it.** Plaid Link metadata (bank ID, bank name, account list) comes from the browser. After the token exchange, every decision that depends on it (same bank, duplicate bank, which Connection to replace) uses Plaid's own answer from `/item/get` or `/accounts/get`. Test it with a browser value that differs from Plaid's.
 
 - **K11. Every hold on a Connection is honored by every path that starts a sync.** The paths are the schedule, the start-up catch-up, Sync now, update mode and `update-finished`. Set the hold in the same write that creates or changes the row, so no window exists. Test each path with the hold set, and break the hold once in each.
+- **K12. Re-matching never ends a hand-made link.** A change that shrinks a candidate set (Exclude, hidden, removed, a new filter) must not end Member links, and must not end app links only because a side changed state. Test a hand link and an app link through the change and back, and check the totals before, during and after.
 When a review blocks on something new that could happen again, the orchestrator adds it here as the next K number.
 
 ## Writing
