@@ -9,6 +9,7 @@ import type { AboutRoutes } from "./about-views.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
 import type { BenchmarkRoutes } from "./benchmarks-views.ts";
+import type { BudgetRoutes } from "./budgets-views.ts";
 import type { CategoryRoutes } from "./category-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
@@ -58,6 +59,8 @@ export type ServerEnv = {
     about: AboutRoutes;
     // Each Category's Benchmark.
     benchmarks: BenchmarkRoutes;
+    // Each Category's Budget for a month.
+    budgets: BudgetRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
   };

@@ -1,5 +1,6 @@
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
+import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import type { Database } from "../db/index.ts";
 import { type FollowUpStepName, startFollowUpPipeline } from "../follow-up/index.ts";
@@ -78,6 +79,10 @@ export const APP_MODULES: readonly AppModule[] = [
       path: "Recurring charge checks on the full history",
       buildLimitMs: 20_000,
     },
+  },
+  {
+    name: "startBudgets",
+    start: ({ database }) => startBudgets({ database, now: HISTORY_NOW }),
   },
   {
     name: "startCpiFetch",

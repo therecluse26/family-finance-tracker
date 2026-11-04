@@ -1024,3 +1024,47 @@ export const typedSteadyIncome = sqliteTable(
   },
   (table) => [check("typed_steady_income_one_row", sql`${table.id} = 1`)],
 );
+
+// Budgets (spec 05, Stored Budgets). Each row is one Budget for one Category, from the month or
+// year it takes effect. A month uses the newest Budget in effect that month, so a past month keeps
+// its Budget when a later one changes. The app stores each Bills Budget per month.
+export const budgets = sqliteTable(
+  "budgets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    category: text("category").notNull(),
+    // Whole cents: per month for a monthly Budget, per calendar year for a yearly one.
+    amount: cents("amount").notNull(),
+    period: text("period", { enum: ["monthly", "yearly"] }).notNull(),
+    // The month a monthly Budget takes effect, written YYYY-MM, or the year a yearly one takes
+    // effect, written YYYY.
+    takesEffect: text("takes_effect").notNull(),
+    source: text("source", { enum: ["formula", "AI draft", "Member edit", "Proposal"] }).notNull(),
+    // The Member who set it, or null when the app set it.
+    setBy: text("set_by").references(() => members.id, { onDelete: "set null" }),
+    // A Bills Budget's pinned flag: true once a Member's edit pins it to the typed amount. Null for
+    // every other Budget.
+    pinned: integer("pinned", { mode: "boolean" }),
+    setAt: moment("set_at").notNull(),
+  },
+  (table) => [index("budgets_takes_effect").on(table.takesEffect)],
+);
+
+// The inputs behind the current Budgets (spec 05, Which Proposals exist): Steady Income and the CE
+// data year. The first draft records them, with its month: there is no Budget before it. It has
+// at most one row, whose ID is 1.
+export const budgetInputs = sqliteTable(
+  "budget_inputs",
+  {
+    id: integer("id").primaryKey(),
+    // I, in whole cents per month.
+    steadyIncome: cents("steady_income").notNull(),
+    ceDataYear: integer("ce_data_year").notNull(),
+    // True when the Benchmarks behind the current Budgets came from the sample snapshot.
+    sampleBenchmarks: integer("sample_benchmarks", { mode: "boolean" }).notNull(),
+    // The month the first draft took effect, written YYYY-MM.
+    firstDraftMonth: text("first_draft_month").notNull(),
+    recordedAt: moment("recorded_at").notNull(),
+  },
+  (table) => [check("budget_inputs_one_row", sql`${table.id} = 1`)],
+);

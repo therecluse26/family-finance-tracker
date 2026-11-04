@@ -18,6 +18,7 @@ import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 
 // A Plaid client ID or secret, as Plaid's dashboard shows it: letters and digits.
 const PLAID_KEY = /^[A-Za-z0-9]{16,64}$/;
@@ -857,6 +858,15 @@ export const api = new Hono<ServerEnv>()
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.
   .get("/benchmarks", async (c) => c.json(await c.var.benchmarks.benchmarks()))
+  // Each Category's Budget for a month (spec 05, Stored Budgets), with the sample label while the
+  // Benchmarks behind the drafted amounts are the sample.
+  .get("/budgets", async (c) => {
+    const month = c.req.query("month");
+    if (month === undefined || !MONTH.test(month)) {
+      return c.json({ error: "Write the month as YYYY-MM." }, 400);
+    }
+    return c.json(await c.var.budgets.budgets(month));
+  })
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))
   .post("/notices/:id/close", async (c) => {

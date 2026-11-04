@@ -324,13 +324,14 @@ export async function listDecidedAt(
 }
 
 type LinkedSpending = {
+  spendingTransactionId: string;
   postedDate: string;
   authorizedDate: string | null;
   category: string | null;
 };
 
-// The Spending that each linked Refund or Reimbursement reduces, by the money in's ID: its dates,
-// which give the month, and the Category of its first Spending part that has one. Reads every
+// The Spending that each linked Refund or Reimbursement reduces, by the money in's ID: its ID, its
+// dates, which give the month, and the Category of its first Spending part that has one. Reads every
 // link, or the links of these Transactions.
 async function readLinkedSpending(
   database: Queries,
@@ -348,6 +349,7 @@ async function readLinkedSpending(
     database
       .select({
         moneyId: spendingLinks.transactionId,
+        spendingTransactionId: spent.id,
         postedDate: spent.postedDate,
         authorizedDate: spent.authorizedDate,
         category: firstCategory,
@@ -363,8 +365,8 @@ async function readLinkedSpending(
 }
 
 // Every part of every posted Transaction that is not hidden, with the dates its month comes from.
-// A linked Refund or Reimbursement part has its Spending's dates and Category instead (spec 03,
-// Which month a link changes). While its link is gone, before Matching decides it again, it keeps
+// A linked Refund or Reimbursement part has its Spending's ID, dates, and Category instead (spec 03,
+// Which month a link changes); every other part has a null spendingTransactionId. While its link is gone, before Matching decides it again, it keeps
 // its own.
 export async function listPostedParts(database: Database) {
   const rows = await database
@@ -380,11 +382,12 @@ export async function listPostedParts(database: Database) {
     .from(transactionParts)
     .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))
     .where(and(eq(transactions.pending, false), isNull(transactions.hiddenReason)));
-  if (!rows.some((row) => row.linked)) return rows;
-  const spending = await readLinkedSpending(database);
+  const spending = rows.some((row) => row.linked)
+    ? await readLinkedSpending(database)
+    : new Map<string, LinkedSpending>();
   return rows.map((row) => {
     const found = row.linked ? spending.get(row.transactionId) : undefined;
-    return found === undefined ? row : { ...row, ...found };
+    return found === undefined ? { ...row, spendingTransactionId: null } : { ...row, ...found };
   });
 }
 

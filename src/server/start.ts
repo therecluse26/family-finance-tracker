@@ -8,6 +8,7 @@ import {
   startBank,
 } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
+import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
@@ -67,11 +68,13 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const moneyMovement = startMoneyMovement({ database });
     const categorization = startCategorization({ database });
     const recurring = startRecurringCharges({ database });
+    const budgets = startBudgets({ database });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {
       updateCheck.stop();
       cpiFetch.stop();
+      budgets.stop();
       recurring.stop();
       categorization.stop();
       moneyMovement.stop();

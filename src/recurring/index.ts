@@ -16,5 +16,5 @@ export {
   steadyIncome,
   typeSteadyIncome,
 } from "./income.ts";
-export { SCHEDULES, type Schedule } from "./schedules.ts";
+export { addMonths, nextExpected, SCHEDULES, type Schedule } from "./schedules.ts";
 export type { Status } from "./series.ts";
