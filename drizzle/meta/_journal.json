@@ -225,6 +225,13 @@
       "when": 1793819287018,
       "tag": "0031_update_check",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1793820443456,
+      "tag": "0032_delete_history_speed",
+      "breakpoints": true
     }
   ]
 }

@@ -794,7 +794,11 @@ export const refusedLinks = sqliteTable(
     memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
     refusedAt: moment("refused_at").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.kind, table.transactionId, table.otherId] })],
+  (table) => [
+    primaryKey({ columns: [table.kind, table.transactionId, table.otherId] }),
+    // The key leads with the kind, so a deleted Transaction's check finds its rows here.
+    index("refused_links_transaction_id").on(table.transactionId),
+  ],
 );
 
 // Each Transaction's type, as the order of decisions last decided it (spec 03, Order of
@@ -861,7 +865,9 @@ export const transactionParts = sqliteTable(
 
 // Each follow-up step's handled mark on each Transaction (spec 10, The follow-up pipeline). A step
 // handles every Transaction it has no mark on. A sync that changes or hides a Transaction deletes
-// its marks, so every step handles it again.
+// its marks, so every step handles it again. The key leads with the Transaction, so one b-tree
+// serves both the lookup by Transaction and step and the delete of a Transaction's marks: a
+// deleted Transaction's marks leave one b-tree, not three.
 export const followUpMarks = sqliteTable(
   "follow_up_marks",
   {
@@ -871,10 +877,7 @@ export const followUpMarks = sqliteTable(
       .references(() => transactions.id, { onDelete: "cascade" }),
     handledAt: moment("handled_at").notNull(),
   },
-  (table) => [
-    primaryKey({ columns: [table.step, table.transactionId] }),
-    index("follow_up_marks_transaction_id").on(table.transactionId),
-  ],
+  (table) => [primaryKey({ columns: [table.transactionId, table.step] })],
 );
 
 // Each time a Member's change made a Transaction unhandled again, in order. A follow-up step that

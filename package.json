@@ -21,6 +21,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc -p tsconfig.json && tsc -p src/web",
     "test": "vitest run",
+    "bench:history": "vitest run --config vitest.history.config.ts",
     "check:licenses": "node scripts/check-licenses.ts",
     "check:audit": "node scripts/check-audit.ts",
     "check:benchmarks": "node scripts/check-benchmark-snapshot.ts",
