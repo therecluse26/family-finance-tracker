@@ -4,7 +4,8 @@ import type { ZipSource, ZipTableData } from "../src/household/zip-table.ts";
 // The ZIP table (spec 05, Household facts and The shipped data): each ZIP code's state and IANA time
 // zone. It is built from two US federal works in the public domain: the Census Bureau's 2020 ZCTA
 // to county relationship file, and the time zone field of the National Weather Service's county
-// file. scripts/build-zip-table.ts fetches both and writes src/household/zip-table.data.ts.
+// file. scripts/build-benchmark-snapshot.ts reads both from files the owner downloads, and writes
+// src/household/zip-table.data.ts.
 
 export const ZCTA_COUNTY_URL =
   "https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/tab20_zcta520_county20_natl.txt";

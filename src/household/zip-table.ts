@@ -1,8 +1,8 @@
 import { ZIP_TABLE_DATA } from "./zip-table.data.ts";
 
 // The shipped ZIP table (spec 05, Household facts): each ZIP code's state and IANA time zone.
-// scripts/build-zip-table.ts builds zip-table.data.ts from the Census ZCTA to county relationship
-// file and the NWS county time zones.
+// scripts/build-benchmark-snapshot.ts builds zip-table.data.ts from the Census ZCTA to county
+// relationship file and the NWS county time zones.
 
 // One source of the table, with its data date, for docs/data-sources.md.
 export type ZipSource = { agency: string; table: string; url: string; dataDate: string };

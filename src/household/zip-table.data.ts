@@ -1,4 +1,4 @@
-// Built by scripts/build-zip-table.ts from US federal public-domain data. Do not edit by hand.
+// Built by scripts/build-benchmark-snapshot.ts from US federal public-domain data. Do not edit by hand.
 import type { ZipTableData } from "./zip-table.ts";
 
 export const ZIP_TABLE_DATA: ZipTableData = {

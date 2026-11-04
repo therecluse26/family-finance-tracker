@@ -23,6 +23,7 @@
     "test": "vitest run",
     "check:licenses": "node scripts/check-licenses.ts",
     "check:audit": "node scripts/check-audit.ts",
+    "check:benchmarks": "node scripts/check-benchmark-snapshot.ts",
     "db:generate": "drizzle-kit generate",
     "seed:demo": "node scripts/seed-demo.ts"
   },

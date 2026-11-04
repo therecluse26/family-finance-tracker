@@ -1,0 +1,145 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { ZIP_TABLE_DATA } from "../src/household/zip-table.data.ts";
+import type { ZipSource } from "../src/household/zip-table.ts";
+import {
+  buildBenchmarkSnapshot,
+  missingFilesMessage,
+  type ReadSource,
+  renderDataSources,
+  SOURCE_FILES,
+} from "./benchmark-snapshot.ts";
+import { readFixture } from "./fixtures/benchmarks/fixtures.ts";
+import {
+  buildZipTable,
+  currentCountyFile,
+  NWS_COUNTIES_FOLDER,
+  parseDbf,
+  readZipEntry,
+  ZCTA_COUNTY_URL,
+} from "./zip-table.ts";
+
+// The release script for the Benchmark snapshot (spec 05, The shipped data). It reads only local
+// files, which the owner downloads by hand as docs/data-sources.md says, and makes no network
+// request. It writes:
+// - src/benchmarks/snapshot.data.ts, the Benchmark snapshot;
+// - src/household/zip-table.data.ts, the ZIP table;
+// - the generated parts of docs/data-sources.md.
+//
+// `node scripts/build-benchmark-snapshot.ts [folder]` reads the real files from the folder, by
+// default benchmark-sources/ at the repo root.
+// `node scripts/build-benchmark-snapshot.ts --sample` reads the made-up fixture files in
+// scripts/fixtures/benchmarks/ instead, marks the snapshot as a sample, and keeps the ZIP table.
+// The release must not ship a sample: scripts/check-benchmark-snapshot.ts fails on one.
+
+const root = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+const SNAPSHOT_OUT = root("src/benchmarks/snapshot.data.ts");
+const ZIP_OUT = root("src/household/zip-table.data.ts");
+const DOC = root("docs/data-sources.md");
+const CENSUS_FILE = /^census-zcta-county-(\d{4}-\d{2}-\d{2})\.txt$/;
+const NWS_FILE = /^c_\d{2}[a-z]{2}\d{2}\.zip$/;
+
+const { values, positionals } = parseArgs({
+  options: { sample: { type: "boolean", default: false } },
+  allowPositionals: true,
+});
+const sample = values.sample === true;
+const folder = resolve(positionals[0] ?? root("benchmark-sources"));
+
+function fail(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+const names = !sample && existsSync(folder) ? readdirSync(folder) : [];
+const census = names.filter((name) => CENSUS_FILE.test(name)).sort();
+const counties = names.filter((name) => NWS_FILE.test(name));
+if (!sample) {
+  const missing: string[] = Object.values(SOURCE_FILES)
+    .map(({ file }) => file)
+    .filter((file) => !names.includes(file));
+  if (census.length === 0) missing.push("census-zcta-county-<YYYY-MM-DD>.txt");
+  if (counties.length === 0) missing.push("c_<DDmmYY>.zip");
+  if (missing.length > 0) fail(missingFilesMessage(missing, folder));
+}
+
+function writeFormatted(path: string, lines: string[]) {
+  writeFileSync(path, lines.join("\n"));
+  execFileSync("pnpm", ["exec", "biome", "format", "--write", path], { stdio: "inherit" });
+}
+
+// ---- The ZIP table, from the Census and NWS files.
+
+let zipSources: ZipSource[] = ZIP_TABLE_DATA.sources;
+if (!sample) {
+  const today = new Date().toISOString().slice(0, 10);
+  const censusName = census.at(-1) ?? "";
+  const censusDate = censusName.match(CENSUS_FILE)?.[1] ?? "";
+  let county: { file: string; date: string };
+  try {
+    county = currentCountyFile(counties.join(" "), today);
+  } catch {
+    fail(`The folder ${folder} holds no NWS county file in effect today.`);
+  }
+  const archive = new Uint8Array(readFileSync(join(folder, county.file)));
+  const nwsRows = parseDbf(readZipEntry(archive, (name) => name.toLowerCase().endsWith(".dbf")));
+  zipSources = [
+    {
+      agency: "U.S. Census Bureau",
+      table: "2020 ZCTA to County Relationship File",
+      url: ZCTA_COUNTY_URL,
+      dataDate: censusDate,
+    },
+    {
+      agency: "National Weather Service",
+      table: "U.S. Counties, time zone field",
+      url: `${NWS_COUNTIES_FOLDER}${county.file}`,
+      dataDate: county.date,
+    },
+  ];
+  const table = buildZipTable(readFileSync(join(folder, censusName), "utf8"), nwsRows, zipSources);
+  writeFormatted(ZIP_OUT, [
+    "// Built by scripts/build-benchmark-snapshot.ts from US federal public-domain data. Do not edit by hand.",
+    'import type { ZipTableData } from "./zip-table.ts";',
+    "",
+    `export const ZIP_TABLE_DATA: ZipTableData = ${JSON.stringify(table, null, 2)};`,
+    "",
+  ]);
+  const count = Object.values(table.zipCodes).reduce(
+    (sum, zips) => sum + zips.split(" ").length,
+    0,
+  );
+  console.log(`Wrote ${count} ZIP codes to ${ZIP_OUT}.`);
+}
+
+// ---- The Benchmark snapshot.
+
+const readFile: ReadSource = (key) =>
+  new Uint8Array(readFileSync(join(folder, SOURCE_FILES[key].file)));
+let snapshot: ReturnType<typeof buildBenchmarkSnapshot>;
+try {
+  snapshot = buildBenchmarkSnapshot(sample ? readFixture : readFile, zipSources, sample);
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+writeFormatted(SNAPSHOT_OUT, [
+  "// Built by scripts/build-benchmark-snapshot.ts from US federal public-domain data. Do not edit by hand.",
+  ...(sample
+    ? [
+        "// SAMPLE: built from the made-up files in scripts/fixtures/benchmarks/. Sample numbers, not real data.",
+      ]
+    : []),
+  'import type { BenchmarkSnapshot } from "./snapshot.ts";',
+  "",
+  `export const BENCHMARK_SNAPSHOT_DATA: BenchmarkSnapshot = ${JSON.stringify(snapshot, null, 2)};`,
+  "",
+]);
+writeFileSync(DOC, renderDataSources(readFileSync(DOC, "utf8"), snapshot));
+
+console.log(`Wrote the ${sample ? "SAMPLE " : ""}Benchmark snapshot to ${SNAPSHOT_OUT}.`);
+for (const source of snapshot.sources) {
+  console.log(`  ${source.agency}, ${source.table}: data date ${source.dataDate}`);
+}

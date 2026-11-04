@@ -10,3 +10,5 @@ coverage/
 *.key
 .playwright-mcp/
 .claude/
+# The source files of the Benchmark snapshot, which the owner downloads by hand (docs/data-sources.md).
+/benchmark-sources/
