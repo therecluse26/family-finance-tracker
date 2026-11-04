@@ -16,6 +16,9 @@ export type AccountView = {
   currentBalance: number | null;
   availableBalance: number | null;
   creditLimit: number | null;
+  // True when the current balance is an estimate: an Unconnected account's once an assigned
+  // Transfer moved it, or with no typed balance, and a Manual loan's always.
+  estimated: boolean;
   // A Member turned on its Exclude switch. Its balances are then null, like a Closed Account's.
   excluded: boolean;
   closed: boolean;

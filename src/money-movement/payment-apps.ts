@@ -61,9 +61,14 @@ function isMoneyWithPerson(txn: DecisionInput): boolean {
 export const paymentToPerson: DecisionRule = (txn) =>
   isMoneyWithPerson(txn) ? named(txn, "Payments to people") : undefined;
 
-// Step 6.5. Money from a person, such as `VENMO CASHOUT` or Zelle from someone outside the
-// Household, is Income until a Reimbursement links it.
+// Plaid's code for cash or a check paid into an Account.
+const DEPOSIT = "TRANSFER_IN_DEPOSIT";
+
+// Step 6.5. Money from a person is a payment-app line, Zelle included, that does not name a Member,
+// such as `VENMO CASHOUT` or Zelle from someone outside the Household; or cash or a check paid in
+// (spec 03, Reimbursements). It is Income until the AI or a Member links it as a Reimbursement, and
+// it goes on the Review list.
 export const moneyFromPerson: DecisionRule = (txn) =>
-  isMoneyWithPerson(txn)
+  isMoneyWithPerson(txn) || txn.providerCategory === DEPOSIT
     ? { parts: [{ type: "Income", amount: txn.amount, category: null }] }
     : undefined;

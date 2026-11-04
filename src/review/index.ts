@@ -4,6 +4,7 @@ export {
   countReviewItems,
   everAskedAbout,
   lastAskedAbout,
+  NotAChoice,
   openReviewItem,
   openReviewItemBatch,
   openReviewItems,

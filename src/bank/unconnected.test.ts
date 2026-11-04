@@ -7,6 +7,7 @@ import {
   estimateBalance,
   listUnconnectedAccounts,
   syncConnection,
+  unconnectedBalanceSteps,
 } from "./index.ts";
 import { newTestBank, type TestBank } from "./testing.ts";
 
@@ -146,6 +147,33 @@ describe("Unconnected accounts", () => {
       state: "estimated",
       typedOn: "2026-10-05",
     });
+  });
+
+  it("steps its balance line from the typed balance through each day an assigned Transfer moved it", async () => {
+    const { id } = await addUnconnectedAccount(bank.database, SAVINGS, {
+      balance: 1_000_000,
+      today: "2026-10-05",
+      memberId: MEMBER,
+    });
+    await assign(id, "before", "same-day");
+    expect(await unconnectedBalanceSteps(bank.database, id)).toEqual([
+      { date: "2026-10-05", balance: 1_000_000, estimated: false },
+    ]);
+
+    await assign(id, "out", "back", "held", "gone");
+
+    expect(await unconnectedBalanceSteps(bank.database, id)).toEqual([
+      { date: "2026-10-05", balance: 1_000_000, estimated: false },
+      { date: "2026-10-07", balance: 1_050_000, estimated: true },
+      { date: "2026-10-09", balance: 1_035_000, estimated: true },
+    ]);
+    // With no typed balance, it starts at $0.
+    const hsa = await addUnconnectedAccount(bank.database, { ...SAVINGS, kind: "HSA" });
+    await assign(hsa.id, "before", "other");
+    expect(await unconnectedBalanceSteps(bank.database, hsa.id)).toEqual([
+      { date: "2026-10-02", balance: 30_000, estimated: true },
+      { date: "2026-10-10", balance: 107_000, estimated: true },
+    ]);
   });
 
   it("starts at $0 on the first day of loaded history with no typed balance, and always shows estimated", async () => {

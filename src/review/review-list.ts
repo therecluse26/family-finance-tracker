@@ -38,13 +38,18 @@ export type ReviewItem = {
   decided: string;
   bestAnswer: ReviewChoice;
   createdAt: Date;
+  // Set when a no-AI path decided the item, so the AI decides it once AI is back (spec 03, AI
+  // decisions and the no-AI path).
+  needsAi: boolean;
 };
 
 export type ReviewKind = {
   // The choices behind "Not this", such as the Category list. The best answer may be among them.
   otherChoices(item: ReviewItem): Promise<ReviewChoice[]>;
   // Applies a Member's answer to the item's subject, and sets its hand-set marks. It runs inside
-  // the transaction that closes the item, so it writes only through `answering.database`.
+  // the transaction that closes the item, so it writes only through `answering.database`. It
+  // throws NotAChoice, before it writes anything, when the choice no longer applies, such as a best
+  // answer whose subject changed since the item opened. The item then stays open.
   answer(
     item: ReviewItem,
     choice: ReviewChoice,
@@ -83,6 +88,7 @@ function itemOf(stored: StoredReviewItem): ReviewItem {
     decided: stored.decided,
     bestAnswer: stored.bestAnswer,
     createdAt: stored.createdAt,
+    needsAi: stored.needsAi,
   };
 }
 
@@ -90,7 +96,13 @@ function subjectIdsOf(subject: ReviewSubject): string[] {
   return subject.type === "transactions" ? subject.transactionIds : [subject.accountId];
 }
 
-type NewItem = { kind: string; subject: ReviewSubject; decided: string; bestAnswer: ReviewChoice };
+type NewItem = {
+  kind: string;
+  subject: ReviewSubject;
+  decided: string;
+  bestAnswer: ReviewChoice;
+  needsAi?: boolean;
+};
 
 function storedItem(item: NewItem) {
   if (!kinds.has(item.kind)) throw new Error(`No Review list kind "${item.kind}" is registered.`);
@@ -104,6 +116,7 @@ function storedItem(item: NewItem) {
     subjectIds,
     decided: item.decided,
     bestAnswer: item.bestAnswer,
+    needsAi: item.needsAi ?? false,
   };
 }
 
@@ -177,6 +190,9 @@ export type ReviewAnswerResult = "answered" | "not open" | "not a choice";
 // the item closes as answered, in one transaction: an answer that fails partway leaves the item
 // open with nothing applied, and two answers, or an answer and a settling event, never both close
 // it.
+// A kind's answer refuses a choice that no longer applies. The Member hears "not a choice".
+export class NotAChoice extends Error {}
+
 export async function answerReviewItem(
   database: Database,
   id: string,
@@ -199,7 +215,12 @@ export async function answerReviewItem(
             ? item.bestAnswer
             : (await kind.otherChoices(item)).find((other) => other.value === value);
         if (choice === undefined) return undefined;
-        await kind.answer(item, choice, { memberId, database: tx });
+        try {
+          await kind.answer(item, choice, { memberId, database: tx });
+        } catch (error) {
+          if (error instanceof NotAChoice) return undefined;
+          throw error;
+        }
         applied = { kind, item, choice };
         return choice;
       },

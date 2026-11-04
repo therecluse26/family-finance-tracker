@@ -1,7 +1,7 @@
 import {
   addUnconnectedAccount as addStoredAccount,
   type Database,
-  listAssignedAmounts,
+  listAssignedMoves,
   listUnconnectedAccounts as listStoredAccounts,
   readLastTypedBalance,
   readUnconnectedAccount,
@@ -56,7 +56,30 @@ export function estimateBalance(
 
 async function balanceEstimate(database: Database, accountId: string): Promise<BalanceEstimate> {
   const typed = await readLastTypedBalance(database, accountId);
-  return estimateBalance(typed, await listAssignedAmounts(database, accountId, typed?.date));
+  const moves = await listAssignedMoves(database, accountId, typed?.date);
+  return estimateBalance(
+    typed,
+    moves.map((move) => move.amount),
+  );
+}
+
+// An Unconnected account's balance over time (spec 02, Balance estimate), oldest first: the last
+// typed balance on its day, then the estimate at the end of each day an assigned Transaction moved
+// it. With no typed balance, the estimate starts at $0. Only a typed balance is not estimated.
+export async function unconnectedBalanceSteps(
+  database: Database,
+  accountId: string,
+): Promise<{ date: string; balance: number; estimated: boolean }[]> {
+  const typed = await readLastTypedBalance(database, accountId);
+  const steps = typed === undefined ? [] : [{ ...typed, estimated: false }];
+  let balance = typed?.balance ?? 0;
+  for (const move of await listAssignedMoves(database, accountId, typed?.date)) {
+    balance -= move.amount;
+    const step = { date: move.postedDate, balance, estimated: true };
+    if (steps.at(-1)?.date === step.date) steps[steps.length - 1] = step;
+    else steps.push(step);
+  }
+  return steps;
 }
 
 async function withEstimate(

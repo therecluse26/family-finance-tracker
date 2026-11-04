@@ -10,7 +10,8 @@ export type StoredReviewItem = typeof reviewItems.$inferSelect;
 export type NewReviewItem = Pick<
   StoredReviewItem,
   "kind" | "subjectType" | "subjectIds" | "decided" | "bestAnswer"
->;
+> &
+  Partial<Pick<StoredReviewItem, "needsAi">>;
 
 export async function addReviewItem(
   database: Database,

@@ -10,6 +10,8 @@ export type ReviewItemView = {
   decided: string;
   bestAnswer: ReviewChoiceView;
   createdAt: string;
+  // The AI decides it once AI is back.
+  needsAi: boolean;
 };
 
 export type ReviewRoutes = {

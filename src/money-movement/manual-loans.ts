@@ -89,6 +89,9 @@ export type ManualLoanSchedule = {
   splits: Map<string, PaymentSplit>;
   // What is owed now, in whole cents, never below $0.
   balance: number;
+  // What was owed after each typed balance, and after each payment that lowered the balance, oldest
+  // first. A typed balance comes after a payment on the same day.
+  steps: { date: string; owed: number }[];
 };
 
 // A payment divides from the balance owed before it. A mortgage accrues balance × APR ÷ 12 for
@@ -124,7 +127,7 @@ export function manualLoanSchedule(
   const typed = loan.balances.map((each) => ({ date: each.date, owed: Math.abs(each.balance) }));
   const first = typed[0];
   const newest = typed.at(-1);
-  if (first === undefined || newest === undefined) return { splits, balance: 0 };
+  if (first === undefined || newest === undefined) return { splits, balance: 0, steps: [] };
   const payments = linked
     .filter((each) => each.amount < 0)
     .sort(
@@ -152,6 +155,7 @@ export function manualLoanSchedule(
   }
   let owed = first.owed;
   let anchor = first;
+  const paid: { date: string; owed: number }[] = [];
   for (let index = backward; index < payments.length; index += 1) {
     const payment = payments[index];
     if (payment === undefined) continue;
@@ -163,10 +167,17 @@ export function manualLoanSchedule(
     const split = splitPayment(loan, owed, daysTo(index, anchor.date), -payment.amount);
     splits.set(payment.transactionId, split);
     owed = Math.max(0, owed - split.principal);
+    paid.push({ date: payment.postedDate, owed });
   }
   const last = payments.at(-1);
   const balance = last !== undefined && last.postedDate > newest.date ? owed : newest.owed;
-  return { splits, balance };
+  const steps = [
+    ...paid.map((step) => ({ ...step, typed: false })),
+    ...typed.map((step) => ({ ...step, typed: true })),
+  ]
+    .sort((a, b) => a.date.localeCompare(b.date) || Number(a.typed) - Number(b.typed))
+    .map(({ date, owed }) => ({ date, owed }));
+  return { splits, balance, steps };
 }
 
 // The facts of each Manual loan a run reads, read once.
@@ -306,6 +317,22 @@ export async function linkManualLoanPayouts(
     }
   }
   return made;
+}
+
+// A Manual loan's balance over time (spec 02, Balance and payoff): what was owed after each typed
+// balance and each payment that lowered it, oldest first. Between them the balance does not
+// change. Undefined when no Manual loan has the ID.
+export async function manualLoanBalanceSteps(
+  database: Database,
+  loanId: string,
+): Promise<{ date: string; owed: number }[] | undefined> {
+  const [loan] = await listManualLoans(database, [loanId]);
+  if (loan === undefined) return undefined;
+  const linked = await listLoanLinkedTransactions(database, [loanId]);
+  return manualLoanSchedule(
+    loan,
+    linked.filter((each) => each.loanAccountId === loanId),
+  ).steps;
 }
 
 function view(loan: StoredManualLoan, linked: readonly Linked[]): ManualLoan {

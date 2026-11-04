@@ -170,16 +170,16 @@ export async function saveUnconnectedAssignments(
   });
 }
 
-// The amounts of the posted Transactions assigned to the account, posted after `after` when it is
-// given. Each amount has the connected Account's sign: money out of it, into the Unconnected
-// account, is negative. Hidden and pending Transactions are left out.
-export async function listAssignedAmounts(
+// The posted Transactions assigned to the account, posted after `after` when it is given, oldest
+// first: each one's posted date and amount. Each amount has the connected Account's sign: money out
+// of it, into the Unconnected account, is negative. Hidden and pending Transactions are left out.
+export async function listAssignedMoves(
   database: Database,
   accountId: string,
   after?: string,
-): Promise<number[]> {
-  const rows = await database
-    .select({ amount: transactions.amount })
+): Promise<{ postedDate: string; amount: number }[]> {
+  return database
+    .select({ postedDate: transactions.postedDate, amount: transactions.amount })
     .from(unconnectedAssignments)
     .innerJoin(transactions, eq(transactions.id, unconnectedAssignments.transactionId))
     .where(
@@ -189,6 +189,6 @@ export async function listAssignedAmounts(
         isNull(transactions.hiddenReason),
         after === undefined ? undefined : gt(transactions.postedDate, after),
       ),
-    );
-  return rows.map((row) => row.amount);
+    )
+    .orderBy(asc(transactions.postedDate), asc(transactions.id));
 }

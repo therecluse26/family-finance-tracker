@@ -66,6 +66,25 @@ export function monthEnds(points: readonly BalancePoint[]): MonthEndBalance[] {
   }));
 }
 
+// The balance line of an Account with no saved daily balances, such as an Unconnected account or a
+// Manual loan, from the balance at the end of each day it changed, oldest first. The last balance
+// holds through `today`, the Household's date, with the last step's mark.
+export function balanceLine(
+  steps: readonly { date: string; currentBalance: number; estimated: boolean }[],
+  today: string,
+  range: BalanceRange = {},
+): AccountBalances {
+  const points: BalancePoint[] = steps.map((step) => ({ ...step, availableBalance: null }));
+  const last = points.at(-1);
+  if (last !== undefined && last.date < today) points.push({ ...last, date: today });
+  const shown = points.filter(
+    ({ date }) =>
+      (range.from === undefined || date >= range.from) &&
+      (range.to === undefined || date <= range.to),
+  );
+  return { points: shown, monthEnds: monthEnds(shown) };
+}
+
 export async function accountBalances(
   database: Database,
   accountId: string,

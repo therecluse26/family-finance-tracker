@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { UNCONNECTED_KINDS, type UnconnectedKind } from "../../../bank/unconnected-kinds.ts";
 import { calendarDateIn, dateLabel, wholeDollars } from "../../../format.ts";
 import type { UnconnectedAccountView } from "../../../server/bank-views.ts";
+import { accountEdits } from "../../account-edits.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 
@@ -77,12 +78,7 @@ export function UnconnectedAccountForm(props: {
     setError(undefined);
     try {
       const json = { name, kind, institutionName, mask, balance: cents };
-      // The route reads its body itself, so the typed client does not name it.
-      const edit = { param: { id: account?.id ?? "" }, json };
-      const res =
-        account === null
-          ? await api["unconnected-accounts"].$post({ json })
-          : await api["unconnected-accounts"][":id"].$put(edit);
+      const res = await accountEdits.saveUnconnectedAccount(account?.id ?? null, json);
       if (!res.ok) return setError(await refusal(res));
       const saved = ((await res.json()) as { account: UnconnectedAccountView }).account;
       setBalance("");

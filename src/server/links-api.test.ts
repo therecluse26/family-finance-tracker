@@ -8,9 +8,14 @@ import { startBank, syncConnection } from "../bank/index.ts";
 import { addConnection, markSetupStep } from "../db/index.ts";
 import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
-import { startMoneyMovement } from "../money-movement/index.ts";
+import {
+  MONEY_FROM_PERSON_KIND,
+  registerReimbursementPicker,
+  startMoneyMovement,
+} from "../money-movement/index.ts";
 import { createApp } from "./app.ts";
 import type { TransactionDetailView } from "./money-movement-views.ts";
+import type { ReviewItemView } from "./review-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
@@ -404,6 +409,50 @@ describe("the link routes", () => {
     ]);
   });
 
+  it("answers 400 to the AI's pick of Spending hidden after the Review list item opened, and links nothing", async () => {
+    const unregister = registerReimbursementPicker(async () => ({
+      spendingTransactionId: id("shoes"),
+    }));
+    try {
+      fake.addPages(BANK, {
+        added: [
+          fakeTxn({
+            id: "friend",
+            accountId: checking.id,
+            amount: 2_500,
+            postedDate: "2026-10-12",
+            description: "VENMO *MORGAN LEE",
+          }),
+        ],
+      });
+      await sync();
+      const list = async () =>
+        ((await (await browser.get("/api/review-list")).json()) as { items: ReviewItemView[] })
+          .items;
+      const item = (await list()).find((each) => each.kind === MONEY_FROM_PERSON_KIND);
+      expect(item?.bestAnswer.value).toBe(`link ${id("shoes")}`);
+      await test.database.$client.execute({
+        sql: `UPDATE transactions SET hidden_reason = 'removed by provider',
+                hidden_at = '2026-10-21T00:00:00.000Z' WHERE id = ?`,
+        args: [id("shoes")],
+      });
+
+      const res = await browser.post(`/api/review-list/${item?.id}/answer`, {
+        value: item?.bestAnswer.value,
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "That is not a choice for this item." });
+      const reimbursements = await test.database.$client.execute(
+        "SELECT count(*) AS n FROM spending_links WHERE kind = 'Reimbursement'",
+      );
+      expect(Number(reimbursements.rows[0]?.n)).toBe(0);
+      expect((await list()).map((each) => each.id)).toContain(item?.id);
+    } finally {
+      unregister();
+    }
+  });
+
   it("answers 401 with no session, 403 from another origin, and 415 to a body that is not JSON, and links nothing", async () => {
     const body = {
       kind: "Refund",
@@ -488,6 +537,39 @@ describe("the link routes", () => {
         { type: "Spending", amount: -1_710, category: "Interest and fees" },
         { type: "Transfer", amount: -38_290, category: null },
       ]);
+    });
+
+    it("lists a Manual loan as an estimated Account, with its balance line stepping at each payment", async () => {
+      const added = await browser.send("POST", "/api/manual-loans", car);
+      const { loan } = (await added.json()) as { loan: { id: string } };
+      await browser.send("POST", "/api/links", {
+        kind: "loan",
+        transactionId: id("lender"),
+        loanAccountId: loan.id,
+      });
+
+      const { accounts } = (await (await browser.get("/api/accounts")).json()) as {
+        accounts: { id: string; currentBalance: number; estimated: boolean }[];
+      };
+      // 39 days on $10,000 at 7.3%: $78.00 of interest, so $322.00 comes off what is owed.
+      expect(accounts.find((each) => each.id === loan.id)).toMatchObject({
+        currentBalance: -967_800,
+        estimated: true,
+      });
+      expect(accounts.find((each) => each.id !== loan.id)).toMatchObject({ estimated: false });
+      const line = (await (await browser.get(`/api/accounts/${loan.id}/balances`)).json()) as {
+        points: { date: string; currentBalance: number; estimated: boolean }[];
+      };
+      expect(line.points.slice(0, 2)).toEqual([
+        { date: "2026-09-01", currentBalance: -1_000_000, availableBalance: null, estimated: true },
+        { date: "2026-10-10", currentBalance: -967_800, availableBalance: null, estimated: true },
+      ]);
+      // The last balance holds through today.
+      expect(line.points.at(-1)).toMatchObject({ currentBalance: -967_800, estimated: true });
+      const ranged = (await (
+        await browser.get(`/api/accounts/${loan.id}/balances?from=2026-10-01&to=2026-10-31`)
+      ).json()) as { points: { date: string }[] };
+      expect(ranged.points.map((point) => point.date)).toEqual(["2026-10-10"]);
     });
 
     it("refuses a credit card, a line of credit, escrow off a mortgage, and missing fields", async () => {

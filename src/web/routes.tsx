@@ -1,5 +1,6 @@
 import type { RouteObject } from "react-router";
 import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
+import { Accounts } from "./pages/Accounts.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
@@ -38,13 +39,18 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
+const BUILT_PAGES: Record<string, () => React.JSX.Element> = { "/accounts": Accounts };
+
 const pages: RouteObject[] = [...MAIN_MENU, ...MORE_MENU]
   .filter((item) => item.path !== "/settings")
-  .map((item) =>
-    item.path === "/"
-      ? { index: true, element: <Dashboard /> }
-      : { path: item.path.slice(1), element: <Placeholder title={item.label} /> },
-  );
+  .map((item) => {
+    if (item.path === "/") return { index: true, element: <Dashboard /> };
+    const Page = BUILT_PAGES[item.path];
+    return {
+      path: item.path.slice(1),
+      element: Page === undefined ? <Placeholder title={item.label} /> : <Page />,
+    };
+  });
 
 export const routes: RouteObject[] = [
   { path: "/setup", Component: Setup },
@@ -54,6 +60,12 @@ export const routes: RouteObject[] = [
     Component: Shell,
     children: [
       ...pages,
+      // An Account's page, opened from the Account list. It loads with its chart library, apart
+      // from the rest of the app.
+      {
+        path: "accounts/:id",
+        lazy: async () => ({ Component: (await import("./pages/Account.tsx")).Account }),
+      },
       {
         path: "settings",
         Component: Settings,

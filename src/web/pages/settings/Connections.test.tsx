@@ -46,6 +46,7 @@ const ACCOUNT: AccountView = {
   currentBalance: 100,
   availableBalance: 100,
   creditLimit: null,
+  estimated: false,
   excluded: false,
   closed: false,
   closedAt: null,

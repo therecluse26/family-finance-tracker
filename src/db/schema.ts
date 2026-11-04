@@ -925,6 +925,9 @@ export const reviewItems = sqliteTable(
     // A Member's answer.
     answer: text("answer", { mode: "json" }).$type<{ value: string; label: string }>(),
     answeredBy: text("answered_by").references(() => members.id, { onDelete: "set null" }),
+    // Set when a no-AI path decided the item, so the AI decides it once AI is back (spec 03, AI
+    // decisions and the no-AI path).
+    needsAi: integer("needs_ai", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [index("review_items_closed_at_created_at").on(table.closedAt, table.createdAt)],
 );

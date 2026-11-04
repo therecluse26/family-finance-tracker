@@ -178,6 +178,7 @@ describe("the Review list", () => {
         decided: "The AI guessed Restaurants, with medium confidence.",
         bestAnswer: { value: "restaurants", label: "Yes, Restaurants" },
         createdAt: "2026-11-03T14:00:00.000Z",
+        needsAi: false,
       },
     ]);
   });

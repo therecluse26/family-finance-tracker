@@ -61,6 +61,11 @@ import {
 } from "./order.ts";
 import { endBrokenOtherLinks, readOtherLinkEvidence } from "./other-links.ts";
 import { linkRefunds, readSpendingAllocations, reducingIds } from "./refunds.ts";
+import {
+  MONEY_FROM_PERSON_KIND,
+  moneyFromPersonKind,
+  updateMoneyFromPersonItems,
+} from "./reimbursements.ts";
 import { type PairingResult, pairTransfers, type TransferSignal } from "./transfers.ts";
 import type { HandSetType } from "./types.ts";
 import {
@@ -232,6 +237,11 @@ async function storeResults(
     now,
   );
   await updateOneSidedItems(database, decided, gone);
+  await updateMoneyFromPersonItems(
+    database,
+    decided.map((result) => result.stored),
+    gone,
+  );
   await updateUntrackedLoanItems(
     database,
     decided.flatMap((result) => (result.offersManualLoan ? [result.offersManualLoan] : [])),
@@ -724,6 +734,7 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
       afterAnswer: () => askForFollowUp(),
     }),
     registerReviewKind(MISSED_PAYMENT_KIND, missedPaymentKind),
+    registerReviewKind(MONEY_FROM_PERSON_KIND, moneyFromPersonKind(started.database)),
   ];
   return {
     stop() {

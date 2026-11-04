@@ -246,8 +246,10 @@ export {
 export {
   listRefundPurchases,
   listRefusedOtherLinks,
+  listReimbursableSpending,
   type ReducingLink,
   type RefundPurchase,
+  type ReimbursableSpending,
   readSpendingToReduce,
   storeAppRefundLinks,
 } from "./refunds.ts";
@@ -288,7 +290,7 @@ export { claimTotpStep } from "./totp-steps.ts";
 export {
   addUnconnectedAccount,
   assignToUnconnectedAccount,
-  listAssignedAmounts,
+  listAssignedMoves,
   listUnconnectedAccounts,
   readLastTypedBalance,
   readUnconnectedAccount,

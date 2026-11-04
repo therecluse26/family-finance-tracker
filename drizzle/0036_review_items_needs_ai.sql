@@ -1,0 +1,1 @@
+ALTER TABLE `review_items` ADD `needs_ai` integer DEFAULT false NOT NULL;

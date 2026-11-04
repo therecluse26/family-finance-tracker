@@ -648,7 +648,12 @@ export async function historyProgress(
 
 export async function readAccount(database: Database, id: string) {
   const [row] = await database
-    .select({ id: householdAccounts.id, closedAt: householdAccounts.closedAt })
+    .select({
+      id: householdAccounts.id,
+      connectionId: householdAccounts.connectionId,
+      kind: householdAccounts.kind,
+      closedAt: householdAccounts.closedAt,
+    })
     .from(householdAccounts)
     .where(eq(householdAccounts.id, id));
   return row;

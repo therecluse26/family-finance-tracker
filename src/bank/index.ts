@@ -23,6 +23,7 @@ export {
   accountBalances,
   type BalancePoint,
   type BalanceRange,
+  balanceLine,
   type MonthEndBalance,
 } from "./balances.ts";
 export { bankConnecting, connectionRepairing } from "./connect.ts";
@@ -122,5 +123,6 @@ export {
   type TypedBalanceInput,
   type UnconnectedAccount,
   type UnconnectedAccountInput,
+  unconnectedBalanceSteps,
 } from "./unconnected.ts";
 export { UNCONNECTED, UNCONNECTED_KINDS, type UnconnectedKind } from "./unconnected-kinds.ts";

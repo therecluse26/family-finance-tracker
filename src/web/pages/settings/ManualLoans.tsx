@@ -5,6 +5,7 @@ import {
   type ManualLoanKind,
   type ManualLoanView,
 } from "../../../server/money-movement-views.ts";
+import { accountEdits } from "../../account-edits.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 import { centsOf } from "./UnconnectedAccounts.tsx";
@@ -80,12 +81,7 @@ export function ManualLoanForm(props: {
         escrow: perPayment,
         loanType: loanType === "app" ? null : loanType,
       };
-      // The route reads its body itself, so the typed client does not name it.
-      const edit = { param: { id: loan?.id ?? "" }, json };
-      const res =
-        loan === null
-          ? await api["manual-loans"].$post({ json })
-          : await api["manual-loans"][":id"].$put(edit);
+      const res = await accountEdits.saveManualLoan(loan?.id ?? null, json);
       if (!res.ok) return setError(await refusal(res));
       props.onSaved(((await res.json()) as { loan: ManualLoanView }).loan);
     } catch {

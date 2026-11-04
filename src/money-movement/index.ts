@@ -17,6 +17,7 @@ export {
   listManualLoanViews,
   type ManualLoan,
   type ManualLoanInput,
+  manualLoanBalanceSteps,
 } from "./manual-loans.ts";
 export {
   type DecidedAgain,
@@ -45,6 +46,11 @@ export {
   type Part,
   whole,
 } from "./order.ts";
+export {
+  MONEY_FROM_PERSON_KIND,
+  type ReimbursementPicker,
+  registerReimbursementPicker,
+} from "./reimbursements.ts";
 export { type MonthTotals, monthOf, totalsByMonth } from "./totals.ts";
 export {
   isCardReward,

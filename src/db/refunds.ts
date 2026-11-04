@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  desc,
   eq,
   gte,
   inArray,
@@ -177,6 +178,53 @@ export async function listRefundPurchases(
     found.push(...rows);
   }
   return found.sort((a, b) => a.postedDate.localeCompare(b.postedDate) || a.id.localeCompare(b.id));
+}
+
+// Spending a Reimbursement could pay back: shown money out with a Spending part, on any Account.
+export type ReimbursableSpending = {
+  id: string;
+  amount: number;
+  postedDate: string;
+  authorizedDate: string | null;
+  description: string;
+  merchantCleanName: string | null;
+};
+
+// The Spending bought from `from` to `to`, by purchase date when there is one, else by posted
+// date, newest first. One statement.
+export async function listReimbursableSpending(
+  database: Database,
+  from: string,
+  to: string,
+): Promise<ReimbursableSpending[]> {
+  return database
+    .selectDistinct({
+      id: transactions.id,
+      amount: transactions.amount,
+      postedDate: transactions.postedDate,
+      authorizedDate: transactions.authorizedDate,
+      description: transactions.description,
+      merchantCleanName: transactions.merchantCleanName,
+    })
+    .from(transactions)
+    .innerJoin(
+      transactionParts,
+      and(
+        eq(transactionParts.transactionId, transactions.id),
+        eq(transactionParts.type, "Spending"),
+      ),
+    )
+    .where(
+      and(
+        // A purchase posts on or after the day it was bought.
+        gte(transactions.postedDate, from),
+        gte(boughtOn, from),
+        lte(boughtOn, to),
+        lt(transactions.amount, 0),
+        isNull(transactions.hiddenReason),
+      ),
+    )
+    .orderBy(desc(boughtOn), desc(transactions.id));
 }
 
 // What each of these Transactions may never link to with a link of this kind, because someone
