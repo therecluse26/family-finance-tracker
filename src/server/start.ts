@@ -2,8 +2,10 @@ import { createAuth } from "../auth/index.ts";
 import { type BankDataAdapter, plaidSettings, startBank } from "../bank/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { startFollowUpPipeline } from "../follow-up/index.ts";
+import { householdTimeZone } from "../household/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
+import { startMoneyMovement } from "../money-movement/index.ts";
 import { startNotify } from "../notify/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import type { Security } from "./security-mode.ts";
@@ -44,17 +46,22 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const applied = await applyMigrations(database, options.migrationsFolder);
     log.info("Applied migrations", { count: applied });
     const secrets = await unlockSecrets(database, options.masterKey);
+    // The Household time zone, from the Household facts. Until the wizard's step 4 is done, both
+    // the bank module and the scheduler use UTC.
+    const timeZone = () => householdTimeZone(database);
     const notify = startNotify({ database });
-    const bank = startBank({ database, secrets, adapters: options.bankAdapters ?? [] });
+    const bank = startBank({ database, secrets, adapters: options.bankAdapters ?? [], timeZone });
     const followUp = startFollowUpPipeline({ database });
+    const moneyMovement = startMoneyMovement({ database });
     const stopModules = () => {
+      moneyMovement.stop();
       followUp.stop();
       bank.stop();
       notify.stop();
     };
     let jobs: Awaited<ReturnType<typeof startJobs>>;
     try {
-      jobs = await startJobs({ ...options.jobs, database });
+      jobs = await startJobs({ ...options.jobs, database, timeZone });
     } catch (error) {
       stopModules();
       throw error;

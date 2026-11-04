@@ -12,10 +12,11 @@ import {
 import { grouped, sendPastedKey } from "../master-key.ts";
 import { postJson, refusalText } from "../requests.ts";
 import { codeFromHash, fetchSetupState } from "../setup-gate.ts";
+import { HouseholdFactsForm } from "./settings/Household.tsx";
 
 // The first-run wizard (spec 12, The first-run wizard). Step 1 takes the setup code from the setup
 // link, step 2 makes the first Member, and step 3 shows the Master key until the Member pastes it
-// back. Step 4 comes with its own ticket.
+// back. Step 4 records the Household facts, which ends page gating.
 
 type Step = "setup link" | "first member" | "master key" | "household facts";
 
@@ -286,7 +287,11 @@ export function Setup() {
       ) : null}
       {step === "master key" ? <MasterKey onDone={() => void load()} /> : null}
       {step === "household facts" ? (
-        <p className="mt-4 text-gray-600">This step is not built yet.</p>
+        <HouseholdFactsForm
+          facts={null}
+          submitLabel="Save and open the app"
+          onSaved={() => void load()}
+        />
       ) : null}
     </main>
   );

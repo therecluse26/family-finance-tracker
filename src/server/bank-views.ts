@@ -1,6 +1,7 @@
 // What the bank API routes answer. This file imports only types that import nothing, so the web
 // app's type check can follow it through api.ts.
 import type { AdapterActions, Provider } from "../bank/adapter.ts";
+import type { UnconnectedKind } from "../bank/unconnected-kinds.ts";
 
 export type AccountView = {
   id: string;
@@ -69,6 +70,36 @@ export type BalancesView = { points: BalancePointView[]; monthEnds: MonthEndView
 // Calendar dates are written YYYY-MM-DD, and both ends are included.
 export type BalanceQuery = { from?: string; to?: string };
 
+// An Unconnected account (spec 02, Unconnected accounts), with its balance estimate.
+export type UnconnectedAccountView = {
+  id: string;
+  name: string;
+  kind: UnconnectedKind;
+  institutionName: string | null;
+  // The last 4 digits.
+  mask: string | null;
+  closed: boolean;
+  estimate: {
+    // Whole cents. Money in the account is positive.
+    balance: number;
+    // "typed" right after a Member types the balance; "estimated" once an assigned Transfer moves
+    // it, or when no balance was ever typed.
+    state: "typed" | "estimated";
+    // The day of the last typed balance, YYYY-MM-DD, or null.
+    typedOn: string | null;
+  };
+};
+
+// The form's fields. A balance, in whole cents, is the true balance a Member typed today; null
+// leaves the estimate as it is.
+export type UnconnectedAccountBody = {
+  name: string;
+  kind: UnconnectedKind;
+  institutionName: string | null;
+  mask: string | null;
+  balance: number | null;
+};
+
 export type BankViews = {
   accounts(): Promise<AccountView[]>;
   // A Member closes or reopens any Account. Undefined when no Account has the ID.
@@ -78,4 +109,15 @@ export type BankViews = {
   // Undefined when no Account has the ID.
   balances(accountId: string, query: BalanceQuery): Promise<BalancesView | undefined>;
   connections(): Promise<ConnectionView[]>;
+  unconnectedAccounts(): Promise<UnconnectedAccountView[]>;
+  addUnconnectedAccount(
+    body: UnconnectedAccountBody,
+    memberId: string,
+  ): Promise<UnconnectedAccountView>;
+  // Undefined when no Unconnected account has the ID.
+  editUnconnectedAccount(
+    id: string,
+    body: UnconnectedAccountBody,
+    memberId: string,
+  ): Promise<UnconnectedAccountView | undefined>;
 };

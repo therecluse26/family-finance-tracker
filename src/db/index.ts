@@ -29,7 +29,23 @@ export {
   type Queries,
 } from "./client.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
+export {
+  type DecisionRecord,
+  listPostedParts,
+  listProvisionalPassed,
+  type PartType,
+  readDecision,
+  readDecisionRecords,
+  removeDecisions,
+  type StoredDecision,
+  storeDecisions,
+} from "./decisions.ts";
 export { listUnhandledTransactions, markTransactionsHandled } from "./follow-up.ts";
+export {
+  readHouseholdFacts,
+  type StoredHouseholdFacts,
+  storeHouseholdFacts,
+} from "./household-facts.ts";
 export { loginTables } from "./login-tables.ts";
 export {
   type MasterKeyCheck,
@@ -77,3 +93,16 @@ export {
   removeSignInTriesUpTo,
 } from "./sign-in-tries.ts";
 export { claimTotpStep } from "./totp-steps.ts";
+export {
+  addUnconnectedAccount,
+  assignToUnconnectedAccount,
+  listAssignedAmounts,
+  listUnconnectedAccounts,
+  readLastTypedBalance,
+  readUnconnectedAccount,
+  type StoredUnconnectedAccount,
+  storeTypedBalance,
+  type TypedBalance,
+  type UnconnectedFields,
+  updateUnconnectedAccount,
+} from "./unconnected-accounts.ts";

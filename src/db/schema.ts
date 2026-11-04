@@ -156,6 +156,26 @@ export const setupSteps = sqliteTable("setup_steps", {
   at: moment("at").notNull(),
 });
 
+// The Household facts (spec 05, Household facts). One row, with ID 1, once the wizard's step 4 is
+// done. The facts stay on the server: no AI provider ever receives them.
+export const householdFacts = sqliteTable(
+  "household_facts",
+  {
+    id: integer("id").primaryKey(),
+    zipCode: text("zip_code").notNull(),
+    // The ZIP code's state and IANA time zone, from the ZIP table. The time zone is the Household
+    // time zone, which every Household-time rule uses.
+    state: text("state").notNull(),
+    timeZone: text("time_zone").notNull(),
+    // Each person's age in years, people without a login included, as JSON.
+    ages: text("ages", { mode: "json" }).$type<number[]>().notNull(),
+    rentOrOwn: text("rent_or_own", { enum: ["rent", "own"] }).notNull(),
+    updatedAt: moment("updated_at").notNull(),
+    updatedBy: text("updated_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [check("household_facts_one_row", sql`${table.id} = 1`)],
+);
+
 // The Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10 lifetime Items). It
 // has one row, whose ID is 1.
 export const plaidSettings = sqliteTable(
@@ -392,6 +412,79 @@ export const dailyBalances = sqliteTable(
     syncedAt: moment("synced_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.accountId, table.date] })],
+);
+
+// The balances a Member typed for an Unconnected account (spec 02, Balance estimate), one per day.
+// The latest one starts the account's balance estimate. A second one on the same day replaces it.
+export const typedBalances = sqliteTable(
+  "typed_balances",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => householdAccounts.id),
+    // The day it was typed, in the Household time zone.
+    date: calendarDate("date").notNull(),
+    // Money in the account is positive.
+    balance: cents("balance").notNull(),
+    typedAt: moment("typed_at").notNull(),
+    typedBy: text("typed_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [primaryKey({ columns: [table.accountId, table.date] })],
+);
+
+// The Transfers and Saving the app assigns to an Unconnected account (spec 03, Unconnected
+// accounts): each one is a Transaction on a connected Account whose other side is the Unconnected
+// account. A Transaction goes to at most one account. They move the account's balance estimate.
+export const unconnectedAssignments = sqliteTable(
+  "unconnected_assignments",
+  {
+    transactionId: text("transaction_id")
+      .primaryKey()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => householdAccounts.id),
+    assignedAt: moment("assigned_at").notNull(),
+  },
+  (table) => [index("unconnected_assignments_account_id").on(table.accountId)],
+);
+
+// Each Transaction's type, as the order of decisions last decided it (spec 03, Order of
+// decisions). Its parts are in transaction_parts. A hidden Transaction has none.
+export const transactionDecisions = sqliteTable(
+  "transaction_decisions",
+  {
+    transactionId: text("transaction_id")
+      .primaryKey()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    // The step that decided it, such as "1" for a hand-set type or "5.7" for Spending.
+    step: text("step").notNull(),
+    // A one-sided result is provisional to the end of this day, the last day of its window.
+    provisionalUntil: calendarDate("provisional_until"),
+    decidedAt: moment("decided_at").notNull(),
+  },
+  (table) => [index("transaction_decisions_provisional_until").on(table.provisionalUntil)],
+);
+
+// The parts of each decided Transaction: one part, or several that add up to its amount (spec 03,
+// Transaction types). Each has one type and, for Spending, one Category.
+export const transactionParts = sqliteTable(
+  "transaction_parts",
+  {
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactionDecisions.transactionId, { onDelete: "cascade" }),
+    part: integer("part").notNull(),
+    type: text("type", {
+      enum: ["Spending", "Income", "Transfer", "Saving", "Refund", "Reimbursement"],
+    }).notNull(),
+    // The Transaction's sign: money into the Account is positive.
+    amount: cents("amount").notNull(),
+    // Null until the categorization step picks one, and always null for Transfers, Income, and
+    // Saving.
+    category: text("category"),
+  },
+  (table) => [primaryKey({ columns: [table.transactionId, table.part] })],
 );
 
 // Each follow-up step's handled mark on each Transaction (spec 10, The follow-up pipeline). A step

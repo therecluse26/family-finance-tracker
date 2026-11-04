@@ -7,6 +7,7 @@ import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
+import { Household } from "./pages/settings/Household.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
 import { Shell } from "./Shell.tsx";
@@ -15,6 +16,7 @@ import { Shell } from "./Shell.tsx";
 // content comes with a later ticket shows a placeholder.
 
 const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
+  household: Household,
   "my-login": MyLogin,
   banks: Banks,
   "backups-and-data": BackupsAndData,

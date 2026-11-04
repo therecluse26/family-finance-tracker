@@ -2,10 +2,11 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD, TextField } from "../../components/Fields.tsx";
+import { UnconnectedAccounts } from "./UnconnectedAccounts.tsx";
 
 // Settings, Banks: the Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10
-// lifetime Items). The app never shows the secret again, only that it is set. Connections come
-// with their own tickets.
+// lifetime Items), and the Unconnected accounts. The app never shows the secret again, only that it
+// is set. Connections come with their own tickets.
 
 const CODE_LABEL = "A code from your authenticator app, or a backup code";
 
@@ -155,6 +156,7 @@ export function Banks() {
           <ItemsUsedForm plaid={plaid} onSaved={setPlaid} />
         </>
       )}
+      <UnconnectedAccounts />
     </>
   );
 }

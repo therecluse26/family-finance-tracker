@@ -1,6 +1,8 @@
 import { type Context, Hono } from "hono";
 import * as z from "zod";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
+import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
+import { HAND_SET_TYPES } from "../money-movement/types.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
@@ -63,6 +65,51 @@ const plaidKeysBody = z.object({
   code: z.string().trim().min(1).max(64),
 });
 
+// The Household facts (spec 05): the ZIP code, each person's age, people without a login
+// included, and rent or own. No one is asked their sex.
+const MAX_PEOPLE = 20;
+const MAX_AGE = 120;
+const householdFactsBody = z.object({
+  zipCode: z
+    .string()
+    .trim()
+    .regex(/^\d{5}$/),
+  ages: z.array(z.number().int().min(0).max(MAX_AGE)).min(1).max(MAX_PEOPLE),
+  rentOrOwn: z.enum(["rent", "own"]),
+});
+
+// An Unconnected account (spec 02, Unconnected accounts). An empty institution name or last 4
+// digits is none. A balance is whole cents.
+const MAX_BALANCE_CENTS = 100_000_000_000;
+const unconnectedAccountBody = z.object({
+  name: z.string().trim().min(1).max(100),
+  kind: z.enum(UNCONNECTED_KINDS),
+  institutionName: z
+    .string()
+    .trim()
+    .max(100)
+    .nullish()
+    .transform((name) => (name === "" || name === undefined ? null : name)),
+  mask: z
+    .string()
+    .trim()
+    .regex(/^(\d{4})?$/)
+    .nullish()
+    .transform((mask) => (mask === "" || mask === undefined ? null : mask)),
+  balance: z
+    .number()
+    .int()
+    .min(-MAX_BALANCE_CENTS)
+    .max(MAX_BALANCE_CENTS)
+    .nullish()
+    .transform((balance) => balance ?? null),
+});
+const UNCONNECTED_REFUSED =
+  "Enter a name and a kind. The last 4 digits are 4 digits, and the balance is in dollars and cents.";
+
+// The types a Member may set by hand.
+const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
+
 const itemsUsedBody = z.object({ itemsUsed: z.number().int().min(0).max(PLAID_ITEM_LIMIT) });
 
 // The body as JSON, or undefined when it is not JSON.
@@ -111,7 +158,42 @@ export const api = new Hono<ServerEnv>()
     if (query === undefined) return c.json({ error: "Write dates as YYYY-MM-DD." }, 400);
     return c.json({ transactions: await c.var.bank.transactions(query) });
   })
+  // A Member sets a Transaction's type by hand (spec 03, Transaction types). It wins over every
+  // rule and survives every re-run.
+  .put("/transactions/:id/type", async (c) => {
+    const body = transactionTypeBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json({ error: "Pick Spending, Transfer, Income, or Saving." }, 400);
+    }
+    const decision = await c.var.moneyMovement.setType(c.req.param("id"), body.data.type);
+    if (decision === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ decision }, 200);
+  })
+  // Spending, Income, and Saving by month, by Category, and by Category group. Posted Transactions
+  // only.
+  .get("/totals", async (c) => c.json({ months: await c.var.moneyMovement.totals() }))
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
+  // Unconnected accounts: any Member adds and edits one at any time (spec 02).
+  .get("/unconnected-accounts", async (c) =>
+    c.json({ accounts: await c.var.bank.unconnectedAccounts() }),
+  )
+  .post("/unconnected-accounts", async (c) => {
+    const body = unconnectedAccountBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: UNCONNECTED_REFUSED }, 400);
+    const account = await c.var.bank.addUnconnectedAccount(body.data, c.var.member.id);
+    return c.json({ account }, 200);
+  })
+  .put("/unconnected-accounts/:id", async (c) => {
+    const body = unconnectedAccountBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: UNCONNECTED_REFUSED }, 400);
+    const account = await c.var.bank.editUnconnectedAccount(
+      c.req.param("id"),
+      body.data,
+      c.var.member.id,
+    );
+    if (account === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ account }, 200);
+  })
   // The Plaid secret is never in an answer: only whether it is set.
   .get("/plaid/settings", async (c) => c.json({ plaid: await c.var.plaid.view() }))
   .post("/plaid/keys", async (c) => {
@@ -169,6 +251,24 @@ export const api = new Hono<ServerEnv>()
     const pasted = await pastedKey(c);
     if (pasted === undefined) return c.json({ error: NO_KEY }, 400);
     return checkAnswer(c, await c.var.masterKey.check(c.var.member.id, pasted));
+  })
+  // The Household facts: the wizard's step 4, and Settings, Household (spec 05, Household facts).
+  .get("/household", async (c) => c.json({ facts: await c.var.household.facts() }))
+  .put("/household", async (c) => {
+    const body = householdFactsBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json(
+        {
+          error: `Enter a 5-digit ZIP code, each person's age from 0 to ${MAX_AGE}, and rent or own.`,
+        },
+        400,
+      );
+    }
+    const facts = await c.var.household.save(body.data, c.var.member.id);
+    if (facts === "unknown zip code") {
+      return c.json({ error: "The app does not know this ZIP code. Check it and try again." }, 400);
+    }
+    return c.json({ facts }, 200);
   })
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))

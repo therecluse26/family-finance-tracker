@@ -1,7 +1,9 @@
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
+import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
+import type { MoneyMovementRoutes } from "./money-movement-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
 
@@ -28,5 +30,9 @@ export type ServerEnv = {
     notices: NoticeRoutes;
     // The Review list.
     reviewList: ReviewRoutes;
+    // The Household facts.
+    household: HouseholdRoutes;
+    // Transaction types and totals by type.
+    moneyMovement: MoneyMovementRoutes;
   };
 };

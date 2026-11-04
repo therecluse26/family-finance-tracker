@@ -9,7 +9,9 @@ import type { Secrets } from "../secrets/index.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
 import type { ServerEnv } from "./env.ts";
+import { householdRoutes } from "./household.ts";
 import { masterKeyRoutes } from "./master-key.ts";
+import { moneyMovementRoutes } from "./money-movement.ts";
 import { noticeRoutes } from "./notices.ts";
 import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
@@ -120,6 +122,8 @@ export function createApp(
   const masterKey = masterKeyRoutes(database, secrets);
   const notices = noticeRoutes(database);
   const reviewList = reviewRoutes(database);
+  const household = householdRoutes(database);
+  const moneyMovement = moneyMovementRoutes(database);
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
@@ -137,6 +141,8 @@ export function createApp(
         c.set("masterKey", masterKey);
         c.set("notices", notices);
         c.set("reviewList", reviewList);
+        c.set("household", household);
+        c.set("moneyMovement", moneyMovement);
         await next();
       })
       .use("/api/*", masterKeyFirst)

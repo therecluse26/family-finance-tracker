@@ -92,6 +92,27 @@
       "when": 1793726157527,
       "tag": "0012_merchant_names",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1793727018484,
+      "tag": "0013_household_facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1793727025272,
+      "tag": "0014_unconnected_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1793727394404,
+      "tag": "0015_transaction_types",
+      "breakpoints": true
     }
   ]
 }

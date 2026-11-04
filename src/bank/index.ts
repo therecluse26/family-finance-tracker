@@ -53,3 +53,14 @@ export {
   startBank,
   syncConnection,
 } from "./sync.ts";
+export {
+  addUnconnectedAccount,
+  type BalanceEstimate,
+  editUnconnectedAccount,
+  estimateBalance,
+  listUnconnectedAccounts,
+  type TypedBalanceInput,
+  type UnconnectedAccount,
+  type UnconnectedAccountInput,
+} from "./unconnected.ts";
+export { UNCONNECTED, UNCONNECTED_KINDS, type UnconnectedKind } from "./unconnected-kinds.ts";

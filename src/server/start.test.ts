@@ -8,6 +8,7 @@ import {
   applyMigrations,
   checkMigrations,
   closeDatabase,
+  loginTables,
   NewerDatabaseError,
   openDatabase,
   readDataKeys,
@@ -26,6 +27,7 @@ import {
   SECOND_MIGRATION,
   writeMigrationsFolder,
 } from "../db/testing.ts";
+import { saveHouseholdFacts } from "../household/index.ts";
 import { type ScheduledTask, startJob } from "../jobs/index.ts";
 import {
   finishSlowJob,
@@ -291,6 +293,37 @@ describe("starting the app", () => {
     expect(task?.lastRunAt).not.toBeNull();
     await waitFor(() => jobRuns.length > 0);
     expect(jobRuns).toEqual(["SampleJob"]);
+  });
+
+  it("moves the next run times when a Member's edit changes the Household time zone", async () => {
+    const first = await start(shipped, 0, masterKey, [sampleTask]);
+    const [before] = await first.database.select().from(scheduledTasks);
+    expect(before?.timeZone).toBe("UTC");
+    expect(before?.nextRunAt.getUTCHours()).toBe(3);
+
+    const at = new Date();
+    await first.database.insert(loginTables.user).values({
+      id: "member-a",
+      name: "Alice",
+      email: "alice@example.com",
+      createdAt: at,
+      updatedAt: at,
+    });
+    await saveHouseholdFacts(
+      first.database,
+      { zipCode: "96813", ages: [40], rentOrOwn: "own" },
+      "member-a",
+    );
+    await stop(first);
+
+    // The next start's first tick reads the Household time zone, as every tick does.
+    const second = await start(shipped, 0, masterKey, [sampleTask]);
+    const [after] = await second.database.select().from(scheduledTasks);
+
+    // 03:00 in Honolulu is 13:00 UTC, with no daylight time.
+    expect(after?.timeZone).toBe("Pacific/Honolulu");
+    expect(after?.nextRunAt.getUTCHours()).toBe(13);
+    expect(after?.nextRunAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it("never listens when the first scheduler tick fails", async () => {
