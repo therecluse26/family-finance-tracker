@@ -117,6 +117,28 @@ describe("background jobs", () => {
     expect(jobRuns).toEqual(["SampleJob"]);
   });
 
+  it("logs no start of a quiet task, such as one that runs every minute", async () => {
+    const quiet: ScheduledTask = { ...sampleTask, name: "quiet sample", quiet: true };
+    const running = await start([sampleTask, quiet]);
+    await running.tick();
+    const written: string[] = [];
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk) => written.push(String(chunk)) > 0);
+
+    now = new Date("2026-11-03T03:00:30Z");
+    try {
+      expect(await running.tick()).toEqual(["sample", "quiet sample"]);
+    } finally {
+      write.mockRestore();
+    }
+
+    const starts = written
+      .filter((line) => line.includes("Started a scheduled task"))
+      .map((line) => JSON.parse(line).task);
+    expect(starts).toEqual(["sample"]);
+  });
+
   it("moves the next run when the Household time zone changes", async () => {
     const running = await start();
     await running.tick();

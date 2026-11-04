@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, isNotNull, isNull, lte, ne, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, ne, or, type SQL } from "drizzle-orm";
 import type {
   AccountSnapshot,
   Provider,
@@ -26,13 +26,16 @@ export async function addConnection(
     bankId: string;
     bankName: string;
     origin: "linked" | "imported";
-    syncMinute: number;
+    // The minute past the hour of each scheduled sync, 0 to 59. Picked at random when not given.
+    syncMinute?: number;
   },
   at = new Date(),
 ): Promise<string> {
   const id = crypto.randomUUID();
+  // A random minute spreads the Connections' syncs over the hour (spec 02, Sync schedule).
+  const syncMinute = connection.syncMinute ?? Math.floor(Math.random() * 60);
   await database.transaction(async (tx) => {
-    await tx.insert(connections).values({ id, ...connection, createdAt: at });
+    await tx.insert(connections).values({ id, ...connection, syncMinute, createdAt: at });
     // N counts every Plaid Connection the app created or imported (spec 02, The 10 lifetime Items).
     if (connection.provider === "plaid") await countPlaidItem(tx);
   });
@@ -45,6 +48,40 @@ export async function readConnection(
 ): Promise<StoredConnection | undefined> {
   const [row] = await database.select().from(connections).where(eq(connections.id, id));
   return row;
+}
+
+// A Connection's health and sync schedule (spec 02, Sync schedule and Back-off).
+export type SyncState = Partial<
+  Pick<
+    StoredConnection,
+    "health" | "lastSyncAttemptAt" | "nextSyncAt" | "retryingSince" | "failedSyncs"
+  >
+>;
+
+export async function saveSyncState(
+  database: Database,
+  id: string,
+  state: SyncState,
+): Promise<void> {
+  await database.update(connections).set(state).where(eq(connections.id, id));
+}
+
+// Each Connection whose sync job is due at `now`: every one that is not Broken and has no next
+// sync time, or one that has come.
+export async function listDueConnections(
+  database: Database,
+  now: Date,
+): Promise<StoredConnection[]> {
+  return database
+    .select()
+    .from(connections)
+    .where(
+      and(
+        ne(connections.health, "broken"),
+        or(isNull(connections.nextSyncAt), lte(connections.nextSyncAt, now)),
+      ),
+    )
+    .orderBy(asc(connections.createdAt), asc(connections.id));
 }
 
 // The provider's fields of an Account. A Member's own fields are left out, so sync never writes them.

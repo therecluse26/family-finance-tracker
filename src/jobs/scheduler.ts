@@ -9,6 +9,9 @@ export type ScheduledTask = {
   schedule: Schedule;
   // The job each run starts. It takes no arguments.
   job: JobClass<[]>;
+  // True for a task that runs so often, such as every minute, that a log line for each start
+  // would flood the log. Its job logs what it does.
+  quiet?: boolean;
 };
 
 // Until a Household time zone is set, schedules use UTC.
@@ -77,7 +80,7 @@ export function createScheduler(options: SchedulerOptions): { tick(): Promise<st
         // The job starts before the new state is saved. If the app stops in between, the next
         // tick starts it again, which every job allows.
         await options.startTask(task);
-        log.info("Started a scheduled task", { task: task.name });
+        if (task.quiet !== true) log.info("Started a scheduled task", { task: task.name });
         started.push(task.name);
       }
       if (before === undefined || !sameState(before, state)) {

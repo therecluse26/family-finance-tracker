@@ -24,7 +24,14 @@ export {
   type BalanceRange,
   type MonthEndBalance,
 } from "./balances.ts";
-export { SyncConnectionJob, startSync } from "./job.ts";
+export { connectionToRepair, type Health } from "./health.ts";
+export {
+  catchUpSyncs,
+  SyncConnectionJob,
+  SyncScheduleJob,
+  startDueSyncs,
+  startSync,
+} from "./job.ts";
 export {
   mapPlaidCategory,
   PLAID_V2_CODES,
@@ -48,6 +55,8 @@ export {
 } from "./plaid-view.ts";
 export {
   adapterActions,
+  runSyncJob,
+  type SyncJobOutcome,
   type SyncOptions,
   type SyncReport,
   startBank,

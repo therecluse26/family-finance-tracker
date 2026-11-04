@@ -1,6 +1,6 @@
 import { aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
-import { type BankDataAdapter, plaidSettings, startBank } from "../bank/index.ts";
+import { type BankDataAdapter, catchUpSyncs, plaidSettings, startBank } from "../bank/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { startFollowUpPipeline } from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
@@ -68,6 +68,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       throw error;
     }
     try {
+      // Each Connection whose last sync attempt is more than 6 hours old syncs at once.
+      await catchUpSyncs();
       await jobs.tick();
       const server = await startServer({
         port: options.port,

@@ -1,3 +1,4 @@
+import { connectionToRepair } from "../bank/index.ts";
 import { closeEventNotice, type Database, listOpenNotices } from "../db/index.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
 
@@ -10,6 +11,7 @@ export function noticeRoutes(database: Database): NoticeRoutes {
         text: notice.text,
         raisedAt: notice.raisedAt.toISOString(),
         closable: notice.kind === "event",
+        repairConnectionId: connectionToRepair(notice.condition),
       }));
     },
 

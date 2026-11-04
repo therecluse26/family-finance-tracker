@@ -7,6 +7,8 @@ export type NoticeView = {
   raisedAt: string;
   // True for an event notice, which a Member closes. A condition notice stays until it ends.
   closable: boolean;
+  // The Connection whose Repair button the notice shows, while it needs a Member or is Broken.
+  repairConnectionId: string | null;
 };
 
 export type NoticeRoutes = {

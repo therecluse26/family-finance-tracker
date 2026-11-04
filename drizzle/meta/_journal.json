@@ -120,6 +120,13 @@
       "when": 1793801395836,
       "tag": "0016_ai_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1793802306683,
+      "tag": "0017_connection_health",
+      "breakpoints": true
     }
   ]
 }

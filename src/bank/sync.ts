@@ -4,9 +4,11 @@ import {
   finishSync,
   type PageCounts,
   readConnection,
+  type StoredConnection,
   storeSyncPage,
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
+import { log } from "../log.ts";
 import { cleanMerchant } from "../merchants/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import type {
@@ -16,12 +18,21 @@ import type {
   Provider,
   TxnRecord,
 } from "./adapter.ts";
+import {
+  errorKind,
+  recordCheckFailed,
+  recordCheckPassed,
+  recordSyncError,
+  recordSyncSuccess,
+  type SyncContext,
+} from "./health.ts";
 
 // Syncing one Connection (spec 02, Sync schedule and Changes to synced data). A sync asks the
 // adapter for pages from the saved cursor, stores each page's records by their stable IDs, and
 // saves the new cursor only after every record is stored. A sync that fails partway saves no
 // cursor, so the next one starts again from the same cursor and stores no record twice. A sync
-// that ends saves each Account's balance for the day (spec 02, Balances).
+// that ends saves each Account's balance for the day (spec 02, Balances). Every sync sets the
+// Connection's health and its next sync time (spec 02, Back-off).
 
 // Each Transaction gets its Merchant as it arrives, before matching, because Refund links need the
 // Merchant (spec 04, Names).
@@ -70,6 +81,12 @@ export function startBank(options: {
   };
 }
 
+// The bank module's services, for its other files.
+export function runningBank(): BankServices {
+  if (services === undefined) throw new Error("The bank module is not running.");
+  return services;
+}
+
 // The adapter's actions, so screens hide the buttons for missing ones.
 export function adapterActions(provider: Provider): AdapterActions {
   return services?.adapters.get(provider)?.actions ?? NO_ACTIONS;
@@ -93,6 +110,8 @@ export type SyncOptions = {
   onPageStored?: (counts: PageCounts) => void;
 };
 
+// Syncs one Connection, and sets its health from the outcome. A failed sync throws its error once
+// the Connection's health records it.
 export function syncConnection(
   connectionId: string,
   now: () => Date = () => new Date(),
@@ -108,13 +127,16 @@ export function syncConnection(
   return run;
 }
 
-async function syncOnce(
-  connectionId: string,
-  now: () => Date,
-  options: SyncOptions,
-): Promise<SyncReport> {
-  if (services === undefined) throw new Error("The bank module is not running.");
-  const { database, secrets, adapters, timeZone } = services;
+type LoadedConnection = {
+  stored: StoredConnection;
+  adapter: BankDataAdapter;
+  // The Connection as its adapter sees it, with its credential decrypted.
+  connection: BankConnection;
+  context: SyncContext;
+};
+
+async function loadConnection(connectionId: string): Promise<LoadedConnection> {
+  const { database, secrets, adapters, timeZone } = runningBank();
   const stored = await readConnection(database, connectionId);
   if (stored === undefined) throw new Error(`No Connection has the ID ${connectionId}.`);
   const adapter = adapters.get(stored.provider);
@@ -132,9 +154,47 @@ async function syncOnce(
             column: "connections.credential",
           }),
   };
+  const context: SyncContext = {
+    database,
+    minSyncGapHours: adapter.minSyncGapHours,
+    timeZone: (await timeZone()) ?? DEFAULT_TIME_ZONE,
+  };
+  return { stored, adapter, connection, context };
+}
 
+async function syncOnce(
+  connectionId: string,
+  now: () => Date,
+  options: SyncOptions,
+): Promise<SyncReport> {
+  const loaded = await loadConnection(connectionId);
+  const startedAt = now();
+  let pulled: { report: SyncReport; historyLoaded: boolean };
+  try {
+    pulled = await pullPages(loaded, now, options);
+  } catch (error) {
+    try {
+      await recordSyncError(loaded.context, loaded.stored, error, startedAt);
+    } catch (recordError) {
+      log.error("Could not record a failed sync", { connectionId, error: recordError });
+    }
+    throw error;
+  }
+  await recordSyncSuccess(loaded.context, loaded.stored, {
+    startedAt,
+    endedAt: now(),
+    historyLoaded: pulled.historyLoaded,
+  });
+  return pulled.report;
+}
+
+async function pullPages(
+  { stored, adapter, connection, context }: LoadedConnection,
+  now: () => Date,
+  options: SyncOptions,
+): Promise<{ report: SyncReport; historyLoaded: boolean }> {
+  const { database, timeZone: zone } = context;
   const report: SyncReport = { added: 0, changed: 0, removed: 0, changedTransactions: false };
-  const zone = (await timeZone()) ?? DEFAULT_TIME_ZONE;
   let cursor = stored.syncCursor;
   for (let pages = 0; pages < MAX_PAGES; pages += 1) {
     const page = await adapter.sync(connection, cursor);
@@ -159,9 +219,42 @@ async function syncOnce(
         at,
       });
       report.changedTransactions = report.added + report.changed + report.removed > 0;
-      return report;
+      return { report, historyLoaded: page.historyLoaded };
     }
     cursor = page.nextCursor;
   }
-  throw new Error(`The sync of Connection ${connectionId} did not end after ${MAX_PAGES} pages.`);
+  throw new Error(`The sync of Connection ${connection.id} did not end after ${MAX_PAGES} pages.`);
+}
+
+export type SyncJobOutcome = "synced" | "failed" | "still needs a member" | "not polled";
+
+// The sync job's work (spec 02, Sync schedule and Back-off). A Broken Connection does not poll.
+// One that needs a Member runs its adapter's check, and syncs once the check finds no error. The
+// Connection's health records a failed sync and sets its retry, so a failure ends the job without
+// an error: the back-off times the retry, not the job queue.
+export async function runSyncJob(
+  connectionId: string,
+  now: () => Date = () => new Date(),
+  options: SyncOptions = {},
+): Promise<SyncJobOutcome> {
+  const { stored, adapter, connection, context } = await loadConnection(connectionId);
+  if (stored.health === "broken") return "not polled";
+  if (stored.health === "needs a member") {
+    const at = now();
+    try {
+      await adapter.check(connection);
+    } catch (error) {
+      log.warn("A Connection's check failed", { connectionId, kind: errorKind(error), error });
+      await recordCheckFailed(context, stored, error, at);
+      return "still needs a member";
+    }
+    await recordCheckPassed(context, stored);
+  }
+  try {
+    await syncConnection(connectionId, now, options);
+    return "synced";
+  } catch (error) {
+    log.warn("A sync failed", { connectionId, kind: errorKind(error), error });
+    return "failed";
+  }
 }

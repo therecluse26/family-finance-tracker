@@ -77,7 +77,12 @@ describe("System notices", () => {
     const id = await raiseNotice({ kind: "event", text: "Your history is ready" });
 
     const expected = [
-      expect.objectContaining({ id, text: "Your history is ready", closable: true }),
+      expect.objectContaining({
+        id,
+        text: "Your history is ready",
+        closable: true,
+        repairConnectionId: null,
+      }),
     ];
     expect(await openNotices(alice)).toEqual(expected);
     expect(await openNotices(bob)).toEqual(expected);
@@ -100,7 +105,10 @@ describe("System notices", () => {
       text: "First Fake Bank needs you to sign in again",
       condition: "connection needs a member:c1",
     });
-    expect(await openNotices(bob)).toEqual([expect.objectContaining({ id, closable: false })]);
+    // It is about a Connection that needs a Member, so it shows Repair for that Connection.
+    expect(await openNotices(bob)).toEqual([
+      expect.objectContaining({ id, closable: false, repairConnectionId: "c1" }),
+    ]);
 
     expect((await alice.post(`/api/notices/${id}/close`)).status).toBe(409);
     expect(await openNotices(bob)).toHaveLength(1);

@@ -73,6 +73,16 @@ function instantOf(wall: WallClock, timeZone: string): number {
   return matches.length > 0 ? Math.min(...matches) : shown - before;
 }
 
+const MINUTE_MS = 60 * 1000;
+
+// Every minute, on the minute, in any time zone. For a task that looks for due work, such as the
+// sync schedule.
+export const everyMinute: Schedule = {
+  next(after) {
+    return new Date((Math.floor(after.getTime() / MINUTE_MS) + 1) * MINUTE_MS);
+  },
+};
+
 // Every day at `time`, a 24-hour time such as "03:00".
 export function daily(time: string): Schedule {
   const match = TIME.exec(time);

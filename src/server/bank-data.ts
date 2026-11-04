@@ -3,6 +3,7 @@ import {
   adapterActions,
   addUnconnectedAccount,
   editUnconnectedAccount,
+  type Health,
   listUnconnectedAccounts,
   type TypedBalanceInput,
 } from "../bank/index.ts";
@@ -18,6 +19,9 @@ import {
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import type { AccountView, BankViews, UnconnectedAccountBody } from "./bank-views.ts";
+
+// A Connection that needs a Member or is Broken does not poll (spec 02, Connections).
+const polls = (health: Health) => health === "healthy" || health === "retrying";
 
 // The bank API's reads from app.db, and a Member's changes to Accounts. Hidden Transactions are
 // left out.
@@ -103,6 +107,9 @@ export function bankViews(database: Database): BankViews {
         health: connection.health,
         historyLoaded: connection.historyLoaded,
         lastSyncedAt: connection.lastSyncedAt?.toISOString() ?? null,
+        nextSyncAt: polls(connection.health)
+          ? (connection.nextSyncAt?.toISOString() ?? null)
+          : null,
         actions: adapterActions(connection.provider),
       }));
     },

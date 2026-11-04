@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
-import { addConnection, markSetupStep } from "../db/index.ts";
+import { addConnection, markSetupStep, saveSyncState } from "../db/index.ts";
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
 import type { AccountView, BalancesView, ConnectionView, TransactionView } from "./bank-views.ts";
@@ -36,6 +36,7 @@ describe("the bank routes", () => {
   let stopBank: () => void;
   let member: TestMember;
   let checkingId: string;
+  let connectionId: string;
 
   beforeEach(async () => {
     const quiet = createLogger(() => {}, { throwOnSecretField: true });
@@ -82,7 +83,7 @@ describe("the bank routes", () => {
       ],
     });
     fake.addPages(BANK, { removed: [{ id: "gone" }], historyLoaded: true });
-    const connectionId = await addConnection(test.database, {
+    connectionId = await addConnection(test.database, {
       provider: "fake",
       bankId: BANK,
       bankName: "First Fake Bank",
@@ -300,9 +301,32 @@ describe("the bank routes", () => {
         bankName: "First Fake Bank",
         health: "healthy",
         historyLoaded: true,
+        // Synced at 15:00 UTC, with no Household time zone yet: the next slot is 18:07.
+        lastSyncedAt: "2026-10-05T15:00:00.000Z",
+        nextSyncAt: "2026-10-05T18:07:00.000Z",
         actions: { repairInApp: true, importExisting: false, refresh: false },
       }),
     ]);
     expect(Object.keys(body.connections[0] ?? {})).not.toContain("credential");
+  });
+
+  it("gives no next sync time for a Connection that does not poll", async () => {
+    const nextSyncAt = new Date("2026-10-06T15:00:00.000Z");
+    const tab = await signedIn();
+    for (const health of ["needs a member", "broken"] as const) {
+      await saveSyncState(test.database, connectionId, { health, nextSyncAt });
+
+      const body = (await (await tab.get("/api/connections")).json()) as {
+        connections: ConnectionView[];
+      };
+
+      expect(body.connections).toEqual([
+        expect.objectContaining({
+          health,
+          lastSyncedAt: "2026-10-05T15:00:00.000Z",
+          nextSyncAt: null,
+        }),
+      ]);
+    }
   });
 });

@@ -40,7 +40,11 @@ export type ConnectionView = {
   bankName: string;
   health: "healthy" | "retrying" | "needs a member" | "broken";
   historyLoaded: boolean;
+  // The last successful sync, for "last synced <date>".
   lastSyncedAt: string | null;
+  // When the next sync is due. Empty while the Connection needs a Member or is Broken, since it
+  // does not poll, and for a new Connection, which syncs at once.
+  nextSyncAt: string | null;
   // The adapter's actions, so a screen hides the button for each missing one.
   actions: AdapterActions;
 };

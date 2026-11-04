@@ -27,20 +27,28 @@ export type FakePage = {
   historyLoaded?: boolean;
 };
 
-type Script = { pages: FakePage[]; failures: Map<number, BankErrorKind> };
+// An error of a kind, or a given error, which a test may fill with what a provider's error holds.
+export type FakeFailure = BankErrorKind | Error;
+
+type Script = { pages: FakePage[]; failures: Map<number, FakeFailure> };
 
 // The cursor after page `index` of a script, such as "fake-chase:2".
 const cursorOf = (key: string, index: number) => `${key}:${index}`;
 
 export class FakeBankAdapter implements BankDataAdapter {
   readonly provider = "fake";
-  readonly minSyncGapHours = 0;
+  // Tests may set a longer gap, as SimpleFIN would.
+  minSyncGapHours = 0;
   // Tests may set any action.
   actions: AdapterActions = { repairInApp: false, importExisting: false, refresh: false };
   // Each sync call, in order.
   readonly calls: { connectionId: string; cursor: string | null }[] = [];
+  // Each check, by Connection ID, in order.
+  readonly checks: string[] = [];
 
   private readonly scripts = new Map<string, Script>();
+  // The error each check of a bank, or of one Connection, finds, until it is cleared.
+  private readonly checkErrors = new Map<string, FakeFailure>();
 
   // A bank's ID, or a Connection's ID.
   private script(key: string): Script {
@@ -57,9 +65,26 @@ export class FakeBankAdapter implements BankDataAdapter {
     this.script(key).pages.push(...pages);
   }
 
-  // The next request for page `index` of the script throws an error of this kind, once.
-  failAt(key: string, index: number, kind: BankErrorKind): void {
-    this.script(key).failures.set(index, kind);
+  // The next request for page `index` of the script throws an error of this kind, or this error,
+  // once.
+  failAt(key: string, index: number, failure: FakeFailure): void {
+    this.script(key).failures.set(index, failure);
+  }
+
+  // Every check of a bank, or of one Connection, throws an error of this kind, or this error,
+  // until it is set to null.
+  setCheckError(key: string, failure: FakeFailure | null): void {
+    if (failure === null) this.checkErrors.delete(key);
+    else this.checkErrors.set(key, failure);
+  }
+
+  async check(connection: BankConnection): Promise<void> {
+    this.checks.push(connection.id);
+    const failure = this.checkErrors.get(connection.id) ?? this.checkErrors.get(connection.bankId);
+    if (failure instanceof Error) throw failure;
+    if (failure !== undefined) {
+      throw new BankDataError(failure, `The fake bank's check found ${failure}.`);
+    }
   }
 
   async sync(connection: BankConnection, cursor: string | null): Promise<SyncResult> {
@@ -71,6 +96,7 @@ export class FakeBankAdapter implements BankDataAdapter {
     const failure = failures.get(index);
     if (failure !== undefined) {
       failures.delete(index);
+      if (failure instanceof Error) throw failure;
       throw new BankDataError(failure, `The fake bank failed page ${index} (${failure}).`);
     }
     const accounts = pages.slice(0, index + 1).findLast((page) => page.accounts)?.accounts ?? [];

@@ -136,6 +136,10 @@ export interface BankDataAdapter {
   // Plaid's update mode.
   startRepair?(connection: BankConnection): Promise<LinkSession>;
   sync(connection: BankConnection, cursor: string | null): Promise<SyncResult>;
+  // Asks the provider whether the Connection still has an error, such as Plaid's /item/get. It
+  // throws a BankDataError when it has one. The app runs it once a day while the Connection needs
+  // a Member (spec 02, Back-off).
+  check(connection: BankConnection): Promise<void>;
   refresh?(connection: BankConnection): Promise<void>;
   remove(connection: BankConnection): Promise<void>;
 }

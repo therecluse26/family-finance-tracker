@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daily } from "./index.ts";
+import { daily, everyMinute } from "./index.ts";
 
 describe("a daily schedule", () => {
   it.each([
@@ -63,5 +63,15 @@ describe("a daily schedule", () => {
 
   it("refuses an unknown time zone", () => {
     expect(() => daily("03:00").next(new Date(), "Mars/Olympus_Mons")).toThrow(RangeError);
+  });
+});
+
+describe("the every-minute schedule", () => {
+  it.each([
+    ["mid-minute", "2026-11-03T01:00:30.250Z", "2026-11-03T01:01:00.000Z"],
+    ["on the minute, the next one", "2026-11-03T01:00:00.000Z", "2026-11-03T01:01:00.000Z"],
+    ["across a day's end", "2026-11-03T23:59:59.999Z", "2026-11-04T00:00:00.000Z"],
+  ])("runs %s", (_case, after, next) => {
+    expect(everyMinute.next(new Date(after), "America/New_York")).toEqual(new Date(next));
   });
 });

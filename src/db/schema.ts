@@ -293,7 +293,19 @@ export const connections = sqliteTable(
     // The provider credential, such as a Plaid access token, encrypted with the Master key.
     credential: text("credential"),
     origin: text("origin", { enum: ["linked", "imported"] }).notNull(),
+    // The last successful sync.
     lastSyncedAt: moment("last_synced_at"),
+    // When the last sync started, whatever came of it. At startup, a Connection whose last attempt
+    // is more than 6 hours old syncs at once (spec 02, Sync schedule).
+    lastSyncAttemptAt: moment("last_sync_attempt_at"),
+    // When the sync schedule next starts this Connection's sync job: its next sync, or, while it
+    // needs a Member, its next daily check. Empty for a new Connection, which syncs at once, and
+    // for a Broken one, which never polls.
+    nextSyncAt: moment("next_sync_at"),
+    // While Retrying: when it became Retrying, and how many Temporary errors came in a row
+    // (spec 02, Back-off).
+    retryingSince: moment("retrying_since"),
+    failedSyncs: integer("failed_syncs").notNull().default(0),
     createdAt: moment("created_at").notNull(),
   },
   (table) => [index("connections_bank_id").on(table.bankId)],

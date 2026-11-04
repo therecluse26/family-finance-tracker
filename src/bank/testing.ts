@@ -1,10 +1,11 @@
-// Test support: app.db with the bank module and the follow-up pipeline running on the fake adapter,
+// Test support: app.db with the bank, notify, and follow-up modules running on the fake adapter,
 // and a job list that holds the sync and follow-up jobs. No test uses a real Bank-data provider or
 // real bank data.
 import { addConnection, type Database } from "../db/index.ts";
 import { newTestDatabase } from "../db/testing.ts";
 import { startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
+import { startNotify } from "../notify/index.ts";
 import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
 import { FakeBankAdapter } from "./fake.ts";
@@ -14,7 +15,7 @@ import { startBank } from "./sync.ts";
 
 export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "../jobs/sidequest.ts";
-export { SyncConnectionJob } from "./job.ts";
+export { SyncConnectionJob, SyncScheduleJob } from "./job.ts";
 
 export const TEST_BANK_JOB_LIST = import.meta.url;
 
@@ -38,6 +39,7 @@ export async function newTestBank(options: { timeZone?: string } = {}): Promise<
     adapters: [fake],
     timeZone: async () => options.timeZone,
   });
+  const notify = startNotify({ database: db.database });
   const followUp = startFollowUpPipeline({ database: db.database });
   return {
     database: db.database,
@@ -53,6 +55,7 @@ export async function newTestBank(options: { timeZone?: string } = {}): Promise<
       }),
     close() {
       followUp.stop();
+      notify.stop();
       bank.stop();
       db.close();
     },
