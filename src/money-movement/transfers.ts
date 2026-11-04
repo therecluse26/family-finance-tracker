@@ -112,21 +112,25 @@ function holdsWords(text: string, name: string[]): boolean {
 }
 
 // The other Account's last 4 digits, not inside a longer number.
-function namesMask(description: string, mask: string | null): boolean {
+export function namesMask(description: string, mask: string | null): boolean {
   return (
     mask !== null && /^\d{4}$/.test(mask) && new RegExp(`(?<!\\d)${mask}(?!\\d)`).test(description)
   );
 }
 
+// The institution's name in the text, whole words, in any case.
+export function namesInstitutionIn(text: string, institution: string | null): boolean {
+  return institution !== null && holdsWords(text, nameWords(institution));
+}
+
 // The other institution's name in the description, or in a counterparty of type
 // financial_institution.
 function namesInstitution(txn: TransferCandidate, institution: string | null): boolean {
-  if (institution === null) return false;
-  const name = nameWords(institution);
   return (
-    holdsWords(txn.description, name) ||
+    namesInstitutionIn(txn.description, institution) ||
     txn.counterparties.some(
-      (party) => party.type === "financial_institution" && holdsWords(party.name, name),
+      (party) =>
+        party.type === "financial_institution" && namesInstitutionIn(party.name, institution),
     )
   );
 }

@@ -1,7 +1,14 @@
-import { aliasedTable, and, asc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { aliasedTable, and, asc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import type { Database, Queries } from "./client.ts";
-import { type TransferLinkMaker, transferLinkMaker } from "./links.ts";
-import { transactionDecisions, transactionParts, transactions } from "./schema.ts";
+import type { TransferLinkMaker } from "./links.ts";
+import {
+  householdAccounts,
+  transactionDecisions,
+  transactionParts,
+  transactions,
+  transferLinks,
+} from "./schema.ts";
 
 // Each Transaction's type and parts (spec 03, Order of decisions). The money-movement module
 // decides; these functions store and read.
@@ -45,8 +52,54 @@ export type DecisionRecord = {
   handSet: Record<string, unknown>;
   // Who made the Transfer link that uses it, or null when it has none.
   transferLink: TransferLinkMaker | null;
+  // The other side of that link, or null.
+  otherSide: { transactionId: string; accountId: string; postedDate: string } | null;
   hidden: boolean;
 };
+
+// One of the Household's Accounts, as the order of decisions reads it.
+export type DecisionAccount = {
+  id: string;
+  // The Member's rename, or the name from the provider or the form.
+  name: string;
+  kind: string;
+  subtype: string | null;
+  institutionName: string | null;
+  // The last 4 digits.
+  mask: string | null;
+  // False for an Account that no provider syncs.
+  connected: boolean;
+  closed: boolean;
+  // A loan's type as a Member set it, or null while the app decides it.
+  loanType: "cash loan" | "purchase loan" | null;
+  // An APR a Member typed on a loan, as a percent, such as 6.5.
+  memberApr: number | null;
+};
+
+export async function listDecisionAccounts(database: Database): Promise<DecisionAccount[]> {
+  const rows = await database
+    .select({
+      id: householdAccounts.id,
+      name: householdAccounts.name,
+      memberName: householdAccounts.memberName,
+      kind: householdAccounts.kind,
+      subtype: householdAccounts.subtype,
+      institutionName: householdAccounts.institutionName,
+      mask: householdAccounts.mask,
+      connectionId: householdAccounts.connectionId,
+      closedAt: householdAccounts.closedAt,
+      loanType: householdAccounts.loanType,
+      memberApr: householdAccounts.memberApr,
+    })
+    .from(householdAccounts)
+    .orderBy(asc(householdAccounts.name), asc(householdAccounts.id));
+  return rows.map(({ memberName, connectionId, closedAt, ...row }) => ({
+    ...row,
+    name: memberName ?? row.name,
+    connected: connectionId !== null,
+    closed: closedAt !== null,
+  }));
+}
 
 function chunks<T>(items: readonly T[]): T[][] {
   const out: T[][] = [];
@@ -61,6 +114,7 @@ export async function readDecisionRecords(
   database: Database,
   ids: readonly string[],
 ): Promise<DecisionRecord[]> {
+  const other = alias(transactions, "other_side");
   const found = new Map<string, DecisionRecord>();
   for (const chunk of chunks(ids)) {
     const rows = await database
@@ -76,13 +130,40 @@ export async function readDecisionRecords(
         merchantCleanName: transactions.merchantCleanName,
         providerCategory: transactions.providerCategory,
         handSet: transactions.handSet,
-        transferLink: transferLinkMaker,
+        transferLink: transferLinks.madeBy,
+        otherId: other.id,
+        otherAccountId: other.accountId,
+        otherPostedDate: other.postedDate,
         hiddenReason: transactions.hiddenReason,
       })
       .from(transactions)
+      .leftJoin(
+        transferLinks,
+        or(
+          eq(transferLinks.outTransactionId, transactions.id),
+          eq(transferLinks.inTransactionId, transactions.id),
+        ),
+      )
+      .leftJoin(
+        other,
+        or(
+          and(
+            eq(transferLinks.outTransactionId, transactions.id),
+            eq(other.id, transferLinks.inTransactionId),
+          ),
+          and(
+            eq(transferLinks.inTransactionId, transactions.id),
+            eq(other.id, transferLinks.outTransactionId),
+          ),
+        ),
+      )
       .where(inArray(transactions.id, chunk));
-    for (const { hiddenReason, ...row } of rows) {
-      found.set(row.id, { ...row, hidden: hiddenReason !== null });
+    for (const { hiddenReason, otherId, otherAccountId, otherPostedDate, ...row } of rows) {
+      const otherSide =
+        otherId === null || otherAccountId === null || otherPostedDate === null
+          ? null
+          : { transactionId: otherId, accountId: otherAccountId, postedDate: otherPostedDate };
+      found.set(row.id, { ...row, otherSide, hidden: hiddenReason !== null });
     }
   }
   return ids.flatMap((id) => found.get(id) ?? []);
@@ -147,6 +228,20 @@ export async function listProvisionalPassed(database: Database, today: string): 
     .from(transactionDecisions)
     .innerJoin(transactions, eq(transactions.id, transactionDecisions.transactionId))
     .where(lt(transactionDecisions.provisionalUntil, today))
+    .orderBy(asc(transactions.postedDate), asc(transactions.id));
+  return rows.map((row) => row.id);
+}
+
+// The Transactions whose result came from one of these steps, oldest first.
+export async function listDecidedAt(
+  database: Database,
+  steps: readonly string[],
+): Promise<string[]> {
+  const rows = await database
+    .select({ id: transactionDecisions.transactionId })
+    .from(transactionDecisions)
+    .innerJoin(transactions, eq(transactions.id, transactionDecisions.transactionId))
+    .where(inArray(transactionDecisions.step, [...steps]))
     .orderBy(asc(transactions.postedDate), asc(transactions.id));
   return rows.map((row) => row.id);
 }

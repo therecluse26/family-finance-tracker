@@ -118,6 +118,14 @@ const UNCONNECTED_REFUSED =
 // The types a Member may set by hand.
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
 
+// A Member's change to a connected loan: its type, and an APR as a percent from 0 to 100.
+const loanBody = z
+  .object({
+    loanType: z.enum(["cash loan", "purchase loan"]).nullable().optional(),
+    apr: z.number().min(0).max(100).nullable().optional(),
+  })
+  .strict();
+
 const itemsUsedBody = z.object({ itemsUsed: z.number().int().min(0).max(PLAID_ITEM_LIMIT) });
 
 // Linking a new bank (spec 02, Linking a new bank). `confirmed` is the second confirmation at N of
@@ -322,6 +330,22 @@ export const api = new Hono<ServerEnv>()
     const decision = await c.var.moneyMovement.setType(c.req.param("id"), body.data.type);
     if (decision === undefined) return c.json({ error: "Not found" }, 404);
     return c.json({ decision }, 200);
+  })
+  // A connected loan's type and the APR a Member typed (spec 02, Account fields). A Member's type
+  // wins over the subtype and the payout. Its payments are decided again.
+  .get("/accounts/:id/loan", async (c) => {
+    const loan = await c.var.moneyMovement.loan(c.req.param("id"));
+    if (loan === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ loan });
+  })
+  .put("/accounts/:id/loan", async (c) => {
+    const body = loanBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json({ error: "Pick Cash loan or Purchase loan, and an APR from 0 to 100." }, 400);
+    }
+    const loan = await c.var.moneyMovement.setLoan(c.req.param("id"), body.data);
+    if (loan === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ loan });
   })
   // Spending, Income, and Saving by month, by Category, and by Category group. Posted Transactions
   // only.

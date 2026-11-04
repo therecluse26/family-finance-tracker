@@ -18,6 +18,7 @@ import {
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
+import { decideOneSidedAgain } from "../money-movement/index.ts";
 import type { AccountView, BankViews, UnconnectedAccountBody } from "./bank-views.ts";
 
 // A Connection that needs a Member or is Broken does not poll (spec 02, Connections).
@@ -74,20 +75,35 @@ export function bankViews(database: Database): BankViews {
       return listUnconnectedAccounts(database);
     },
 
+    // Each change to the Accounts may tie a one-sided Transfer to another account, so Money
+    // movement decides them again.
     async addUnconnectedAccount(body, memberId) {
-      return addUnconnectedAccount(database, input(body), await typed(body, memberId));
+      const added = await addUnconnectedAccount(database, input(body), await typed(body, memberId));
+      await decideOneSidedAgain(database);
+      return added;
     },
 
     async editUnconnectedAccount(id, body, memberId) {
-      return editUnconnectedAccount(database, id, input(body), await typed(body, memberId));
+      const edited = await editUnconnectedAccount(
+        database,
+        id,
+        input(body),
+        await typed(body, memberId),
+      );
+      if (edited !== undefined) await decideOneSidedAgain(database);
+      return edited;
     },
 
     async closeAccount(id) {
-      return (await closeAccount(database, id)) ? accountView(id) : undefined;
+      if (!(await closeAccount(database, id))) return undefined;
+      await decideOneSidedAgain(database);
+      return accountView(id);
     },
 
     async reopenAccount(id) {
-      return (await reopenAccount(database, id)) ? accountView(id) : undefined;
+      if (!(await reopenAccount(database, id))) return undefined;
+      await decideOneSidedAgain(database);
+      return accountView(id);
     },
 
     transactions(query) {

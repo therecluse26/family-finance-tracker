@@ -253,13 +253,6 @@ export async function readTransferLink(
   return link;
 }
 
-// For the order of decisions: who made the Transfer link that uses the Transaction, or null.
-export const transferLinkMaker = sql<TransferLinkMaker | null>`(
-  SELECT ${sql.identifier("made_by")} FROM ${transferLinks}
-  WHERE ${sql.identifier("out_transaction_id")} = "transactions"."id"
-     OR ${sql.identifier("in_transaction_id")} = "transactions"."id"
-)`;
-
 // Transactions the order decided as linked Transfers, at steps 2 and 3, whose link has ended since.
 export async function listUnlinkedTransferDecisions(database: Database): Promise<string[]> {
   const rows = await database

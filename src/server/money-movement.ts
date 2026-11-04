@@ -1,6 +1,8 @@
 import type { Database } from "../db/index.ts";
 import {
+  readLoanSettings,
   readTransactionDetail,
+  setLoanSettings,
   setTransactionType,
   totalsByMonth,
 } from "../money-movement/index.ts";
@@ -19,6 +21,17 @@ export function moneyMovementRoutes(database: Database): MoneyMovementRoutes {
 
     totals() {
       return totalsByMonth(database);
+    },
+
+    loan(accountId) {
+      return readLoanSettings(database, accountId);
+    },
+
+    setLoan(accountId, { loanType, apr }) {
+      return setLoanSettings(database, accountId, {
+        ...(loanType === undefined ? {} : { loanType }),
+        ...(apr === undefined ? {} : { memberApr: apr }),
+      });
     },
   };
 }

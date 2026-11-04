@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, type SQL } from "drizzle-orm";
 import { UNCONNECTED } from "../bank/unconnected-kinds.ts";
 import type { Database } from "./client.ts";
 import {
@@ -11,6 +11,9 @@ import {
 // Unconnected accounts in app.db (spec 02, Unconnected accounts): Accounts with no Connection,
 // whose kind is "unconnected" and whose subtype is the Unconnected account's kind. The bank module
 // decides; these functions store and read.
+
+// SQLite takes at most 32,766 values in one statement.
+const IDS_PER_QUERY = 500;
 
 export type UnconnectedFields = {
   name: string;
@@ -132,6 +135,39 @@ export async function assignToUnconnectedAccount(
       target: unconnectedAssignments.transactionId,
       set: { accountId, assignedAt: at },
     });
+}
+
+// Keeps each Transaction's assignment in step with the order of decisions' last result: an
+// account ID assigns it, and null ends any assignment it had.
+export async function saveUnconnectedAssignments(
+  database: Database,
+  assignments: readonly { transactionId: string; accountId: string | null }[],
+  at = new Date(),
+): Promise<void> {
+  const ended = assignments.filter((a) => a.accountId === null).map((a) => a.transactionId);
+  const kept = assignments.flatMap(({ transactionId, accountId }) =>
+    accountId === null ? [] : [{ transactionId, accountId }],
+  );
+  if (ended.length === 0 && kept.length === 0) return;
+  await database.transaction(async (tx) => {
+    for (let start = 0; start < ended.length; start += IDS_PER_QUERY) {
+      const chunk = ended.slice(start, start + IDS_PER_QUERY);
+      await tx
+        .delete(unconnectedAssignments)
+        .where(inArray(unconnectedAssignments.transactionId, chunk));
+    }
+    for (const { transactionId, accountId } of kept) {
+      await tx
+        .insert(unconnectedAssignments)
+        .values({ transactionId, accountId, assignedAt: at })
+        .onConflictDoUpdate({
+          target: unconnectedAssignments.transactionId,
+          set: { accountId, assignedAt: at },
+          // An assignment that stays as it was keeps its time.
+          setWhere: ne(unconnectedAssignments.accountId, accountId),
+        });
+    }
+  });
 }
 
 // The amounts of the posted Transactions assigned to the account, posted after `after` when it is

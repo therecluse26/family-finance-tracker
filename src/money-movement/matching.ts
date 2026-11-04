@@ -1,7 +1,11 @@
 import {
   type Database,
   type DecisionRecord,
+  type LoanFields,
   linkTransferByHand,
+  listDecidedAt,
+  listDecisionAccounts,
+  listLoanPaymentIds,
   listProvisionalPassed,
   listUnlinkedTransferDecisions,
   type Queries,
@@ -13,8 +17,10 @@ import {
   removeDecisions,
   type StoredDecision,
   type StoredPart,
+  saveUnconnectedAssignments,
   setHandSetFields,
   storeDecisions,
+  storeLoanFields,
   type TransferPair,
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
@@ -30,7 +36,15 @@ import {
   registerReviewKind,
   settleReviewItems,
 } from "../review/index.ts";
-import { type DecisionStep, decide, type Part } from "./order.ts";
+import { isLoan, type LoanSettings, loanFactsReader, readLoanSettings } from "./loans.ts";
+import { ONE_SIDED_KIND, ONE_SIDED_STEPS, oneSidedKind } from "./one-sided.ts";
+import {
+  type Decision,
+  type DecisionContext,
+  type DecisionStep,
+  decide,
+  type Part,
+} from "./order.ts";
 import { type PairingResult, pairTransfers, type TransferSignal } from "./transfers.ts";
 import type { HandSetType } from "./types.ts";
 
@@ -43,24 +57,107 @@ async function householdToday(database: Database, now: Date): Promise<string> {
   return calendarDateIn(now, (await householdTimeZone(database)) ?? "UTC");
 }
 
+// What the order reads besides each Transaction, read once a run.
+async function decisionContext(database: Database, now: Date): Promise<DecisionContext> {
+  const today = await householdToday(database, now);
+  const accounts = new Map(
+    (await listDecisionAccounts(database)).map((account) => [account.id, account]),
+  );
+  return { today, accounts, loanFacts: loanFactsReader(database, accounts) };
+}
+
+// A result to store, with the Unconnected account it goes to and the Review list item it asks
+// for.
+type Decided = {
+  stored: StoredDecision;
+  unconnectedAccountId: string | null;
+  asks: Decision["asks"];
+};
+
 async function decideAll(
   database: Database,
   records: readonly DecisionRecord[],
   now: Date,
-): Promise<StoredDecision[]> {
-  const today = await householdToday(database, now);
-  const decisions: StoredDecision[] = [];
+): Promise<Decided[]> {
+  const context = await decisionContext(database, now);
+  const decided: Decided[] = [];
   for (const { hidden, ...record } of records) {
-    const { step, parts, provisionalUntil } = await decide({ ...record, today });
-    decisions.push({
-      transactionId: record.id,
-      step,
-      provisionalUntil: provisionalUntil ?? null,
-      decidedAt: now,
-      parts,
+    const { step, parts, provisionalUntil, unconnectedAccountId, asks } = await decide({
+      ...record,
+      ...context,
+    });
+    decided.push({
+      stored: {
+        transactionId: record.id,
+        step,
+        provisionalUntil: provisionalUntil ?? null,
+        decidedAt: now,
+        parts,
+      },
+      unconnectedAccountId: unconnectedAccountId ?? null,
+      asks,
     });
   }
-  return decisions;
+  return decided;
+}
+
+// Opens a one-sided Transfer item for each result that asks for one, and settles each open item
+// whose Transaction no longer asks for it, or now asks with another best answer. `gone` are
+// Transactions that no longer show.
+async function updateOneSidedItems(
+  database: Database,
+  decided: readonly Decided[],
+  gone: readonly string[],
+): Promise<void> {
+  const open = new Map<string, ReviewItem>();
+  for (const item of await openReviewItems(database)) {
+    if (item.kind !== ONE_SIDED_KIND || item.subject.type !== "transactions") continue;
+    open.set(item.subject.transactionIds[0] ?? "", item);
+  }
+  const settle = (id: string) =>
+    settleReviewItems(database, { kind: ONE_SIDED_KIND, subjectId: id }, "decided again");
+  let opened = 0;
+  for (const { stored, asks } of decided) {
+    const id = stored.transactionId;
+    const item = open.get(id);
+    if (item !== undefined && item.bestAnswer.value === asks?.bestAnswer.value) continue;
+    if (item !== undefined) await settle(id);
+    if (asks === undefined) continue;
+    await openReviewItem(database, {
+      kind: ONE_SIDED_KIND,
+      subject: { type: "transactions", transactionIds: [id] },
+      ...asks,
+    });
+    opened += 1;
+  }
+  for (const id of gone) if (open.has(id)) await settle(id);
+  if (opened > 0) log.info("One-sided Transfers went on the Review list", { opened });
+}
+
+// Stores each result in place of the Transaction's earlier one, with the Unconnected account it
+// goes to, and keeps the one-sided Transfer items in step.
+async function storeResults(
+  database: Database,
+  decided: readonly Decided[],
+  now: Date,
+  gone: readonly string[] = [],
+): Promise<void> {
+  await storeDecisions(
+    database,
+    decided.map((result) => result.stored),
+  );
+  await saveUnconnectedAssignments(
+    database,
+    [
+      ...decided.map((result) => ({
+        transactionId: result.stored.transactionId,
+        accountId: result.unconnectedAccountId,
+      })),
+      ...gone.map((transactionId) => ({ transactionId, accountId: null })),
+    ],
+    now,
+  );
+  await updateOneSidedItems(database, decided, gone);
 }
 
 // Transactions the order decided again outside the Matching step's own list: a type set by hand, a
@@ -189,17 +286,50 @@ export async function runMatching(
     database,
     shown.filter((record) => handled.has(record.id)).map((record) => record.id),
   );
-  await removeDecisions(
+  const gone = records.filter((record) => record.hidden).map((record) => record.id);
+  await removeDecisions(database, gone);
+  const decided = await decideAll(database, shown, now);
+  await storeResults(
     database,
-    records.filter((record) => record.hidden).map((record) => record.id),
-  );
-  const decisions = await decideAll(database, shown, now);
-  await storeDecisions(
-    database,
-    decisions.map((decision) => carryOver(decision, pending.get(decision.transactionId))),
+    decided.map((result) => ({
+      ...result,
+      stored: carryOver(result.stored, pending.get(result.stored.transactionId)),
+    })),
+    now,
+    gone,
   );
   await updatePairItems(database, pairing);
   await tellDecidedAgain(shown.filter((record) => !handled.has(record.id)));
+  await decideLoanPaymentsAgain(database, shown, now);
+}
+
+// A payout the app sees for the first time may make a loan a Cash loan (spec 02, Connected loans),
+// so the payments of each loan whose type the app decides are decided again. A payout is money in
+// under a LOAN_DISBURSEMENTS_* code, or the other side of a pair with a loan.
+async function decideLoanPaymentsAgain(
+  database: Database,
+  records: readonly DecisionRecord[],
+  now: Date,
+): Promise<void> {
+  if (!records.some((record) => record.amount > 0)) return;
+  const loans = (await listDecisionAccounts(database)).filter(
+    (account) => isLoan(account) && account.loanType === null,
+  );
+  const loanIds = new Set(loans.map((loan) => loan.id));
+  const payout = records.some(
+    (record) =>
+      record.amount > 0 &&
+      !loanIds.has(record.accountId) &&
+      (record.providerCategory?.startsWith("LOAN_DISBURSEMENTS_") === true ||
+        (record.otherSide !== null && loanIds.has(record.otherSide.accountId))),
+  );
+  if (!payout) return;
+  const ids: string[] = [];
+  for (const loan of loans) ids.push(...(await listLoanPaymentIds(database, loan.id)));
+  const again = (await readDecisionRecords(database, ids)).filter((record) => !record.hidden);
+  if (again.length === 0) return;
+  await storeResults(database, await decideAll(database, again, now), now);
+  await tellDecidedAgain(again);
 }
 
 // The daily task: decides again each Transaction whose provisional result ended before the
@@ -211,7 +341,7 @@ export async function decideProvisionalAgain(
 ): Promise<number> {
   const passed = await listProvisionalPassed(database, await householdToday(database, now));
   const records = await readDecisionRecords(database, passed);
-  await storeDecisions(database, await decideAll(database, records, now));
+  await storeResults(database, await decideAll(database, records, now), now);
   await tellDecidedAgain(records);
   if (passed.length > 0) log.info("Decided provisional results again", { count: passed.length });
   return passed.length;
@@ -278,6 +408,32 @@ async function followUpSoon(): Promise<void> {
   }
 }
 
+// A Member added, edited, closed, or reopened an Account, so each one-sided Transfer may go to
+// another account now, such as one whose name it holds. The follow-up job decides them again.
+export async function decideOneSidedAgain(database: Database): Promise<void> {
+  const ids = await listDecidedAt(database, ONE_SIDED_STEPS);
+  if (ids.length === 0) return;
+  await followUpAgain(database, ids);
+  await followUpSoon();
+}
+
+// A Member switches a connected loan's type, or types its APR. The follow-up job decides its
+// payments again. Undefined when no connected loan has the ID.
+export async function setLoanSettings(
+  database: Database,
+  accountId: string,
+  fields: Partial<LoanFields>,
+): Promise<LoanSettings | undefined> {
+  if (!(await storeLoanFields(database, accountId, fields))) return undefined;
+  const ids = await listLoanPaymentIds(database, accountId);
+  if (ids.length > 0) {
+    await followUpAgain(database, ids);
+    await followUpSoon();
+  }
+  log.info("A Member set a loan's type or APR", { fields: Object.keys(fields) });
+  return readLoanSettings(database, accountId);
+}
+
 // A Member sets the type by hand. It wins over every rule and survives every re-run. The follow-up
 // job stores the result and pairs the other side of any link again, so Matching never runs beside
 // a sync. Returns the result the job stores, or undefined when no Transaction that shows has the
@@ -299,7 +455,7 @@ export async function setTransactionType(
   const { hidden, ...updated } = { ...record, handSet: { ...record.handSet, type } };
   const { step, parts, provisionalUntil } = await decide({
     ...updated,
-    today: await householdToday(database, now),
+    ...(await decisionContext(database, now)),
   });
   return { step, parts, provisionalUntil: provisionalUntil ?? null };
 }
@@ -365,6 +521,7 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
     }),
     registerReviewKind(UNCLEAR_PAIR_KIND, pairKind),
     registerReviewKind(PAIR_GUESS_KIND, pairKind),
+    registerReviewKind(ONE_SIDED_KIND, oneSidedKind(started.database)),
   ];
   return {
     stop() {

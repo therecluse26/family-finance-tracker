@@ -42,6 +42,8 @@ describe("the money-movement routes", () => {
   let stops: (() => void)[];
   // Each Transaction's ID in app.db, by its provider ID.
   let ids: Map<string, string>;
+  let fake: FakeBankAdapter;
+  let connectionId: string;
 
   beforeEach(async () => {
     const quiet = createLogger(() => {}, { throwOnSecretField: true });
@@ -53,7 +55,7 @@ describe("the money-movement routes", () => {
       test.database,
       test.secrets,
     );
-    const fake = new FakeBankAdapter();
+    fake = new FakeBankAdapter();
     stops = [
       startBank({ database: test.database, secrets: test.secrets, adapters: [fake] }).stop,
       // The follow-up job runs at once.
@@ -84,7 +86,7 @@ describe("the money-movement routes", () => {
       ],
     });
     fake.addPages(BANK, { removed: [{ id: "gone" }], historyLoaded: true });
-    const connectionId = await addConnection(test.database, {
+    connectionId = await addConnection(test.database, {
       provider: "fake",
       bankId: BANK,
       bankName: "First Fake Bank",
@@ -197,6 +199,86 @@ describe("the money-movement routes", () => {
     expect(rent.transferLink).toBeNull();
     expect((await browser.get(`/api/transactions/${ids.get("gone")}`)).status).toBe(404);
     expect((await browser.get("/api/transactions/no-such-id")).status).toBe(404);
+  });
+
+  it("ties a one-sided Transfer to the Unconnected account a Member adds", async () => {
+    fake.addPages(BANK, {
+      added: [
+        fakeTxn({
+          id: "to-credit-union",
+          accountId: "acc-checking",
+          amount: -25_000,
+          postedDate: "2026-10-04",
+          description: "ONLINE TRANSFER TO CREDIT UNION XXXX1234",
+        }),
+      ],
+    });
+    await syncConnection(connectionId, () => new Date("2026-10-20T15:00:00.000Z"));
+    await runFollowUp(() => new Date("2026-10-20T15:00:00.000Z"));
+
+    const res = await browser.send("POST", "/api/unconnected-accounts", {
+      name: "Credit union savings",
+      kind: "savings",
+      institutionName: "Credit union",
+      mask: "1234",
+    });
+
+    expect(res.status).toBe(200);
+    // The follow-up job decided the Transfer again, and it moved the new account's estimate.
+    const { accounts } = (await (await browser.get("/api/unconnected-accounts")).json()) as {
+      accounts: { estimate: { balance: number; state: string } }[];
+    };
+    expect(accounts.map((account) => account.estimate)).toEqual([
+      { balance: 25_000, state: "estimated", typedOn: null },
+    ]);
+  });
+
+  it("reads and sets a connected loan's type and the APR a Member typed", async () => {
+    fake.addPages(BANK, {
+      accounts: [
+        fakeAccount({ id: "acc-car", type: "loan", subtype: "auto", currentBalance: -900_000 }),
+      ],
+    });
+    await syncConnection(connectionId, () => new Date("2026-10-20T15:00:00.000Z"));
+    const rows = await test.database.$client.execute(
+      "SELECT id FROM household_accounts WHERE provider_account_id = 'acc-car'",
+    );
+    const car = String(rows.rows[0]?.id);
+    const loanRoute = `/api/accounts/${car}/loan`;
+
+    expect(await (await browser.get(loanRoute)).json()).toEqual({
+      loan: { accountId: car, loanType: "purchase loan", setBy: "app", apr: null },
+    });
+    const set = await browser.send("PUT", loanRoute, { loanType: "cash loan", apr: 5.25 });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({
+      loan: { accountId: car, loanType: "cash loan", setBy: "Member", apr: 5.25 },
+    });
+    // Null hands the type back to the app. The APR keeps its value.
+    expect(await (await browser.send("PUT", loanRoute, { loanType: null })).json()).toEqual({
+      loan: { accountId: car, loanType: "purchase loan", setBy: "app", apr: 5.25 },
+    });
+
+    for (const body of [
+      { apr: 101 },
+      { apr: -1 },
+      { apr: "5" },
+      { loanType: "car loan" },
+      { other: 1 },
+    ]) {
+      expect((await browser.send("PUT", loanRoute, body)).status).toBe(400);
+    }
+    // Checking is not a loan.
+    const checking = await test.database.$client.execute(
+      "SELECT id FROM household_accounts WHERE provider_account_id = 'acc-checking'",
+    );
+    expect((await browser.get(`/api/accounts/${checking.rows[0]?.id}/loan`)).status).toBe(404);
+    expect(
+      (await browser.send("PUT", `/api/accounts/${checking.rows[0]?.id}/loan`, { apr: 5 })).status,
+    ).toBe(404);
+    expect((await browser.send("PUT", "/api/accounts/no-such-id/loan", { apr: 5 })).status).toBe(
+      404,
+    );
   });
 
   it("answers no one who is signed out", async () => {

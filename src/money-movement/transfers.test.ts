@@ -279,7 +279,8 @@ describe("Transfer pairing", () => {
       });
 
       expect(await pairs()).toEqual(["maple-out-1 → maple-in-1"]);
-      expect(await typeOf("maple-out-2")).toBe("Spending");
+      // With no pair, its transfer category makes it a one-sided Transfer.
+      expect(await typeOf("maple-out-2")).toBe("Transfer");
       expect(await typeOf("maple-in-2")).toBe("Income");
     });
 
@@ -593,7 +594,8 @@ describe("Transfer pairing", () => {
 
       await sync({ removed: ["maple-in-2"] });
       expect(await pairs()).toEqual([]);
-      expect(await typeOf("maple-out-2")).toBe("Spending");
+      // One-sided now.
+      expect(await typeOf("maple-out-2")).toBe("Transfer");
     });
 
     it("tells Categorization about each other side decided again, oldest first", async () => {

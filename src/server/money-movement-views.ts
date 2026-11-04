@@ -67,6 +67,23 @@ export type TransactionDetailView = {
   transferLink: TransferLinkView | null;
 };
 
+// A connected loan's type as it counts, and the APR a Member typed (spec 02, Account fields).
+export type LoanView = {
+  accountId: string;
+  loanType: "cash loan" | "purchase loan";
+  // "app" while the subtype or a payout decides the type.
+  setBy: "Member" | "app";
+  // A percent, such as 6.5, or null.
+  apr: number | null;
+};
+
+// A Member's change to a connected loan. A field left out keeps its value. Null hands the type back
+// to the app, or clears the APR.
+export type LoanBody = {
+  loanType?: "cash loan" | "purchase loan" | null;
+  apr?: number | null;
+};
+
 export type MoneyMovementRoutes = {
   // Undefined when no Transaction that shows has the ID.
   transaction(transactionId: string): Promise<TransactionDetailView | undefined>;
@@ -77,4 +94,8 @@ export type MoneyMovementRoutes = {
   ): Promise<TransactionDecisionView | undefined>;
   // Every month with a posted Transaction, oldest first.
   totals(): Promise<MonthTotalsView[]>;
+  // Undefined when no connected loan has the ID.
+  loan(accountId: string): Promise<LoanView | undefined>;
+  // Undefined when no connected loan has the ID.
+  setLoan(accountId: string, body: LoanBody): Promise<LoanView | undefined>;
 };

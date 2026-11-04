@@ -1,12 +1,15 @@
 import type { Category } from "../categories/index.ts";
-import type { DecisionRecord } from "../db/index.ts";
+import type { DecisionAccount, DecisionRecord } from "../db/index.ts";
+import { type LoanFacts, loanPayout } from "./loans.ts";
+import { oneSidedTransfer } from "./one-sided.ts";
+import { accountsTreatment, pairTreatment } from "./pairs.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";
 
 // The order of decisions (spec 03, Order of decisions): each Transaction's type comes from an
 // ordered list of steps, and the first step that fits wins. Steps 1 to 4 apply to every
 // Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Steps 1, 2, 3,
-// 5.7, and 6.9 are built in; later tickets register their rules in the other steps. An empty step
-// is skipped.
+// 5.6, 5.7, 6.2, 6.7, and 6.9 are built in; later tickets register their rules in the other steps.
+// An empty step is skipped.
 
 export const DECISION_STEPS = [
   { step: "1", name: "a type a Member set by hand" },
@@ -49,12 +52,32 @@ export type Part = {
 // A rule's answer. The parts add up to the Transaction's amount. A one-sided result may be
 // provisional to the end of a day, the last day of its window; a daily task decides it again
 // once that day has passed.
-export type Decision = { parts: Part[]; provisionalUntil?: string };
-
-// What a rule reads: the Transaction, and the Household's date.
-export type DecisionInput = Omit<DecisionRecord, "hidden"> & {
-  today: string;
+// - `unconnectedAccountId` assigns the Transaction to an Unconnected account, or to a synced
+//   investment Account, which moves its balance estimate (spec 03, Unconnected accounts).
+// - `asks` puts a one-sided Transfer on the Review list, with what the app decided and its best
+//   answer.
+// - `paidFromOutside` marks a payment on a tracked loan that no Household Account sent. Its parts
+//   sit on the loan's own Transaction with the paying side's sign, so they add up to minus the
+//   Transaction's amount: money into the loan is money out of the Household (spec 03, Payments on
+//   a tracked loan).
+export type Decision = {
+  parts: Part[];
+  provisionalUntil?: string;
+  unconnectedAccountId?: string;
+  asks?: { decided: string; bestAnswer: { value: string; label: string } };
+  paidFromOutside?: boolean;
 };
+
+// What a rule reads besides the Transaction: the Household's date, its Accounts by ID, and the
+// facts of a connected loan, read once a run when a rule first needs them.
+export type DecisionContext = {
+  today: string;
+  accounts: ReadonlyMap<string, DecisionAccount>;
+  loanFacts(loanId: string): Promise<LoanFacts>;
+};
+
+// What a rule reads: the Transaction, and its context.
+export type DecisionInput = Omit<DecisionRecord, "hidden"> & DecisionContext;
 
 // A rule fits when it gives a Decision, and does not fit when it gives undefined.
 export type DecisionRule = (
@@ -75,18 +98,26 @@ const handSetType: DecisionRule = (txn) =>
   isHandSetType(txn.handSet.type) ? whole(txn, txn.handSet.type) : undefined;
 
 // Step 2. A Transfer link a Member made by hand. Other kinds of hand link come with their tickets.
+// The Accounts on its two sides decide how it counts.
 const handLink: DecisionRule = (txn) =>
-  txn.transferLink === "Member" ? whole(txn, "Transfer") : undefined;
+  txn.transferLink === "Member" ? pairTreatment(txn) : undefined;
 
-// Step 3. A Transfer pair that pairing or the AI linked (spec 03, Transfers).
+// Step 3. A Transfer pair that pairing or the AI linked (spec 03, Transfers). The Accounts on its
+// two sides decide how it counts. A Transaction with no pair, on an Account whose own Transactions
+// count only through pairs, an investment Account or a loan, is decided here too.
 const transferPair: DecisionRule = (txn) =>
-  txn.transferLink === "app" || txn.transferLink === "AI" ? whole(txn, "Transfer") : undefined;
+  txn.transferLink === "app" || txn.transferLink === "AI"
+    ? pairTreatment(txn)
+    : accountsTreatment(txn);
 
 const BUILT_IN = new Map<DecisionStep, DecisionRule>([
   ["1", handSetType],
   ["2", handLink],
   ["3", transferPair],
+  ["5.6", oneSidedTransfer],
   ["5.7", (txn) => whole(txn, "Spending")],
+  ["6.2", loanPayout],
+  ["6.7", oneSidedTransfer],
   ["6.9", (txn) => whole(txn, "Income")],
 ]);
 
@@ -109,7 +140,8 @@ const appliesTo = (step: DecisionStep, amount: number) =>
 
 function checkDecision(step: DecisionStep, txn: DecisionInput, decision: Decision): void {
   const sum = decision.parts.reduce((total, part) => total + part.amount, 0);
-  if (decision.parts.length === 0 || sum !== txn.amount) {
+  const amount = decision.paidFromOutside === true ? -txn.amount : txn.amount;
+  if (decision.parts.length === 0 || sum !== amount) {
     throw new Error(`Step ${step} gave parts that do not add up to the Transaction's amount.`);
   }
   for (const part of decision.parts) {

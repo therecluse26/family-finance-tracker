@@ -64,7 +64,10 @@ export {
   type CategoryConfidence,
   type CategoryRecord,
   type CategorySource,
+  type DecisionAccount,
   type DecisionRecord,
+  listDecidedAt,
+  listDecisionAccounts,
   listMerchantHistory,
   listPostedParts,
   listProvisionalPassed,
@@ -109,6 +112,17 @@ export {
   type TransferLinkMaker,
   type TransferPair,
 } from "./links.ts";
+export {
+  type LoanFields,
+  type LoanHistory,
+  type LoanPayouts,
+  type LoanType,
+  listLoanPaymentIds,
+  listLoanPayouts,
+  readLoanFields,
+  readLoanHistory,
+  storeLoanFields,
+} from "./loans.ts";
 export { loginTables } from "./login-tables.ts";
 export {
   type MasterKeyCheck,
@@ -164,6 +178,7 @@ export {
   readLastTypedBalance,
   readUnconnectedAccount,
   type StoredUnconnectedAccount,
+  saveUnconnectedAssignments,
   storeTypedBalance,
   type TypedBalance,
   type UnconnectedFields,
