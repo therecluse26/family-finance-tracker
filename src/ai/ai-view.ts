@@ -151,12 +151,104 @@ function ipv6Kind(words: number[]): HostKind {
   return "public";
 }
 
+// Every AI use (spec 08, Every AI use), and the check on save, which also counts toward the
+// month's cost. The db module stores the same names.
+export const AI_USES = [
+  "category fix",
+  "merchant cleanup",
+  "unclear transfer",
+  "reimbursement linking",
+  "reading a goal",
+  "alert advice",
+  "budget tailoring",
+  "insight cards",
+  "monthly review",
+  "chat",
+  "check on save",
+] as const;
+
+export type AiUse = (typeof AI_USES)[number];
+
+export const AI_USE_LABELS: Record<AiUse, string> = {
+  "category fix": "Category fix",
+  "merchant cleanup": "Merchant cleanup",
+  "unclear transfer": "Unclear Transfer",
+  "reimbursement linking": "Reimbursement linking",
+  "reading a goal": "Reading a Goal",
+  "alert advice": "Alert advice",
+  "budget tailoring": "Budget tailoring",
+  "insight cards": "Insight cards",
+  "monthly review": "Monthly review",
+  chat: "Chat",
+  "check on save": "Check on save",
+};
+
+// Spec 08, Model tiers. The check on save calls both tiers.
+export type ModelUse = Exclude<AiUse, "check on save">;
+
+export const USE_TIERS: Record<ModelUse, AiTier> = {
+  "category fix": "quick",
+  "merchant cleanup": "quick",
+  "unclear transfer": "quick",
+  "reimbursement linking": "quick",
+  "reading a goal": "quick",
+  "alert advice": "quick",
+  "budget tailoring": "writer",
+  "insight cards": "writer",
+  "monthly review": "writer",
+  chat: "writer",
+};
+
+// Background AI is every use except Chat and reading a Goal. A Member starts those two, and at
+// the AI cost cap they ask "Send anyway?" first.
+export function isBackground(use: ModelUse): boolean {
+  return use !== "chat" && use !== "reading a goal";
+}
+
+// The AI cost cap a Household starts with: $10 a month.
+export const DEFAULT_COST_CAP_CENTS = 1000;
+
+// The highest cap a Member may set: $10,000 a month.
+export const MAX_COST_CAP_CENTS = 1_000_000;
+
+// The AI usage page (spec 08, AI usage page): metadata only, never prompt or reply text. Costs
+// are in billionths of a dollar. `month` is the calendar month in the Household time zone,
+// YYYY-MM, and `at` is a moment in UTC.
+export type AiCallView = {
+  id: number;
+  use: AiUse;
+  model: string;
+  noCacheTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  costNanos: number;
+  at: string;
+};
+
+export type AiUsageView = {
+  month: string;
+  totalNanos: number;
+  capCents: number;
+  // The date background AI starts again, YYYY-MM-DD, while the month is at the cap.
+  pausedUntil: string | null;
+  byUse: { use: AiUse; calls: number; costNanos: number }[];
+  calls: AiCallView[];
+};
+
 // The status line. "cost cap" pauses AI until `until`, a calendar date written YYYY-MM-DD.
 export type AiStatus =
   | { state: "on" }
   | { state: "waits for history" }
   | { state: "cost cap"; until: string }
   | { state: "key rejected" };
+
+// How the app prices a model: from its price table, from prices a Member entered, or not at all.
+// The app makes no call with a model that has no price.
+export type PriceSource =
+  | { source: "table" }
+  | { source: "member"; input: number; output: number }
+  | { source: "none" };
 
 export type AiView = {
   provider: AiProviderName;
@@ -165,8 +257,13 @@ export type AiView = {
   gatewayTokenSet: boolean;
   quickModel: string;
   writerModel: string;
+  prices: Record<AiTier, PriceSource>;
   status: AiStatus;
 };
+
+// Input and output prices a Member enters for a model not in the price table, each in millionths
+// of a dollar per million tokens. Cache reads and writes then count at the input price.
+export type EnteredPrice = { input: number; output: number };
 
 // What a Member saves. An API key or gateway token left out keeps the one stored; a gateway token
 // of null removes it. A change of AI provider or base URL keeps neither, so a stored key never goes
@@ -178,6 +275,8 @@ export type AiSettingsInput = {
   gatewayToken?: string | null;
   quickModel: string;
   writerModel: string;
+  // For a model not in the price table. Left out, the prices stored for that model stay.
+  prices?: Partial<Record<AiTier, EnteredPrice>>;
 };
 
 // What the one call to a model on save did.
@@ -192,7 +291,9 @@ export type AiSave =
   // A Remove AI provider or another save changed the settings while this save checked them.
   | { saved: false; refusal: "changed" }
   // The change touches a secret or where it goes, so it needs a fresh TOTP or backup code.
-  | { saved: false; refusal: "code needed" };
+  | { saved: false; refusal: "code needed" }
+  // A model is not in the price table, and has no prices from a Member.
+  | { saved: false; refusal: "price needed"; tier: AiTier };
 
 export type AiSettings = {
   // Undefined when no AI provider is set up.
@@ -202,4 +303,8 @@ export type AiSettings = {
   save(input: AiSettingsInput, options: { freshCode: boolean }): Promise<AiSave>;
   // Deletes the AI provider and its key. Every use falls back to its no-AI path.
   remove(): Promise<void>;
+  // The AI usage page. It holds no prompt text or reply text.
+  usage(): Promise<AiUsageView>;
+  // Sets the AI cost cap, in cents. A cap above the month's total starts background AI again.
+  setCostCap(capCents: number): Promise<AiUsageView>;
 };

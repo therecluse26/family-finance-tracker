@@ -53,7 +53,7 @@ describe("the AI providers' models", () => {
     ]);
   });
 
-  it('sends provider: { data_collection: "deny" } to OpenRouter on every call', async () => {
+  it('sends provider: { data_collection: "deny" } to OpenRouter on every call, and asks for its cost', async () => {
     const requests = await callBoth(connection("openrouter"));
 
     expect(requests.map((request) => request.url)).toEqual([
@@ -62,6 +62,7 @@ describe("the AI providers' models", () => {
     ]);
     for (const request of requests) {
       expect(request.body.provider).toEqual({ data_collection: "deny" });
+      expect(request.body.usage).toEqual({ include: true });
     }
   });
 

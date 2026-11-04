@@ -1,6 +1,6 @@
 import { type Context, Hono } from "hono";
 import * as z from "zod";
-import { AI_PROVIDERS, baseUrlProblem, onGateway } from "../ai/ai-view.ts";
+import { AI_PROVIDERS, baseUrlProblem, MAX_COST_CAP_CENTS, onGateway } from "../ai/ai-view.ts";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { HAND_SET_TYPES } from "../money-movement/types.ts";
@@ -119,6 +119,12 @@ const VISIBLE_ASCII = /^[\x21-\x7e]+$/;
 const aiSecret = z.string().trim().min(1).max(512).regex(VISIBLE_ASCII);
 const modelId = z.string().trim().min(1).max(200).regex(VISIBLE_ASCII);
 
+// A price a Member enters for a model not in the price table, in millionths of a dollar per
+// million tokens: at most $1,000 per million tokens. A local model may be $0.
+const MAX_PRICE = 1_000_000_000;
+const price = z.number().int().min(0).max(MAX_PRICE);
+const enteredPrice = z.object({ input: price, output: price });
+
 // Changing the API key, the gateway token, the AI provider, or the base URL takes a fresh TOTP or
 // backup code, checked when `code` is given. An API key or gateway token left out keeps the one
 // stored.
@@ -129,8 +135,12 @@ const aiSettingsBody = z.object({
   gatewayToken: aiSecret.nullable().optional(),
   quickModel: modelId,
   writerModel: modelId,
+  prices: z.object({ quick: enteredPrice.optional(), writer: enteredPrice.optional() }).optional(),
   code: z.string().trim().min(1).max(64).optional(),
 });
+
+// The AI cost cap, in whole cents.
+const costCapBody = z.object({ capCents: z.number().int().min(0).max(MAX_COST_CAP_CENTS) });
 
 // A base URL as the AI SDK takes it: http or https, with no login, query, or fragment, and no
 // trailing slash. Empty is none. Undefined when it is not such a URL.
@@ -170,6 +180,8 @@ const SAVE_REFUSALS = {
     error: "The AI settings changed while the app checked them. Check and save again.",
   },
 } as const;
+
+const TIER_NAMES = { quick: "Quick model", writer: "Writer model" } as const;
 
 // The body as JSON, or undefined when it is not JSON.
 async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
@@ -391,6 +403,10 @@ export const api = new Hono<ServerEnv>()
     }
     const saved = await c.var.ai.save({ ...fields, baseUrl }, { freshCode });
     if (!saved.saved) {
+      if (saved.refusal === "price needed") {
+        const error = `The app has no price for the ${TIER_NAMES[saved.tier]}. Enter its input and output prices.`;
+        return c.json({ error }, 400);
+      }
       const { status, error } = SAVE_REFUSALS[saved.refusal];
       return c.json({ error }, status);
     }
@@ -399,6 +415,15 @@ export const api = new Hono<ServerEnv>()
   .post("/ai/remove", async (c) => {
     await c.var.ai.remove();
     return c.json({ ai: null });
+  })
+  // The AI usage page: metadata only, never prompt text or reply text (spec 08, AI usage page).
+  .get("/ai/usage", async (c) => c.json({ usage: await c.var.ai.usage() }))
+  .put("/ai/cost-cap", async (c) => {
+    const body = costCapBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json({ error: "Enter the AI cost cap in dollars, from $0 to $10,000." }, 400);
+    }
+    return c.json({ usage: await c.var.ai.setCostCap(body.data.capCents) }, 200);
   });
 
 export type Api = typeof api;

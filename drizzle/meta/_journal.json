@@ -127,6 +127,13 @@
       "when": 1793802306683,
       "tag": "0017_connection_health",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1793804142660,
+      "tag": "0018_ai_cost",
+      "breakpoints": true
     }
   ]
 }

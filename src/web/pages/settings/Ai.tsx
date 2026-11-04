@@ -1,16 +1,22 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import {
   AI_PROVIDER_LABELS,
   AI_PROVIDERS,
   type AiProviderName,
   type AiStatus,
   type AiTier,
+  type AiUsageView,
   type AiView,
   DEFAULT_MODELS,
+  type EnteredPrice,
+  MAX_COST_CAP_CENTS,
   type ModelCheck,
   onGateway,
   USAGE_LIMIT_LINKS,
 } from "../../../ai/ai-view.ts";
+import { tablePrice } from "../../../ai/prices.ts";
+import { capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel } from "../../../format.ts";
 import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
@@ -74,6 +80,54 @@ const CHECK_WORDS: Record<ModelCheck, string> = {
 
 const TIER_LABELS: Record<AiTier, string> = { quick: "Quick model", writer: "Writer model" };
 
+// A price as a Member types it, in dollars per million tokens, such as "0.50", in millionths of
+// a dollar per million tokens. Undefined when it is not $0 or more with at most 6 decimals.
+export function priceOfText(text: string): number | undefined {
+  const plain = text.trim().replace(/^\$/, "");
+  if (!/^\d{1,4}(\.\d{1,6})?$/.test(plain)) return undefined;
+  return Math.round(Number(plain) * 1_000_000);
+}
+
+function textOfPrice(millionths: number): string {
+  return String(millionths / 1_000_000);
+}
+
+// An amount in dollars as a Member types it, such as "10" or "12.50", in cents.
+export function centsOfText(text: string): number | undefined {
+  const plain = text.trim().replace(/^\$/, "");
+  if (!/^\d{1,5}(\.\d{1,2})?$/.test(plain)) return undefined;
+  return Math.round(Number(plain) * 100);
+}
+
+type PriceText = { input: string; output: string };
+
+function storedPriceText(ai: AiView | null, tier: AiTier): PriceText {
+  const price = ai?.prices[tier];
+  return price?.source === "member"
+    ? { input: textOfPrice(price.input), output: textOfPrice(price.output) }
+    : { input: "", output: "" };
+}
+
+// The prices to send for each model not in the price table. Fields left empty keep the stored
+// prices. "bad" when a field holds no price.
+export function enteredPrices(
+  provider: AiProviderName,
+  models: Record<AiTier, string>,
+  texts: Record<AiTier, PriceText>,
+): Partial<Record<AiTier, EnteredPrice>> | "bad" {
+  const prices: Partial<Record<AiTier, EnteredPrice>> = {};
+  for (const tier of ["quick", "writer"] as const) {
+    const text = texts[tier];
+    if (tablePrice(provider, models[tier]) !== undefined) continue;
+    if (text.input.trim() === "" && text.output.trim() === "") continue;
+    const input = priceOfText(text.input);
+    const output = priceOfText(text.output);
+    if (input === undefined || output === undefined) return "bad";
+    prices[tier] = { input, output };
+  }
+  return prices;
+}
+
 function Field(props: {
   label: string;
   value: string;
@@ -112,6 +166,10 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
   const [writerModel, setWriterModel] = useState(
     ai?.writerModel ?? DEFAULT_MODELS.anthropic?.writer ?? "",
   );
+  const [prices, setPrices] = useState<Record<AiTier, PriceText>>({
+    quick: storedPriceText(ai, "quick"),
+    writer: storedPriceText(ai, "writer"),
+  });
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -128,11 +186,20 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
     setWriterModel(DEFAULT_MODELS[next]?.writer ?? "");
   }
 
+  const models: Record<AiTier, string> = { quick: quickModel.trim(), writer: writerModel.trim() };
+  const unpriced = (["quick", "writer"] as const).filter(
+    (tier) => models[tier] !== "" && tablePrice(provider, models[tier]) === undefined,
+  );
+
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setBusy(true);
     setError(undefined);
     setCheck(undefined);
+    const entered = enteredPrices(provider, models, prices);
+    if (entered === "bad") {
+      return setError("Enter each price in dollars per million tokens, such as 0.50.");
+    }
+    setBusy(true);
     try {
       const res = await api.ai.settings.$post({
         json: {
@@ -141,8 +208,9 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           baseUrl: baseUrl.trim() === "" ? null : baseUrl.trim(),
           ...(gateway && gatewayToken.trim() !== "" ? { gatewayToken: gatewayToken.trim() } : {}),
           ...(gateway && removeToken ? { gatewayToken: null } : {}),
-          quickModel: quickModel.trim(),
-          writerModel: writerModel.trim(),
+          quickModel: models.quick,
+          writerModel: models.writer,
+          ...(Object.keys(entered).length === 0 ? {} : { prices: entered }),
           ...(code.trim() === "" ? {} : { code: code.trim() }),
         },
       });
@@ -224,6 +292,31 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
       ) : null}
       <Field label="Quick model" value={quickModel} onChange={setQuickModel} required />
       <Field label="Writer model" value={writerModel} onChange={setWriterModel} required />
+      {unpriced.length === 0 ? null : (
+        <fieldset className="mt-4">
+          <legend className="font-semibold">Prices, in dollars per million tokens</legend>
+          <p className="mt-1 text-gray-600">
+            The app has no price for this model. Cache reads and writes count at the input price. A
+            local model may be $0. The app makes no call with a model that has no price.
+          </p>
+          {unpriced.map((tier) => (
+            <div key={tier}>
+              <Field
+                label={`${TIER_LABELS[tier]} (${models[tier]}): input price`}
+                value={prices[tier].input}
+                onChange={(input) => setPrices({ ...prices, [tier]: { ...prices[tier], input } })}
+                placeholder="0.50"
+              />
+              <Field
+                label={`${TIER_LABELS[tier]} (${models[tier]}): output price`}
+                value={prices[tier].output}
+                onChange={(output) => setPrices({ ...prices, [tier]: { ...prices[tier], output } })}
+                placeholder="2.50"
+              />
+            </div>
+          ))}
+        </fieldset>
+      )}
       <Field
         label={`${CODE_LABEL}, to set or change the key, the token, the AI provider, or the base URL`}
         autoComplete="one-time-code"
@@ -295,13 +388,72 @@ function RemoveAiProvider(props: { onRemoved: () => void }) {
   );
 }
 
+// The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap).
+export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsageView) => void }) {
+  const { usage } = props;
+  const [cap, setCap] = useState(String(usage.capCents / 100));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(undefined);
+    const capCents = centsOfText(cap);
+    if (capCents === undefined || capCents > MAX_COST_CAP_CENTS) {
+      return setError("Enter the AI cost cap in dollars, from $0 to $10,000.");
+    }
+    setBusy(true);
+    try {
+      const res = await api.ai["cost-cap"].$put({ json: { capCents } });
+      if (!res.ok) return setError(await refusal(res));
+      props.onSaved(((await res.json()) as { usage: AiUsageView }).usage);
+    } catch {
+      setError("The server did not answer.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="mt-6" onSubmit={submit}>
+      <h3 className="text-lg font-semibold">AI cost cap</h3>
+      <p className="mt-1">This month: {capLine(usage.totalNanos, usage.capCents)}</p>
+      <p className="mt-1 text-gray-600">
+        At the cap, background AI pauses until the 1st. Chat and Goals ask before each call.
+      </p>
+      <Field label="AI cost cap, in dollars a month" value={cap} onChange={setCap} required />
+      <button className={BUTTON} type="submit" disabled={busy}>
+        Save cap
+      </button>
+      <ErrorLine error={error} />
+      <p className="mt-3">
+        <Link className="text-blue-700 underline" to="/settings/ai/usage">
+          AI usage
+        </Link>
+      </p>
+    </form>
+  );
+}
+
 export function Ai() {
   const [ai, setAi] = useState<AiView | null | undefined>();
+  const [usage, setUsage] = useState<AiUsageView | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [zone, setZone] = useState<string | undefined>();
   const today = todayHere(new Date(), zone);
 
+  // The check on save counts toward the month's cost, so a save loads the total again.
+  const loadUsage = useCallback(() => {
+    api.ai.usage
+      .$get()
+      .then(async (res) => {
+        if (res.ok) setUsage(((await res.json()) as { usage: AiUsageView }).usage);
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
+    loadUsage();
     // The AI provider is set only after the wizard's step 4, so the Household has a time zone.
     api.household
       .$get()
@@ -317,7 +469,7 @@ export function Ai() {
         setAi(((await res.json()) as { ai: AiView | null }).ai);
       })
       .catch(() => setError("The server did not answer."));
-  }, []);
+  }, [loadUsage]);
 
   return (
     <>
@@ -330,7 +482,15 @@ export function Ai() {
           ) : (
             <AiStatusLine ai={ai} today={today} />
           )}
-          <AiProviderForm key={ai === null ? "none" : "set"} ai={ai} onSaved={setAi} />
+          <AiProviderForm
+            key={ai === null ? "none" : "set"}
+            ai={ai}
+            onSaved={(saved) => {
+              setAi(saved);
+              loadUsage();
+            }}
+          />
+          {usage === undefined ? null : <CostCapForm usage={usage} onSaved={setUsage} />}
           {ai === null ? null : <RemoveAiProvider onRemoved={() => setAi(null)} />}
         </>
       )}

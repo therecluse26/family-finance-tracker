@@ -3,8 +3,9 @@ import { addConnection } from "../db/index.ts";
 import { createLogger, holdsSecretValue } from "../log.ts";
 import { SecretDecryptError } from "../secrets/index.ts";
 import type { AiSettings, AiSettingsInput } from "./ai-view.ts";
+import { aiCost } from "./cost.ts";
 import { makeFetchModels } from "./providers.ts";
-import { type AiGates, aiSettings, defaultGates, readAiModels } from "./settings.ts";
+import { type AiGates, aiCalls, aiSettings, defaultGates } from "./settings.ts";
 import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
 
 // Settings → AI behind its routes (spec 08, AI settings page), on AI SDK test models and a fetch
@@ -18,6 +19,8 @@ const anthropic = (more: Partial<AiSettingsInput> = {}): AiSettingsInput => ({
   baseUrl: null,
   quickModel: "claude-haiku-5-5",
   writerModel: "claude-sonnet-5-5",
+  // Used only for a model not in the price table, such as a made-up one.
+  prices: { quick: { input: 0, output: 0 }, writer: { input: 0, output: 0 } },
   ...more,
 });
 
@@ -37,6 +40,7 @@ describe("the AI settings", () => {
     gates = { historyLoaded: async () => true, costCapPausedUntil: async () => undefined };
     ai = aiSettings({
       database: test.database,
+      cost: aiCost({ database: test.database }),
       secrets: test.secrets,
       makeModels: stub.makeModels,
       gates: {
@@ -50,6 +54,17 @@ describe("the AI settings", () => {
   afterEach(() => {
     test.close();
   });
+
+  const chatReady = async () =>
+    (
+      await aiCalls({
+        database: test.database,
+        cost: aiCost({ database: test.database }),
+        secrets: test.secrets,
+        makeModels: stub.makeModels,
+        gates,
+      }).modelFor("chat")
+    ).ready;
 
   const storedRow = async () =>
     (await test.database.$client.execute("SELECT * FROM ai_settings")).rows;
@@ -73,6 +88,7 @@ describe("the AI settings", () => {
         gatewayTokenSet: false,
         quickModel: "claude-haiku-5-5",
         writerModel: "claude-sonnet-5-5",
+        prices: { quick: { source: "table" }, writer: { source: "table" } },
         status: { state: "on" },
       },
     });
@@ -83,6 +99,7 @@ describe("the AI settings", () => {
     const capture = new CapturingFetch();
     const real = aiSettings({
       database: test.database,
+      cost: aiCost({ database: test.database }),
       secrets: test.secrets,
       makeModels: makeFetchModels(capture.fetch),
       gates,
@@ -177,7 +194,12 @@ describe("the AI settings", () => {
     await ai.save(anthropic(), FRESH);
 
     const moved = await ai.save(
-      { provider: "anthropic", baseUrl: GATEWAY, quickModel: "a", writerModel: "b" },
+      {
+        provider: "anthropic",
+        baseUrl: GATEWAY,
+        quickModel: "claude-haiku-5-5",
+        writerModel: "claude-sonnet-5-5",
+      },
       FRESH,
     );
 
@@ -199,6 +221,7 @@ describe("the AI settings", () => {
         baseUrl: "http://ollama.local:11434/v1",
         quickModel: "llama-small",
         writerModel: "llama-large",
+        prices: { quick: { input: 0, output: 0 }, writer: { input: 0, output: 0 } },
       },
       FRESH,
     );
@@ -289,7 +312,7 @@ describe("the AI settings", () => {
 
   it("removes the AI provider and its key, so every use takes its no-AI path", async () => {
     await ai.save(anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() }), FRESH);
-    expect(await readAiModels(test.database, test.secrets, stub.makeModels)).toBeDefined();
+    expect(await chatReady()).toBe(true);
 
     await ai.remove();
 
@@ -297,7 +320,7 @@ describe("the AI settings", () => {
       expect.objectContaining({ provider: null, api_key: null, gateway_token: null }),
     ]);
     expect(await ai.view()).toBeUndefined();
-    expect(await readAiModels(test.database, test.secrets, stub.makeModels)).toBeUndefined();
+    expect(await chatReady()).toBe(false);
   });
 
   it("never writes the settings back over a Remove AI provider or a save that came during its check", async () => {
@@ -356,9 +379,7 @@ describe("the AI settings", () => {
     const input = anthropic();
     await ai.save(input, FRESH);
 
-    const models = await readAiModels(test.database, test.secrets, stub.makeModels);
-
-    expect(models).toBeDefined();
+    expect(await chatReady()).toBe(true);
     expect(stub.connections.at(-1)).toEqual({
       provider: "anthropic",
       apiKey: input.apiKey,
@@ -380,7 +401,7 @@ describe("the gate on loaded history, until T20", () => {
   });
 
   it("holds AI back while any Connection's history is loading", async () => {
-    const gates = defaultGates(test.database);
+    const gates = defaultGates(test.database, aiCost({ database: test.database }));
     expect(await gates.historyLoaded()).toBe(true);
 
     const id = await addConnection(test.database, {

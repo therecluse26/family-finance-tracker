@@ -270,6 +270,76 @@ export const aiSettings = sqliteTable(
   ],
 );
 
+// Each AI use, as the AI usage page names it (spec 08, Every AI use). The check on save is the one
+// call to each model when a Member saves the AI settings.
+export const AI_USE_NAMES = [
+  "category fix",
+  "merchant cleanup",
+  "unclear transfer",
+  "reimbursement linking",
+  "reading a goal",
+  "alert advice",
+  "budget tailoring",
+  "insight cards",
+  "monthly review",
+  "chat",
+  "check on save",
+] as const;
+
+// One AI call, for the AI usage page and the AI cost cap (spec 08, Counting cost). It holds
+// metadata only, never prompt text or reply text.
+export const aiCalls = sqliteTable(
+  "ai_calls",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    at: moment("at").notNull(),
+    // The calendar month in the Household time zone when the call ended, written YYYY-MM.
+    month: text("month").notNull(),
+    use: text("use", { enum: AI_USE_NAMES }).notNull(),
+    provider: text("provider", {
+      enum: ["anthropic", "openai", "openrouter", "openai-compatible"],
+    }).notNull(),
+    model: text("model").notNull(),
+    noCacheTokens: integer("no_cache_tokens").notNull(),
+    cacheReadTokens: integer("cache_read_tokens").notNull(),
+    cacheWriteTokens: integer("cache_write_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    // In billionths of a dollar: one call can cost far less than a cent.
+    costNanos: integer("cost_nanos").notNull(),
+  },
+  (table) => [index("ai_calls_month").on(table.month)],
+);
+
+// The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap). It has at
+// most one row, whose ID is 1. With no row, the cap is the default.
+export const aiCostCap = sqliteTable(
+  "ai_cost_cap",
+  {
+    id: integer("id").primaryKey(),
+    capCents: cents("cap_cents"),
+    // The month, YYYY-MM, whose 80% and 100% System notices went out. Each goes out once a month.
+    warnedMonth: text("warned_month"),
+    reachedMonth: text("reached_month"),
+  },
+  (table) => [check("ai_cost_cap_one_row", sql`${table.id} = 1`)],
+);
+
+// The prices a Member entered for a model not in the app's price table (spec 08, AI settings
+// page), in millionths of a dollar per million tokens. Cache reads and writes count at the input
+// price.
+export const aiModelPrices = sqliteTable(
+  "ai_model_prices",
+  {
+    provider: text("provider", {
+      enum: ["anthropic", "openai", "openrouter", "openai-compatible"],
+    }).notNull(),
+    model: text("model").notNull(),
+    input: integer("input").notNull(),
+    output: integer("output").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.provider, table.model] })],
+);
+
 // One link to one bank through one Bank-data provider (spec 02, Connections). bank_id is not
 // unique: a bank can be linked again after its Connection is removed, and "Link again" on a Broken
 // Connection links the same bank. The duplicate check before a token exchange belongs to linking.

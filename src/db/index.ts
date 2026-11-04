@@ -8,6 +8,23 @@ export {
   storeAiSettings,
 } from "./ai-settings.ts";
 export {
+  type AiUseName,
+  addAiCall,
+  type CapNotice,
+  claimCapNotice,
+  listMonthAiCalls,
+  type MemberPrice,
+  type NewAiCall,
+  readCostCap,
+  readMemberPrice,
+  readMonthCost,
+  readMonthCostByUse,
+  type StoredAiCall,
+  storeCostCap,
+  storeMemberPrice,
+  type UseCost,
+} from "./ai-usage.ts";
+export {
   listDailyBalances,
   listPostedDayTotals,
   type StoredDailyBalance,

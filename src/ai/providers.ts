@@ -102,7 +102,11 @@ export function makeFetchModels(base: typeof fetch = fetch): AiModelMaker {
           compatibility: "strict",
           fetch: guarded,
         });
-        const settings = { provider: { data_collection: "deny" as const } };
+        // usage.include asks for the reply's own cost, which replaces the price table.
+        const settings = {
+          provider: { data_collection: "deny" as const },
+          usage: { include: true },
+        };
         return {
           quick: openrouter.chat(models.quick, settings),
           writer: openrouter.chat(models.writer, settings),

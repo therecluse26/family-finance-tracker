@@ -1,25 +1,38 @@
 import { APICallError, generateText, type LanguageModel, RetryError } from "ai";
 import {
   AI_SETTINGS_ROW,
+  type AiUseName,
   type Database,
   listConnections,
   readAiSettings,
   readAiSettingsVersion,
+  readMemberPrice,
   removeAiSettings,
   type StoredAiSettings,
   storeAiSettings,
+  storeMemberPrice,
 } from "../db/index.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 import type { SecretPlace, Secrets } from "../secrets/index.ts";
 import {
+  type AiProviderName,
   type AiSettings,
   type AiStatus,
   type AiTier,
+  type AiUse,
   type AiView,
   baseUrlProblem,
+  type EnteredPrice,
+  isBackground,
   type ModelCheck,
+  type ModelUse,
   onGateway,
+  type PriceSource,
+  USE_TIERS,
 } from "./ai-view.ts";
+import type { AiCost } from "./cost.ts";
+import { type AiPause, outbound } from "./outbound.ts";
+import { type ModelPrice, memberPrice, tablePrice } from "./prices.ts";
 import {
   type AiConnection,
   type AiModelMaker,
@@ -30,6 +43,11 @@ import {
 // The Household's one AI provider (spec 08, AI settings page). The API key and the gateway token
 // are Master-key secrets: the app encrypts them, and never shows or logs them again.
 
+// The ai module's use names and the db module's are one list.
+type SameUses = [AiUse, AiUseName] extends [AiUseName, AiUse] ? true : never;
+const sameUses: SameUses = true;
+void sameUses;
+
 // Each ciphertext decrypts only in ai_settings' one row, in its own column.
 const KEY_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.api_key" };
 const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.gateway_token" };
@@ -37,21 +55,35 @@ const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.
 // Spec 08, Failures: no reply within 120 seconds is an AI error.
 const CALL_TIMEOUT_MS = 120_000;
 
-// What stops AI besides the key. T20 (#46) brings the gate on loaded history, and T77 (#103) the
-// AI cost cap.
+const TIERS = ["quick", "writer"] as const;
+
+// What stops AI besides the key. T20 (#46) brings the gate on loaded history.
 export type AiGates = {
   historyLoaded(): Promise<boolean>;
-  // The date AI starts again, YYYY-MM-DD, while the month's cost is at the AI cost cap.
+  // The date background AI starts again, YYYY-MM-DD, while the month's cost is at the AI cost cap.
   costCapPausedUntil(): Promise<string | undefined>;
 };
 
 // Until T20's gate: AI waits while any Connection's history is loading.
-export function defaultGates(database: Database): AiGates {
+export function defaultGates(database: Database, cost: AiCost): AiGates {
   return {
     historyLoaded: async () =>
       (await listConnections(database)).every((connection) => connection.historyLoaded),
-    costCapPausedUntil: async () => undefined,
+    costCapPausedUntil: () => cost.pausedUntil(),
   };
+}
+
+// A model's price: from the price table, or else from a Member's prices, or none.
+async function priceOf(
+  database: Database,
+  provider: AiProviderName,
+  model: string,
+  entered?: EnteredPrice,
+): Promise<ModelPrice | undefined> {
+  const listed = tablePrice(provider, model);
+  if (listed !== undefined) return listed;
+  const member = entered ?? (await readMemberPrice(database, provider, model));
+  return member === undefined ? undefined : memberPrice(member.input, member.output);
 }
 
 // The HTTP status of a failed call, and nothing else: an AI SDK error also holds the request and
@@ -62,7 +94,7 @@ function statusOf(error: unknown): number | undefined {
 }
 
 // One call with a 1-token reply, and no retry. A 401 or 403 means the AI provider rejected the key.
-// T77 (#103) counts these calls toward the month's cost.
+// The call counts toward the month's cost.
 async function checkModel(model: LanguageModel, logger: Logger): Promise<ModelCheck> {
   try {
     await generateText({
@@ -91,15 +123,19 @@ function decryptConnection(stored: StoredAiSettings, secrets: Secrets): AiConnec
   };
 }
 
-export function aiSettings(options: {
+export type AiOptions = {
   database: Database;
   secrets: Secrets;
   makeModels?: AiModelMaker;
+  // The month's cost and the AI cost cap, with the Household time zone.
+  cost: AiCost;
   gates?: AiGates;
   logger?: Logger;
-}): AiSettings {
-  const { database, secrets, makeModels = makeFetchModels(), logger = log } = options;
-  const gates = options.gates ?? defaultGates(database);
+};
+
+export function aiSettings(options: AiOptions): AiSettings {
+  const { database, secrets, cost, makeModels = makeFetchModels(), logger = log } = options;
+  const gates = options.gates ?? defaultGates(database, cost);
 
   // Undefined when the ciphertext does not decrypt, such as after a restore with another Master key.
   function readSecret(ciphertext: string, place: SecretPlace): string | undefined {
@@ -119,6 +155,12 @@ export function aiSettings(options: {
     return { state: "on" };
   }
 
+  async function priceSource(provider: AiProviderName, model: string): Promise<PriceSource> {
+    if (tablePrice(provider, model) !== undefined) return { source: "table" };
+    const member = await readMemberPrice(database, provider, model);
+    return member === undefined ? { source: "none" } : { source: "member", ...member };
+  }
+
   async function view(): Promise<AiView | undefined> {
     const stored = await readAiSettings(database);
     if (stored === undefined) return undefined;
@@ -129,6 +171,10 @@ export function aiSettings(options: {
       gatewayTokenSet: stored.gatewayToken !== null,
       quickModel: stored.quickModel,
       writerModel: stored.writerModel,
+      prices: {
+        quick: await priceSource(stored.provider, stored.quickModel),
+        writer: await priceSource(stored.provider, stored.writerModel),
+      },
       status: await status(stored),
     };
   }
@@ -152,6 +198,18 @@ export function aiSettings(options: {
       }
       if (input.baseUrl !== null && baseUrlProblem(input.baseUrl) !== undefined) {
         throw new TypeError("The app does not send a key to this base URL.");
+      }
+
+      // The app makes no call with a model that has no price, the check on save included.
+      const modelOf: Record<AiTier, string> = {
+        quick: input.quickModel,
+        writer: input.writerModel,
+      };
+      const prices = {} as Record<AiTier, ModelPrice>;
+      for (const tier of TIERS) {
+        const price = await priceOf(database, input.provider, modelOf[tier], input.prices?.[tier]);
+        if (price === undefined) return { saved: false, refusal: "price needed", tier };
+        prices[tier] = price;
       }
 
       const changesSecrets =
@@ -187,13 +245,20 @@ export function aiSettings(options: {
         baseUrl: input.baseUrl,
         gatewayToken,
       };
-      const models: AiModels = makeModels(connection, {
-        quick: input.quickModel,
-        writer: input.writerModel,
-      });
+      const models: AiModels = makeModels(connection, modelOf);
+      // The check is the Member's own, so no gate holds it back. Its cost still counts.
+      const counted = (tier: AiTier) =>
+        outbound(models[tier], {
+          use: "check on save",
+          provider: input.provider,
+          model: modelOf[tier],
+          price: prices[tier],
+          gate: async () => undefined,
+          cost,
+        });
       const [quick, writer] = await Promise.all([
-        checkModel(models.quick, logger),
-        checkModel(models.writer, logger),
+        checkModel(counted("quick"), logger),
+        checkModel(counted("writer"), logger),
       ]);
       const check: Record<AiTier, ModelCheck> = { quick, writer };
 
@@ -213,6 +278,12 @@ export function aiSettings(options: {
       );
       // A Remove AI provider or another save came first while the AI provider answered.
       if (!written) return { saved: false, refusal: "changed" };
+      for (const tier of TIERS) {
+        const entered = input.prices?.[tier];
+        if (entered !== undefined && tablePrice(input.provider, modelOf[tier]) === undefined) {
+          await storeMemberPrice(database, input.provider, modelOf[tier], entered);
+        }
+      }
       const ai = await view();
       if (ai === undefined) throw new Error("The AI settings were not saved.");
       return { saved: true, check, ai };
@@ -221,21 +292,70 @@ export function aiSettings(options: {
     async remove() {
       await removeAiSettings(database);
     },
+
+    usage: () => cost.usage(),
+
+    async setCostCap(capCents) {
+      await cost.setCap(capCents);
+      return cost.usage();
+    },
   };
 }
 
-// The Household's models, for every AI use, or undefined with no AI provider, and every use takes
-// its no-AI path. Decrypting registers the key and the token with the logger, which refuses them
-// from then on.
-export async function readAiModels(
-  database: Database,
-  secrets: Secrets,
-  makeModels: AiModelMaker = makeFetchModels(),
-): Promise<AiModels | undefined> {
-  const stored = await readAiSettings(database);
-  if (stored === undefined) return undefined;
-  return makeModels(decryptConnection(stored, secrets), {
-    quick: stored.quickModel,
-    writer: stored.writerModel,
-  });
+// The model for one AI use, or why that use takes its no-AI path.
+export type ModelFor = { ready: true; model: LanguageModel } | { ready: false; pause: AiPause };
+
+export type AiCalls = {
+  // Checks the AI status first. No AI provider, a rejected key, history still loading, the AI
+  // cost cap, and a model with no price each give a pause. At the cap, a background use pauses,
+  // and Chat and reading a Goal pause with "send anyway?" until the Member says yes. The model
+  // passes the same gate again before each call it makes, and counts each call's cost.
+  modelFor(use: ModelUse, options?: { sendAnyway?: boolean }): Promise<ModelFor>;
+};
+
+// Every AI use gets its model here, and nowhere else. Decrypting registers the key and the token
+// with the logger, which refuses them from then on.
+export function aiCalls(options: AiOptions): AiCalls {
+  const { database, secrets, cost, makeModels = makeFetchModels() } = options;
+  const gates = options.gates ?? defaultGates(database, cost);
+
+  async function gate(use: ModelUse, sendAnyway: boolean): Promise<AiPause | undefined> {
+    const stored = await readAiSettings(database);
+    if (stored === undefined) return "no AI provider";
+    if (stored.keyRejectedAt !== null) return "key rejected";
+    if (!(await gates.historyLoaded())) return "waits for history";
+    if ((await gates.costCapPausedUntil()) !== undefined) {
+      if (isBackground(use)) return "cost cap";
+      if (!sendAnyway) return "send anyway?";
+    }
+    return undefined;
+  }
+
+  return {
+    async modelFor(use, { sendAnyway = false } = {}) {
+      const pause = await gate(use, sendAnyway);
+      if (pause !== undefined) return { ready: false, pause };
+      const stored = await readAiSettings(database);
+      if (stored === undefined) return { ready: false, pause: "no AI provider" };
+      const tier = USE_TIERS[use];
+      const model = tier === "quick" ? stored.quickModel : stored.writerModel;
+      const price = await priceOf(database, stored.provider, model);
+      if (price === undefined) return { ready: false, pause: "no price" };
+      const models = makeModels(decryptConnection(stored, secrets), {
+        quick: stored.quickModel,
+        writer: stored.writerModel,
+      });
+      return {
+        ready: true,
+        model: outbound(models[tier], {
+          use,
+          provider: stored.provider,
+          model,
+          price,
+          gate: () => gate(use, sendAnyway),
+          cost,
+        }),
+      };
+    },
+  };
 }

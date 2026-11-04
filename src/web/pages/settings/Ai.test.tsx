@@ -1,7 +1,20 @@
+import type { ReactNode } from "react";
 import { renderToString } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
-import type { AiView } from "../../../ai/ai-view.ts";
-import { AiProviderForm, AiStatusLine, dataUseLine, statusLine, todayHere } from "./Ai.tsx";
+import type { AiUsageView, AiView } from "../../../ai/ai-view.ts";
+import {
+  AiProviderForm,
+  AiStatusLine,
+  CostCapForm,
+  centsOfText,
+  dataUseLine,
+  enteredPrices,
+  priceOfText,
+  statusLine,
+  todayHere,
+} from "./Ai.tsx";
+import { AiUsageReport } from "./AiUsage.tsx";
 
 // Settings → AI, as the browser paints it once the AI settings have loaded.
 
@@ -12,8 +25,36 @@ const OPENAI: AiView = {
   gatewayTokenSet: false,
   quickModel: "gpt-6-luna",
   writerModel: "gpt-6.1-terra",
+  prices: { quick: { source: "table" }, writer: { source: "table" } },
   status: { state: "on" },
 };
+
+// A month at $3.12 of $10.00, with one Chat call and one check on save.
+const USAGE: AiUsageView = {
+  month: "2026-11",
+  totalNanos: 3_120_000_000,
+  capCents: 1000,
+  pausedUntil: null,
+  byUse: [
+    { use: "chat", calls: 1, costNanos: 3_119_979_000 },
+    { use: "check on save", calls: 2, costNanos: 21_000 },
+  ],
+  calls: [
+    {
+      id: 3,
+      use: "chat",
+      model: "claude-sonnet-5-5",
+      noCacheTokens: 1200,
+      cacheReadTokens: 2500,
+      cacheWriteTokens: 0,
+      outputTokens: 310,
+      costNanos: 6_350_000,
+      at: "2026-11-20T13:15:00.000Z",
+    },
+  ],
+};
+
+const routed = (page: ReactNode) => renderToString(<MemoryRouter>{page}</MemoryRouter>);
 
 const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/<!-- -->/g, "");
 
@@ -101,5 +142,98 @@ describe("Settings → AI", () => {
 
     expect(text(plain)).not.toContain("Gateway token");
     expect(text(gateway)).toContain("Gateway token");
+  });
+
+  it("asks for prices only for a model not in the price table, and fills in the stored ones", () => {
+    const table = renderToString(<AiProviderForm ai={OPENAI} onSaved={() => {}} />);
+    const custom = renderToString(
+      <AiProviderForm
+        ai={{
+          ...OPENAI,
+          quickModel: "gpt-6-luna-mini",
+          prices: {
+            quick: { source: "member", input: 50_000, output: 250_000 },
+            writer: { source: "table" },
+          },
+        }}
+        onSaved={() => {}}
+      />,
+    );
+
+    expect(text(table)).not.toContain("Prices, in dollars per million tokens");
+    expect(text(custom)).toContain("Quick model (gpt-6-luna-mini): input price");
+    expect(text(custom)).not.toContain("Writer model (gpt-6.1-terra)");
+    expect(text(custom)).toContain("Cache reads and writes count at the input price.");
+    expect(custom).toContain('value="0.05"');
+    expect(custom).toContain('value="0.25"');
+  });
+
+  it("reads prices and the cap as a Member types them", () => {
+    expect(priceOfText("0.50")).toBe(500_000);
+    expect(priceOfText("$2")).toBe(2_000_000);
+    expect(priceOfText("0")).toBe(0);
+    expect(priceOfText("-1")).toBeUndefined();
+    expect(priceOfText("abc")).toBeUndefined();
+    expect(centsOfText("10")).toBe(1000);
+    expect(centsOfText("$12.50")).toBe(1250);
+    expect(centsOfText("12.505")).toBeUndefined();
+
+    const models = { quick: "llama-small", writer: "gpt-6.1-terra" };
+    const empty = { input: "", output: "" };
+    expect(
+      enteredPrices("openai", models, { quick: { input: "0", output: "0" }, writer: empty }),
+    ).toEqual({ quick: { input: 0, output: 0 } });
+    expect(enteredPrices("openai", models, { quick: empty, writer: empty })).toEqual({});
+    expect(
+      enteredPrices("openai", models, { quick: { input: "0.1", output: "" }, writer: empty }),
+    ).toBe("bad");
+  });
+
+  it("shows the AI cost cap, the month's total against it, and a link to the AI usage page", () => {
+    const html = routed(<CostCapForm usage={USAGE} onSaved={() => {}} />);
+
+    expect(text(html)).toContain("This month: $3.12 of $10.00");
+    expect(html).toContain('value="10"');
+    expect(html).toContain('href="/settings/ai/usage"');
+  });
+});
+
+describe("Settings → AI → AI usage", () => {
+  it("lists each call's use, model, token counts, cost, and time, and the month's totals", () => {
+    const html = renderToString(
+      <AiUsageReport usage={USAGE} zone="America/New_York" today="2026-11-20" />,
+    );
+    const cells = [...html.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((match) => text(match[1] ?? ""));
+
+    expect(text(html)).toContain("$3.12 of $10.00 this month");
+    expect(cells).toEqual([
+      "Chat",
+      "1",
+      "$3.1200",
+      "Check on save",
+      "2",
+      "under $0.0001",
+      "Nov 20, 8:15 AM",
+      "Chat",
+      "claude-sonnet-5-5",
+      "1,200",
+      "2,500",
+      "0",
+      "310",
+      "$0.0064",
+    ]);
+  });
+
+  it("says when background AI is paused, and when no call was made", () => {
+    const html = renderToString(
+      <AiUsageReport
+        usage={{ ...USAGE, pausedUntil: "2026-12-01", byUse: [], calls: [] }}
+        zone="America/New_York"
+        today="2026-11-20"
+      />,
+    );
+
+    expect(text(html)).toContain("AI paused until Dec 1: AI cost cap reached");
+    expect(text(html)).toContain("No AI calls this month.");
   });
 });

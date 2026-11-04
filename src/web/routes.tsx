@@ -6,6 +6,7 @@ import { Placeholder } from "./pages/Placeholder.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { Ai } from "./pages/settings/Ai.tsx";
+import { AiUsage } from "./pages/settings/AiUsage.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
 import { Household } from "./pages/settings/Household.tsx";
@@ -51,7 +52,12 @@ export const routes: RouteObject[] = [
       {
         path: "settings",
         Component: Settings,
-        children: [{ index: true, Component: SettingsIndex }, ...settingsSections],
+        children: [
+          { index: true, Component: SettingsIndex },
+          ...settingsSections,
+          // The AI usage page, linked from Settings → AI.
+          { path: "ai/usage", Component: AiUsage },
+        ],
       },
       { path: "*", Component: NotFound },
     ],

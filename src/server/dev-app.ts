@@ -1,9 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { aiSettings } from "../ai/index.ts";
+import { aiCost, aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
 import { plaidSettings } from "../bank/index.ts";
 import { applyMigrations, openDatabase } from "../db/index.ts";
+import { householdTimeZone } from "../household/index.ts";
+import { startNotify } from "../notify/index.ts";
 import { checkDataKey, loadMasterKey, unlockSecrets } from "../secrets/index.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -28,9 +30,15 @@ export async function createDevApp(
   await checkDataKey(database, masterKey);
   await applyMigrations(database, fileURLToPath(new URL("../../drizzle", import.meta.url)));
   const secrets = await unlockSecrets(database, masterKey);
+  // System notices, such as the AI cost cap's, go to the dev app.db. Vite starts the app once.
+  startNotify({ database });
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
   return createApp(webRoot, security, auth, database, secrets, {
     plaid: plaidSettings({ database, secrets }),
-    ai: aiSettings({ database, secrets }),
+    ai: aiSettings({
+      database,
+      secrets,
+      cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+    }),
   });
 }

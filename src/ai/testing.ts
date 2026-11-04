@@ -1,6 +1,6 @@
 // Test support: AI SDK test models and a fetch that captures each request, so no test calls an AI
 // provider. Keys and tokens are made up when the test runs. Never real keys.
-import { APICallError } from "ai";
+import { APICallError, type ProviderMetadata, simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { Database } from "../db/index.ts";
 import { newTestDatabase } from "../db/testing.ts";
@@ -87,12 +87,26 @@ export class CapturingFetch {
 // config, as an AI provider SDK's error can.
 export type StubAnswer = "work" | "reject" | "fail" | "throw";
 
+// A reply's token counts, as an AI provider reports them.
+export type StubUsage = {
+  noCache: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+};
+
 export class StubModels {
   answers: Record<AiTier, StubAnswer> = { quick: "work", writer: "work" };
+  // What each reply that works says, and its usage and provider metadata.
+  reply = OK_REPLY;
+  usage: StubUsage = { noCache: 5, cacheRead: 0, cacheWrite: 0, output: 1 };
+  providerMetadata: ProviderMetadata | undefined;
   readonly connections: AiConnection[] = [];
   readonly calls: { tier: AiTier; modelId: string; maxOutputTokens: number | undefined }[] = [];
   // Runs before each answer, so a test can act while the AI provider is answering.
   beforeAnswer: () => Promise<void> = async () => {};
+  // A streamed reply that fails after its text and before its finish part, with its usage.
+  streamFails = false;
 
   readonly makeModels: AiModelMaker = (connection, models: TierModels) => {
     this.connections.push(connection);
@@ -108,6 +122,43 @@ export class StubModels {
           });
           await this.beforeAnswer();
           return this.answer(tier, connection);
+        },
+        doStream: async (options) => {
+          this.calls.push({
+            tier,
+            modelId: models[tier],
+            maxOutputTokens: options.maxOutputTokens,
+          });
+          await this.beforeAnswer();
+          const { usage, finishReason, providerMetadata } = this.answer(tier, connection);
+          if (this.streamFails) {
+            const text = this.reply;
+            let sent = false;
+            return {
+              stream: new ReadableStream({
+                pull(controller) {
+                  if (sent) return controller.error(new Error("The connection dropped."));
+                  sent = true;
+                  controller.enqueue({ type: "text-delta" as const, id: "1", delta: text });
+                },
+              }),
+            };
+          }
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: "text-start" as const, id: "1" },
+                { type: "text-delta" as const, id: "1", delta: this.reply },
+                { type: "text-end" as const, id: "1" },
+                {
+                  type: "finish" as const,
+                  finishReason,
+                  usage,
+                  ...(providerMetadata === undefined ? {} : { providerMetadata }),
+                },
+              ],
+            }),
+          };
         },
       });
     return { quick: model("quick"), writer: model("writer") };
@@ -136,13 +187,15 @@ export class StubModels {
     if (answer === "throw") {
       throw Object.assign(new Error(`connect ETIMEDOUT ${secrets}`), { config: { headers } });
     }
+    const { noCache, cacheRead, cacheWrite, output } = this.usage;
     return {
-      content: [{ type: "text" as const, text: OK_REPLY }],
+      content: [{ type: "text" as const, text: this.reply }],
       finishReason: { unified: "length" as const, raw: "length" },
       usage: {
-        inputTokens: { total: 5, noCache: 5, cacheRead: 0, cacheWrite: 0 },
-        outputTokens: { total: 1, text: 1, reasoning: 0 },
+        inputTokens: { total: noCache + cacheRead + cacheWrite, noCache, cacheRead, cacheWrite },
+        outputTokens: { total: output, text: output, reasoning: 0 },
       },
+      ...(this.providerMetadata === undefined ? {} : { providerMetadata: this.providerMetadata }),
       warnings: [],
     };
   }

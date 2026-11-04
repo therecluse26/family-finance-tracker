@@ -2,7 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AiView, aiSettings, onGateway, readAiModels } from "../ai/index.ts";
+import {
+  type AiUsageView,
+  type AiView,
+  aiCalls,
+  aiCost,
+  aiSettings,
+  onGateway,
+} from "../ai/index.ts";
 import { newAiKey, StubModels } from "../ai/testing.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { markSetupStep } from "../db/index.ts";
@@ -17,6 +24,9 @@ import { type App, TestBrowser } from "./testing.ts";
 const APP_URL = "http://nas.local:8080";
 const TOTP_STEP_MS = 30_000;
 const GATEWAY = "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai";
+
+// A local model's prices: $0.
+const LOCAL = { quick: { input: 0, output: 0 }, writer: { input: 0, output: 0 } };
 
 let webRoot: string;
 
@@ -52,6 +62,7 @@ describe("the AI routes", () => {
       {
         ai: aiSettings({
           database: test.database,
+          cost: aiCost({ database: test.database }),
           secrets: test.secrets,
           makeModels: stub.makeModels,
           logger,
@@ -95,7 +106,16 @@ describe("the AI routes", () => {
   const shown = async (tab: TestBrowser) =>
     ((await (await tab.get("/api/ai/settings")).json()) as { ai: AiView | null }).ai;
 
-  const models = () => readAiModels(test.database, test.secrets, stub.makeModels);
+  // Whether an AI use, such as Chat, gets a model.
+  const ready = async () =>
+    (
+      await aiCalls({
+        database: test.database,
+        cost: aiCost({ database: test.database }),
+        secrets: test.secrets,
+        makeModels: stub.makeModels,
+      }).modelFor("chat")
+    ).ready;
 
   it("answers 401 to a browser with no session, on every route", async () => {
     await finishWizard();
@@ -104,6 +124,8 @@ describe("the AI routes", () => {
     expect((await tab.get("/api/ai/settings")).status).toBe(401);
     expect((await save(tab, openai())).status).toBe(401);
     expect((await tab.post("/api/ai/remove", {})).status).toBe(401);
+    expect((await tab.get("/api/ai/usage")).status).toBe(401);
+    expect((await tab.send("PUT", "/api/ai/cost-cap", { capCents: 0 })).status).toBe(401);
     expect(stub.calls).toEqual([]);
   });
 
@@ -113,7 +135,7 @@ describe("the AI routes", () => {
 
     expect((await save(tab, openai())).status).toBe(409);
     expect(stub.calls).toEqual([]);
-    expect(await models()).toBeUndefined();
+    expect(await ready()).toBe(false);
   });
 
   it("checks both models on save, shows the result, and never shows the key again", async () => {
@@ -135,6 +157,7 @@ describe("the AI routes", () => {
         gatewayTokenSet: true,
         quickModel: "gpt-6-luna",
         writerModel: "gpt-6.1-terra",
+        prices: { quick: { source: "table" }, writer: { source: "table" } },
         status: { state: "on" },
       },
     });
@@ -181,7 +204,11 @@ describe("the AI routes", () => {
     await save(tab, first);
     const { apiKey: _key, ...kept } = first;
 
-    const res = await tab.post("/api/ai/settings", { ...kept, writerModel: "gpt-6.1-sol" });
+    const res = await tab.post("/api/ai/settings", {
+      ...kept,
+      writerModel: "gpt-6.1-sol",
+      prices: { writer: { input: 2_000_000, output: 10_000_000 } },
+    });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ai: { writerModel: "gpt-6.1-sol", keySet: true } });
@@ -229,7 +256,7 @@ describe("the AI routes", () => {
     await finishWizard();
     const tab = await signedIn();
     const compatible = (baseUrl: string) =>
-      openai({ provider: "openai-compatible", baseUrl, apiKey: undefined });
+      openai({ provider: "openai-compatible", baseUrl, apiKey: undefined, prices: LOCAL });
 
     for (const baseUrl of [
       "http://api.example.com/v1",
@@ -326,11 +353,15 @@ describe("the AI routes", () => {
       expect((await tab.post("/api/ai/remove", {})).status).toBe(200);
     };
 
-    const res = await tab.post("/api/ai/settings", { ...kept, writerModel: "gpt-6.1-sol" });
+    const res = await tab.post("/api/ai/settings", {
+      ...kept,
+      writerModel: "gpt-6.1-sol",
+      prices: LOCAL,
+    });
 
     expect(res.status).toBe(409);
     expect(await shown(tab)).toBeNull();
-    expect(await models()).toBeUndefined();
+    expect(await ready()).toBe(false);
   });
 
   it("asks for the key again, and takes a new one, when the stored key cannot be read", async () => {
@@ -366,17 +397,47 @@ describe("the AI routes", () => {
     expect(stub.calls).toEqual([]);
   });
 
+  it("shows the AI usage page, with the check on save counted, and changes the AI cost cap", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    await save(tab, openai());
+    const usage = async (res: Response) => ((await res.json()) as { usage: AiUsageView }).usage;
+
+    expect(await usage(await tab.get("/api/ai/usage"))).toMatchObject({
+      capCents: 1000,
+      pausedUntil: null,
+      byUse: [{ use: "check on save", calls: 2 }],
+    });
+    for (const capCents of [-1, 1.5, 1_000_001, "10"]) {
+      expect((await tab.send("PUT", "/api/ai/cost-cap", { capCents })).status).toBe(400);
+    }
+    const raised = await tab.send("PUT", "/api/ai/cost-cap", { capCents: 2500 });
+
+    expect(raised.status).toBe(200);
+    expect(await usage(raised)).toMatchObject({ capCents: 2500 });
+    expect(
+      (
+        await tab.send(
+          "PUT",
+          "/api/ai/cost-cap",
+          { capCents: 0 },
+          { origin: "http://evil.example" },
+        )
+      ).status,
+    ).toBe(403);
+  });
+
   it("removes the AI provider, so every use takes its no-AI path", async () => {
     await finishWizard();
     const tab = await signedIn();
     await save(tab, openai());
-    expect(await models()).toBeDefined();
+    expect(await ready()).toBe(true);
 
     const res = await tab.post("/api/ai/remove", {});
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ai: null });
     expect(await shown(tab)).toBeNull();
-    expect(await models()).toBeUndefined();
+    expect(await ready()).toBe(false);
   });
 });
