@@ -203,6 +203,7 @@ export {
   readLastMasterKeyCheck,
   recordMasterKeyCheck,
 } from "./master-key-checks.ts";
+export { listMembersByJoinOrder } from "./members.ts";
 export {
   applyMigrations,
   checkMigrations,

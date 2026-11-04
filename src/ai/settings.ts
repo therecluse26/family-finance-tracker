@@ -1,4 +1,4 @@
-import { APICallError, generateText, type LanguageModel, RetryError } from "ai";
+import type { LanguageModel } from "ai";
 import { aiMayRun } from "../bank/index.ts";
 import {
   AI_SETTINGS_ROW,
@@ -30,15 +30,11 @@ import {
   type PriceSource,
   USE_TIERS,
 } from "./ai-view.ts";
+import { checkModel, privateModels } from "./call.ts";
 import type { AiCost } from "./cost.ts";
-import { type AiPause, outbound } from "./outbound.ts";
+import type { AiPause } from "./outbound.ts";
 import { type ModelPrice, memberPrice, tablePrice } from "./prices.ts";
-import {
-  type AiConnection,
-  type AiModelMaker,
-  type AiModels,
-  makeFetchModels,
-} from "./providers.ts";
+import type { AiConnection, AiModelMaker } from "./providers.ts";
 
 // The Household's one AI provider (spec 08, AI settings page). The API key and the gateway token
 // are Master-key secrets: the app encrypts them, and never shows or logs them again.
@@ -51,9 +47,6 @@ void sameUses;
 // Each ciphertext decrypts only in ai_settings' one row, in its own column.
 const KEY_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.api_key" };
 const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.gateway_token" };
-
-// Spec 08, Failures: no reply within 120 seconds is an AI error.
-const CALL_TIMEOUT_MS = 120_000;
 
 const TIERS = ["quick", "writer"] as const;
 
@@ -86,33 +79,6 @@ async function priceOf(
   return member === undefined ? undefined : memberPrice(member.input, member.output);
 }
 
-// The HTTP status of a failed call, and nothing else: an AI SDK error also holds the request and
-// the response, and a provider error can hold the key in its headers or config.
-function statusOf(error: unknown): number | undefined {
-  const last = RetryError.isInstance(error) ? error.lastError : error;
-  return APICallError.isInstance(last) ? last.statusCode : undefined;
-}
-
-// One call with a 1-token reply, and no retry. A 401 or 403 means the AI provider rejected the key.
-// The call counts toward the month's cost.
-async function checkModel(model: LanguageModel, logger: Logger): Promise<ModelCheck> {
-  try {
-    await generateText({
-      model,
-      prompt: "Reply with OK.",
-      maxOutputTokens: 1,
-      maxRetries: 0,
-      timeout: CALL_TIMEOUT_MS,
-    });
-    return "worked";
-  } catch (error) {
-    const status = statusOf(error);
-    if (status === 401 || status === 403) return "key rejected";
-    logger.warn("The AI provider did not answer the check on save", { status: status ?? null });
-    return "failed";
-  }
-}
-
 function decryptConnection(stored: StoredAiSettings, secrets: Secrets): AiConnection {
   return {
     provider: stored.provider,
@@ -134,7 +100,7 @@ export type AiOptions = {
 };
 
 export function aiSettings(options: AiOptions): AiSettings {
-  const { database, secrets, cost, makeModels = makeFetchModels(), logger = log } = options;
+  const { database, secrets, cost, makeModels, logger = log } = options;
   const gates = options.gates ?? defaultGates(database, cost);
 
   // Undefined when the ciphertext does not decrypt, such as after a restore with another Master key.
@@ -245,20 +211,19 @@ export function aiSettings(options: AiOptions): AiSettings {
         baseUrl: input.baseUrl,
         gatewayToken,
       };
-      const models: AiModels = makeModels(connection, modelOf);
-      // The check is the Member's own, so no gate holds it back. Its cost still counts.
-      const counted = (tier: AiTier) =>
-        outbound(models[tier], {
-          use: "check on save",
-          provider: input.provider,
-          model: modelOf[tier],
-          price: prices[tier],
-          gate: async () => undefined,
-          cost,
-        });
+      // The check is the Member's own, so no gate holds it back. It still passes the privacy
+      // filter, and its cost still counts.
+      const models = privateModels(database, makeModels, connection, modelOf, (tier) => ({
+        use: "check on save",
+        provider: input.provider,
+        model: modelOf[tier],
+        price: prices[tier],
+        gate: async () => undefined,
+        cost,
+      }));
       const [quick, writer] = await Promise.all([
-        checkModel(counted("quick"), logger),
-        checkModel(counted("writer"), logger),
+        checkModel(models.quick, logger),
+        checkModel(models.writer, logger),
       ]);
       const check: Record<AiTier, ModelCheck> = { quick, writer };
 
@@ -313,10 +278,12 @@ export type AiCalls = {
   modelFor(use: ModelUse, options?: { sendAnyway?: boolean }): Promise<ModelFor>;
 };
 
-// Every AI use gets its model here, and nowhere else. Decrypting registers the key and the token
-// with the logger, which refuses them from then on.
+// Every AI use gets its model here, and nowhere else, behind the privacy filter and the cost gate
+// (src/ai/call.ts). Only householdAi hands its calls to other modules: no model leaves the ai
+// module. Decrypting registers the key and the token with the logger, which refuses them from
+// then on.
 export function aiCalls(options: AiOptions): AiCalls {
-  const { database, secrets, cost, makeModels = makeFetchModels() } = options;
+  const { database, secrets, cost, makeModels } = options;
   const gates = options.gates ?? defaultGates(database, cost);
 
   async function gate(use: ModelUse, sendAnyway: boolean): Promise<AiPause | undefined> {
@@ -341,13 +308,12 @@ export function aiCalls(options: AiOptions): AiCalls {
       const model = tier === "quick" ? stored.quickModel : stored.writerModel;
       const price = await priceOf(database, stored.provider, model);
       if (price === undefined) return { ready: false, pause: "no price" };
-      const models = makeModels(decryptConnection(stored, secrets), {
-        quick: stored.quickModel,
-        writer: stored.writerModel,
-      });
-      return {
-        ready: true,
-        model: outbound(models[tier], {
+      const models = privateModels(
+        database,
+        makeModels,
+        decryptConnection(stored, secrets),
+        { quick: stored.quickModel, writer: stored.writerModel },
+        () => ({
           use,
           provider: stored.provider,
           model,
@@ -355,7 +321,8 @@ export function aiCalls(options: AiOptions): AiCalls {
           gate: () => gate(use, sendAnyway),
           cost,
         }),
-      };
+      );
+      return { ready: true, model: models[tier] };
     },
   };
 }

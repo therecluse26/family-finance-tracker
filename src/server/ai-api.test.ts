@@ -2,14 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type AiUsageView,
-  type AiView,
-  aiCalls,
-  aiCost,
-  aiSettings,
-  onGateway,
-} from "../ai/index.ts";
+import { type AiUsageView, type AiView, aiCost, aiSettings, onGateway } from "../ai/index.ts";
+import { aiCalls } from "../ai/settings.ts";
 import { newAiKey, StubModels } from "../ai/testing.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { markSetupStep } from "../db/index.ts";
@@ -341,6 +335,43 @@ describe("the AI routes", () => {
       ]);
     }
     expect(stub.calls).toEqual([]);
+  });
+
+  it("never calls an address whose destination it cannot judge", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+
+    for (const baseUrl of [
+      "https://0.0.0.0/v1",
+      "http://0.0.0.0:11434/v1",
+      "https://0.1.2.3/v1",
+      "https://[::]/v1",
+      "https://[::ffff:0.0.0.0]/v1",
+      // The local-use NAT64 prefix, which can map to any IPv4 address.
+      "https://[64:ff9b:1::a9fe:a9fe]/v1",
+      "https://[64:ff9b:1:ffff::1]/v1",
+    ]) {
+      const res = await save(
+        tab,
+        openai({ provider: "openai-compatible", baseUrl, apiKey: undefined }),
+      );
+      expect([baseUrl, res.status, await res.json()]).toEqual([
+        baseUrl,
+        400,
+        {
+          error:
+            "The app does not call an address whose destination it cannot judge, such as 0.0.0.0.",
+        },
+      ]);
+    }
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("treats a gateway host written with a final dot as the gateway", () => {
+    const dotted = GATEWAY.replace("gateway.ai.cloudflare.com", "gateway.ai.cloudflare.com.");
+
+    expect(onGateway(dotted)).toBe(true);
+    expect(onGateway(dotted.replace(".com.", ".com.."))).toBe(false);
   });
 
   it("answers 409 and stores nothing when Remove AI provider comes during the check", async () => {

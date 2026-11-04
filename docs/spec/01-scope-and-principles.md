@@ -123,6 +123,7 @@ The AI provider is optional. Core data works without it.
   | GitHub | Daily update check, which a Member can turn off | Nothing about the Household |
 
 - One privacy filter covers every AI call. Member names become "Member A" and "Member B". Account and card numbers are removed. The ZIP code and ages are never sent ([AI](08-ai.md)).
+- The filter is exact for text the app builds, and best effort for text a Member types, such as Chat messages ([AI](08-ai.md)).
 - The app uses only AI providers and settings that do not train on API data or use it for ads ([AI](08-ai.md)).
 - The AI provider's API key still ties each request to the key owner's provider account.
 - The app has no analytics, usage tracking, or crash reporting.

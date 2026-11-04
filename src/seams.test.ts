@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
-import { join, relative, sep } from "node:path";
+import { join, posix, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSync } from "vite";
 import { describe, expect, it } from "vitest";
@@ -116,18 +116,170 @@ function computedImports(file: SourceFile, { module }: Parsed): string[] {
     .filter((text) => !PLAIN_STRING.test(text));
 }
 
-function importedSpecifiers(file: SourceFile, { module }: Parsed): string[] {
-  const dynamic = module.dynamicImports
+// The import() calls in a file whose specifier is a plain string.
+function dynamicSpecifiers(file: SourceFile, { module }: Parsed): string[] {
+  return module.dynamicImports
     .map(({ moduleRequest }) => file.code.slice(moduleRequest.start, moduleRequest.end))
     .filter((text) => PLAIN_STRING.test(text))
     .map((text) => text.slice(1, -1));
+}
+
+function importedSpecifiers(file: SourceFile, parsed: Parsed): string[] {
+  const { module } = parsed;
   return [
     ...module.staticImports.map((entry) => entry.moduleRequest.value),
     ...module.staticExports.flatMap((entry) =>
       entry.entries.flatMap((e) => (e.moduleRequest ? [e.moduleRequest.value] : [])),
     ),
-    ...dynamic,
+    ...dynamicSpecifiers(file, parsed),
   ];
+}
+
+// The one AI call path (spec 08, Privacy filter). Every value from the `ai` package, such as
+// generateText, is imported in src/ai/call.ts, which sends every request through the privacy
+// filter. providers.ts wraps each model with its AI provider's data-use setting. Test files and
+// test support use the AI SDK's test models; a type passes anywhere in src/ai.
+const AI_VALUE_IMPORTS: Record<string, readonly string[] | "all"> = {
+  "src/ai/call.ts": "all",
+  "src/ai/providers.ts": ["wrapLanguageModel"],
+};
+
+function isTestFile(path: string): boolean {
+  return /\.test\.tsx?$/.test(path) || path.endsWith("/testing.ts");
+}
+
+// The names a file imports, or re-exports, from one specifier. "*" stands for a namespace or a
+// default import. Types are left out.
+function importedValues(file: SourceFile, matches: (specifier: string) => boolean): string[] {
+  const parsed = parse(file);
+  const { module } = parsed;
+  const fromImports = module.staticImports
+    .filter((entry) => matches(entry.moduleRequest.value))
+    .flatMap((entry) =>
+      entry.entries.filter((e) => !e.isType).map((e) => e.importName.name ?? "*"),
+    );
+  const fromExports = module.staticExports.flatMap((entry) =>
+    entry.entries
+      .filter((e) => e.moduleRequest !== null && matches(e.moduleRequest.value) && !e.isType)
+      .map((e) => e.importName.name ?? "*"),
+  );
+  const dynamic = dynamicSpecifiers(file, parsed).some(matches) ? ["*"] : [];
+  return [...fromImports, ...fromExports, ...dynamic];
+}
+
+function findCallPathBreaches(files: SourceFile[]): string[] {
+  const breaches: string[] = [];
+  for (const file of files) {
+    if (isTestFile(file.path)) continue;
+    const allowed = AI_VALUE_IMPORTS[file.path] ?? [];
+    if (allowed === "all") continue;
+    const values = importedValues(file, (specifier) => packageName(specifier) === "ai");
+    for (const name of new Set(values)) {
+      if (!allowed.includes(name)) {
+        breaches.push(`${file.path} imports ${name} from ai, which only src/ai/call.ts may import`);
+      }
+    }
+  }
+  return breaches;
+}
+
+// Only src/ai/call.ts builds models, so every model is behind the privacy filter: the AI
+// provider packages' models are made in src/ai/providers.ts, and only call.ts takes a value from
+// providers.ts. A raw model's doGenerate needs no import from ai, so this guards the models too.
+const MODEL_BUILDERS: { owner: string; matches: (specifier: string, from: string) => boolean }[] = [
+  {
+    owner: "src/ai/providers.ts",
+    matches: (specifier) => {
+      const pkg = packageName(specifier);
+      return pkg !== undefined && pkg !== "ai" && ownerOf(pkg) === "ai";
+    },
+  },
+  {
+    owner: "src/ai/call.ts",
+    matches: (specifier, from) =>
+      specifier.startsWith(".") &&
+      posix.join(posix.dirname(from), specifier) === "src/ai/providers.ts",
+  },
+];
+
+function findModelBuilderBreaches(files: SourceFile[]): string[] {
+  const breaches: string[] = [];
+  for (const file of files) {
+    if (isTestFile(file.path)) continue;
+    for (const { owner, matches } of MODEL_BUILDERS) {
+      if (file.path === owner) continue;
+      const values = importedValues(file, (specifier) => matches(specifier, file.path));
+      for (const name of new Set(values)) {
+        breaches.push(`${file.path} imports ${name}, which builds models only in ${owner}`);
+      }
+    }
+  }
+  return breaches;
+}
+
+// The db-level read of the Household facts returns them without their never-sent-to-AI mark, so
+// the ai module reads them only through the household module.
+const DB_FACTS = "src/db/household-facts.ts";
+const DB_FACTS_NAMES = new Set(["readHouseholdFacts", "storeHouseholdFacts"]);
+
+function findFactsBreaches(files: SourceFile[]): string[] {
+  const breaches: string[] = [];
+  for (const file of files.filter((f) => f.path.startsWith("src/ai/"))) {
+    const target = (specifier: string) =>
+      specifier.startsWith(".") ? posix.join(posix.dirname(file.path), specifier) : specifier;
+    for (const entry of parse(file).module.staticImports) {
+      const to = target(entry.moduleRequest.value);
+      const names = entry.entries.map((e) => e.importName.name ?? "*");
+      if (
+        to === DB_FACTS ||
+        (to.startsWith("src/db") && names.some((n) => DB_FACTS_NAMES.has(n)))
+      ) {
+        breaches.push(`${file.path} reads the Household facts from src/db`);
+      }
+    }
+  }
+  return breaches;
+}
+
+// Test support, such as src/db/testing.ts or src/ai/testing.ts, makes fake data, test keys, and
+// test models, so it stays out of the app: only test files and other test support import it.
+// A test entry point is test support that a test runs as its own program.
+const TEST_ENTRY_POINTS = new Map([
+  [
+    "src/jobs/failing-job-probe.ts",
+    "src/jobs/jobs.test.ts runs it with plain node, since Vitest hides what Sidequest writes to " +
+      "stdout. No file imports it, so the build never reaches it.",
+  ],
+]);
+
+// A test support folder holds only test support. The large-history check (`pnpm bench:history`)
+// runs src/large-history/ under Vitest alone, so it may import test support and the app may not import it.
+// A Vitest config, such as vitest.history.config.ts, is test tooling and may import it too.
+const TEST_SUPPORT_DIRS = ["src/large-history/"];
+const VITEST_CONFIG = /^vitest(?:\.[\w-]+)?\.config\.ts$/;
+
+function isTestSupport(path: string): boolean {
+  return (
+    /(?:^|\/)testing\.tsx?$/.test(path) ||
+    TEST_ENTRY_POINTS.has(path) ||
+    TEST_SUPPORT_DIRS.some((dir) => path.startsWith(dir))
+  );
+}
+
+function findTestSupportBreaches(files: SourceFile[]): string[] {
+  const breaches: string[] = [];
+  for (const file of files) {
+    if (isTestFile(file.path) || isTestSupport(file.path) || VITEST_CONFIG.test(file.path))
+      continue;
+    for (const specifier of new Set(importedSpecifiers(file, parse(file)))) {
+      if (!specifier.startsWith(".")) continue;
+      const target = posix.join(posix.dirname(file.path), specifier);
+      if (isTestSupport(target) || isTestSupport(`${target}.ts`)) {
+        breaches.push(`${file.path} imports ${target}, which only tests may import`);
+      }
+    }
+  }
+  return breaches;
 }
 
 function moduleOf(path: string): string | undefined {
@@ -381,10 +533,116 @@ describe("module seams", () => {
     expect(OTHER_DRIZZLE_DRIVERS.has("libsql")).toBe(false);
   });
 
+  it("flags a value from ai imported anywhere but the one AI call path", () => {
+    const files: SourceFile[] = [
+      { path: "src/ai/call.ts", code: 'import { generateText, wrapLanguageModel } from "ai";' },
+      { path: "src/ai/providers.ts", code: 'import { wrapLanguageModel } from "ai";' },
+      {
+        path: "src/ai/settings.ts",
+        code: 'import { generateText, type LanguageModel } from "ai";',
+      },
+      { path: "src/ai/summary.ts", code: 'import type { ModelMessage } from "ai";' },
+      { path: "src/ai/chat.ts", code: 'import * as sdk from "ai";' },
+      { path: "src/ai/tools.ts", code: 'export { streamText } from "ai";' },
+      { path: "src/ai/agent.ts", code: 'const { streamText } = await import("ai");' },
+      { path: "src/ai/testing.ts", code: 'import { MockLanguageModelV4 } from "ai/test";' },
+      { path: "src/ai/chat.test.ts", code: 'import { generateText } from "ai";' },
+    ];
+
+    expect(findCallPathBreaches(files)).toEqual([
+      "src/ai/settings.ts imports generateText from ai, which only src/ai/call.ts may import",
+      "src/ai/chat.ts imports * from ai, which only src/ai/call.ts may import",
+      "src/ai/tools.ts imports streamText from ai, which only src/ai/call.ts may import",
+      "src/ai/agent.ts imports * from ai, which only src/ai/call.ts may import",
+    ]);
+  });
+
+  it("flags a model built anywhere but the one AI call path", () => {
+    const files: SourceFile[] = [
+      { path: "src/ai/providers.ts", code: 'import { createAnthropic } from "@ai-sdk/anthropic";' },
+      { path: "src/ai/call.ts", code: 'import { makeFetchModels } from "./providers.ts";' },
+      {
+        path: "src/ai/settings.ts",
+        code: 'import { type AiModelMaker, makeFetchModels } from "./providers.ts";',
+      },
+      { path: "src/ai/index.ts", code: 'export { makeFetchModels } from "./providers.ts";' },
+      { path: "src/ai/summary.ts", code: 'import type { AiModels } from "./providers.ts";' },
+      { path: "src/ai/chat.ts", code: 'import { createOpenAI } from "@ai-sdk/openai";' },
+      { path: "src/server/ai.ts", code: 'import { makeFetchModels } from "../ai/providers.ts";' },
+      { path: "src/web/Chat.tsx", code: 'import { useChat } from "@ai-sdk/react";' },
+      { path: "src/ai/testing.ts", code: 'import { makeFetchModels } from "./providers.ts";' },
+    ];
+
+    expect(findModelBuilderBreaches(files)).toEqual([
+      "src/ai/settings.ts imports makeFetchModels, which builds models only in src/ai/call.ts",
+      "src/ai/index.ts imports makeFetchModels, which builds models only in src/ai/call.ts",
+      "src/ai/chat.ts imports createOpenAI, which builds models only in src/ai/providers.ts",
+      "src/server/ai.ts imports makeFetchModels, which builds models only in src/ai/call.ts",
+    ]);
+  });
+
+  it("flags the ai module reading the Household facts from src/db", () => {
+    const files: SourceFile[] = [
+      {
+        path: "src/ai/call.ts",
+        code: 'import { readHouseholdFacts } from "../household/index.ts";',
+      },
+      { path: "src/ai/a.ts", code: 'import { readHouseholdFacts } from "../db/index.ts";' },
+      { path: "src/ai/b.ts", code: 'import { readHouseholdFacts as read } from "../db/index.ts";' },
+      {
+        path: "src/ai/c.ts",
+        code: 'import type { StoredHouseholdFacts } from "../db/household-facts.ts";',
+      },
+      { path: "src/ai/d.ts", code: 'import { listAccounts } from "../db/index.ts";' },
+      {
+        path: "src/household/facts.ts",
+        code: 'import { readHouseholdFacts } from "../db/index.ts";',
+      },
+    ];
+
+    expect(findFactsBreaches(files)).toEqual([
+      "src/ai/a.ts reads the Household facts from src/db",
+      "src/ai/b.ts reads the Household facts from src/db",
+      "src/ai/c.ts reads the Household facts from src/db",
+    ]);
+  });
+
+  it("flags test support imported by a file that is not a test", () => {
+    const files: SourceFile[] = [
+      { path: "src/ai/call.ts", code: 'import { StubModels } from "./testing.ts";' },
+      { path: "src/server/start.ts", code: 'export { newTestDatabase } from "../db/testing.ts";' },
+      { path: "src/bank/sync.ts", code: 'const t = await import("./testing");' },
+      { path: "src/jobs/run.ts", code: 'import "./failing-job-probe.ts";' },
+      { path: "src/db/testing.ts", code: 'import { newAiKey } from "../ai/testing.ts";' },
+      { path: "src/ai/call.test.ts", code: 'import { StubModels } from "./testing.ts";' },
+      { path: "src/jobs/failing-job-probe.ts", code: 'import { failWith } from "./testing.ts";' },
+      { path: "src/ai/settings.ts", code: 'import { privateModels } from "./call.ts";' },
+    ];
+
+    expect(findTestSupportBreaches(files)).toEqual([
+      "src/ai/call.ts imports src/ai/testing.ts, which only tests may import",
+      "src/server/start.ts imports src/db/testing.ts, which only tests may import",
+      "src/bank/sync.ts imports src/bank/testing, which only tests may import",
+      "src/jobs/run.ts imports src/jobs/failing-job-probe.ts, which only tests may import",
+    ]);
+  });
+
+  it("no file but a test imports test support", () => {
+    expect(findTestSupportBreaches(repoSourceFiles())).toEqual([]);
+  });
+
   it("no file outside a module imports a package the seams table gives to that module", () => {
     const files = repoSourceFiles();
 
     expect(files.length).toBeGreaterThan(0);
     expect(findSeamBreaches(files)).toEqual([]);
+  });
+
+  it("every AI call goes through src/ai/call.ts, and the ai module reads no facts from src/db", () => {
+    const files = repoSourceFiles();
+
+    expect(findCallPathBreaches(files)).toEqual([]);
+    expect(findModelBuilderBreaches(files)).toEqual([]);
+    expect(findFactsBreaches(files)).toEqual([]);
   });
 });

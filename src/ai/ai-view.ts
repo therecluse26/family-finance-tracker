@@ -47,12 +47,13 @@ export const USAGE_LIMIT_LINKS: Record<AiProviderName, { label: string; url: str
 // A base URL on this host is a Cloudflare AI Gateway.
 export const GATEWAY_HOST = "gateway.ai.cloudflare.com";
 
-// Only over https: the gateway token goes nowhere else.
+// Only over https: the gateway token goes nowhere else. The host may end in one dot, as a fully
+// written DNS name does, so the gateway still gets the header that keeps prompts out of its logs.
 export function onGateway(baseUrl: string | null): boolean {
   if (baseUrl === null) return false;
   try {
     const url = new URL(baseUrl);
-    return url.protocol === "https:" && url.hostname === GATEWAY_HOST;
+    return url.protocol === "https:" && url.hostname.replace(/\.$/, "") === GATEWAY_HOST;
   } catch {
     return false;
   }
@@ -61,8 +62,10 @@ export function onGateway(baseUrl: string | null): boolean {
 // Why the app refuses a base URL. "link-local": the host is a link-local address, such as a cloud
 // metadata address, which can hand out the server's own credentials. "plain http": http:// to a
 // host that is not on this computer or a private network, so the key would cross the internet
-// unencrypted. http:// stays open for a local model server, such as Ollama.
-export type BaseUrlProblem = "link-local" | "plain http";
+// unencrypted. http:// stays open for a local model server, such as Ollama. "unclear host": an
+// address whose destination the app cannot judge, such as 0.0.0.0, or one behind the local-use
+// NAT64 prefix 64:ff9b:1::/48, which can map to any IPv4 address.
+export type BaseUrlProblem = "link-local" | "plain http" | "unclear host";
 
 // Judged on the host as written, with no DNS lookup. The URL parser has already turned other ways
 // of writing an IPv4 address, such as 2852039166, into a.b.c.d.
@@ -75,11 +78,12 @@ export function baseUrlProblem(baseUrl: string): BaseUrlProblem | undefined {
   }
   const kind = hostKind(url.hostname);
   if (kind === "link-local") return "link-local";
+  if (kind === "unclear") return "unclear host";
   if (url.protocol === "http:" && kind !== "local") return "plain http";
   return undefined;
 }
 
-type HostKind = "link-local" | "local" | "public";
+type HostKind = "link-local" | "local" | "public" | "unclear";
 
 // Names of cloud metadata services, which answer on a link-local address.
 const METADATA_NAMES = new Set([
@@ -112,6 +116,7 @@ function ipv4Of(host: string): number[] | undefined {
 }
 
 function ipv4Kind([a = 0, b = 0]: number[]): HostKind {
+  if (a === 0) return "unclear";
   if (a === 169 && b === 254) return "link-local";
   const local =
     a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
@@ -141,6 +146,9 @@ function ipv6Kind(words: number[]): HostKind {
   const loopback = zeroUpTo(7) && eighth === 1;
   // So is one behind NAT64's well-known prefix, 64:ff9b::a.b.c.d.
   const nat64 = first === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((w) => w === 0);
+  if ((first === 0x64 && words[1] === 0xff9b && words[2] === 1) || words.every((w) => w === 0)) {
+    return "unclear";
+  }
   if (nat64 || (zeroUpTo(5) && (sixth === 0xffff || (sixth === 0 && !zeroUpTo(7))))) {
     return ipv4Kind([seventh >> 8, seventh & 0xff, eighth >> 8, eighth & 0xff]);
   }

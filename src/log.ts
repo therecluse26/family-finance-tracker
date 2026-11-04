@@ -11,8 +11,11 @@ export type LoggerOptions = {
 };
 
 // A name is split into words ("dataKeyHex" is data, key, hex) and refused if any word is one of these,
-// or ends in "key" or "keys".
+// or ends in "key" or "keys". The ZIP code and ages are Household facts, which never leave the
+// server (spec 01, 11. Privacy), so no log line holds them either.
 const SECRET_WORDS = new Set([
+  "age",
+  "ages",
   "authorization",
   "authorizations",
   "cookie",
@@ -25,10 +28,13 @@ const SECRET_WORDS = new Set([
   "passphrases",
   "password",
   "passwords",
+  "postal",
   "secret",
   "secrets",
   "token",
   "tokens",
+  "zip",
+  "zipcode",
 ]);
 
 // A word whose parts run together, such as "aikey" in AIKEY, or "vapidkeys", still names a key.
@@ -47,11 +53,13 @@ const SECRET_PARTS = [
   "otpauth",
   "passphrase",
   "password",
+  "postalcode",
   "privatekey",
   "secret",
   "setupcode",
   "token",
   "totpuri",
+  "zipcode",
 ];
 
 // Names that pass although they hold a secret word. Compared in lowercase, without separators.

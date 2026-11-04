@@ -381,6 +381,8 @@ const BASE_URL_REFUSALS = {
   "link-local": "The app does not call a link-local address, such as a cloud metadata address.",
   "plain http":
     "Use https:// for this base URL. http:// works only for this computer or a private network.",
+  "unclear host":
+    "The app does not call an address whose destination it cannot judge, such as 0.0.0.0.",
 } as const;
 
 // The answer to each save refusal.

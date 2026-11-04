@@ -98,6 +98,18 @@ const SECRET_NAMES = [
   "TOTPURI",
   "otpauth",
   "otpauthUrl",
+  "zip",
+  "zipCode",
+  "zip_code",
+  "ZIPCODE",
+  "householdZipcode",
+  "postal",
+  "postalCode",
+  "postal_code",
+  "POSTALCODE",
+  "age",
+  "ages",
+  "memberAges",
 ];
 
 const ALLOWED_NAMES = [
@@ -123,6 +135,10 @@ const ALLOWED_NAMES = [
   "cachedInputTokens",
   "twoFactorEnabled",
   "totpDigits",
+  "messages",
+  "pages",
+  "usage",
+  "average",
 ];
 
 class Creds {

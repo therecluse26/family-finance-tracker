@@ -1,13 +1,12 @@
-import { type LanguageModel, type LanguageModelMiddleware, wrapLanguageModel } from "ai";
+import type { LanguageModelMiddleware } from "ai";
 import type { AiProviderName, AiUse } from "./ai-view.ts";
 import type { AiCost } from "./cost.ts";
 import { type CallTokens, costOf, type ModelPrice, nanosOfDollars } from "./prices.ts";
 
-// The one place every AI call leaves the app (spec 10, Module seams: `ai`). Each model the app
-// hands out is wrapped here, so every model call, one round of Chat included, first passes its
-// gate, then has its cost counted from the reply's usage. The check and the count live in
-// costMiddleware, which imports nothing but types from the AI SDK, so a single call path, such as
-// the privacy filter's, can stack it on the same wrap.
+// The cost gate and the cost count (spec 10, Module seams: `ai`). src/ai/call.ts, the one AI call
+// path, stacks costMiddleware on every model it hands out, behind the privacy filter, so every
+// model call, one round of Chat included, first passes the filter, then its gate, then has its
+// cost counted from the reply's usage. This file imports nothing but types from the AI SDK.
 
 // Why an AI use takes its no-AI path instead of a call.
 export type AiPause =
@@ -171,9 +170,4 @@ export function costMiddleware(call: OutboundCall): LanguageModelMiddleware {
       };
     },
   };
-}
-
-export function outbound(model: LanguageModel, call: OutboundCall): LanguageModel {
-  if (typeof model === "string") throw new TypeError("A model is never a plain model-ID string.");
-  return wrapLanguageModel({ model, middleware: costMiddleware(call) });
 }
