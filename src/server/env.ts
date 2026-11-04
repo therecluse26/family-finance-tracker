@@ -7,10 +7,12 @@ import type {
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
+import type { CategoryRoutes } from "./category-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
+import type { RecurringRoutes } from "./recurring-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
 
 // What the security check sets on every request it accepts, and the session check on every /api
@@ -46,6 +48,10 @@ export type ServerEnv = {
     household: HouseholdRoutes;
     // Transaction types and totals by type.
     moneyMovement: MoneyMovementRoutes;
+    // A Member's Category for a Transaction, and the Category rules.
+    categories: CategoryRoutes;
+    // Recurring charges.
+    recurring: RecurringRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
   };

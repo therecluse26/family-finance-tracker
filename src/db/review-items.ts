@@ -52,6 +52,18 @@ export async function listOpenReviewItems(database: Database): Promise<StoredRev
     .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
 }
 
+// Every open item of one kind, newest first.
+export async function listOpenReviewItemsOfKind(
+  database: Database,
+  kind: string,
+): Promise<StoredReviewItem[]> {
+  return database
+    .select()
+    .from(reviewItems)
+    .where(and(isNull(reviewItems.closedAt), eq(reviewItems.kind, kind)))
+    .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
+}
+
 export async function countOpenReviewItems(database: Database): Promise<number> {
   const [row] = await database
     .select({ open: count() })
@@ -86,6 +98,31 @@ export async function answerOpenReviewItem(
   });
 }
 
+// Closes the open items among `ids` with no answer, in one write transaction. Returns how many
+// closed: an item already closed stays as it was.
+export async function closeReviewItems(
+  database: Database,
+  ids: readonly string[],
+  closing: { reason: string; at: Date },
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  return database.transaction(async (tx) => {
+    let closed = 0;
+    // SQLite limits the parameters in one statement.
+    for (let start = 0; start < ids.length; start += 500) {
+      const rows = await tx
+        .update(reviewItems)
+        .set({ closedAt: closing.at, closedReason: closing.reason, answer: null, answeredBy: null })
+        .where(
+          and(inArray(reviewItems.id, ids.slice(start, start + 500)), isNull(reviewItems.closedAt)),
+        )
+        .returning({ id: reviewItems.id });
+      closed += rows.length;
+    }
+    return closed;
+  });
+}
+
 // Closes an open item. False when it was already closed.
 export async function closeReviewItem(
   database: Database,
@@ -108,24 +145,4 @@ export async function closeReviewItem(
     .where(and(eq(reviewItems.id, id), isNull(reviewItems.closedAt)))
     .returning({ id: reviewItems.id });
   return closed.length > 0;
-}
-
-// Closes several open items for one reason, in one statement for each 500 IDs. Returns how many
-// closed; an item already closed stays as it was.
-export async function closeReviewItems(
-  database: Queries,
-  ids: readonly string[],
-  closing: { reason: string; at: Date },
-): Promise<number> {
-  let closed = 0;
-  for (let start = 0; start < ids.length; start += 500) {
-    const chunk = ids.slice(start, start + 500);
-    const rows = await database
-      .update(reviewItems)
-      .set({ closedAt: closing.at, closedReason: closing.reason })
-      .where(and(inArray(reviewItems.id, chunk), isNull(reviewItems.closedAt)))
-      .returning({ id: reviewItems.id });
-    closed += rows.length;
-  }
-  return closed;
 }

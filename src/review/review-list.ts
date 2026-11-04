@@ -6,6 +6,7 @@ import {
   countOpenReviewItems,
   type Database,
   listOpenReviewItems,
+  listOpenReviewItemsOfKind,
   type Queries,
   readReviewItem,
   type StoredReviewItem,
@@ -210,9 +211,10 @@ export async function answerReviewItem(
   return answered;
 }
 
-// A later event settled every open item of this kind about this Transaction or loan, such as a
-// later AI answer with high confidence, or about any of several, which reads the open items once.
-// Returns how many closed. `reason` says what settled them.
+// A later event settled every open item of this kind about this Transaction or loan, or about any
+// of these, such as a later AI answer with high confidence. Returns how many closed. `reason` says
+// what settled them. One call reads the kind's open items once and closes them in one write, so a
+// Category rule that settles thousands of best guesses stays quick.
 export async function settleReviewItems(
   database: Database,
   about: { kind: string; subjectId: string } | { kind: string; subjectIds: readonly string[] },
@@ -221,11 +223,11 @@ export async function settleReviewItems(
   if (reason.trim() === "" || reason === "answered") {
     throw new Error("Say which event settled the Review list item.");
   }
-  const subjects = new Set("subjectId" in about ? [about.subjectId] : about.subjectIds);
+  const subjects = new Set("subjectIds" in about ? about.subjectIds : [about.subjectId]);
   if (subjects.size === 0) return 0;
   return oneAtATime(async () => {
-    const settled = (await listOpenReviewItems(database)).filter(
-      (item) => item.kind === about.kind && item.subjectIds.some((id) => subjects.has(id)),
+    const settled = (await listOpenReviewItemsOfKind(database, about.kind)).filter((item) =>
+      item.subjectIds.some((id) => subjects.has(id)),
     );
     return closeReviewItems(
       database,

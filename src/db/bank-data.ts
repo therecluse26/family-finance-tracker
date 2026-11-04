@@ -33,6 +33,7 @@ import {
   followUpMarks,
   historyWait,
   householdAccounts,
+  recurringCharges,
   reviewItems,
   systemNotices,
   transactions,
@@ -738,8 +739,10 @@ export type DeletedHistory = { accounts: number; transactions: number };
 
 // Deletes a removed Connection's history (spec 02, Removing a Connection), in one transaction: its
 // Accounts and their Transactions. The daily balances go first, since their foreign key has no
-// cascade. The links and decisions on the Transactions go with them by cascade. The other side of
-// each undone Transfer link is marked for the follow-up job, so matching runs on it again. Each
+// cascade, and so does each Recurring charge, ended or not, whose last Transaction landed on one of
+// the Accounts. The follow-up job finds the other Recurring charges again. The links and decisions
+// on the Transactions go with them by cascade. The other side of each undone Transfer link is
+// marked for the follow-up job, so matching runs on it again. Each
 // open Review list item about the deleted rows closes. The Connection's row goes too, unless an
 // Account carried over to a newer Connection still holds some of its old Transactions. Returns
 // undefined when no removed Connection has the ID.
@@ -808,6 +811,7 @@ export async function deleteRemovedConnection(
     if (accountIds.length > 0) {
       await tx.delete(dailyBalances).where(inArray(dailyBalances.accountId, accountIds));
       await tx.delete(typedBalances).where(inArray(typedBalances.accountId, accountIds));
+      await tx.delete(recurringCharges).where(inArray(recurringCharges.accountId, accountIds));
     }
     await tx.delete(transactions).where(onAccounts);
     await tx.delete(householdAccounts).where(eq(householdAccounts.connectionId, id));

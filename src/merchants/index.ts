@@ -1,5 +1,5 @@
 // The merchants module's interface (spec 04, Merchants). Other modules import from here.
-export { merchantKey, sameMerchant } from "./identity.ts";
+export { isPaymentApp, merchantKey, sameMerchant } from "./identity.ts";
 export {
   cleanDescription,
   cleanMerchant,

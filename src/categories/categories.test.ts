@@ -97,7 +97,12 @@ describe("the Category list", () => {
     const changes = api.routes.filter(
       (route) => route.method !== "GET" && /categor/i.test(route.path),
     );
-    expect(changes).toEqual([]);
+    // A Member's Category for one Transaction, and deleting a Category rule, leave the list as it
+    // is.
+    expect(changes.map((route) => `${route.method} ${route.path}`)).toEqual([
+      "PUT /transactions/:id/category",
+      "DELETE /category-rules/:id",
+    ]);
   });
 });
 

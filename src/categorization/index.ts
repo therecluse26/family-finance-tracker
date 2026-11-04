@@ -14,3 +14,10 @@ export {
   chooseCategories,
   startCategorization,
 } from "./categorize.ts";
+export {
+  type CategoryRule,
+  type Correction,
+  categoryRules,
+  correctCategory,
+  deleteCategoryRule,
+} from "./rules.ts";

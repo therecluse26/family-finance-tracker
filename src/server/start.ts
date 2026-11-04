@@ -15,6 +15,7 @@ import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startNotify } from "../notify/index.ts";
+import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
@@ -63,7 +64,9 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });
     const moneyMovement = startMoneyMovement({ database });
     const categorization = startCategorization({ database });
+    const recurring = startRecurringCharges({ database });
     const stopModules = () => {
+      recurring.stop();
       categorization.stop();
       moneyMovement.stop();
       followUp.stop();

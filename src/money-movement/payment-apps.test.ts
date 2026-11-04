@@ -3,7 +3,7 @@ import { DEMO_BANKS, DEMO_MEMBERS, demoRecords, seedDemoHousehold } from "../ban
 import { type FakePage, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { addUnconnectedAccount, syncConnection, type TxnRecord } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
-import { registerCascadeStep, startCategorization } from "../categorization/index.ts";
+import { correctCategory, startCategorization } from "../categorization/index.ts";
 import { listConnections, setHandSetFields } from "../db/index.ts";
 import { followUpAgain, runFollowUp } from "../follow-up/index.ts";
 import { openReviewItems } from "../review/index.ts";
@@ -305,17 +305,18 @@ describe("payment apps and cash", () => {
 
   describe("a person's own Category", () => {
     it("lets a Category rule for the person move the payments to Childcare", async () => {
-      stops.push(
-        registerCascadeStep("Category rule", async (txn) =>
-          txn.merchant?.name === "Morgan Lee"
-            ? { category: "Childcare", confidence: "certain" }
-            : undefined,
-        ),
-      );
+      await runFollowUp(NOW);
+      const [first, ...lines] = demoLines("Zelle payment to MORGAN LEE");
+      expect(lines.length).toBeGreaterThan(0);
+      // A Member's correction on one line makes a Category rule for the person.
+      expect(
+        await correctCategory(bank.database, await idOf(first?.id ?? ""), "Childcare", {
+          onlyThisTransaction: false,
+          memberId: "member-0",
+        }),
+      ).toMatchObject({ result: "corrected", rule: { merchant: { name: "Morgan Lee" } } });
       await runFollowUp(NOW);
 
-      const lines = demoLines("Zelle payment to MORGAN LEE");
-      expect(lines.length).toBeGreaterThan(0);
       for (const line of lines) {
         expect(await shownAs(line.id)).toEqual({
           parts: [{ type: "Spending", category: "Childcare", source: "Category rule" }],

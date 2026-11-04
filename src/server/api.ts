@@ -10,6 +10,7 @@ import type {
 } from "../bank/connect-view.ts";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
+import { CATEGORIES } from "../categories/list.ts";
 import { HAND_SET_TYPES } from "../money-movement/types.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -123,6 +124,14 @@ const UNCONNECTED_REFUSED =
 
 // The types a Member may set by hand.
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
+
+// A Member's Category for one Transaction. Without "only this Transaction", it also makes a
+// Category rule for the Transaction's Merchant (spec 04, Category rules).
+const CATEGORY_NAMES = new Set<string>(CATEGORIES.map((category) => category.name));
+const transactionCategoryBody = z.object({
+  category: z.string().refine((name) => CATEGORY_NAMES.has(name)),
+  onlyThisTransaction: z.boolean().optional(),
+});
 
 // An Account's Exclude switch.
 const excludeBody = z.object({ excluded: z.boolean() }).strict();
@@ -399,6 +408,43 @@ export const api = new Hono<ServerEnv>()
     const decision = await c.var.moneyMovement.setType(c.req.param("id"), body.data.type);
     if (decision === undefined) return c.json({ error: "Not found" }, 404);
     return c.json({ decision }, 200);
+  })
+  // A Member sets a Transaction's Category by hand. Unless the Member picks "only this
+  // Transaction", the app also makes a Category rule for its Merchant (spec 04, Category rules).
+  .put("/transactions/:id/category", async (c) => {
+    const body = transactionCategoryBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Pick a Category." }, 400);
+    const corrected = await c.var.categories.correct(
+      c.req.param("id"),
+      body.data.category,
+      body.data.onlyThisTransaction ?? false,
+      c.var.member.id,
+    );
+    if (corrected === "not found") return c.json({ error: "Not found" }, 404);
+    if (corrected === "not decided") {
+      return c.json(
+        { error: "The app has not decided this Transaction's type yet. Try again soon." },
+        409,
+      );
+    }
+    return c.json(corrected, 200);
+  })
+  // Settings → Categories: every Category rule, with Delete. Deleting one runs the cascade again on
+  // its Merchant's Transactions not set by hand.
+  .get("/category-rules", async (c) => c.json({ rules: await c.var.categories.rules() }))
+  .delete("/category-rules/:id", async (c) => {
+    if (!(await c.var.categories.deleteRule(c.req.param("id")))) {
+      return c.json({ error: "No Category rule has this ID." }, 404);
+    }
+    return c.json({ deleted: true }, 200);
+  })
+  // Recurring charges (spec 06), by next expected date.
+  .get("/recurring-charges", async (c) => c.json({ charges: await c.var.recurring.list() }))
+  // A Member marks a Recurring charge ended. It never comes back by itself.
+  .post("/recurring-charges/:id/end", async (c) => {
+    const ended = await c.var.recurring.end(c.req.param("id"), c.var.member.id);
+    if (ended === undefined) return c.json({ error: "No Recurring charge has this ID." }, 404);
+    return c.json({ charge: ended }, 200);
   })
   // A connected loan's type and the APR a Member typed (spec 02, Account fields). A Member's type
   // wins over the subtype and the payout. Its payments are decided again.

@@ -1,4 +1,4 @@
-import { CATEGORIES, type Category, isCategory } from "../categories/index.ts";
+import { type Category, isCategory } from "../categories/index.ts";
 import {
   type CategoryRecord,
   type CategorySource,
@@ -6,15 +6,15 @@ import {
   listMerchantHistory,
   type PartCategory,
   readCategoryRecords,
-  setHandSetFields,
   storePartCategories,
 } from "../db/index.ts";
-import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
+import { askForFollowUp, registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
 import { registerDecidedAgain } from "../money-movement/index.ts";
 import {
   openReviewItemBatch,
   openReviewItems,
+  type ReviewItem,
   registerReviewKind,
   settleReviewItems,
 } from "../review/index.ts";
@@ -25,7 +25,15 @@ import {
   handSetOrRule,
   MerchantHistory,
   merchantOf,
+  registerCascadeStep,
 } from "./cascade.ts";
+import {
+  applyCorrection,
+  categoryChoices,
+  readCategoryChoice,
+  ruleFor,
+  takesCategory,
+} from "./rules.ts";
 
 // The Categorization follow-up step (spec 10, The follow-up pipeline; spec 04, The categorization
 // cascade). It runs after Matching, on the parts Matching decided, and works through Transactions
@@ -188,8 +196,12 @@ export async function categorize(database: Database, ids: readonly string[]): Pr
   if (opened > 0) log.info("Best guesses made without AI went on the Review list", { opened });
 }
 
-// Registers the Categorization step, the best-guess Review list kind, and the listener for
-// Transactions Money movement decides again. The start calls it before jobs run.
+const transactionIdsOf = (item: ReviewItem) =>
+  item.subject.type === "transactions" ? item.subject.transactionIds : [];
+
+// Registers the Categorization step, the cascade's Category rule step, the best-guess Review list
+// kind, and the listener for Transactions Money movement decides again. The start calls it before
+// jobs run.
 export function startCategorization(options: { database: Database }): { stop(): void } {
   const { database } = options;
   const stops = [
@@ -198,22 +210,38 @@ export function startCategorization(options: { database: Database }): { stop(): 
       return undefined;
     }),
     registerDecidedAgain((ids) => categorize(database, ids)),
+    registerCascadeStep("Category rule", async (txn) => {
+      const rule = await ruleFor(database, txn.merchant);
+      return rule === undefined ? undefined : { category: rule.category, confidence: "certain" };
+    }),
     registerReviewKind(BEST_GUESS_KIND, {
-      // "Not this" offers the Category list.
-      async otherChoices() {
-        return CATEGORIES.map((category) => ({ value: category.name, label: category.name }));
+      // "Not this" offers the Category list, and the same list for only this Transaction.
+      async otherChoices(item) {
+        const [record] = await readCategoryRecords(database, transactionIdsOf(item));
+        return categoryChoices(record === undefined ? null : merchantOf(record));
       },
       // Every answer counts as hand-set: the Category becomes the Transaction's hand-set Category.
-      // Accepting also makes a Category rule once T32 (#58) adds them. The follow-up job then runs
-      // the cascade again, so Categorization never runs beside a sync.
+      // Accepting the guess makes a Category rule with it (spec 04, Review list items). Picking
+      // another Category is a correction, and makes a rule unless the Member picks "only this
+      // Transaction". The follow-up job then runs the cascade again, so Categorization never runs
+      // beside a sync.
       async answer(item, choice, answering) {
-        if (item.subject.type !== "transactions" || !isCategory(choice.value)) {
+        const answer = readCategoryChoice(choice.value);
+        if (item.subject.type !== "transactions" || answer === undefined) {
           throw new Error("A best guess is about a Transaction, and its answer is a Category.");
         }
-        for (const id of item.subject.transactionIds) {
-          await setHandSetFields(answering.database, id, { category: choice.value });
+        const at = new Date();
+        for (const record of await readCategoryRecords(
+          answering.database,
+          transactionIdsOf(item),
+        )) {
+          await applyCorrection(
+            answering.database,
+            { id: record.id, merchant: merchantOf(record), takesCategory: takesCategory(record) },
+            answer.category,
+            { onlyThisTransaction: answer.onlyThisTransaction, memberId: answering.memberId, at },
+          );
         }
-        await followUpAgain(answering.database, item.subject.transactionIds);
       },
       afterAnswer: () => askForFollowUp(),
     }),

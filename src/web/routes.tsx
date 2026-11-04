@@ -9,6 +9,7 @@ import { Ai } from "./pages/settings/Ai.tsx";
 import { AiUsage } from "./pages/settings/AiUsage.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
+import { Categories } from "./pages/settings/Categories.tsx";
 import { Household } from "./pages/settings/Household.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
@@ -21,6 +22,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   household: Household,
   "my-login": MyLogin,
   banks: Banks,
+  categories: Categories,
   "backups-and-data": BackupsAndData,
   ai: Ai,
 };

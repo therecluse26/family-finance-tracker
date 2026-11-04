@@ -59,6 +59,17 @@ export {
   type TransactionFilter,
 } from "./bank-data.ts";
 export {
+  listCategoryRules,
+  listMerchantCandidates,
+  listRulesNamed,
+  type MerchantLookup,
+  type NewCategoryRule,
+  readCategoryRule,
+  removeCategoryRule,
+  type StoredCategoryRule,
+  storeCategoryRule,
+} from "./category-rules.ts";
+export {
   APP_DB_URL,
   closeDatabase,
   type Database,
@@ -174,6 +185,14 @@ export {
   storePlaidKeys,
 } from "./plaid-settings.ts";
 export {
+  endRecurringCharge,
+  listPostedSpending,
+  listRecurringCharges,
+  type PostedSpendingRow,
+  replaceRecurringCharges,
+  type StoredRecurringCharge,
+} from "./recurring-charges.ts";
+export {
   addReviewItem,
   addReviewItems,
   answerOpenReviewItem,
@@ -181,6 +200,7 @@ export {
   closeReviewItems,
   countOpenReviewItems,
   listOpenReviewItems,
+  listOpenReviewItemsOfKind,
   type NewReviewItem,
   readReviewItem,
   type StoredReviewItem,

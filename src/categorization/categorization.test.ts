@@ -4,8 +4,9 @@ import { fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { CATEGORIES } from "../categories/index.ts";
-import { setHandSetFields } from "../db/index.ts";
+import { setHandSetFields, storeCategoryRule } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
+import { merchantKey } from "../merchants/index.ts";
 import {
   registerDecisionRule,
   setTransactionType,
@@ -72,6 +73,20 @@ describe("the categorization cascade", () => {
     await runFollowUp(NOW);
   };
   const register = (stop: () => void) => stops.push(stop);
+  // A stored Category rule for a Merchant with no Merchant ID.
+  const addRule = (name: string, category: string) =>
+    storeCategoryRule(
+      bank.database,
+      {
+        merchantId: null,
+        merchantName: name,
+        merchantKey: merchantKey(name),
+        category,
+        madeAt: new Date(),
+        madeBy: null,
+      },
+      [],
+    );
 
   // A purchase on the card. The category is Plaid's detailed code with its confidence level.
   const buy = (
@@ -302,7 +317,11 @@ describe("the categorization cascade", () => {
         bestAnswer: { value: "Restaurants", label: "Yes, Restaurants" },
       });
       const choices = await otherReviewChoices(bank.database, item?.id ?? "");
-      expect(choices?.map((choice) => choice.value)).toEqual(CATEGORIES.map((c) => c.name));
+      // Each Category makes a rule; each one for only this Transaction makes none.
+      expect(choices?.map((choice) => choice.value)).toEqual([
+        ...CATEGORIES.map((c) => c.name),
+        ...CATEGORIES.map((c) => `only this Transaction: ${c.name}`),
+      ]);
 
       // A second run keeps one item.
       await sync({
@@ -374,13 +393,7 @@ describe("the categorization cascade", () => {
 
   describe("registered steps", () => {
     it("lets a Category rule win over the provider, and the AI answer before a best guess", async () => {
-      register(
-        registerCascadeStep("Category rule", async (txn) =>
-          txn.merchant?.name === "Ruled Co"
-            ? { category: "Hobbies", confidence: "certain" }
-            : undefined,
-        ),
-      );
+      await addRule("Ruled Co", "Hobbies");
       register(registerCascadeStep("AI", async () => ({ category: "Pets", confidence: "high" })));
 
       await sync({
@@ -423,7 +436,7 @@ describe("the categorization cascade", () => {
         },
       });
 
-    beforeEach(() => {
+    beforeEach(async () => {
       // A tracked loan payment: $10 of interest, the rest principal on a Cash loan.
       register(
         registerDecisionRule("5.2", (txn) =>
@@ -442,13 +455,8 @@ describe("the categorization cascade", () => {
             : undefined,
         ),
       );
-      register(
-        registerCascadeStep("Category rule", async (txn) =>
-          txn.merchant?.name === "Ruled Lender" || txn.merchant?.name === "Ruled ATM"
-            ? { category: "Services", confidence: "certain" }
-            : undefined,
-        ),
-      );
+      await addRule("Ruled Lender", "Services");
+      await addRule("Ruled ATM", "Services");
     });
 
     it("takes the place of steps 3 to 6, while a Category rule still wins", async () => {

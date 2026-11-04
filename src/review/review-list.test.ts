@@ -313,6 +313,33 @@ describe("the Review list", () => {
     expect(await handSet()).toEqual({ t1: { category: "groceries" }, t2: {}, t3: {} });
   });
 
+  it("settles many Transactions in one call, and only items of that kind about them", async () => {
+    const stopOther = registerReviewKind("other kind", categoryGuess);
+    try {
+      await guess("t1");
+      await guess("t2");
+      const kept = await guess("t3");
+      const otherKind = await openReviewItem(test.database, {
+        kind: "other kind",
+        subject: { type: "transactions", transactionIds: [txns.t1 ?? ""] },
+        decided: "Another kind about the same Transaction.",
+        bestAnswer: { value: "groceries", label: "Yes, Groceries" },
+      });
+
+      const closed = await settleReviewItems(
+        test.database,
+        { kind: KIND, subjectIds: [txns.t1 ?? "", txns.t2 ?? ""] },
+        "A Category rule settled it",
+      );
+
+      expect(closed).toBe(2);
+      const open = await query("SELECT id FROM review_items WHERE closed_at IS NULL ORDER BY id");
+      expect(open.map((row) => row.id)).toEqual([kept, otherKind].sort());
+    } finally {
+      stopOther();
+    }
+  });
+
   it("closes an item when a later event settles it", async () => {
     const settled = await guess("t1");
     const kept = await guess("t2");

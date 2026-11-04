@@ -14,11 +14,13 @@ import type { Logger } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
+import { categoryRoutes } from "./categories.ts";
 import type { ServerEnv } from "./env.ts";
 import { householdRoutes } from "./household.ts";
 import { masterKeyRoutes } from "./master-key.ts";
 import { moneyMovementRoutes } from "./money-movement.ts";
 import { noticeRoutes } from "./notices.ts";
+import { recurringRoutes } from "./recurring.ts";
 import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
 import { readSetupState } from "./setup.ts";
@@ -141,6 +143,8 @@ export function createApp(
   const reviewList = reviewRoutes(database);
   const household = householdRoutes(database);
   const moneyMovement = moneyMovementRoutes(database);
+  const categories = categoryRoutes(database);
+  const recurring = recurringRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -163,6 +167,8 @@ export function createApp(
         c.set("reviewList", reviewList);
         c.set("household", household);
         c.set("moneyMovement", moneyMovement);
+        c.set("categories", categories);
+        c.set("recurring", recurring);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);
@@ -170,6 +176,8 @@ export function createApp(
       })
       .use("/api/*", masterKeyFirst)
       .use("/api/connections/*", jsonOnly)
+      // A Member's Category for a Transaction takes only a JSON body.
+      .use("/api/transactions/:id/category", jsonOnly)
       .use("/api/plaid/*", secretRoutes(database, "plaid", services.plaid))
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .route("/api", api)

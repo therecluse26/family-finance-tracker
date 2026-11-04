@@ -775,3 +775,55 @@ export const reviewItems = sqliteTable(
   },
   (table) => [index("review_items_closed_at_created_at").on(table.closedAt, table.createdAt)],
 );
+
+// Category rules (spec 04, Category rules). A Member's correction makes one for the Transaction's
+// Merchant, and it gives each of that Merchant's Transactions not set by hand the same Category.
+// Each Merchant has at most one rule.
+export const categoryRules = sqliteTable(
+  "category_rules",
+  {
+    id: text("id").primaryKey(),
+    // The provider's Merchant ID, when the Transaction had one, and the clean name.
+    merchantId: text("merchant_id"),
+    merchantName: text("merchant_name").notNull(),
+    // The clean name as Merchant identity compares it: no case, no spaces, no punctuation.
+    merchantKey: text("merchant_key").notNull(),
+    category: text("category").notNull(),
+    madeAt: moment("made_at").notNull(),
+    madeBy: text("made_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    index("category_rules_merchant_id").on(table.merchantId),
+    index("category_rules_merchant_key").on(table.merchantKey),
+  ],
+);
+
+// Recurring charges (spec 06, What the app stores): Spending with one Merchant that repeats on a
+// schedule at a similar amount. The checks after each sync find them again from posted Spending,
+// except one a Member marked ended, which never changes again.
+export const recurringCharges = sqliteTable("recurring_charges", {
+  id: text("id").primaryKey(),
+  // The Merchant: the provider's Merchant ID, when it has one, and the clean name.
+  merchantId: text("merchant_id"),
+  merchantName: text("merchant_name").notNull(),
+  // The Category of its last Transaction.
+  category: text("category"),
+  schedule: text("schedule", {
+    enum: ["weekly", "every 2 weeks", "monthly", "yearly"],
+  }).notNull(),
+  nextExpectedDate: calendarDate("next_expected_date").notNull(),
+  // The amount of its last Transaction, in whole cents spent.
+  latestAmount: cents("latest_amount").notNull(),
+  // Each Transaction's ID, posted date, and amount in whole cents spent, oldest first, as JSON.
+  priceHistory: text("price_history", { mode: "json" })
+    .$type<{ transactionId: string; date: string; amount: number }[]>()
+    .notNull(),
+  // The Account its last Transaction landed on.
+  accountId: text("account_id")
+    .notNull()
+    .references(() => householdAccounts.id),
+  status: text("status", { enum: ["active", "inactive", "ended"] }).notNull(),
+  foundAt: moment("found_at").notNull(),
+  endedAt: moment("ended_at"),
+  endedBy: text("ended_by").references(() => members.id, { onDelete: "set null" }),
+});
