@@ -45,6 +45,7 @@ Each item was a blocking review finding at least once, and each cost a full revi
 - **K9. Large-history check.** If a diff touches `src/bank/`, `src/money-movement/`, `src/categorization/`, `src/merchants/` or `src/review/`, run it on 5 years of synthetic history (about 20,000 Transactions). Time each changed request and follow-up job, and put the numbers in the PR text. No request takes more than 1 s.
 - **K10. Never decide on data the browser sends when the server can learn it.** Plaid Link metadata (bank ID, bank name, account list) comes from the browser. After the token exchange, every decision that depends on it (same bank, duplicate bank, which Connection to replace) uses Plaid's own answer from `/item/get` or `/accounts/get`. Test it with a browser value that differs from Plaid's.
 
+- **K11. Every hold on a Connection is honored by every path that starts a sync.** The paths are the schedule, the start-up catch-up, Sync now, update mode and `update-finished`. Set the hold in the same write that creates or changes the row, so no window exists. Test each path with the hold set, and break the hold once in each.
 When a review blocks on something new that could happen again, the orchestrator adds it here as the next K number.
 
 ## Writing
