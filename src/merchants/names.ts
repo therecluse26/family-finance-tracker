@@ -1,3 +1,5 @@
+import { paymentAppLine } from "./payment-apps.ts";
+
 // Merchant names (spec 04, Names). The provider's Merchant name wins. Otherwise fixed rules clean
 // the bank's original description: they remove store numbers, payment-processor prefixes, cities,
 // and dates. A name the rules cannot fix keeps the rule-cleaned text and is marked for AI cleanup,
@@ -161,15 +163,28 @@ export function isFixedName(name: string): boolean {
   return parts.length >= 1 && parts.length <= 4 && !parts.some((word) => NO_LETTERS.test(word));
 }
 
-// The Merchant of one arriving Transaction, from the provider's data and its bank description.
+// The Merchant of one arriving Transaction, from the provider's data and its bank description. In
+// a payment-app line that names a person, that person is the Merchant, with no Merchant ID, so two
+// people never share the app's ID. In one that names no one, such as `VENMO PAYMENT`, the payment
+// app is the Merchant (spec 04, Identity). A line that names another Merchant is an ordinary
+// purchase.
 export function cleanMerchant(txn: {
   description: string;
   merchantName: string | null;
   merchantId: string | null;
+  counterparties?: readonly { name: string; type: string }[];
+  category?: { name: string } | null;
 }): MerchantCleanup {
   const id = txn.merchantId === null || txn.merchantId.trim() === "" ? null : txn.merchantId;
+  const line = paymentAppLine({ ...txn, providerCategory: txn.category?.name ?? null });
+  if (line !== undefined && typeof line.party === "object") {
+    return { merchant: { id: null, name: line.party.person }, needsAi: false };
+  }
   const providerName = txn.merchantName?.replace(/\s+/g, " ").trim() ?? "";
   if (providerName !== "") return { merchant: { id, name: providerName }, needsAi: false };
+  if (line?.party === "no one" && line.app !== null) {
+    return { merchant: { id, name: line.app }, needsAi: false };
+  }
 
   const description = txn.description.replace(/\s+/g, " ").trim();
   if (id === null && (description === "" || CHECK.test(description))) {

@@ -70,66 +70,88 @@ describe("money movement", () => {
       await seedDemoHousehold(bank.database, bank.fake, NOW);
     });
 
-    it("makes money out Spending at step 5.7 and money in Income at step 6.9, unless it is a loan payout, or has transfer wording or a transfer category", async () => {
+    it("makes money out Spending at step 5.7 and money in Income at step 6.9, unless an earlier step fits", async () => {
       await runFollowUp(NOW);
 
       const shown = "FROM transactions WHERE hidden_reason IS NULL";
       expect(await count("SELECT count(*) AS n FROM transaction_decisions")).toBe(
         await count(`SELECT count(*) AS n ${shown}`),
       );
-      // Except the Transfer pairs that step 3 links, the one-sided Transfers at steps 5.6 and
-      // 6.7, and the loan payout at step 6.2.
+      // Except the Transfer pairs that step 3 links, card payments at steps 5.1 and 6.6, cash at
+      // step 5.3, payment-app lines at steps 5.5 and 6.5, the one-sided Transfers at steps 5.6 and
+      // 6.7, and the loan payout at step 6.2. The demo has no Member, so no Zelle line names one.
       const transferWording = `(t.description LIKE '%transfer%' OR t.description LIKE '%xfer%'
         OR coalesce(t.provider_category, '') GLOB 'TRANSFER_IN_*'
         OR coalesce(t.provider_category, '') GLOB 'TRANSFER_OUT_*')`;
+      const paymentApp = `(t.description LIKE '%venmo%' OR t.description LIKE '%zelle%'
+        OR t.description LIKE '%paypal%' OR t.description LIKE '%cash app%')`;
+      const cardPayment = "coalesce(t.provider_category, '') = 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT'";
       const linked = `EXISTS (SELECT 1 FROM transfer_links l
         WHERE t.id IN (l.out_transaction_id, l.in_transaction_id))`;
+      const unpaired = `NOT ${linked} AND NOT ${cardPayment}`;
       expect(
         await count(
           `SELECT count(*) AS n FROM transaction_decisions d JOIN transactions t ON t.id = d.transaction_id
            JOIN transaction_parts p ON p.transaction_id = d.transaction_id
-           WHERE (t.amount <= 0 AND d.step = '5.7' AND p.type = 'Spending' AND NOT ${linked}
-                AND NOT ${transferWording})
-              OR (t.amount > 0 AND d.step = '6.9' AND p.type = 'Income' AND NOT ${linked}
-                AND NOT ${transferWording})
+           WHERE (t.amount <= 0 AND d.step = '5.7' AND p.type = 'Spending' AND ${unpaired}
+                AND NOT ${transferWording} AND NOT ${paymentApp})
+              OR (t.amount > 0 AND d.step = '6.9' AND p.type = 'Income' AND ${unpaired}
+                AND NOT ${transferWording} AND NOT ${paymentApp})
               OR (d.step = '3' AND p.type = 'Transfer' AND ${linked})
+              OR (d.step IN ('5.1', '6.6') AND p.type = 'Transfer' AND ${cardPayment}
+                AND NOT ${linked})
+              OR (d.step = '5.3' AND p.type = 'Spending' AND p.category = 'Cash'
+                AND t.provider_category = 'TRANSFER_OUT_WITHDRAWAL')
+              OR (d.step = '5.5' AND p.type = 'Spending' AND p.category = 'Payments to people'
+                AND ${paymentApp} AND NOT ${linked})
+              OR (d.step = '6.5' AND p.type = 'Income' AND ${paymentApp} AND NOT ${linked})
               OR (d.step IN ('5.6', '6.7') AND p.type IN ('Transfer', 'Saving')
-                AND ${transferWording} AND NOT ${linked})
+                AND ${transferWording} AND NOT ${paymentApp} AND NOT ${linked})
               OR (d.step = '6.2' AND p.type = 'Transfer'
                 AND t.provider_category GLOB 'LOAN_DISBURSEMENTS_*')`,
         ),
       ).toBe(await count(`SELECT count(*) AS n ${shown}`));
       expect(await count("SELECT count(*) AS n FROM transfer_links")).toBeGreaterThan(0);
-      // One part each, for the whole amount.
+      for (const step of ["5.3", "5.5", "6.5"]) {
+        expect(
+          await count(`SELECT count(*) AS n FROM transaction_decisions WHERE step = '${step}'`),
+        ).toBeGreaterThan(0);
+      }
+      // One part each, for the whole amount. Only cash and payments to people name a Category.
       expect(
         await count(
           `SELECT count(*) AS n FROM transaction_parts p JOIN transactions t ON t.id = p.transaction_id
-           WHERE p.part <> 0 OR p.amount <> t.amount OR p.category IS NOT NULL`,
+           WHERE p.part <> 0 OR p.amount <> t.amount
+              OR (p.category IS NOT NULL AND p.category NOT IN ('Cash', 'Payments to people'))`,
         ),
       ).toBe(0);
     });
 
     it("lets the first step that fits win, and skips an empty step", async () => {
-      register("5.3", (txn) =>
-        txn.description.includes("ATM") ? whole(txn, "Spending") : undefined,
+      // Step 5.2 comes before the built-in cash rule at step 5.3, and claims every withdrawal.
+      register("5.2", (txn) =>
+        txn.providerCategory === "TRANSFER_OUT_WITHDRAWAL" ? whole(txn, "Saving") : undefined,
       );
-      register("5.5", (txn) => whole(txn, "Transfer"));
 
       await runFollowUp(NOW);
 
-      expect(
-        await count("SELECT count(*) AS n FROM transaction_decisions WHERE step = '5.7'"),
-      ).toBe(0);
-      expect(
-        await count("SELECT count(*) AS n FROM transaction_decisions WHERE step = '5.3'"),
-      ).toBeGreaterThan(0);
-      // Steps 5.x never see money in. Paired Transfers stop at step 3.
+      const at = (step: string) =>
+        count(`SELECT count(*) AS n FROM transaction_decisions WHERE step = '${step}'`);
+      expect(await at("5.2")).toBeGreaterThan(0);
+      expect(await at("5.3")).toBe(0);
+      // Steps 6.4 and 6.8 are empty, so money in passes them by.
+      expect(await at("6.4")).toBe(0);
+      expect(await at("6.8")).toBe(0);
+      expect(await at("6.9")).toBeGreaterThan(0);
+      // Steps 5.x never see money in, and steps 6.x never see money out.
       expect(
         await count(
-          "SELECT count(*) AS n FROM transaction_decisions d JOIN transactions t ON t.id = d.transaction_id WHERE t.amount > 0 AND d.step NOT IN ('3', '6.2', '6.7', '6.9')",
+          `SELECT count(*) AS n FROM transaction_decisions d JOIN transactions t ON t.id = d.transaction_id
+           WHERE (t.amount > 0 AND d.step GLOB '5.*') OR (t.amount <= 0 AND d.step GLOB '6.*')`,
         ),
       ).toBe(0);
       expect(() => register("5.7", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
+      expect(() => register("5.3", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
     });
 
     it("keeps a hand-set type through every re-run, even when a sync changes the Transaction", async () => {
@@ -152,7 +174,7 @@ describe("money movement", () => {
       expect(await decisionOf(dinner.id)).toEqual(set);
 
       // A rule that would claim it, and a sync that changes its description and then its amount.
-      register("5.5", (txn) => whole(txn, "Saving"));
+      register("5.2", (txn) => whole(txn, "Saving"));
       await syncMore("fake-chase", { changed: [{ ...dinner, description: "CHANGED" }] });
       expect(await decisionOf(dinner.id)).toEqual(set);
 
@@ -229,7 +251,7 @@ describe("money movement", () => {
     };
 
     it("decides a provisional result again once its window has passed, with no sync", async () => {
-      register("5.5", oneSided);
+      register("5.2", oneSided);
       const connectionId = await bank.connect("fake-first-bank");
       bank.fake.addPages("fake-first-bank", {
         accounts: [CHECKING],
@@ -247,14 +269,14 @@ describe("money movement", () => {
       // Matching, on the day after the Transfer posted.
       await runMatching(bank.database, [await idOf("xfer")], new Date("2026-10-10T15:00:00Z"));
       expect(await decisionOf("xfer")).toEqual({
-        step: "5.5",
+        step: "5.2",
         provisionalUntil: "2026-10-12",
         parts: [{ type: "Transfer", amount: -20_000, category: null }],
       });
 
       // On the window's last day it stays.
       expect(await decideProvisionalAgain(bank.database, new Date("2026-10-12T23:00:00Z"))).toBe(0);
-      expect((await decisionOf("xfer"))?.step).toBe("5.5");
+      expect((await decisionOf("xfer"))?.step).toBe("5.2");
 
       expect(await decideProvisionalAgain(bank.database, new Date("2026-10-13T12:00:00Z"))).toBe(1);
       expect(await decisionOf("xfer")).toEqual({
@@ -276,20 +298,18 @@ describe("money movement", () => {
 
     it("sums Spending, Income, and Saving by month, by Category, and by Category group", async () => {
       // Rules for the test, keyed on the description: what later tickets will decide.
-      register("5.3", (txn) =>
-        txn.description === "GROCER"
+      register("5.2", (txn) => {
+        if (txn.description === "BROKERAGE") return whole(txn, "Saving");
+        return txn.description === "GROCER"
           ? { parts: [{ type: "Spending", amount: txn.amount, category: "Groceries" }] }
-          : undefined,
-      );
-      register("5.5", (txn) =>
-        txn.description === "BROKERAGE" ? whole(txn, "Saving") : undefined,
-      );
+          : undefined;
+      });
       register("6.4", (txn) =>
         txn.description === "GROCER REFUND"
           ? { parts: [{ type: "Refund", amount: txn.amount, category: "Groceries" }] }
           : undefined,
       );
-      register("6.5", (txn) =>
+      register("6.8", (txn) =>
         txn.description === "BROKERAGE" ? whole(txn, "Saving") : undefined,
       );
       const connectionId = await bank.connect("fake-first-bank");

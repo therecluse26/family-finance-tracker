@@ -15,6 +15,7 @@ export {
   setLoanSettings,
   setTransactionType,
   startMoneyMovement,
+  switchExclude,
   type TransactionDecision,
   type TransferLinkEvidence,
   UNCLEAR_PAIR_KIND,

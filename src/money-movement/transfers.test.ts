@@ -479,6 +479,12 @@ describe("Transfer pairing", () => {
         changed: [txn("birch-in", CARD, 12_345, "2026-10-06", { description: "THANKS" })],
       });
       expect(await links()).toMatchObject([{ madeBy: "Member" }]);
+      // An amount change that breaks its hard filters ends it (spec 03, Undo and hand links).
+      await sync({
+        changed: [txn("birch-in", CARD, 12_300, "2026-10-06", { description: "THANKS" })],
+      });
+      expect(await links()).toEqual([]);
+      expect(await typeOf("maple-out")).toBe("Spending");
     });
 
     it("never offers the pair again after Not this", async () => {

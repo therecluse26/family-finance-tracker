@@ -48,8 +48,9 @@ export type TransferCandidateFilter =
   | { ids: readonly string[] }
   | { amounts: readonly number[]; from: string; to: string };
 
-// The Transactions that could pair: each shown, posted Transaction on an Account that is not
-// excluded, that the filter names. Pending Transactions wait until they post.
+// The Transactions that could pair: each shown, posted Transaction that the filter names. Pending
+// Transactions wait until they post. An excluded Account's Transactions still pair: money between
+// it and an included Account is a Transfer (spec 03, Transaction types).
 export async function listTransferCandidates(
   database: Database,
   filter: TransferCandidateFilter,
@@ -89,7 +90,6 @@ export async function listTransferCandidates(
           ne(transactions.amount, 0),
           isNull(transactions.hiddenReason),
           eq(transactions.pending, false),
-          eq(householdAccounts.excluded, false),
         ),
       );
     found.push(...rows);

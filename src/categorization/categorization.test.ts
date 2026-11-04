@@ -129,9 +129,19 @@ describe("the categorization cascade", () => {
       const bySource = new Map<unknown, number>();
       for (const row of found)
         bySource.set(row.source, (bySource.get(row.source) ?? 0) + Number(row.n));
-      // With no AI, the cascade answers at steps 3, 4, and 6.
-      expect([...bySource.keys()].sort()).toEqual(["Merchant history", "best guess", "provider"]);
+      // With no AI, the cascade answers at steps 3, 4, and 6. Money movement names Cash and
+      // Payments to people.
+      expect([...bySource.keys()].sort()).toEqual([
+        "Merchant history",
+        "best guess",
+        "money movement",
+        "provider",
+      ]);
       for (const row of found) {
+        if (row.source === "money movement") {
+          expect(["Cash", "Payments to people"]).toContain(row.category);
+          expect(row.confidence).toBe("certain");
+        }
         if (row.source === "provider") expect(["very high", "high"]).toContain(row.confidence);
         if (row.source === "Merchant history") expect(row.confidence).toBe("high");
         if (row.source === "best guess") expect([row.confidence, row.needsAi]).toEqual(["low", 1]);
@@ -397,23 +407,23 @@ describe("the categorization cascade", () => {
   });
 
   describe("Categories that Money movement names", () => {
+    // A cash withdrawal, which Money movement puts in Cash at step 5.3.
     const cash = (id: string, merchant: string) =>
       fakeTxn({
         id,
         accountId: CARD.id,
         amount: -6_000,
-        description: `CASH ${id}`,
+        description: `ATM WITHDRAWAL ${id}`,
         merchantName: merchant,
+        category: {
+          name: "TRANSFER_OUT_WITHDRAWAL",
+          confidence: "VERY_HIGH",
+          version: "v2",
+          mcc: null,
+        },
       });
 
     beforeEach(() => {
-      register(
-        registerDecisionRule("5.3", (txn) =>
-          txn.description.startsWith("CASH")
-            ? { parts: [{ type: "Spending", amount: txn.amount, category: "Cash" }] }
-            : undefined,
-        ),
-      );
       // A tracked loan payment: $10 of interest, the rest principal on a Cash loan.
       register(
         registerDecisionRule("5.2", (txn) =>

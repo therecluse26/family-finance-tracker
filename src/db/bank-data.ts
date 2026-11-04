@@ -34,6 +34,7 @@ import {
   transactions,
   transferLinks,
   typedBalances,
+  unconnectedAssignments,
 } from "./schema.ts";
 
 // Connections, Accounts, and Transactions in app.db (spec 02). The bank module decides; these
@@ -599,6 +600,22 @@ export async function closeAccount(
   return true;
 }
 
+// A Member turns an Account's Exclude switch on or off (spec 02, Exclude). Sync never writes it.
+export async function setAccountExcluded(
+  database: Queries,
+  id: string,
+  excluded: boolean,
+): Promise<"not found" | "unchanged" | "changed"> {
+  const [account] = await database
+    .select({ excluded: householdAccounts.excluded })
+    .from(householdAccounts)
+    .where(eq(householdAccounts.id, id));
+  if (account === undefined) return "not found";
+  if (account.excluded === excluded) return "unchanged";
+  await database.update(householdAccounts).set({ excluded }).where(eq(householdAccounts.id, id));
+  return "changed";
+}
+
 // A Member reopens any Closed Account. Returns false when no Account has the ID.
 export async function reopenAccount(database: Database, id: string): Promise<boolean> {
   const account = await readAccount(database, id);
@@ -683,7 +700,20 @@ export async function deleteRemovedConnection(
     )
       .flatMap((link) => [link.out, link.in])
       .filter((transactionId) => !transactionIds.has(transactionId));
-    await markTransactionsUnhandled(tx, partners);
+    // A one-sided Transfer on another Connection's Account may be tied to one of these Accounts,
+    // such as an excluded one. It is decided again, with no account.
+    const tiedHere = (
+      await tx
+        .select({ id: unconnectedAssignments.transactionId })
+        .from(unconnectedAssignments)
+        .where(inArray(unconnectedAssignments.accountId, accountIds))
+    )
+      .map((row) => row.id)
+      .filter((transactionId) => !transactionIds.has(transactionId));
+    await tx
+      .delete(unconnectedAssignments)
+      .where(inArray(unconnectedAssignments.accountId, accountIds));
+    await markTransactionsUnhandled(tx, [...partners, ...tiedHere]);
     const subjects = new Set([...accountIds, ...transactionIds]);
     for (const item of await tx
       .select({ id: reviewItems.id, subjectIds: reviewItems.subjectIds })

@@ -61,10 +61,15 @@ async function tellNewAccounts(stored: StoredConnection, accounts: NewAccount[])
 }
 
 // Each Transaction gets its Merchant as it arrives, before matching, because Refund links need the
-// Merchant (spec 04, Names).
+// Merchant (spec 04, Names). A person named in a payment-app line is the Merchant with no Merchant
+// ID, so the app's ID never makes two people one Merchant.
 function arriving(record: TxnRecord): ArrivingTxn {
   const { merchant, needsAi } = cleanMerchant(record);
-  return { ...record, merchant: { cleanName: merchant?.name || null, needsAi } };
+  return {
+    ...record,
+    merchantId: merchant === null ? record.merchantId : merchant.id,
+    merchant: { cleanName: merchant?.name || null, needsAi },
+  };
 }
 
 // A sync that has not reached its last page after this many pages stops, with no cursor saved.

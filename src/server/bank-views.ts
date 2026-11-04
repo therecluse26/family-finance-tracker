@@ -16,6 +16,7 @@ export type AccountView = {
   currentBalance: number | null;
   availableBalance: number | null;
   creditLimit: number | null;
+  // A Member turned on its Exclude switch. Its balances are then null, like a Closed Account's.
   excluded: boolean;
   closed: boolean;
   // When the Account became Closed, in UTC, or null while it is open.
@@ -115,6 +116,8 @@ export type BankViews = {
   // A Member closes or reopens any Account. Undefined when no Account has the ID.
   closeAccount(id: string): Promise<AccountView | undefined>;
   reopenAccount(id: string): Promise<AccountView | undefined>;
+  // A Member turns an Account's Exclude switch on or off. Undefined when no Account has the ID.
+  setExcluded(id: string, excluded: boolean): Promise<AccountView | undefined>;
   transactions(query: TransactionQuery): Promise<TransactionView[]>;
   // Undefined when no Account has the ID.
   balances(accountId: string, query: BalanceQuery): Promise<BalancesView | undefined>;

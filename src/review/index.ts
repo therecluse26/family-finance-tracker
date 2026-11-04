@@ -3,6 +3,7 @@ export {
   answerReviewItem,
   countReviewItems,
   openReviewItem,
+  openReviewItemBatch,
   openReviewItems,
   otherReviewChoices,
   type ReviewAnswerResult,

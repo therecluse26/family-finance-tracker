@@ -48,6 +48,9 @@ export function isCardReward(txn: {
   );
 }
 
+// A card payment from another bank: the longest route a card payment can take.
+export const CARD_PAYMENT_WINDOW = 4;
+
 // The route's window in business days (spec 03, Windows): within one bank, 1; a card payment from
 // another bank, 4; between two banks, or to a connected loan, 5.
 export function transferWindow(
@@ -55,7 +58,7 @@ export function transferWindow(
   b: Pick<TransferCandidate, "institutionId" | "accountKind">,
 ): number {
   if (a.institutionId !== null && a.institutionId === b.institutionId) return 1;
-  if (a.accountKind === "credit" || b.accountKind === "credit") return 4;
+  if (a.accountKind === "credit" || b.accountKind === "credit") return CARD_PAYMENT_WINDOW;
   return 5;
 }
 
@@ -446,9 +449,9 @@ export async function pairTransfers(
   const byId = new Map(found.map((candidate) => [candidate.id, candidate]));
   const result: PairingResult = { changed: new Set(), looked: new Set(seeds), items: [] };
 
-  // A link ends when a side no longer shows, is pending, or is on an excluded Account, or the
-  // amounts differ. Otherwise a link the AI or a Member made stays, and its sides stay out of
-  // pairing.
+  // A link ends when a side no longer shows or is pending, or the amounts differ: it no longer
+  // passes its hard filters (spec 03, Undo and hand links). A side on an excluded Account still
+  // counts. Otherwise a link the AI or a Member made stays, and its sides stay out of pairing.
   const ended = touching.filter((link) => {
     const out = byId.get(link.outTransactionId);
     const into = byId.get(link.inTransactionId);

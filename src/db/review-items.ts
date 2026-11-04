@@ -1,4 +1,4 @@
-import { and, count, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Database, Queries } from "./client.ts";
 import { reviewItems } from "./schema.ts";
 
@@ -20,6 +20,19 @@ export async function addReviewItem(
   const id = crypto.randomUUID();
   await database.insert(reviewItems).values({ id, ...item, createdAt: at });
   return id;
+}
+
+// Adds several items in one statement for each 500, and returns their IDs in order.
+export async function addReviewItems(
+  database: Queries,
+  items: readonly NewReviewItem[],
+  at: Date,
+): Promise<string[]> {
+  const rows = items.map((item) => ({ id: crypto.randomUUID(), ...item, createdAt: at }));
+  for (let start = 0; start < rows.length; start += 500) {
+    await database.insert(reviewItems).values(rows.slice(start, start + 500));
+  }
+  return rows.map((row) => row.id);
 }
 
 export async function readReviewItem(
@@ -95,4 +108,24 @@ export async function closeReviewItem(
     .where(and(eq(reviewItems.id, id), isNull(reviewItems.closedAt)))
     .returning({ id: reviewItems.id });
   return closed.length > 0;
+}
+
+// Closes several open items for one reason, in one statement for each 500 IDs. Returns how many
+// closed; an item already closed stays as it was.
+export async function closeReviewItems(
+  database: Queries,
+  ids: readonly string[],
+  closing: { reason: string; at: Date },
+): Promise<number> {
+  let closed = 0;
+  for (let start = 0; start < ids.length; start += 500) {
+    const chunk = ids.slice(start, start + 500);
+    const rows = await database
+      .update(reviewItems)
+      .set({ closedAt: closing.at, closedReason: closing.reason })
+      .where(and(inArray(reviewItems.id, chunk), isNull(reviewItems.closedAt)))
+      .returning({ id: reviewItems.id });
+    closed += rows.length;
+  }
+  return closed;
 }

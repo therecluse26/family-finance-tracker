@@ -290,6 +290,62 @@ describe("the bank routes", () => {
     expect(await isClosed(tab)).toBe(true);
   });
 
+  describe("the Exclude switch", () => {
+    const exclude = (tab: TestBrowser, body: unknown, headers = {}, id = checkingId) =>
+      tab.send("PUT", `/api/accounts/${id}/exclude`, body, headers);
+    async function excluded(tab: TestBrowser) {
+      const { accounts } = (await (await tab.get("/api/accounts")).json()) as {
+        accounts: AccountView[];
+      };
+      return accounts.find((account) => account.id === checkingId)?.excluded;
+    }
+
+    it("is off by default, and a Member turns it on and off; an excluded Account's balances drop out", async () => {
+      const tab = await signedIn();
+      expect(await excluded(tab)).toBe(false);
+
+      const on = await exclude(tab, { excluded: true });
+      expect(on.status).toBe(200);
+      expect(((await on.json()) as { account: AccountView }).account).toMatchObject({
+        excluded: true,
+        closed: false,
+        currentBalance: null,
+        availableBalance: null,
+      });
+
+      const off = await exclude(tab, { excluded: false });
+      expect(((await off.json()) as { account: AccountView }).account).toMatchObject({
+        excluded: false,
+        currentBalance: 248_000,
+      });
+    });
+
+    it("answers 401 with no session, 403 from another origin, 415 to a body that is not JSON, and 400 to a bad body, and changes nothing", async () => {
+      const stranger = new TestBrowser(app, APP_URL, "192.168.1.21");
+      const refused = await exclude(stranger, { excluded: true });
+      expect(refused.status).toBe(401);
+      expect(await refused.text()).not.toContain("Everyday Checking");
+
+      const tab = await signedIn();
+      for (const origin of WRONG_ORIGINS) {
+        expect((await exclude(tab, { excluded: true }, { origin })).status, `${origin}`).toBe(403);
+      }
+      expect(
+        (await exclude(tab, { excluded: true }, { "content-type": "text/plain" })).status,
+      ).toBe(415);
+      for (const body of [{}, { excluded: "yes" }, { excluded: 1 }, { excluded: true, extra: 1 }]) {
+        expect((await exclude(tab, body)).status, JSON.stringify(body)).toBe(400);
+      }
+      expect(await excluded(tab)).toBe(false);
+    });
+
+    it("answers 404 for an Account that does not exist", async () => {
+      const tab = await signedIn();
+
+      expect((await exclude(tab, { excluded: true }, {}, "no-such-account")).status).toBe(404);
+    });
+  });
+
   it("lists the Connections with their adapter's actions, and never a credential", async () => {
     const res = await (await signedIn()).get("/api/connections");
 

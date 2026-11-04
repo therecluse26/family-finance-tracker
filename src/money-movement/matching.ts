@@ -3,9 +3,11 @@ import {
   type DecisionRecord,
   type LoanFields,
   linkTransferByHand,
+  listAccountTransactionIds,
   listDecidedAt,
   listDecisionAccounts,
   listLoanPaymentIds,
+  listMemberNames,
   listProvisionalPassed,
   listUnlinkedTransferDecisions,
   type Queries,
@@ -18,6 +20,7 @@ import {
   type StoredDecision,
   type StoredPart,
   saveUnconnectedAssignments,
+  setAccountExcluded,
   setHandSetFields,
   storeDecisions,
   storeLoanFields,
@@ -30,6 +33,7 @@ import { Job } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import {
   openReviewItem,
+  openReviewItemBatch,
   openReviewItems,
   type ReviewChoice,
   type ReviewItem,
@@ -63,7 +67,8 @@ async function decisionContext(database: Database, now: Date): Promise<DecisionC
   const accounts = new Map(
     (await listDecisionAccounts(database)).map((account) => [account.id, account]),
   );
-  return { today, accounts, loanFacts: loanFactsReader(database, accounts) };
+  const members = await listMemberNames(database);
+  return { today, accounts, members, loanFacts: loanFactsReader(database, accounts) };
 }
 
 // A result to store, with the Unconnected account it goes to and the Review list item it asks
@@ -103,7 +108,7 @@ async function decideAll(
 
 // Opens a one-sided Transfer item for each result that asks for one, and settles each open item
 // whose Transaction no longer asks for it, or now asks with another best answer. `gone` are
-// Transactions that no longer show.
+// Transactions that no longer show. The open items are read once, and settled in one batch.
 async function updateOneSidedItems(
   database: Database,
   decided: readonly Decided[],
@@ -114,24 +119,27 @@ async function updateOneSidedItems(
     if (item.kind !== ONE_SIDED_KIND || item.subject.type !== "transactions") continue;
     open.set(item.subject.transactionIds[0] ?? "", item);
   }
-  const settle = (id: string) =>
-    settleReviewItems(database, { kind: ONE_SIDED_KIND, subjectId: id }, "decided again");
-  let opened = 0;
+  const settled = gone.filter((id) => open.has(id));
+  const asked: { id: string; asks: NonNullable<Decision["asks"]> }[] = [];
   for (const { stored, asks } of decided) {
     const id = stored.transactionId;
     const item = open.get(id);
     if (item !== undefined && item.bestAnswer.value === asks?.bestAnswer.value) continue;
-    if (item !== undefined) await settle(id);
-    if (asks === undefined) continue;
-    await openReviewItem(database, {
+    if (item !== undefined) settled.push(id);
+    if (asks !== undefined) asked.push({ id, asks });
+  }
+  await settleReviewItems(database, { kind: ONE_SIDED_KIND, subjectIds: settled }, "decided again");
+  await openReviewItemBatch(
+    database,
+    asked.map(({ id, asks }) => ({
       kind: ONE_SIDED_KIND,
       subject: { type: "transactions", transactionIds: [id] },
       ...asks,
-    });
-    opened += 1;
+    })),
+  );
+  if (asked.length > 0) {
+    log.info("One-sided Transfers went on the Review list", { opened: asked.length });
   }
-  for (const id of gone) if (open.has(id)) await settle(id);
-  if (opened > 0) log.info("One-sided Transfers went on the Review list", { opened });
 }
 
 // Stores each result in place of the Transaction's earlier one, with the Unconnected account it
@@ -237,18 +245,19 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
   );
   const kinds = new Set<string>(Object.values(PAIR_KINDS));
   const open = new Set<string>();
+  // The items to settle, by kind, settled in one batch for each kind.
+  const settled = new Map<string, string[]>();
   for (const item of await openReviewItems(database)) {
     if (!kinds.has(item.kind) || item.subject.type !== "transactions") continue;
     const ids = item.subject.transactionIds;
     const key = `${item.kind} ${ids.join(" ")}`;
     if (wanted.has(key)) open.add(key);
     else if (ids.some((id) => pairing.looked.has(id))) {
-      await settleReviewItems(
-        database,
-        { kind: item.kind, subjectId: ids[0] ?? "" },
-        "Transfer pairing changed",
-      );
+      settled.set(item.kind, [...(settled.get(item.kind) ?? []), ids[0] ?? ""]);
     }
+  }
+  for (const [kind, subjectIds] of settled) {
+    await settleReviewItems(database, { kind, subjectIds }, "Transfer pairing changed");
   }
   for (const [key, item] of wanted) {
     if (open.has(key)) continue;
@@ -415,6 +424,37 @@ export async function decideOneSidedAgain(database: Database): Promise<void> {
   if (ids.length === 0) return;
   await followUpAgain(database, ids);
   await followUpSoon();
+}
+
+// The steps whose result depends on the Household's Accounts: a card payment's card, and each
+// one-sided Transfer's account.
+const ACCOUNT_STEPS = ["5.1", ...ONE_SIDED_STEPS];
+
+// A Member turns an Account's Exclude switch on or off (spec 02, Exclude). Matching and totals run
+// again over all history: the follow-up job pairs the Account's own Transactions again, with the
+// other side of each of their links, and decides them again with every result that depends on the
+// Accounts. Totals add up the new results. Returns false when no Account has the ID.
+export async function switchExclude(
+  database: Database,
+  accountId: string,
+  excluded: boolean,
+): Promise<boolean> {
+  const changed = await database.transaction(async (tx) => {
+    const result = await setAccountExcluded(tx, accountId, excluded);
+    if (result !== "changed") return result;
+    const ids = [
+      ...(await listAccountTransactionIds(tx, accountId)),
+      ...(await listDecidedAt(tx, ACCOUNT_STEPS)),
+    ];
+    await followUpAgain(tx, [...new Set(ids)]);
+    return result;
+  });
+  if (changed === "not found") return false;
+  if (changed === "changed") {
+    await followUpSoon();
+    log.info("A Member switched an Account's Exclude", { excluded });
+  }
+  return true;
 }
 
 // A Member switches a connected loan's type, or types its APR. The follow-up job decides its

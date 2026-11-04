@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { cleanMerchant, isFixedName, type Merchant, merchantKey, sameMerchant } from "./index.ts";
+import {
+  cleanMerchant,
+  isFixedName,
+  type Merchant,
+  merchantKey,
+  paymentAppLine,
+  sameMerchant,
+} from "./index.ts";
 
 // Merchant names and identity (spec 04, Merchants). Every bank description here is made up.
 
@@ -165,6 +172,78 @@ describe("Merchant names", () => {
         merchantId: "merchant-bdc",
       }),
     ).toEqual({ merchant: { id: "merchant-bdc", name: "Blue Door Coffee" }, needsAi: false });
+  });
+});
+
+// Payment-app lines (spec 03, Payment apps): the person a line names is the Merchant; with no
+// person, the payment app is.
+describe("payment-app lines", () => {
+  it.each([
+    // No person, no shop: the payment app is the Merchant.
+    ["VENMO PAYMENT 1234567890 WEB ID", "Venmo", "no one"],
+    ["ZELLE PAYMENT TO 5551234", "Zelle", "no one"],
+    ["PAYPAL *INST XFER", "PayPal", "no one"],
+    ["CASH APP*SENT", "Cash App", "no one"],
+    ["VENMO CASHOUT", "Venmo", "no one"],
+    ["VENMO ADDFUNDS", "Venmo", "no one"],
+    // A person is the Merchant.
+    ["VENMO *MORGAN LEE", "Morgan Lee", { person: "Morgan Lee" }],
+    ["ZELLE PAYMENT TO JOHN SMITH", "John Smith", { person: "John Smith" }],
+    ["CASH APP*JOHN SMITH", "John Smith", { person: "John Smith" }],
+    ["Zelle payment from TAYLOR BROOKS Conf# 7f3k2", "Taylor Brooks", { person: "Taylor Brooks" }],
+    ["Zelle to Morgan Lee", "Morgan Lee", { person: "Morgan Lee" }],
+    // A shop: an ordinary purchase, which the cleanup rules name.
+    ["PAYPAL *ETSY SHOP", "Etsy Shop", "another Merchant"],
+  ])("%j has the Merchant %j", (description, name, party) => {
+    expect(paymentAppLine({ description })?.party).toEqual(party);
+    expect(fromBank(description).merchant).toEqual({ id: null, name });
+  });
+
+  it.each([
+    "PURCHASE 1005 BLUEBIRD BOOKS",
+    "BEST BUY CO",
+    "XXXX4821",
+    "REF#12345678",
+    "(800) 555-1212",
+    "TRANSFER TO SAVINGS 8802",
+  ])("%j is no payment-app line", (description) => {
+    expect(paymentAppLine({ description })).toBeUndefined();
+  });
+
+  it("finds a line by its payment_app counterparty or its Plaid code alone", () => {
+    expect(
+      paymentAppLine({
+        description: "P2P SEND 0042",
+        counterparties: [{ name: "Venmo", type: "payment_app" }],
+      }),
+    ).toEqual({ app: "Venmo", party: "no one" });
+    expect(
+      paymentAppLine({
+        description: "MOBILE SEND 0042",
+        providerCategory: "TRANSFER_OUT_TRANSFER_OUT_FROM_APPS",
+      }),
+    ).toEqual({ app: null, party: "no one" });
+  });
+
+  it("makes a line that names another Merchant an ordinary purchase, and drops a person's Merchant ID", () => {
+    const line = {
+      description: "PAYPAL TO SUNSHINE YOGA",
+      merchantName: "Sunshine Yoga Studio",
+      counterparties: [{ name: "PayPal", type: "payment_app" }],
+    };
+    expect(paymentAppLine(line)?.party).toBe("another Merchant");
+    expect(cleanMerchant({ ...line, merchantId: "m-yoga" }).merchant).toEqual({
+      id: "m-yoga",
+      name: "Sunshine Yoga Studio",
+    });
+    expect(
+      cleanMerchant({
+        description: "VENMO *MORGAN LEE",
+        merchantName: "Venmo",
+        merchantId: "m-venmo",
+        counterparties: [{ name: "Venmo", type: "payment_app" }],
+      }).merchant,
+    ).toEqual({ id: null, name: "Morgan Lee" });
   });
 });
 

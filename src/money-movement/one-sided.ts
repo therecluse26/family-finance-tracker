@@ -6,6 +6,7 @@ import {
   setHandSetFields,
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain } from "../follow-up/index.ts";
+import { paymentAppLine } from "../merchants/index.ts";
 import type { ReviewChoice, ReviewKind } from "../review/index.ts";
 import { addBusinessDays } from "./business-days.ts";
 import type { Decision, DecisionInput } from "./order.ts";
@@ -17,14 +18,16 @@ import type { TransactionType } from "./types.ts";
 // accounts, Saving). A Transaction with no pair that has transfer wording or a Plaid transfer
 // category goes to one Unconnected account, or counts as Saving. Pairing and every earlier step
 // have had their turn, so a code an earlier step claims, such as TRANSFER_OUT_WITHDRAWAL, never
-// gets here once that step's rule is registered.
+// gets here. A payment-app line never does either: a payment app is never an Unconnected account.
+// Steps 5.4, 6.3, and 6.6 tie their one-sided Transfers to an account the same way.
 
 // Transfer wording: "transfer" or "xfer", in any case. A Plaid transfer category: any
 // TRANSFER_IN_* or TRANSFER_OUT_* code.
 const TRANSFER_WORDING = /transfer|xfer/i;
 const TRANSFER_CODE = /^TRANSFER_(IN|OUT)_/;
 
-export const ONE_SIDED_STEPS = ["5.6", "6.7"] as const;
+// The steps whose result goes to one Unconnected account, by the case table below.
+export const ONE_SIDED_STEPS = ["5.4", "5.6", "6.3", "6.6", "6.7"] as const;
 
 // With no account named, these codes make Saving with no account. Money in under the last one
 // reduces Saving.
@@ -36,23 +39,33 @@ const SAVING_CODES = new Set([
 
 // One-sided results are provisional until the longest window that could apply has passed: a
 // Transfer between two banks, 5 business days (spec 03, Windows). A pair found inside the window
-// replaces them. Undefined once the window has passed.
+// replaces them. Undefined once the window has passed. A rule whose longest route is shorter, such
+// as a card payment's, passes its own window.
 const ONE_SIDED_WINDOW = 5;
 
-export function oneSidedUntil(txn: { postedDate: string; today: string }): string | undefined {
-  const until = addBusinessDays(txn.postedDate, ONE_SIDED_WINDOW);
+export function oneSidedUntil(
+  txn: { postedDate: string; today: string },
+  window = ONE_SIDED_WINDOW,
+): string | undefined {
+  const until = addBusinessDays(txn.postedDate, window);
   return until >= txn.today ? until : undefined;
 }
 
-// The accounts a one-sided Transfer may go to: the Unconnected accounts, and the synced
-// investment Accounts, which count like one of kind "investment or retirement".
+const isUnconnected = (account: DecisionAccount) =>
+  account.kind === UNCONNECTED && !account.connected;
+
+// The accounts a one-sided Transfer may go to: the Unconnected accounts, the synced investment
+// Accounts, which count like one of kind "investment or retirement", and the excluded Accounts,
+// which count as Unconnected accounts (spec 03, Transaction types).
 function standsIn(account: DecisionAccount): boolean {
-  return (account.kind === UNCONNECTED && !account.connected) || isInvestment(account);
+  return isUnconnected(account) || isInvestment(account) || account.excluded;
 }
 
 // The account's kind decides the type: "investment or retirement" makes Saving; "savings", "HSA",
-// and "other" make a Transfer. Money to an HSA is never Saving.
+// and "other" make a Transfer. Money to an HSA is never Saving. Money to or from an excluded
+// Account is always a Transfer.
 function typeFor(account: DecisionAccount): TransactionType {
+  if (account.excluded) return "Transfer";
   return isInvestment(account) || account.subtype === "investment or retirement"
     ? "Saving"
     : "Transfer";
@@ -77,17 +90,27 @@ const PICK = "account ";
 const KEEP: ReviewChoice = { value: "keep", label: "Keep it as a Transfer" };
 const NOT_A_TRANSFER: ReviewChoice = { value: "not a transfer", label: "Not a Transfer" };
 
-// Steps 5.6 and 6.7. The first case that fits wins:
-// 1. The account a Member picked on the Review list.
-// 2. The account the description names.
-// 3. Saving with no account, for an investment or crypto code.
-// 4. The Household's only account, with a Review list item to confirm it.
-// 5. A Transfer with no account, with the item "Which account is this?".
-// A Closed account can still be named or picked, but is never the only one.
+// Steps 5.6 and 6.7: transfer wording or a Plaid transfer category, on a line that is no
+// payment-app line.
 export function oneSidedTransfer(txn: DecisionInput): Decision | undefined {
   const code = txn.providerCategory ?? "";
   if (!TRANSFER_WORDING.test(txn.description) && !TRANSFER_CODE.test(code)) return undefined;
-  const until = oneSidedUntil(txn);
+  if (paymentAppLine(txn) !== undefined) return undefined;
+  return toUnconnectedAccount(txn);
+}
+
+// Ties a one-sided Transfer to one account. The first case that fits wins:
+// 1. The account a Member picked on the Review list.
+// 2. The account the description names.
+// 3. Saving with no account, for an investment or crypto code.
+// 4. The Household's only Unconnected account, with a Review list item to confirm it.
+// 5. A Transfer with no account, with the item "Which account is this?".
+// A Closed account can still be named or picked, but is never the only one. A synced investment
+// Account or an excluded Account can be named or picked too, but is never the only one: it syncs,
+// so money to it shows on its own side as well.
+export function toUnconnectedAccount(txn: DecisionInput, window = ONE_SIDED_WINDOW): Decision {
+  const code = txn.providerCategory ?? "";
+  const until = oneSidedUntil(txn, window);
   const result = (
     type: TransactionType,
     account?: DecisionAccount,
@@ -106,7 +129,7 @@ export function oneSidedTransfer(txn: DecisionInput): Decision | undefined {
   const named = namedIn(txn.description, accounts);
   if (named !== undefined) return result(typeFor(named), named);
   if (SAVING_CODES.has(code)) return result("Saving");
-  const open = accounts.filter((account) => !account.closed);
+  const open = accounts.filter((account) => !account.closed && isUnconnected(account));
   const [only] = open;
   if (open.length === 1 && only !== undefined) {
     return result(typeFor(only), only, {

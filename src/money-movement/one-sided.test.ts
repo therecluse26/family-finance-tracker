@@ -16,10 +16,8 @@ import {
   decideOneSidedAgain,
   type MonthTotals,
   readTransactionDecision,
-  registerDecisionRule,
   startMoneyMovement,
   totalsByMonth,
-  whole,
 } from "./index.ts";
 
 // One-sided Transfers and Saving, steps 5.6 and 6.7 (spec 03, Unconnected accounts, Saving), on
@@ -122,19 +120,6 @@ describe("one-sided Transfers and Saving", () => {
     vi.setSystemTime(NOW());
     bank = await newTestBank();
     stops = [startMoneyMovement({ database: bank.database }).stop];
-    // What later tickets decide before step 5.6 and 6.7: cash withdrawals, and payment-app lines.
-    const paymentApp = /VENMO|Zelle/;
-    stops.push(
-      registerDecisionRule("5.3", (txn) =>
-        txn.providerCategory === "TRANSFER_OUT_WITHDRAWAL" ? whole(txn, "Spending") : undefined,
-      ),
-      registerDecisionRule("5.5", (txn) =>
-        paymentApp.test(txn.description) ? whole(txn, "Spending") : undefined,
-      ),
-      registerDecisionRule("6.5", (txn) =>
-        paymentApp.test(txn.description) ? whole(txn, "Income") : undefined,
-      ),
-    );
     // The Member who answers the Review list.
     await bank.database.$client.execute(
       `INSERT INTO members (id, name, email, created_at, updated_at)

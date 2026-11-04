@@ -13,7 +13,7 @@ import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-u
 import { log } from "../log.ts";
 import { registerDecidedAgain } from "../money-movement/index.ts";
 import {
-  openReviewItem,
+  openReviewItemBatch,
   openReviewItems,
   registerReviewKind,
   settleReviewItems,
@@ -163,24 +163,28 @@ export async function categorize(database: Database, ids: readonly string[]): Pr
       .filter((item) => item.kind === BEST_GUESS_KIND && item.subject.type === "transactions")
       .flatMap((item) => (item.subject.type === "transactions" ? item.subject.transactionIds : [])),
   );
-  let opened = 0;
+  const settled: string[] = [];
+  const opening: { id: string; guess: string }[] = [];
   for (const [id, guess] of guesses) {
-    if (guess !== null && !open.has(id)) {
-      await openReviewItem(database, {
-        kind: BEST_GUESS_KIND,
-        subject: { type: "transactions", transactionIds: [id] },
-        decided: `No AI was available, so the app guessed ${guess}.`,
-        bestAnswer: { value: guess, label: `Yes, ${guess}` },
-      });
-      opened += 1;
-    } else if (guess === null && open.has(id)) {
-      await settleReviewItems(
-        database,
-        { kind: BEST_GUESS_KIND, subjectId: id },
-        "its Category was chosen again",
-      );
-    }
+    if (guess !== null && !open.has(id)) opening.push({ id, guess });
+    else if (guess === null && open.has(id)) settled.push(id);
   }
+  // In one batch each, so a large re-run reads the open items once.
+  await settleReviewItems(
+    database,
+    { kind: BEST_GUESS_KIND, subjectIds: settled },
+    "its Category was chosen again",
+  );
+  await openReviewItemBatch(
+    database,
+    opening.map(({ id, guess }) => ({
+      kind: BEST_GUESS_KIND,
+      subject: { type: "transactions", transactionIds: [id] },
+      decided: `No AI was available, so the app guessed ${guess}.`,
+      bestAnswer: { value: guess, label: `Yes, ${guess}` },
+    })),
+  );
+  const opened = opening.length;
   if (opened > 0) log.info("Best guesses made without AI went on the Review list", { opened });
 }
 

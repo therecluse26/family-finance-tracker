@@ -124,6 +124,9 @@ const UNCONNECTED_REFUSED =
 // The types a Member may set by hand.
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
 
+// An Account's Exclude switch.
+const excludeBody = z.object({ excluded: z.boolean() }).strict();
+
 // A Member's change to a connected loan: its type, and an APR as a percent from 0 to 100.
 const loanBody = z
   .object({
@@ -319,6 +322,11 @@ const SAVE_REFUSALS = {
 
 const TIER_NAMES = { quick: "Quick model", writer: "Writer model" } as const;
 
+// A JSON route takes only JSON bodies, so a form on another site cannot post to it.
+function sentJson(c: { req: { header(name: string): string | undefined } }): boolean {
+  return c.req.header("content-type")?.split(";")[0]?.trim() === "application/json";
+}
+
 // The body as JSON, or undefined when it is not JSON.
 async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
   try {
@@ -357,6 +365,16 @@ export const api = new Hono<ServerEnv>()
   })
   .post("/accounts/:id/reopen", async (c) => {
     const account = await c.var.bank.reopenAccount(c.req.param("id"));
+    if (account === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ account });
+  })
+  // A Member turns any Account's Exclude switch on or off (spec 02, Exclude). Its own Transactions
+  // then count nowhere, and its balance drops out of every balance and total. It still syncs.
+  .put("/accounts/:id/exclude", async (c) => {
+    if (!sentJson(c)) return c.json({ error: "Send JSON." }, 415);
+    const body = excludeBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Say whether to exclude the Account." }, 400);
+    const account = await c.var.bank.setExcluded(c.req.param("id"), body.data.excluded);
     if (account === undefined) return c.json({ error: "Not found" }, 404);
     return c.json({ account });
   })

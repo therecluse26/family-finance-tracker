@@ -1,7 +1,8 @@
 import {
   addReviewItem,
+  addReviewItems,
   answerOpenReviewItem,
-  closeReviewItem,
+  closeReviewItems,
   countOpenReviewItems,
   type Database,
   listOpenReviewItems,
@@ -87,27 +88,36 @@ function subjectIdsOf(subject: ReviewSubject): string[] {
   return subject.type === "transactions" ? subject.transactionIds : [subject.accountId];
 }
 
-// Opens an item of a registered kind, and returns its ID.
-export async function openReviewItem(
-  database: Database,
-  item: { kind: string; subject: ReviewSubject; decided: string; bestAnswer: ReviewChoice },
-): Promise<string> {
+type NewItem = { kind: string; subject: ReviewSubject; decided: string; bestAnswer: ReviewChoice };
+
+function storedItem(item: NewItem) {
   if (!kinds.has(item.kind)) throw new Error(`No Review list kind "${item.kind}" is registered.`);
   const subjectIds = subjectIdsOf(item.subject);
   if (subjectIds.length === 0 || subjectIds.some((id) => id === "")) {
     throw new Error("A Review list item needs its Transactions or its loan.");
   }
-  return addReviewItem(
-    database,
-    {
-      kind: item.kind,
-      subjectType: item.subject.type,
-      subjectIds,
-      decided: item.decided,
-      bestAnswer: item.bestAnswer,
-    },
-    new Date(),
-  );
+  return {
+    kind: item.kind,
+    subjectType: item.subject.type,
+    subjectIds,
+    decided: item.decided,
+    bestAnswer: item.bestAnswer,
+  };
+}
+
+// Opens an item of a registered kind, and returns its ID.
+export async function openReviewItem(database: Database, item: NewItem): Promise<string> {
+  return addReviewItem(database, storedItem(item), new Date());
+}
+
+// Opens several items at once, in one transaction, and returns their IDs in order.
+export async function openReviewItemBatch(
+  database: Database,
+  items: readonly NewItem[],
+): Promise<string[]> {
+  const stored = items.map(storedItem);
+  if (stored.length === 0) return [];
+  return database.transaction((tx) => addReviewItems(tx, stored, new Date()));
 }
 
 // Every open item, newest first.
@@ -201,23 +211,26 @@ export async function answerReviewItem(
 }
 
 // A later event settled every open item of this kind about this Transaction or loan, such as a
-// later AI answer with high confidence. Returns how many closed. `reason` says what settled them.
+// later AI answer with high confidence, or about any of several, which reads the open items once.
+// Returns how many closed. `reason` says what settled them.
 export async function settleReviewItems(
   database: Database,
-  about: { kind: string; subjectId: string },
+  about: { kind: string; subjectId: string } | { kind: string; subjectIds: readonly string[] },
   reason: string,
 ): Promise<number> {
   if (reason.trim() === "" || reason === "answered") {
     throw new Error("Say which event settled the Review list item.");
   }
+  const subjects = new Set("subjectId" in about ? [about.subjectId] : about.subjectIds);
+  if (subjects.size === 0) return 0;
   return oneAtATime(async () => {
     const settled = (await listOpenReviewItems(database)).filter(
-      (item) => item.kind === about.kind && item.subjectIds.includes(about.subjectId),
+      (item) => item.kind === about.kind && item.subjectIds.some((id) => subjects.has(id)),
     );
-    let closed = 0;
-    for (const item of settled) {
-      if (await closeReviewItem(database, item.id, { reason, at: new Date() })) closed += 1;
-    }
-    return closed;
+    return closeReviewItems(
+      database,
+      settled.map((item) => item.id),
+      { reason, at: new Date() },
+    );
   });
 }

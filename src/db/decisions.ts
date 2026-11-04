@@ -4,6 +4,7 @@ import type { Database, Queries } from "./client.ts";
 import type { TransferLinkMaker } from "./links.ts";
 import {
   householdAccounts,
+  members,
   transactionDecisions,
   transactionParts,
   transactions,
@@ -49,6 +50,8 @@ export type DecisionRecord = {
   merchantName: string | null;
   merchantCleanName: string | null;
   providerCategory: string | null;
+  // The other parties named on it, with their types, such as "payment_app".
+  counterparties: { name: string; type: string }[];
   handSet: Record<string, unknown>;
   // Who made the Transfer link that uses it, or null when it has none.
   transferLink: TransferLinkMaker | null;
@@ -70,6 +73,8 @@ export type DecisionAccount = {
   // False for an Account that no provider syncs.
   connected: boolean;
   closed: boolean;
+  // A Member turned on its Exclude switch (spec 02, Exclude).
+  excluded: boolean;
   // A loan's type as a Member set it, or null while the app decides it.
   loanType: "cash loan" | "purchase loan" | null;
   // An APR a Member typed on a loan, as a percent, such as 6.5.
@@ -88,6 +93,7 @@ export async function listDecisionAccounts(database: Database): Promise<Decision
       mask: householdAccounts.mask,
       connectionId: householdAccounts.connectionId,
       closedAt: householdAccounts.closedAt,
+      excluded: householdAccounts.excluded,
       loanType: householdAccounts.loanType,
       memberApr: householdAccounts.memberApr,
     })
@@ -99,6 +105,25 @@ export async function listDecisionAccounts(database: Database): Promise<Decision
     connected: connectionId !== null,
     closed: closedAt !== null,
   }));
+}
+
+// Each Member's name, as a Member typed it (spec 03, Payment apps: a Zelle line names a Member).
+export async function listMemberNames(database: Database): Promise<string[]> {
+  const rows = await database.select({ name: members.name }).from(members);
+  return rows.map((row) => row.name);
+}
+
+// The Transactions that show on an Account, oldest first.
+export async function listAccountTransactionIds(
+  database: Queries,
+  accountId: string,
+): Promise<string[]> {
+  const rows = await database
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(and(eq(transactions.accountId, accountId), isNull(transactions.hiddenReason)))
+    .orderBy(asc(transactions.postedDate), asc(transactions.id));
+  return rows.map((row) => row.id);
 }
 
 function chunks<T>(items: readonly T[]): T[][] {
@@ -129,6 +154,7 @@ export async function readDecisionRecords(
         merchantName: transactions.merchantName,
         merchantCleanName: transactions.merchantCleanName,
         providerCategory: transactions.providerCategory,
+        counterparties: transactions.counterparties,
         handSet: transactions.handSet,
         transferLink: transferLinks.madeBy,
         otherId: other.id,
@@ -234,7 +260,7 @@ export async function listProvisionalPassed(database: Database, today: string): 
 
 // The Transactions whose result came from one of these steps, oldest first.
 export async function listDecidedAt(
-  database: Database,
+  database: Queries,
   steps: readonly string[],
 ): Promise<string[]> {
   const rows = await database

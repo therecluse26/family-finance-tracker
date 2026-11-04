@@ -1,15 +1,22 @@
 import type { Category } from "../categories/index.ts";
 import type { DecisionAccount, DecisionRecord } from "../db/index.ts";
+import { cardPayment, cardPaymentReceived, cardRewards } from "./card-payments.ts";
 import { type LoanFacts, loanPayout } from "./loans.ts";
 import { oneSidedTransfer } from "./one-sided.ts";
-import { accountsTreatment, pairTreatment } from "./pairs.ts";
+import { accountsTreatment, isExcluded, pairTreatment } from "./pairs.ts";
+import {
+  cashWithdrawal,
+  moneyFromPerson,
+  paymentToPerson,
+  zelleWithMember,
+} from "./payment-apps.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";
 
 // The order of decisions (spec 03, Order of decisions): each Transaction's type comes from an
 // ordered list of steps, and the first step that fits wins. Steps 1 to 4 apply to every
 // Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Steps 1, 2, 3,
-// 5.6, 5.7, 6.2, 6.7, and 6.9 are built in; later tickets register their rules in the other steps.
-// An empty step is skipped.
+// 5.1, 5.3 to 5.7, 6.1 to 6.3, 6.5 to 6.7, and 6.9 are built in; later tickets register their
+// rules in the other steps. An empty step is skipped.
 
 export const DECISION_STEPS = [
   { step: "1", name: "a type a Member set by hand" },
@@ -68,11 +75,12 @@ export type Decision = {
   paidFromOutside?: boolean;
 };
 
-// What a rule reads besides the Transaction: the Household's date, its Accounts by ID, and the
-// facts of a connected loan, read once a run when a rule first needs them.
+// What a rule reads besides the Transaction: the Household's date, its Accounts by ID, its
+// Members' names, and the facts of a connected loan, read once a run when a rule first needs them.
 export type DecisionContext = {
   today: string;
   accounts: ReadonlyMap<string, DecisionAccount>;
+  members: readonly string[];
   loanFacts(loanId: string): Promise<LoanFacts>;
 };
 
@@ -93,20 +101,26 @@ export function isHandSetType(value: unknown): value is HandSetType {
   return HAND_SET_TYPES.includes(value as HandSetType);
 }
 
+// An excluded Account's own Transactions count nowhere (spec 02, Exclude), so steps 1 and 2 pass
+// them to step 3. The app keeps them, and their hand-set fields count again once the switch is
+// off.
+const ownExcluded = (txn: DecisionInput) => isExcluded(txn.accounts.get(txn.accountId));
+
 // Step 1. The type is in the Transaction's hand-set fields, which a sync never writes.
 const handSetType: DecisionRule = (txn) =>
-  isHandSetType(txn.handSet.type) ? whole(txn, txn.handSet.type) : undefined;
+  isHandSetType(txn.handSet.type) && !ownExcluded(txn) ? whole(txn, txn.handSet.type) : undefined;
 
 // Step 2. A Transfer link a Member made by hand. Other kinds of hand link come with their tickets.
 // The Accounts on its two sides decide how it counts.
 const handLink: DecisionRule = (txn) =>
-  txn.transferLink === "Member" ? pairTreatment(txn) : undefined;
+  txn.transferLink === "Member" && !ownExcluded(txn) ? pairTreatment(txn) : undefined;
 
 // Step 3. A Transfer pair that pairing or the AI linked (spec 03, Transfers). The Accounts on its
 // two sides decide how it counts. A Transaction with no pair, on an Account whose own Transactions
-// count only through pairs, an investment Account or a loan, is decided here too.
+// count only through pairs, an investment Account, a loan, or an excluded Account, is decided here
+// too.
 const transferPair: DecisionRule = (txn) =>
-  txn.transferLink === "app" || txn.transferLink === "AI"
+  (txn.transferLink === "app" || txn.transferLink === "AI") && !ownExcluded(txn)
     ? pairTreatment(txn)
     : accountsTreatment(txn);
 
@@ -114,9 +128,17 @@ const BUILT_IN = new Map<DecisionStep, DecisionRule>([
   ["1", handSetType],
   ["2", handLink],
   ["3", transferPair],
+  ["5.1", cardPayment],
+  ["5.3", cashWithdrawal],
+  ["5.4", zelleWithMember],
+  ["5.5", paymentToPerson],
   ["5.6", oneSidedTransfer],
   ["5.7", (txn) => whole(txn, "Spending")],
+  ["6.1", cardRewards],
   ["6.2", loanPayout],
+  ["6.3", zelleWithMember],
+  ["6.5", moneyFromPerson],
+  ["6.6", cardPaymentReceived],
   ["6.7", oneSidedTransfer],
   ["6.9", (txn) => whole(txn, "Income")],
 ]);

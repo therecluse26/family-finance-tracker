@@ -18,7 +18,7 @@ import {
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
-import { decideOneSidedAgain } from "../money-movement/index.ts";
+import { decideOneSidedAgain, switchExclude } from "../money-movement/index.ts";
 import type { AccountView, BankViews, UnconnectedAccountBody } from "./bank-views.ts";
 
 // A Connection that needs a Member or is Broken does not poll (spec 02, Connections).
@@ -35,13 +35,15 @@ export function bankViews(database: Database): BankViews {
     return (await listAccounts(database)).map(({ memberName, closedAt, ...account }) => {
       const closed = closedAt !== null;
       const balance = estimates.get(account.id)?.balance ?? account.currentBalance;
+      // A Closed Account drops out of balances and balance totals (spec 02, Closed Accounts), and
+      // so does an excluded one (spec 02, Exclude). Its saved daily balances and its Transactions
+      // stay.
+      const counted = !closed && !account.excluded;
       return {
         ...account,
         name: memberName ?? account.name,
-        // A Closed Account drops out of balances and balance totals (spec 02, Closed Accounts).
-        // Its saved daily balances and its Transactions stay.
-        currentBalance: closed ? null : balance,
-        availableBalance: closed ? null : account.availableBalance,
+        currentBalance: counted ? balance : null,
+        availableBalance: counted ? account.availableBalance : null,
         closed,
         closedAt: closedAt?.toISOString() ?? null,
       };
@@ -103,6 +105,12 @@ export function bankViews(database: Database): BankViews {
     async reopenAccount(id) {
       if (!(await reopenAccount(database, id))) return undefined;
       await decideOneSidedAgain(database);
+      return accountView(id);
+    },
+
+    // Matching and totals run again over all history.
+    async setExcluded(id, excluded) {
+      if (!(await switchExclude(database, id, excluded))) return undefined;
       return accountView(id);
     },
 

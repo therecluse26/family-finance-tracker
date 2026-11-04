@@ -264,5 +264,40 @@ describe("removing a Connection", () => {
       ]);
       expect(await rows("SELECT id FROM transactions")).toEqual([{ id: otherIn?.id }]);
     });
+
+    it("unties a one-sided Transfer on another Connection from a deleted Account, such as an excluded one, and marks it for matching again", async () => {
+      const other = await bank.connect("fake-other", "Other Bank");
+      bank.fake.addPages("fake-other", {
+        accounts: [fakeAccount({ id: "other-checking" })],
+        added: [fakeTxn({ id: "other-out", accountId: "other-checking", amount: -5000 })],
+        historyLoaded: true,
+      });
+      await syncConnection(other);
+      const [plaidAccount] = await rows(
+        "SELECT id FROM household_accounts WHERE connection_id = ? LIMIT 1",
+        [connectionId],
+      );
+      const [otherOut] = await rows("SELECT id FROM transactions WHERE connection_id = ?", [other]);
+      await bank.database.$client.execute({
+        sql: "UPDATE household_accounts SET excluded = 1 WHERE id = ?",
+        args: [String(plaidAccount?.id)],
+      });
+      await bank.database.$client.execute({
+        sql: "INSERT INTO unconnected_assignments (transaction_id, account_id, assigned_at) VALUES (?, ?, ?)",
+        args: [String(otherOut?.id), String(plaidAccount?.id), new Date().toISOString()],
+      });
+      await bank.database.$client.execute({
+        sql: "INSERT INTO follow_up_marks (step, transaction_id, handled_at) VALUES ('match', ?, ?)",
+        args: [String(otherOut?.id), new Date().toISOString()],
+      });
+      plaid.answer(ITEM_REMOVE, { body: RECORDED.itemRemove });
+      await removing.remove(connectionId);
+
+      expect(await removing.deleteHistory(connectionId)).toMatchObject({ outcome: "deleted" });
+
+      expect(await count("SELECT count(*) AS n FROM unconnected_assignments")).toBe(0);
+      expect(await count("SELECT count(*) AS n FROM follow_up_marks")).toBe(0);
+      expect(await rows("SELECT id FROM transactions")).toEqual([{ id: otherOut?.id }]);
+    });
   });
 });
