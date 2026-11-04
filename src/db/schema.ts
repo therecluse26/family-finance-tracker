@@ -176,6 +176,57 @@ export const householdFacts = sqliteTable(
   (table) => [check("household_facts_one_row", sql`${table.id} = 1`)],
 );
 
+// The CPI values the app fetched from the BLS API (spec 05, CPI): one per series and month. The
+// shipped values stay in the Benchmark snapshot; the app uses the newest of both.
+export const cpiValues = sqliteTable(
+  "cpi_values",
+  {
+    series: text("series", { enum: ["CUUR0000SA0", "CUUR0000SAF11"] }).notNull(),
+    // The month, such as "2026-09".
+    month: text("month").notNull(),
+    value: real("value").notNull(),
+    fetchedAt: moment("fetched_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.series, table.month] })],
+);
+
+// The monthly CPI fetch (spec 05, CPI). One row, with ID 1, once the first fetch has run. A round
+// is the month of the 20th it follows, such as "2026-11" from Nov 20 to Dec 19, Household time.
+export const cpiFetch = sqliteTable(
+  "cpi_fetch",
+  {
+    id: integer("id").primaryKey(),
+    // The last successful fetch, which the Data sources page shows, and its round.
+    fetchedAt: moment("fetched_at"),
+    fetchedRound: text("fetched_round"),
+    // The round that failed, and how often. At the cap the round stops until the next 20th.
+    failedRound: text("failed_round"),
+    failedTries: integer("failed_tries").notNull().default(0),
+    // Why the last try failed, such as "timed out".
+    lastFailure: text("last_failure"),
+  },
+  (table) => [check("cpi_fetch_one_row", sql`${table.id} = 1`)],
+);
+
+// The daily Update check (spec 12, Updates). One row, with ID 1, once a Member turns the check off
+// or the first check runs. With no row the check is on.
+export const updateCheck = sqliteTable(
+  "update_check",
+  {
+    id: integer("id").primaryKey(),
+    // Any Member may turn the check off. Off means no request.
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    // The last check GitHub answered, and the latest release it named, such as "1.2.0" from the
+    // tag "v1.2.0". A failed check keeps both.
+    checkedAt: moment("checked_at"),
+    latestVersion: text("latest_version"),
+    latestTag: text("latest_tag"),
+    // Why the last check failed, such as "rate limited", or null after a check GitHub answered.
+    lastFailure: text("last_failure"),
+  },
+  (table) => [check("update_check_one_row", sql`${table.id} = 1`)],
+);
+
 // The Plaid keys and the count of Plaid Items (spec 02, Plaid keys and The 10 lifetime Items). It
 // has one row, whose ID is 1.
 export const plaidSettings = sqliteTable(

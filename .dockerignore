@@ -7,6 +7,8 @@
 coverage
 dist
 docs
+# The build bundles the Data sources page from this file (spec 10, Benchmark data).
+!docs/data-sources.md
 node_modules
 backups
 data

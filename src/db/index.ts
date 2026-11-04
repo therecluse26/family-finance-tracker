@@ -76,6 +76,16 @@ export {
   openDatabase,
   type Queries,
 } from "./client.ts";
+export {
+  type CpiFetchState,
+  type CpiSeries,
+  type FetchedCpi,
+  markCpiFailed,
+  markCpiFetched,
+  readCpiFetch,
+  readNewestCpi,
+  storeCpiValues,
+} from "./cpi.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
 export {
   type CategoryConfidence,
@@ -257,3 +267,10 @@ export {
   type UnconnectedFields,
   updateUnconnectedAccount,
 } from "./unconnected-accounts.ts";
+export {
+  readUpdateCheck,
+  storeUpdateCheckEnabled,
+  storeUpdateChecked,
+  storeUpdateFailure,
+  type UpdateCheckState,
+} from "./update-check.ts";

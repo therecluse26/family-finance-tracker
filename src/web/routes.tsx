@@ -5,11 +5,13 @@ import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
+import { About } from "./pages/settings/About.tsx";
 import { Ai } from "./pages/settings/Ai.tsx";
 import { AiUsage } from "./pages/settings/AiUsage.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
 import { Categories } from "./pages/settings/Categories.tsx";
+import { DataSources } from "./pages/settings/DataSources.tsx";
 import { Household } from "./pages/settings/Household.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
@@ -25,6 +27,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   categories: Categories,
   "backups-and-data": BackupsAndData,
   ai: Ai,
+  about: About,
 };
 
 const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
@@ -59,6 +62,8 @@ export const routes: RouteObject[] = [
           ...settingsSections,
           // The AI usage page, linked from Settings → AI.
           { path: "ai/usage", Component: AiUsage },
+          // The Data sources page, linked from Settings → About.
+          { path: "about/data-sources", Component: DataSources },
         ],
       },
       { path: "*", Component: NotFound },

@@ -10,6 +10,23 @@ export {
   ceLinesOf,
 } from "./ce-lines.ts";
 export {
+  BLS_API,
+  CPI_FETCH_CAP,
+  CPI_FETCH_DAY,
+  CPI_SERIES,
+  CPI_STOPPED,
+  type CpiFetchFailure,
+  CpiFetchJob,
+  type CpiFetchOptions,
+  type CpiSeries,
+  type CpiValue,
+  cpiNow,
+  cpiPeriodLabel,
+  cpiRound,
+  lastCpiFetch,
+  startCpiFetch,
+} from "./cpi.ts";
+export {
   type BenchmarkSnapshot,
   type BenchmarkSource,
   benchmarkNotice,

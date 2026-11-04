@@ -1,0 +1,75 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router";
+import DATA_SOURCES from "../../../../docs/data-sources.md?raw";
+import { calendarDateIn, dateLabel } from "../../../format.ts";
+import type { AboutView } from "../../../server/about-views.ts";
+import { api } from "../../api.ts";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { Markdown } from "../../components/Markdown.tsx";
+
+// The Data sources page in Settings, About (spec 05, The Data sources page). It renders the repo's
+// docs/data-sources.md, which the build bundles into the app, so the page and the file say the
+// same. The page adds what only the running app knows: the date it last fetched the CPI, and the
+// sample label while the Benchmark snapshot holds sample numbers.
+
+// The document without its own "# Data sources" title, which the page shows as its heading.
+const DOCUMENT = DATA_SOURCES.replace(/^#\s+Data sources\s*\n/, "");
+
+export function cpiFetchText(cpiFetchedAt: string | null, now = new Date()): string {
+  if (cpiFetchedAt === null) {
+    return "The app has not fetched the CPI from BLS yet. It uses the CPI values shipped with this release.";
+  }
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const day = dateLabel(calendarDateIn(new Date(cpiFetchedAt), zone), calendarDateIn(now, zone));
+  return `The app last fetched the CPI from BLS on ${day}.`;
+}
+
+export function DataSourcesPage(props: {
+  dataSources: AboutView["dataSources"] | undefined;
+  now?: Date;
+}) {
+  const { dataSources } = props;
+  return (
+    <>
+      <h2 className="text-xl font-semibold">Data sources</h2>
+      <p className="mt-1">
+        <Link className="text-blue-700 underline" to="/settings/about">
+          Back to About
+        </Link>
+      </p>
+      {dataSources?.benchmarkNotice == null ? null : (
+        <p className="mt-3 font-semibold text-orange-700" role="status">
+          {dataSources.benchmarkNotice}
+        </p>
+      )}
+      {dataSources === undefined ? null : (
+        <p className="mt-3">{cpiFetchText(dataSources.cpiFetchedAt, props.now)}</p>
+      )}
+      <div className="mt-2">
+        <Markdown text={DOCUMENT} topLevel={2} />
+      </div>
+    </>
+  );
+}
+
+export function DataSources() {
+  const [dataSources, setDataSources] = useState<AboutView["dataSources"] | undefined>();
+  const [error, setError] = useState<string | undefined>();
+
+  useEffect(() => {
+    api.about
+      .$get()
+      .then(async (res) => {
+        if (!res.ok) return setError("The CPI fetch date did not load.");
+        setDataSources(((await res.json()) as AboutView).dataSources);
+      })
+      .catch(() => setError("The server did not answer."));
+  }, []);
+
+  return (
+    <>
+      <DataSourcesPage dataSources={dataSources} />
+      <ErrorLine error={error} />
+    </>
+  );
+}

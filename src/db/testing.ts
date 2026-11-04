@@ -48,6 +48,20 @@ export function readSettings(database: Database): Promise<Settings> {
   `);
 }
 
+// Every row of each of app.db's own tables, by table name, for a test that a step writes only where
+// it should. Drizzle's migration table is left out.
+export async function readEveryTable(database: Database): Promise<Record<string, unknown[]>> {
+  const tables = await database.all<{ name: string }>(sql`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%'
+  `);
+  const rows: Record<string, unknown[]> = {};
+  for (const { name } of tables) {
+    rows[name] = await database.all(sql`SELECT * FROM ${sql.identifier(name)} ORDER BY rowid`);
+  }
+  return rows;
+}
+
 // Names in pragma_pragma_list() that are not settings, so readEverySetting leaves them out.
 const NOT_SETTINGS = new Set([
   "collation_list", // What SQLite was built with.

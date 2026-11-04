@@ -7,6 +7,7 @@ import {
   plaidSettings,
   startBank,
 } from "../bank/index.ts";
+import { startCpiFetch } from "../benchmarks/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
@@ -17,6 +18,7 @@ import { startMoneyMovement } from "../money-movement/index.ts";
 import { startNotify } from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
+import { startUpdateCheck } from "../updates/index.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
 
@@ -65,7 +67,11 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const moneyMovement = startMoneyMovement({ database });
     const categorization = startCategorization({ database });
     const recurring = startRecurringCharges({ database });
+    const cpiFetch = startCpiFetch({ database, timeZone });
+    const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {
+      updateCheck.stop();
+      cpiFetch.stop();
       recurring.stop();
       categorization.stop();
       moneyMovement.stop();

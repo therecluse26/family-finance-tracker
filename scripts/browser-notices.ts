@@ -74,11 +74,13 @@ function realpathOr(path: string): string {
 
 // Finds the package behind each module in the browser bundle. Each package must be in the
 // "dependencies" tree or on BUNDLER_PACKAGES, and pass the shipped allowlist. A module that
-// is neither in appDir nor in a package fails.
+// is neither in appDir, nor one of ownFiles, nor in a package fails.
 export function bundledPackages(
   ids: Iterable<string>,
   input: {
     appDir: string;
+    // The app's own documents that the browser bundle may hold, each by its exact path.
+    ownFiles?: readonly string[];
     shipped: readonly InstalledPackage[];
     installed: readonly InstalledPackage[];
     reviewed: readonly ReviewedRecord[];
@@ -90,6 +92,7 @@ export function bundledPackages(
   const bundlers = input.installed.filter((pkg) => BUNDLER_PACKAGES.includes(pkg.name));
   const bundlerDirs = byDir(bundlers);
   const appDir = `${realpathOr(input.appDir)}/`;
+  const ownFiles = new Set((input.ownFiles ?? []).map(realpathOr));
   const bundled = new Map<string, InstalledPackage>();
   const problems: string[] = [];
 
@@ -109,7 +112,8 @@ export function bundledPackages(
     const dir = packageDirOf(id);
     if (dir === undefined) {
       const path = id.replace(/[?#].*$/, "");
-      if (!isAbsolute(path) || !realpathOr(path).startsWith(appDir)) {
+      const own = isAbsolute(path) && ownFiles.has(realpathOr(path));
+      if (!own && (!isAbsolute(path) || !realpathOr(path).startsWith(appDir))) {
         problems.push(
           `${id} is in the browser bundle, but it is neither the app's code nor a package.`,
         );
@@ -160,6 +164,8 @@ export function browserNotices(): Plugin {
       const reviewed = readReviewed();
       const { packages, problems } = bundledPackages(ids, {
         appDir: join(ROOT, "src"),
+        // The Data sources page renders this file (spec 05, The Data sources page).
+        ownFiles: [join(ROOT, "docs", "data-sources.md")],
         shipped: listInstalled("prod"),
         installed: listInstalled("all"),
         reviewed,

@@ -169,6 +169,8 @@ function manualLoanOrRefusal(
   if (body.data.kind !== "mortgage" && body.data.escrow !== null) return { error: ESCROW_REFUSED };
   return { loan: body.data };
 }
+// The Update check's switch (spec 12, Updates).
+const updateCheckBody = z.object({ on: z.boolean() }).strict();
 
 // The types a Member may set by hand.
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
@@ -819,6 +821,15 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "The app does not know this ZIP code. Check it and try again." }, 400);
     }
     return c.json({ facts }, 200);
+  })
+  // Settings, About (spec 07, Settings overview): the version, the Source code link, the Update
+  // check, and the Data sources page's CPI date. Any Member may turn the Update check off.
+  .get("/about", async (c) => c.json(await c.var.about.about()))
+  .put("/about/update-check", async (c) => {
+    if (!sentJson(c)) return c.json({ error: "Send JSON." }, 415);
+    const body = updateCheckBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Say whether to check for updates." }, 400);
+    return c.json({ updateCheck: await c.var.about.switchUpdateCheck(body.data.on) }, 200);
   })
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))

@@ -89,6 +89,18 @@ describe("bundledPackages", () => {
     ]);
   });
 
+  it("allows each of the app's own documents by its exact path, and no other file beside it", () => {
+    const own = { ...input, ownFiles: ["/app/docs/data-sources.md"] };
+
+    expect(bundledPackages(["/app/docs/data-sources.md?raw"], own).problems).toEqual([]);
+    expect(bundledPackages(["/app/docs/data-sources.md?raw"], input).problems).toEqual([
+      "/app/docs/data-sources.md?raw is in the browser bundle, but it is neither the app's code nor a package.",
+    ]);
+    expect(bundledPackages(["/app/docs/other.md?raw"], own).problems).toEqual([
+      "/app/docs/other.md?raw is in the browser bundle, but it is neither the app's code nor a package.",
+    ]);
+  });
+
   it.each(["/elsewhere/vendor/lib.js", "virtual:no-null-byte"])(
     "fails %s, which is neither the app's code nor a package",
     (id) => {

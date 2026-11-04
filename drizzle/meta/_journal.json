@@ -211,6 +211,20 @@
       "when": 1793818220355,
       "tag": "0029_manual_loans",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1793819243981,
+      "tag": "0030_cpi_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1793819287018,
+      "tag": "0031_update_check",
+      "breakpoints": true
     }
   ]
 }

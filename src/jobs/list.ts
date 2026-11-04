@@ -2,14 +2,16 @@
 // exported here under its own name. The server build is one file, so src/server/main.ts
 // re-exports this list and names the server file as the job list.
 import { SyncScheduleJob } from "../bank/index.ts";
+import { CpiFetchJob } from "../benchmarks/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
+import { UpdateCheckJob } from "../updates/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
 import type { ScheduledTask } from "./scheduler.ts";
 
 export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "./sidequest.ts";
-export { ProvisionalResultsJob, SyncScheduleJob };
+export { CpiFetchJob, ProvisionalResultsJob, SyncScheduleJob, UpdateCheckJob };
 
 // Every scheduled task. Each task's job is in the list above.
 export const scheduledTasks: readonly ScheduledTask[] = [
@@ -19,4 +21,10 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // Decides again each provisional one-sided result whose window has passed (spec 03, Order of
   // decisions), shortly after midnight Household time.
   { name: "provisional results", schedule: daily("00:15"), job: ProvisionalResultsJob },
+  // Fetches the CPI on the 20th, Household time, and on each later day of the round until a fetch
+  // succeeds or the round stops at its cap (spec 05, CPI). On other days its job makes no request.
+  { name: "cpi fetch", schedule: daily("06:00"), job: CpiFetchJob },
+  // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no
+  // request.
+  { name: "update check", schedule: daily("05:00"), job: UpdateCheckJob },
 ];

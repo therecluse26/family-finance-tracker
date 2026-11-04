@@ -12,6 +12,7 @@ import {
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { aboutRoutes } from "./about.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
 import { categoryRoutes } from "./categories.ts";
@@ -145,6 +146,7 @@ export function createApp(
   const moneyMovement = moneyMovementRoutes(database);
   const categories = categoryRoutes(database);
   const recurring = recurringRoutes(database);
+  const about = aboutRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -169,6 +171,7 @@ export function createApp(
         c.set("moneyMovement", moneyMovement);
         c.set("categories", categories);
         c.set("recurring", recurring);
+        c.set("about", about);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);
