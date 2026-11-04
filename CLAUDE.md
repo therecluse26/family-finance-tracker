@@ -43,6 +43,7 @@ Each item was a blocking review finding at least once, and each cost a full revi
   - Store numbers, lead-ins and digit runs: `PURCHASE 1005 BLUEBIRD BOOKS`, `BEST BUY CO`, `XXXX4821`, `REF#12345678`, `(800) 555-1212`.
 - **K8. No personal or secret field reaches storage, logs, errors or the AI.** Raw provider data drops every account-number-like field at every depth: `account_number`, `account_numbers`, `payment_reference_number`, and any new one in the Plaid types you touch. No raw error object reaches Sidequest or a log line; errors go through `src/log.ts`. Library errors such as rate limits map to their own status, not 500.
 - **K9. Large-history check.** If a diff touches `src/bank/`, `src/money-movement/`, `src/categorization/`, `src/merchants/` or `src/review/`, run it on 5 years of synthetic history (about 20,000 Transactions). Time each changed request and follow-up job, and put the numbers in the PR text. No request takes more than 1 s.
+- **K10. Never decide on data the browser sends when the server can learn it.** Plaid Link metadata (bank ID, bank name, account list) comes from the browser. After the token exchange, every decision that depends on it (same bank, duplicate bank, which Connection to replace) uses Plaid's own answer from `/item/get` or `/accounts/get`. Test it with a browser value that differs from Plaid's.
 
 When a review blocks on something new that could happen again, the orchestrator adds it here as the next K number.
 
