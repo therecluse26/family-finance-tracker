@@ -1,9 +1,14 @@
 import { serveStatic } from "@hono/node-server/serve-static";
-import { type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
+import { type Context, type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { AiSettings } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
-import { bankConnecting, connectionRemoving, type PlaidSettings } from "../bank/index.ts";
+import {
+  bankConnecting,
+  connectionRemoving,
+  connectionRepairing,
+  type PlaidSettings,
+} from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
@@ -79,14 +84,24 @@ function secretRoutes<Name extends "plaid" | "ai">(
       if ((await readSetupState(database)).wizard) {
         return c.json({ error: "Finish the first-run wizard first." }, 409);
       }
-      if (c.req.header("content-type")?.split(";")[0]?.trim() !== "application/json") {
-        return c.json({ error: "Send JSON." }, 415);
-      }
+      if (!sendsJson(c)) return c.json({ error: "Send JSON." }, 415);
     }
     c.set(name, service);
     await next();
   };
 }
+
+const sendsJson = (c: Context<ServerEnv>) =>
+  c.req.header("content-type")?.split(";")[0]?.trim() === "application/json";
+
+// The Connection routes, which remove a Connection or open its update mode, take only JSON bodies,
+// as the Plaid routes do: a form on another site cannot post to them.
+const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
+  if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sendsJson(c)) {
+    return c.json({ error: "Send JSON." }, 415);
+  }
+  await next();
+};
 
 // A route that changes data answers only the app's own pages: the request's Origin must be
 // APP_URL's. The session cookie is SameSite=Lax, which still lets a page on another port or
@@ -128,6 +143,7 @@ export function createApp(
   const moneyMovement = moneyMovementRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
+  const repairing = connectionRepairing();
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
@@ -149,9 +165,11 @@ export function createApp(
         c.set("moneyMovement", moneyMovement);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
+        c.set("repairing", repairing);
         await next();
       })
       .use("/api/*", masterKeyFirst)
+      .use("/api/connections/*", jsonOnly)
       .use("/api/plaid/*", secretRoutes(database, "plaid", services.plaid))
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .route("/api", api)

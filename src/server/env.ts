@@ -1,5 +1,9 @@
 import type { AiSettings } from "../ai/ai-view.ts";
-import type { BankConnecting, ConnectionRemoving } from "../bank/connect-view.ts";
+import type {
+  BankConnecting,
+  ConnectionRemoving,
+  ConnectionRepairing,
+} from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
@@ -30,6 +34,8 @@ export type ServerEnv = {
     plaidConnecting: BankConnecting;
     // Removing a Connection and deleting its history, for the routes under /api/connections/.
     removing: ConnectionRemoving;
+    // Repair and Add accounts in update mode, for the routes under /api/connections/.
+    repairing: ConnectionRepairing;
     // The wizard's step 3 and "Check my master key".
     masterKey: MasterKeyRoutes;
     // The open System notices.

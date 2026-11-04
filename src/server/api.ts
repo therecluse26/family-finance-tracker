@@ -1,7 +1,13 @@
 import { type Context, Hono } from "hono";
 import * as z from "zod";
 import { AI_PROVIDERS, baseUrlProblem, MAX_COST_CAP_CENTS, onGateway } from "../ai/ai-view.ts";
-import type { CoveringConnection, LinkRefusal, ProviderFailure } from "../bank/connect-view.ts";
+import type {
+  CoveringConnection,
+  LinkRefusal,
+  ProviderFailure,
+  UpdateModeFinish,
+  UpdateModeStart,
+} from "../bank/connect-view.ts";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { HAND_SET_TYPES } from "../money-movement/types.ts";
@@ -193,9 +199,54 @@ function connectRefusal(c: Context<ServerEnv>, refused: LinkRefusal | ProviderFa
       );
     case "not broken":
       return c.json({ error: "Link again works only for a Broken Connection." }, 400);
+    case "other bank":
+      return c.json(
+        {
+          error: "Link again must link the same bank as the Broken Connection. Nothing was linked.",
+        },
+        409,
+      );
     case "provider error":
       return c.json({ error: `${refused.message} Nothing was saved.` }, 502);
   }
+}
+
+const HELD =
+  "This Connection is not in use: it is a second Connection to a bank another Connection covers, so it never syncs. Remove it.";
+
+const LINK_AGAIN =
+  "The bank's provider says access is gone, so Repair cannot fix this Connection. Use Link again.";
+
+// The answer to a Connection that is gone or Broken after update mode. The Broken one needs Link
+// again.
+function updateModeRefusal(
+  c: Context<ServerEnv>,
+  refused: Exclude<
+    UpdateModeStart | UpdateModeFinish,
+    { outcome: "ready" | "syncing" | "sync soon" }
+  >,
+) {
+  switch (refused.outcome) {
+    case "not found":
+      return c.json({ error: "Not found" }, 404);
+    case "link again":
+      return c.json({ linkAgain: true, error: LINK_AGAIN }, 409);
+    case "not needed":
+      return c.json({ error: "This Connection does not need Repair." }, 409);
+    case "no repair":
+      return c.json({ error: "This Connection's provider has no Repair in the app." }, 409);
+    case "held":
+      return c.json({ error: HELD }, 409);
+    case "provider error":
+      return c.json({ error: `${refused.message} Nothing changed.` }, 502);
+  }
+}
+
+// A link token in update mode, for the browser's link screen only. It is not cached.
+function updateModeStarted(c: Context<ServerEnv>, started: UpdateModeStart) {
+  if (started.outcome !== "ready") return updateModeRefusal(c, started);
+  c.header("Cache-Control", "no-store");
+  return c.json({ linkToken: started.linkToken }, 200);
 }
 
 // An AI API key, gateway token, or model ID: visible ASCII with no spaces, so it fits in a header
@@ -384,6 +435,26 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ accounts: deleted.accounts, transactions: deleted.transactions }, 200);
   })
+  // Repair (spec 02, Repair): Plaid Link in update mode for a Connection that needs a Member. It
+  // keeps the Connection and its access token, and spends no Item. A Broken one answers 409 with
+  // linkAgain.
+  .post("/connections/:id/repair", async (c) =>
+    updateModeStarted(c, await c.var.repairing.startRepair(c.req.param("id"))),
+  )
+  // Add accounts (spec 02, New accounts at a bank): update mode with account selection. It spends no
+  // Item.
+  .post("/connections/:id/add-accounts", async (c) =>
+    updateModeStarted(c, await c.var.repairing.startAddAccounts(c.req.param("id"))),
+  )
+  // Link's onSuccess in update mode. The public token is not needed: the access token stays the
+  // same. The Connection's sync starts at once.
+  .post("/connections/:id/update-finished", async (c) => {
+    const finished = await c.var.repairing.finishUpdate(c.req.param("id"));
+    if (finished.outcome === "syncing") return c.json({ syncing: true }, 200);
+    // A sync started a few minutes ago: the next one starts when the gap has passed.
+    if (finished.outcome === "sync soon") return c.json({ syncing: false }, 200);
+    return updateModeRefusal(c, finished);
+  })
   // Unconnected accounts: any Member adds and edits one at any time (spec 02).
   .get("/unconnected-accounts", async (c) =>
     c.json({ accounts: await c.var.bank.unconnectedAccounts() }),
@@ -470,6 +541,41 @@ export const api = new Hono<ServerEnv>()
       return c.json({ connection: { id: linked.connectionId, bankName: linked.bankName } }, 200);
     }
     if (linked.outcome === "duplicate") return duplicateBank(c, linked.coveredBy);
+    // After the exchange, Plaid's own answer named another bank than the browser did.
+    if (linked.outcome === "added other bank") {
+      return c.json(
+        {
+          connection: { id: linked.connectionId, bankName: linked.bankName },
+          error: `Plaid linked ${linked.bankName}, not the Broken Connection's bank. It was added as a new Connection, and nothing was replaced.`,
+        },
+        409,
+      );
+    }
+    // Plaid did not confirm the bank after the exchange: it was added, and replaced nothing.
+    if (linked.outcome === "added unconfirmed") {
+      const connection = { id: linked.connectionId, bankName: linked.bankName };
+      if (!linked.replacedNothing) return c.json({ connection, bankConfirmed: false }, 200);
+      return c.json(
+        {
+          connection,
+          error:
+            "Plaid did not confirm which bank was linked, so it was added as a new Connection, and nothing was replaced. If it is the Broken Connection's bank, Remove the Broken Connection.",
+        },
+        409,
+      );
+    }
+    if (linked.outcome === "duplicate after link") {
+      const { bankName } = linked.coveredBy;
+      return c.json(
+        {
+          coveredBy: linked.coveredBy,
+          error: linked.removed
+            ? `Plaid linked a bank already connected as ${bankName}. The app removed the new Connection; it still counts as one of Plaid's ${PLAID_ITEM_LIMIT} lifetime Items.`
+            : `Plaid linked a bank already connected as ${bankName}, and Plaid did not end the new Connection. Remove it.`,
+        },
+        409,
+      );
+    }
     return connectRefusal(c, linked);
   })
   // Import Plaid Connection (spec 02): the bank and its Accounts, before anything is saved.

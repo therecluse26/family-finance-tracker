@@ -46,6 +46,73 @@ export const newPublicToken = () => `public-production-${crypto.randomUUID()}`;
 export const newAccessToken = () => `access-production-${crypto.randomUUID()}`;
 export const newItemId = () => crypto.randomUUID().replaceAll("-", "");
 
+// A hand-written /accounts/get Account in Plaid's shape: a checking Account unless the fields say
+// otherwise. Its account_id is Plaid's, and differs for each Item.
+export function plaidAccount(
+  fields: { account_id: string; mask: string } & Record<string, unknown>,
+) {
+  return {
+    balances: {
+      available: 100,
+      current: 100,
+      limit: null,
+      iso_currency_code: "USD",
+      unofficial_currency_code: null,
+    },
+    name: "Plaid Checking",
+    official_name: null,
+    type: "depository",
+    subtype: "checking",
+    ...fields,
+  };
+}
+
+// A hand-written posted Transaction in Plaid's /transactions/sync shape. Plaid's amount is
+// positive for money out.
+export function plaidTransaction(fields: {
+  transaction_id: string;
+  account_id: string;
+  date: string;
+  amount?: number;
+}) {
+  return {
+    amount: 10,
+    iso_currency_code: "USD",
+    unofficial_currency_code: null,
+    authorized_date: null,
+    datetime: null,
+    authorized_datetime: null,
+    pending: false,
+    pending_transaction_id: null,
+    name: `FAKE ${fields.transaction_id}`,
+    original_description: `FAKE ${fields.transaction_id}`,
+    merchant_name: null,
+    merchant_entity_id: null,
+    logo_url: null,
+    website: null,
+    payment_channel: "other",
+    account_owner: null,
+    transaction_code: null,
+    counterparties: [],
+    personal_finance_category: null,
+    ...fields,
+  };
+}
+
+// A hand-written last /transactions/sync page: it adds `added`, and history is loaded.
+export function plaidSyncPage(nextCursor: string, added: unknown[] = []) {
+  return {
+    added,
+    modified: [],
+    removed: [],
+    accounts: [],
+    next_cursor: nextCursor,
+    has_more: false,
+    transactions_update_status: "HISTORICAL_UPDATE_COMPLETE",
+    request_id: `req-${nextCursor}`,
+  };
+}
+
 // A fake Plaid server. Each path answers from its queue in order; its last answer repeats.
 export class FakePlaid {
   readonly requests: PlaidRequest[] = [];

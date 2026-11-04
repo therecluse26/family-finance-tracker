@@ -2,6 +2,7 @@ import {
   type ArrivingTxn,
   type Database,
   finishSync,
+  type NewAccount,
   type PageCounts,
   readConnection,
   type StoredConnection,
@@ -10,6 +11,7 @@ import {
 import { calendarDateIn } from "../format.ts";
 import { log } from "../log.ts";
 import { cleanMerchant } from "../merchants/index.ts";
+import { raiseNotice } from "../notify/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import type {
   AdapterActions,
@@ -33,6 +35,30 @@ import {
 // cursor, so the next one starts again from the same cursor and stores no record twice. A sync
 // that ends saves each Account's balance for the day (spec 02, Balances). Every sync sets the
 // Connection's health and its next sync time (spec 02, Back-off).
+
+// A sync that returns an Account the app has not seen tracks it at once (spec 02, New accounts at a
+// bank). Every Member gets a gentler System notice that names it and points to its Exclude switch:
+// an event notice, with no banner and no Repair button. A Connection's first sync brings only the
+// Accounts the Member just picked, so it sends none. A notice that fails is logged, and the sync
+// goes on: the Account is tracked either way.
+async function tellNewAccounts(stored: StoredConnection, accounts: NewAccount[]): Promise<void> {
+  if (stored.lastSyncedAt === null) return;
+  for (const account of accounts) {
+    const named = `${account.name}${account.mask === null ? "" : ` ··${account.mask}`}`;
+    try {
+      await raiseNotice({
+        kind: "event",
+        text: `${stored.bankName} has a new Account, ${named}. The app tracks it now. To leave it out, turn on its Exclude switch in the Account list`,
+      });
+    } catch (error) {
+      log.error("Could not send a new Account's System notice", {
+        connectionId: stored.id,
+        accountId: account.id,
+        error,
+      });
+    }
+  }
+}
 
 // Each Transaction gets its Merchant as it arrives, before matching, because Refund links need the
 // Merchant (spec 04, Names).
@@ -147,13 +173,11 @@ type LoadedConnection = {
   context: SyncContext;
 };
 
-async function loadConnection(connectionId: string): Promise<LoadedConnection> {
-  const { database, secrets, adapters, timeZone } = runningBank();
-  const stored = await readConnection(database, connectionId);
-  if (stored === undefined) throw new Error(`No Connection has the ID ${connectionId}.`);
-  const adapter = adapters.get(stored.provider);
-  if (adapter === undefined) throw new Error(`No adapter for the provider "${stored.provider}".`);
-  const connection: BankConnection = {
+// The stored Connection as its adapter sees it, with its credential decrypted for its row and
+// column.
+export function adapterConnection(stored: StoredConnection): BankConnection {
+  const { secrets } = runningBank();
+  return {
     id: stored.id,
     provider: stored.provider,
     bankId: stored.bankId,
@@ -166,6 +190,15 @@ async function loadConnection(connectionId: string): Promise<LoadedConnection> {
             column: "connections.credential",
           }),
   };
+}
+
+async function loadConnection(connectionId: string): Promise<LoadedConnection> {
+  const { database, adapters, timeZone } = runningBank();
+  const stored = await readConnection(database, connectionId);
+  if (stored === undefined) throw new Error(`No Connection has the ID ${connectionId}.`);
+  const adapter = adapters.get(stored.provider);
+  if (adapter === undefined) throw new Error(`No adapter for the provider "${stored.provider}".`);
+  const connection = adapterConnection(stored);
   const context: SyncContext = {
     database,
     minSyncGapHours: adapter.minSyncGapHours,
@@ -180,8 +213,8 @@ async function syncOnce(
   options: SyncOptions,
 ): Promise<SyncReport> {
   const loaded = await loadConnection(connectionId);
-  // A removed Connection has no credential, and never syncs.
-  if (loaded.stored.removedAt !== null) return NOTHING_SYNCED;
+  // A removed Connection has no credential, and never syncs; nor does a held one.
+  if (loaded.stored.removedAt !== null || loaded.stored.syncHeld) return NOTHING_SYNCED;
   const startedAt = now();
   let pulled: { report: SyncReport; historyLoaded: boolean };
   try {
@@ -219,6 +252,7 @@ async function pullPages(
       now(),
       zone,
     );
+    await tellNewAccounts(stored, counts.newAccounts);
     options.onPageStored?.(counts);
     report.added += counts.added;
     report.changed += counts.changed;
@@ -257,7 +291,9 @@ export async function runSyncJob(
     return "not polled";
   }
   const { stored, adapter, connection, context } = await loadConnection(connectionId);
-  if (stored.health === "broken" || stored.removedAt !== null) return "not polled";
+  if (stored.health === "broken" || stored.removedAt !== null || stored.syncHeld) {
+    return "not polled";
+  }
   if (stored.health === "needs a member") {
     const at = now();
     try {

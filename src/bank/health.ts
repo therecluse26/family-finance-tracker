@@ -95,11 +95,14 @@ export async function recordCheckPassed(
   await endConditions(connection.id);
 }
 
+// Every System notice condition about the Connection.
+export function connectionConditions(id: string): string[] {
+  return [condition.notSyncing(id), condition.needsAMember(id), condition.broken(id)];
+}
+
 // Ends every System notice condition about the Connection.
 export async function endConditions(id: string): Promise<void> {
-  await endCondition(condition.notSyncing(id));
-  await endCondition(condition.needsAMember(id));
-  await endCondition(condition.broken(id));
+  for (const key of connectionConditions(id)) await endCondition(key);
 }
 
 // The error kind the core acts on. An error the adapter did not sort counts as Temporary.

@@ -137,16 +137,34 @@ describe("removing a Connection", () => {
       ).toBeUndefined();
     });
 
-    it("goes on when Plaid says the Item is already gone", async () => {
-      plaid.answer(ITEM_REMOVE, {
-        status: 400,
-        body: plaidFailure("ITEM_ERROR", "ITEM_NOT_FOUND"),
-      });
+    it.each([
+      ["ITEM_ERROR", "ITEM_NOT_FOUND"],
+      ["INVALID_INPUT", "INVALID_ACCESS_TOKEN"],
+    ])("goes on when Plaid says the Item is already gone (%s %s)", async (type, code) => {
+      plaid.answer(ITEM_REMOVE, { status: 400, body: plaidFailure(type, code) });
 
       expect(await removing.remove(connectionId)).toEqual({ outcome: "removed" });
       expect(await rows("SELECT credential FROM connections WHERE id = ?", [connectionId])).toEqual(
         [{ credential: null }],
       );
+    });
+
+    it("changes nothing after INSTITUTION_NO_LONGER_SUPPORTED, since the Item may still exist at Plaid", async () => {
+      plaid.answer(ITEM_REMOVE, {
+        status: 400,
+        body: plaidFailure("INSTITUTION_ERROR", "INSTITUTION_NO_LONGER_SUPPORTED"),
+      });
+
+      expect(await removing.remove(connectionId)).toEqual({
+        outcome: "provider error",
+        message: "Plaid answered INSTITUTION_NO_LONGER_SUPPORTED (INSTITUTION_ERROR).",
+      });
+      const [connection] = await rows(
+        "SELECT credential, removed_at FROM connections WHERE id = ?",
+        [connectionId],
+      );
+      expect(connection?.credential).not.toBeNull();
+      expect(connection?.removed_at).toBeNull();
     });
 
     it("changes nothing, and keeps the token for a retry, when Plaid does not answer", async () => {

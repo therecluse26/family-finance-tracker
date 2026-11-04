@@ -4,7 +4,7 @@ import { daily } from "../jobs/index.ts";
 // are moments; the 6-hour slots follow the Household time zone.
 
 const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
+export const HOUR_MS = 60 * MINUTE_MS;
 
 // A Healthy Connection syncs at these hours, at its own minute.
 const SYNC_HOURS = [0, 6, 12, 18];
@@ -28,6 +28,11 @@ export const CHECK_GAP_MS = 24 * HOUR_MS;
 // The sync schedule starts a sync job, then sets the next sync this far ahead. The job's outcome
 // replaces it, so it only matters when the job never ran: then the sync is tried again.
 export const STARTED_SYNC_GAP_MS = HOUR_MS;
+
+// After Repair or Add accounts, the sync starts at once unless one started less than this long ago,
+// or less than minSyncGapHours if longer. Then the sync schedule starts it when the gap has passed.
+// So a Member cannot start syncs without limit.
+export const UPDATE_SYNC_GAP_MS = 5 * MINUTE_MS;
 
 const twoDigits = (n: number) => String(n).padStart(2, "0");
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { LinkedAccount } from "../../../bank/adapter.ts";
 import { CONFIRM_ITEMS_FROM } from "../../../bank/connect-view.ts";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
@@ -8,7 +8,9 @@ import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 
 // Settings → Banks: the Connections, and "Link a new bank" through Plaid Link (spec 02, Linking a
 // new bank and The 10 lifetime Items). The browser never sees an access token: it hands Link's
-// public token to the server once, and the server exchanges it.
+// public token to the server once, and the server exchanges it. Repair and Add accounts open Link
+// in update mode, which keeps the Connection and its access token; Link's public token is then
+// sent nowhere (spec 02, Repair and New accounts at a bank).
 
 // Plaid's Link script. Plaid requires that it load from Plaid's own CDN, never bundled or hosted
 // here.
@@ -53,6 +55,30 @@ function loadPlaidLink(): Promise<PlaidLink> {
     document.head.append(script);
   });
   return loading;
+}
+
+// Opens Plaid Link with a link token from the server.
+async function openPlaidLink(
+  linkToken: string,
+  handlers: {
+    onSuccess(publicToken: string, metadata: PlaidLinkMetadata): void;
+    // Link closed before it finished: `failed` is true when Plaid named an error.
+    onExit(failed: boolean): void;
+  },
+): Promise<void> {
+  const plaid = await loadPlaidLink();
+  const handler = plaid.create({
+    token: linkToken,
+    onSuccess: (publicToken, metadata) => {
+      handler.destroy();
+      handlers.onSuccess(publicToken, metadata);
+    },
+    onExit: (exit) => {
+      handler.destroy();
+      handlers.onExit(exit !== null);
+    },
+  });
+  handler.open();
 }
 
 // What the server needs from Link's onSuccess, or undefined when Link named no institution.
@@ -135,11 +161,15 @@ export function BeforeLink(props: {
   );
 }
 
+// "Link a new bank", or, with `replaces`, "Link again" for a Broken Connection (spec 02, Repair).
+// Link again follows the same steps, with the Item count and its confirmation, and spends a new
+// Item. The new Connection replaces the Broken one, and its Accounts carry on the old ones.
 export function LinkBank(props: {
   plaid: PlaidView;
   connections: ConnectionView[];
   accounts: AccountView[];
   onLinked: () => void;
+  replaces?: ConnectionView;
 }) {
   const [open, setOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -149,16 +179,28 @@ export function LinkBank(props: {
   const { itemsUsed, itemLimit } = props.plaid;
   const blocked = itemsUsed >= itemLimit;
   const needsConfirm = itemsUsed >= CONFIRM_ITEMS_FROM;
+  const replaces = props.replaces?.id;
+  const options = replaces === undefined ? { confirmed } : { confirmed, replaces };
 
   async function finish(publicToken: string, metadata: PlaidLinkMetadata) {
     const result = linkResultOf(publicToken, metadata);
     if (result === undefined) return setError("Plaid Link named no bank. Nothing was linked.");
     setBusy(true);
     try {
-      const res = await api.plaid.link.$post({ json: { ...result, confirmed } });
-      if (!res.ok) return setError(await refusal(res));
-      const body = (await res.json()) as { connection: { bankName: string } };
-      setDone(`Linked ${body.connection.bankName}. Its first sync has started.`);
+      const res = await api.plaid.link.$post({ json: { ...result, ...options } });
+      if (!res.ok) {
+        setError(await refusal(res));
+        // After the exchange a refusal may still have added or removed a Connection.
+        if (res.status === 409) props.onLinked();
+        return;
+      }
+      const body = (await res.json()) as {
+        connection: { bankName: string };
+        bankConfirmed?: boolean;
+      };
+      const unconfirmed =
+        body.bankConfirmed === false ? " Plaid did not confirm the bank's name, so check it." : "";
+      setDone(`Linked ${body.connection.bankName}. Its first sync has started.${unconfirmed}`);
       setOpen(false);
       props.onLinked();
     } catch {
@@ -173,22 +215,15 @@ export function LinkBank(props: {
     setError(undefined);
     setDone(undefined);
     try {
-      const res = await api.plaid["link-token"].$post({ json: { confirmed } });
+      const res = await api.plaid["link-token"].$post({ json: options });
       if (!res.ok) return setError(await refusal(res));
       const { linkToken } = (await res.json()) as { linkToken: string };
-      const plaid = await loadPlaidLink();
-      const handler = plaid.create({
-        token: linkToken,
-        onSuccess: (publicToken, metadata) => {
-          handler.destroy();
-          void finish(publicToken, metadata);
-        },
-        onExit: (exit) => {
-          handler.destroy();
-          if (exit !== null) setError("Plaid Link closed before the bank was linked.");
+      await openPlaidLink(linkToken, {
+        onSuccess: (publicToken, metadata) => void finish(publicToken, metadata),
+        onExit: (failed) => {
+          if (failed) setError("Plaid Link closed before the bank was linked.");
         },
       });
-      handler.open();
     } catch {
       setError("Plaid Link did not open. If this keeps happening over plain HTTP, use HTTPS.");
     } finally {
@@ -202,10 +237,17 @@ export function LinkBank(props: {
   return (
     <div className="mt-4">
       <button className={BUTTON} type="button" onClick={() => setOpen(true)} disabled={open}>
-        Link a new bank
+        {props.replaces === undefined ? "Link a new bank" : "Link again"}
       </button>
       {open ? (
         <div className="mt-3">
+          {props.replaces === undefined ? null : (
+            <p className="mt-2">
+              The bank says the app's access to {props.replaces.bankName} is gone, so Repair cannot
+              fix it. Link again links {props.replaces.bankName} as a new Connection, which spends a
+              new Item. Its Accounts carry on the old ones, with their history.
+            </p>
+          )}
           <BeforeLink
             plaid={props.plaid}
             connections={props.connections}
@@ -335,6 +377,10 @@ export function ImportConnection(props: { plaid: PlaidView; onImported: () => vo
               }}
             />
           </label>
+          <p className="mt-2 text-gray-600">
+            An import spends no new Item, but it counts in "at least N of 10 used". If you already
+            raised N by hand for this Item, lower N by one after you save.
+          </p>
           {preview === undefined ? (
             <button
               className={BUTTON}
@@ -404,6 +450,15 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
             connection={connection}
             accounts={accounts.filter((account) => account.connectionId === connection.id)}
             onChanged={changed}
+            linkAgain={
+              <LinkBank
+                plaid={props.plaid}
+                connections={connected.filter((other) => other.id !== connection.id)}
+                accounts={accounts}
+                onLinked={changed}
+                replaces={connection}
+              />
+            }
           />
         ))}
       </ul>
@@ -419,11 +474,89 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
   );
 }
 
-// One Connection with its Accounts, and Remove or Delete history (spec 02, Removing a Connection).
+// Repair or Add accounts: Plaid Link in update mode for one Connection (spec 02, Repair and New
+// accounts at a bank). When Link finishes, the server syncs the Connection at once.
+export function UpdateMode(props: {
+  connection: ConnectionView;
+  addAccounts: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
+  // The routes read no body, but every Connection route takes only JSON, so the typed client sends
+  // an empty object.
+  const request = { param: { id: props.connection.id }, json: {} };
+
+  async function finished() {
+    try {
+      const res = await api.connections[":id"]["update-finished"].$post(request);
+      if (!res.ok) return setError(await refusal(res));
+      const { syncing } = (await res.json()) as { syncing: boolean };
+      const sync = syncing
+        ? "A sync has started"
+        : "A sync ran a few minutes ago, so the next one starts within minutes";
+      setDone(
+        props.addAccounts
+          ? `Done. ${sync}, and it brings in the Accounts you added.`
+          : `Repaired. ${sync}.`,
+      );
+      props.onChanged();
+    } catch {
+      setError("The server did not answer.");
+    }
+  }
+
+  async function open() {
+    setBusy(true);
+    setError(undefined);
+    setDone(undefined);
+    try {
+      const route = props.addAccounts
+        ? api.connections[":id"]["add-accounts"]
+        : api.connections[":id"].repair;
+      const res = await route.$post(request);
+      if (!res.ok) return setError(await refusal(res));
+      const { linkToken } = (await res.json()) as { linkToken: string };
+      await openPlaidLink(linkToken, {
+        // Update mode keeps the access token, so Link's public token goes nowhere.
+        onSuccess: () => void finished(),
+        onExit: (failed) => {
+          if (failed) setError("Plaid Link closed before it finished. Nothing changed.");
+        },
+      });
+    } catch {
+      setError("Plaid Link did not open. If this keeps happening over plain HTTP, use HTTPS.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button className="mt-1 mr-3 underline" type="button" onClick={open} disabled={busy}>
+        {props.addAccounts ? "Add accounts" : "Repair"}
+      </button>
+      <ErrorLine error={error} />
+      {done === undefined ? null : <p className="mt-1">{done}</p>}
+    </>
+  );
+}
+
+// What a Connection's health asks of a Member, if anything.
+const HEALTH_NOTES: Partial<Record<ConnectionView["health"], string>> = {
+  "needs a member": " (Needs you to sign in again: use Repair)",
+  broken: " (Disconnected: use Link again)",
+};
+
+// One Connection with its Accounts, Repair or Link again, Add accounts, and Remove or Delete
+// history (spec 02, Repair, New accounts at a bank, and Removing a Connection).
 export function ConnectionItem(props: {
   connection: ConnectionView;
   accounts: AccountView[];
   onChanged: () => void;
+  // Link again, shown while the Connection is Broken.
+  linkAgain?: ReactNode;
 }) {
   const { connection } = props;
   const [asking, setAsking] = useState<"remove" | "delete history" | undefined>();
@@ -465,12 +598,28 @@ export function ConnectionItem(props: {
   return (
     <li className="mt-3">
       <span className="font-medium">{connection.bankName}</span>
-      {connection.removed ? " (Removed)" : null}
+      {connection.removed
+        ? " (Removed)"
+        : connection.held
+          ? " (Not in use: another Connection already covers this bank, so it never syncs. Remove it.)"
+          : (HEALTH_NOTES[connection.health] ?? null)}
       <ul className="list-[circle] pl-6 text-gray-700">
         {props.accounts.map((account) => (
           <li key={account.id}>{accountLabel(account)}</li>
         ))}
       </ul>
+      {connection.removed || connection.held || !connection.actions.repairInApp ? null : (
+        <div>
+          {connection.health === "needs a member" ? (
+            <UpdateMode connection={connection} addAccounts={false} onChanged={props.onChanged} />
+          ) : null}
+          {connection.health === "broken" ? (
+            props.linkAgain
+          ) : (
+            <UpdateMode connection={connection} addAccounts={true} onChanged={props.onChanged} />
+          )}
+        </div>
+      )}
       {asking === undefined ? (
         <button
           className="mt-1 underline"

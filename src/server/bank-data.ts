@@ -129,6 +129,7 @@ export function bankViews(database: Database): BankViews {
             : null,
         actions: adapterActions(connection.provider),
         removed: connection.removedAt !== null,
+        held: connection.syncHeld,
       }));
     },
   };

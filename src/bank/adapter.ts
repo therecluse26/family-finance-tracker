@@ -46,6 +46,9 @@ export type LinkResult = {
 export type NewConnection = {
   bankId: string;
   bankName: string;
+  // True when the provider itself named the bank. False when it did not answer, so the bank is the
+  // browser's word, which decides nothing.
+  bankConfirmed: boolean;
   credential: string;
   accounts: AccountSnapshot[];
 };
@@ -154,14 +157,18 @@ export interface BankDataAdapter {
   // it calls this, so a blocked bank never reaches the exchange.
   finishLink(result: LinkResult): Promise<NewConnection>;
   importExisting?(credential: string): Promise<NewConnection>;
-  // Plaid's update mode.
-  startRepair?(connection: BankConnection): Promise<LinkSession>;
+  // Plaid's update mode, for the same Connection and credential: a link session for Repair, or, with
+  // `addAccounts`, one where the Member picks Accounts to add at the bank (spec 02, Repair and New
+  // accounts at a bank). It never makes a new credential, so it spends no Item.
+  startRepair?(connection: BankConnection, options: { addAccounts: boolean }): Promise<LinkSession>;
   sync(connection: BankConnection, cursor: string | null): Promise<SyncResult>;
   // Asks the provider whether the Connection still has an error, such as Plaid's /item/get. It
   // throws a BankDataError when it has one. The app runs it once a day while the Connection needs
   // a Member (spec 02, Back-off).
   check(connection: BankConnection): Promise<void>;
   refresh?(connection: BankConnection): Promise<void>;
+  // Ends the Connection at the provider. It throws a Gone error only when the provider says the
+  // Connection no longer exists there, so the app can treat it as ended already.
   remove(connection: BankConnection): Promise<void>;
 }
 

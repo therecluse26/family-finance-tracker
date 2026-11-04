@@ -10,7 +10,7 @@ import {
   TransactionsUpdateStatus,
 } from "plaid";
 import type { Database } from "../db/index.ts";
-import { registerSecretValue } from "../log.ts";
+import { log, registerSecretValue } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import {
   type AccountSnapshot,
@@ -25,9 +25,11 @@ import {
 import { plaidConfiguration, plaidError, readPlaidKeys } from "./plaid-keys.ts";
 import type { PlaidKeys } from "./plaid-view.ts";
 
-// The Plaid adapter (spec 02, The Plaid adapter, Linking a new bank, What a Plaid sync calls, and
-// Plaid errors). It links a bank through /link/token/create and /item/public_token/exchange,
-// imports one through /item/get, and removes one through /item/remove. It reads a Connection
+// The Plaid adapter (spec 02, The Plaid adapter, Linking a new bank, Repair, What a Plaid sync
+// calls, and Plaid errors). It links a bank through /link/token/create and
+// /item/public_token/exchange, confirms the bank through /item/get, repairs one or adds Accounts to
+// it through /link/token/create in update mode, imports one through /item/get, and removes one
+// through /item/remove. It reads a Connection
 // through /transactions/sync, /accounts/get, and /liabilities/get, and maps
 // Plaid's fields into the app's records. It sorts every Plaid error into an error kind. Its errors
 // name only Plaid's error code and type, or the HTTP status: Plaid's own error also holds the
@@ -95,6 +97,11 @@ const ACCOUNTS_REUSE_MS = 5 * 60_000;
 
 // Plaid's error codes and types are upper-case names. Anything else is not written into a message.
 const PLAID_NAME = /^[A-Z0-9_]{1,80}$/;
+
+// The /item/remove errors that mean the Item no longer exists at Plaid, so the Connection has
+// already ended. Any other error, INSTITUTION_NO_LONGER_SUPPORTED included, may leave the Item at
+// Plaid, so the removal does not go on.
+const ALREADY_ENDED = new Set(["ITEM_NOT_FOUND", "INVALID_ACCESS_TOKEN"]);
 
 const plaidName = (value: unknown): string | undefined =>
   typeof value === "string" && PLAID_NAME.test(value) ? value : undefined;
@@ -431,8 +438,33 @@ export function plaidAdapter(options: {
       return { linkToken: link_token };
     },
 
-    // Exchanges Link's public token for the access token. The bank is the one Link's metadata
-    // named, which the core already checked. The first sync brings the Accounts.
+    // A link token in update mode (spec 02, Repair and New accounts at a bank): it carries the
+    // Connection's access token and no products, so Link repairs the same Item and spends none. With
+    // `addAccounts`, the Member also picks Accounts to add. Link's public token is not exchanged
+    // after update mode: the access token stays the same. client_user_id is a new random ID, as for
+    // a new bank.
+    async startRepair(connection, { addAccounts }) {
+      const { client, access_token } = await open(connection);
+      const { link_token } = await call(() =>
+        client.linkTokenCreate({
+          client_name: CLIENT_NAME,
+          user: { client_user_id: crypto.randomUUID() },
+          country_codes: [CountryCode.Us],
+          language: "en",
+          access_token,
+          ...(addAccounts ? { update: { account_selection_enabled: true } } : {}),
+        }),
+      );
+      registerSecretValue(link_token);
+      return { linkToken: link_token };
+    },
+
+    // Exchanges Link's public token for the access token. The core already checked the bank Link's
+    // metadata named. One /item/get, which spends no Item, then confirms the bank by Plaid's own ID,
+    // so the browser's word does not decide the stored bank. When that call fails, or names no
+    // bank, the Item is already spent, so the Connection keeps Link's bank rather than losing its
+    // access token, marked unconfirmed, so the core decides nothing on it. The first sync brings
+    // the Accounts.
     async finishLink(result) {
       registerSecretValue(result.publicToken);
       const client = await plaidClient();
@@ -441,12 +473,23 @@ export function plaidAdapter(options: {
       );
       registerSecretValue(exchanged.access_token);
       registerSecretValue(exchanged.item_id);
-      return {
-        bankId: result.bankId,
-        bankName: result.bankName,
-        credential: exchanged.access_token,
-        accounts: [],
-      };
+      let bankId = result.bankId;
+      let bankName = result.bankName;
+      let bankConfirmed = false;
+      try {
+        const { item } = await call(() => client.itemGet({ access_token: exchanged.access_token }));
+        if (item.institution_id) {
+          if (item.institution_id !== result.bankId) {
+            log.warn("Plaid named another bank than Link did; the app keeps Plaid's");
+          }
+          bankId = item.institution_id;
+          bankName = item.institution_name ?? bankName;
+          bankConfirmed = true;
+        }
+      } catch (error) {
+        log.warn("Plaid did not confirm a new bank; the app keeps Link's", { error });
+      }
+      return { bankId, bankName, bankConfirmed, credential: exchanged.access_token, accounts: [] };
     },
 
     // Adopts an access token made outside the app (spec 02, Import Plaid Connection). One /item/get
@@ -467,15 +510,26 @@ export function plaidAdapter(options: {
       return {
         bankId,
         bankName: item.institution_name ?? bankId,
+        bankConfirmed: true,
         credential,
         accounts: found.map((account) => accountSnapshot(account, null)),
       };
     },
 
-    // Ends the Item at Plaid (spec 02, Removing a Connection). Plaid's slot stays spent.
+    // Ends the Item at Plaid (spec 02, Removing a Connection). Plaid's slot stays spent. Only
+    // ITEM_NOT_FOUND and INVALID_ACCESS_TOKEN throw as Gone; every other Gone code is Temporary
+    // here, since the Item may still exist at Plaid.
     async remove(connection) {
       const { client, access_token } = await open(connection);
-      await call(() => client.itemRemove({ access_token }));
+      try {
+        await call(() => client.itemRemove({ access_token }));
+      } catch (error) {
+        const ended = error instanceof PlaidCallError && ALREADY_ENDED.has(error.code ?? "");
+        if (error instanceof BankDataError && error.kind === "gone" && !ended) {
+          throw new BankDataError("temporary", error.message);
+        }
+        throw error;
+      }
       lastAccounts.delete(connection.id);
     },
   };

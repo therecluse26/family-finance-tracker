@@ -25,11 +25,12 @@ export {
   type BalanceRange,
   type MonthEndBalance,
 } from "./balances.ts";
-export { bankConnecting } from "./connect.ts";
+export { bankConnecting, connectionRepairing } from "./connect.ts";
 export {
   type BankConnecting,
   CONFIRM_ITEMS_FROM,
   type ConnectionRemoving,
+  type ConnectionRepairing,
   type CoveringConnection,
   type DeleteHistoryOutcome,
   type ImportFinish,
@@ -38,6 +39,8 @@ export {
   type LinkOptions,
   type LinkStart,
   type RemoveOutcome,
+  type UpdateModeFinish,
+  type UpdateModeStart,
 } from "./connect-view.ts";
 export { connectionToRepair, type Health } from "./health.ts";
 export {

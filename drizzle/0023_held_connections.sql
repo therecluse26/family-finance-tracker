@@ -1,0 +1,1 @@
+ALTER TABLE `connections` ADD `sync_held` integer DEFAULT false NOT NULL;

@@ -32,6 +32,7 @@ const CONNECTION: ConnectionView = {
   nextSyncAt: null,
   actions: { repairInApp: true, importExisting: true, refresh: true },
   removed: false,
+  held: false,
 };
 
 const ACCOUNT: AccountView = {
@@ -178,5 +179,72 @@ describe("Settings → Banks: removing a Connection", () => {
     expect(shown).toContain("Delete history");
     expect(shown).not.toMatch(/\bRemove\b(?! )/);
     expect(item(removed, [])).toBe("");
+  });
+});
+
+describe("Settings → Banks: Repair, Link again, and Add accounts", () => {
+  const item = (connection: ConnectionView) =>
+    text(
+      renderToString(
+        <ConnectionItem
+          connection={connection}
+          accounts={[ACCOUNT]}
+          onChanged={() => {}}
+          linkAgain={<span>LINK AGAIN SHOWN</span>}
+        />,
+      ),
+    );
+
+  it("offers Repair and Add accounts on a Connection that needs a Member", () => {
+    const shown = item({ ...CONNECTION, health: "needs a member" });
+
+    expect(shown).toContain("Needs you to sign in again");
+    // "use Repair" in the note, and the Repair button.
+    expect(shown.match(/Repair/g)).toHaveLength(2);
+    expect(shown).toContain("Add accounts");
+    expect(shown).not.toContain("LINK AGAIN SHOWN");
+  });
+
+  it("offers Link again, not Repair or Add accounts, on a Broken Connection", () => {
+    const shown = item({ ...CONNECTION, health: "broken" });
+
+    expect(shown).toContain("LINK AGAIN SHOWN");
+    expect(shown).not.toContain("Repair");
+    expect(shown).not.toContain("Add accounts");
+  });
+
+  it("offers Add accounts on every Connection that is not Broken or removed", () => {
+    for (const health of ["healthy", "retrying"] as const) {
+      const shown = item({ ...CONNECTION, health });
+      expect(shown).toContain("Add accounts");
+      expect(shown).not.toContain("Repair");
+    }
+    expect(item({ ...CONNECTION, removed: true })).not.toContain("Add accounts");
+  });
+
+  it("shows a held Connection as not in use, with Remove and nothing that would sync it", () => {
+    const shown = item({ ...CONNECTION, held: true });
+
+    expect(shown).toContain("Not in use: another Connection already covers this bank");
+    expect(shown).toContain("Remove");
+    expect(shown).not.toContain("Add accounts");
+    expect(shown).not.toContain("Repair");
+  });
+
+  it("names Link again for the Broken Connection it replaces", () => {
+    const shown = text(
+      renderToString(
+        <LinkBank
+          plaid={KEYS_SET}
+          connections={[]}
+          accounts={[]}
+          onLinked={() => {}}
+          replaces={{ ...CONNECTION, health: "broken" }}
+        />,
+      ),
+    );
+
+    expect(shown).toContain("Link again");
+    expect(shown).not.toContain("Link a new bank");
   });
 });

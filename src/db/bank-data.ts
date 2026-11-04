@@ -30,6 +30,7 @@ import {
   followUpMarks,
   householdAccounts,
   reviewItems,
+  systemNotices,
   transactions,
   transferLinks,
   typedBalances,
@@ -53,11 +54,19 @@ export async function addConnection(
     syncMinute?: number;
     // The provider credential's ciphertext, sealed for the new row's ID, which it is bound to.
     sealCredential?: (id: string) => string;
+    // Link again (spec 02, Repair): the Broken Connection the new one replaces. It is removed in
+    // the same transaction, so its Accounts are Closed before the new Connection's first sync, and
+    // that sync carries them over. The System notice conditions in `endsConditions`, the replaced
+    // Connection's, end in the same transaction, so its notice and banner cannot stay open.
+    replaces?: string;
+    endsConditions?: readonly string[];
+    // A held Connection never syncs. It is held in this insert, so no sync can start before it is.
+    syncHeld?: boolean;
   },
   at = new Date(),
 ): Promise<string> {
   const id = crypto.randomUUID();
-  const { sealCredential, ...fields } = connection;
+  const { sealCredential, replaces, endsConditions = [], ...fields } = connection;
   const credential = sealCredential?.(id) ?? null;
   // A random minute spreads the Connections' syncs over the hour (spec 02, Sync schedule).
   const syncMinute = connection.syncMinute ?? Math.floor(Math.random() * 60);
@@ -65,6 +74,18 @@ export async function addConnection(
     await tx.insert(connections).values({ id, ...fields, credential, syncMinute, createdAt: at });
     // N counts every Plaid Connection the app created or imported (spec 02, The 10 lifetime Items).
     if (connection.provider === "plaid") await countPlaidItem(tx);
+    if (replaces !== undefined) await removeConnection(tx, replaces, at);
+    if (endsConditions.length > 0) {
+      await tx
+        .update(systemNotices)
+        .set({ closedAt: at })
+        .where(
+          and(
+            inArray(systemNotices.condition, [...endsConditions]),
+            isNull(systemNotices.closedAt),
+          ),
+        );
+    }
   });
   return id;
 }
@@ -93,8 +114,8 @@ export async function saveSyncState(
   await database.update(connections).set(state).where(eq(connections.id, id));
 }
 
-// Each Connection whose sync job is due at `now`: every one that is not Broken or removed and has
-// no next sync time, or one that has come.
+// Each Connection whose sync job is due at `now`: every one that is not Broken, held or removed and
+// has no next sync time, or one that has come.
 export async function listDueConnections(
   database: Database,
   now: Date,
@@ -106,6 +127,7 @@ export async function listDueConnections(
       and(
         ne(connections.health, "broken"),
         isNull(connections.removedAt),
+        eq(connections.syncHeld, false),
         or(isNull(connections.nextSyncAt), lte(connections.nextSyncAt, now)),
       ),
     )
@@ -260,17 +282,22 @@ async function carryOver(
     .where(eq(householdAccounts.id, old.id));
 }
 
-// Adds or updates each Account by its provider ID, and returns each one's app ID by provider ID.
-// A new provider ID first looks for an old Account to carry on. `snapshots` is every Account the
-// provider returns for the Connection.
+// An Account the app had not seen before a sync, which the sync now tracks (spec 02, New accounts
+// at a bank). A carried Account is not new.
+export type NewAccount = { id: string; name: string; mask: string | null };
+
+// Adds or updates each Account by its provider ID, and returns each one's app ID by provider ID,
+// with the Accounts it added. A new provider ID first looks for an old Account to carry on.
+// `snapshots` is every Account the provider returns for the Connection.
 async function storeAccounts(
   tx: Transaction,
   connection: StoredConnection,
   snapshots: AccountSnapshot[],
   at: Date,
   timeZone: string,
-): Promise<Map<string, string>> {
+): Promise<{ ids: Map<string, string>; added: NewAccount[] }> {
   const ids = new Map<string, string>();
+  const added: NewAccount[] = [];
   const returned = new Set(snapshots.map((snapshot) => snapshot.id));
   for (const snapshot of snapshots) {
     const fields = {
@@ -306,8 +333,9 @@ async function storeAccounts(
       ...fields,
     });
     ids.set(snapshot.id, id);
+    added.push({ id, name: snapshot.name, mask: snapshot.mask });
   }
-  return ids;
+  return { ids, added };
 }
 
 // The day D of each Account's last carry-over from another Connection, or null, by app ID.
@@ -366,6 +394,9 @@ async function findTransaction(tx: Transaction, connectionId: string, providerId
 
 export type PageCounts = { added: number; changed: number; removed: number };
 
+// What storing one page did: its Transaction counts, and the Accounts it added.
+export type StoredPage = PageCounts & { newAccounts: NewAccount[] };
+
 // Stores one sync page in one transaction: its Accounts, then each added or changed Transaction by
 // its stable ID, then each removal. A page stored twice, as after a restarted sync, changes
 // nothing the second time. A Member's own fields are never written. `timeZone` is the Household's,
@@ -377,7 +408,7 @@ export async function storeSyncPage(
   page: Pick<SyncResult, "accounts" | "removed"> & { added: ArrivingTxn[]; changed: ArrivingTxn[] },
   at = new Date(),
   timeZone = "UTC",
-): Promise<PageCounts> {
+): Promise<StoredPage> {
   return database.transaction(async (tx) => {
     const counts: PageCounts = { added: 0, changed: 0, removed: 0 };
     const [connection] = await tx
@@ -385,7 +416,13 @@ export async function storeSyncPage(
       .from(connections)
       .where(eq(connections.id, connectionId));
     if (connection === undefined) throw new Error(`No Connection has the ID ${connectionId}.`);
-    const ids = await storeAccounts(tx, connection, page.accounts, at, timeZone);
+    const { ids, added: newAccounts } = await storeAccounts(
+      tx,
+      connection,
+      page.accounts,
+      at,
+      timeZone,
+    );
     const splits = new Map<string, string | null>();
 
     const unmark = async (row: { id: string }) => {
@@ -452,7 +489,7 @@ export async function storeSyncPage(
       await hide(found, removal.reason);
       counts.removed += 1;
     }
-    return counts;
+    return { ...counts, newAccounts };
   });
 }
 
@@ -582,19 +619,21 @@ export async function markConnectionRemoved(
   id: string,
   at = new Date(),
 ): Promise<boolean> {
-  return database.transaction(async (tx) => {
-    const removed = await tx
-      .update(connections)
-      .set({ credential: null, removedAt: at, nextSyncAt: null })
-      .where(and(eq(connections.id, id), isNull(connections.removedAt)))
-      .returning({ id: connections.id });
-    if (removed.length === 0) return false;
-    await tx
-      .update(householdAccounts)
-      .set({ closedAt: at, closedReason: "connection removed" })
-      .where(and(eq(householdAccounts.connectionId, id), isNull(householdAccounts.closedAt)));
-    return true;
-  });
+  return database.transaction((tx) => removeConnection(tx, id, at));
+}
+
+async function removeConnection(tx: Transaction, id: string, at: Date): Promise<boolean> {
+  const removed = await tx
+    .update(connections)
+    .set({ credential: null, removedAt: at, nextSyncAt: null, syncHeld: false })
+    .where(and(eq(connections.id, id), isNull(connections.removedAt)))
+    .returning({ id: connections.id });
+  if (removed.length === 0) return false;
+  await tx
+    .update(householdAccounts)
+    .set({ closedAt: at, closedReason: "connection removed" })
+    .where(and(eq(householdAccounts.connectionId, id), isNull(householdAccounts.closedAt)));
+  return true;
 }
 
 // What Delete history removed.

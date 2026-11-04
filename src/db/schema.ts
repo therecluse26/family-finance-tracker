@@ -381,6 +381,10 @@ export const connections = sqliteTable(
     // has no credential, never syncs, and blocks no new link. Its Closed Accounts keep their
     // history until a Member deletes it.
     removedAt: moment("removed_at"),
+    // The provider linked a bank that another Connection covers, and did not end the new one
+    // (spec 02, Linking a new bank). A held Connection never syncs, so the bank's money does not
+    // count twice. It is set when the row is made, and only Remove clears it.
+    syncHeld: integer("sync_held", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [index("connections_bank_id").on(table.bankId)],
 );

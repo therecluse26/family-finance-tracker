@@ -373,6 +373,46 @@ describe("syncing a fake Connection", () => {
     });
   });
 
+  // Spec 02, New accounts at a bank.
+  it("tracks an Account it has not seen at once, and names it in a System notice with no banner and no Repair button", async () => {
+    const notices = () =>
+      rows("SELECT kind, condition, text FROM system_notices ORDER BY raised_at, rowid");
+    bank.fake.addPages(BANK, {
+      accounts: [CHECKING],
+      added: [fakeTxn({ id: "t1", accountId: CHECKING.id, amount: 320_000 })],
+    });
+    await syncConnection(connectionId);
+    // The first sync brings the Accounts the Member just picked.
+    expect(await notices()).toEqual([]);
+
+    bank.fake.addPages(BANK, {
+      accounts: [CHECKING, CARD],
+      added: [fakeTxn({ id: "t2", accountId: CARD.id, amount: -1_599 })],
+    });
+    await syncConnection(connectionId);
+    await syncConnection(connectionId);
+
+    expect(
+      await rows(
+        "SELECT provider_account_id AS id, closed_at, excluded FROM household_accounts ORDER BY provider_account_id",
+      ),
+    ).toEqual([
+      { id: CARD.id, closed_at: null, excluded: 0 },
+      { id: CHECKING.id, closed_at: null, excluded: 0 },
+    ]);
+    expect(await rows("SELECT provider_transaction_id AS id FROM transactions ORDER BY 1")).toEqual(
+      [{ id: "t1" }, { id: "t2" }],
+    );
+    // An event notice: a Member closes it. It names no Connection to repair, so it has no banner.
+    expect(await notices()).toEqual([
+      {
+        kind: "event",
+        condition: null,
+        text: "First Fake Bank has a new Account, Rewards Card ··9876. The app tracks it now. To leave it out, turn on its Exclude switch in the Account list",
+      },
+    ]);
+  });
+
   it("reports no change for a sync that brings nothing new", async () => {
     bank.fake.addPages(...threePages());
     await syncConnection(connectionId);

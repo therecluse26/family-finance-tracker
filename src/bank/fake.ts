@@ -45,6 +45,8 @@ export class FakeBankAdapter implements BankDataAdapter {
   readonly calls: { connectionId: string; cursor: string | null }[] = [];
   // Each check, by Connection ID, in order.
   readonly checks: string[] = [];
+  // Each update-mode link session asked for, in order.
+  readonly repairs: { connectionId: string; addAccounts: boolean }[] = [];
 
   private readonly scripts = new Map<string, Script>();
   // The error each check of a bank, or of one Connection, finds, until it is cleared.
@@ -128,6 +130,15 @@ export class FakeBankAdapter implements BankDataAdapter {
 
   async startLink(): Promise<LinkSession> {
     return { linkToken: "fake-link-token" };
+  }
+
+  // Update mode, as Plaid's: the same Connection, so nothing is made.
+  async startRepair(
+    connection: BankConnection,
+    options: { addAccounts: boolean },
+  ): Promise<LinkSession> {
+    this.repairs.push({ connectionId: connection.id, addAccounts: options.addAccounts });
+    return { linkToken: "fake-update-link-token" };
   }
 
   async finishLink(_result: LinkResult): Promise<NewConnection> {

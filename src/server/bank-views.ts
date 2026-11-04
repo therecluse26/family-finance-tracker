@@ -50,6 +50,9 @@ export type ConnectionView = {
   // A Member removed it: it has no credential and never syncs. Its Closed Accounts keep their
   // history until a Member deletes it.
   removed: boolean;
+  // A second Connection to a bank another Connection covers, which the provider did not end. It
+  // never syncs, and the Member removes it.
+  held: boolean;
 };
 
 // Calendar dates are written YYYY-MM-DD.

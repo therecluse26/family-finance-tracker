@@ -18,6 +18,7 @@ import {
   addConnection,
   markSetupStep,
   PLAID_SETTINGS_ROW,
+  saveSyncState,
   storeItemsUsed,
   storePlaidKeys,
 } from "../db/index.ts";
@@ -63,6 +64,9 @@ describe("the Connection routes", () => {
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     lines = [];
+    // The bank module writes through the global log, to stdout; the server through its logger.
+    // Both go into `lines`.
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => lines.push(String(chunk)) > 0);
     const logger = createLogger((line) => lines.push(line), { throwOnSecretField: true });
     test = await newTestAuth(APP_URL, logger);
     plaid = new FakePlaid();
@@ -115,6 +119,7 @@ describe("the Connection routes", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     stopOthers();
     stopBank();
@@ -196,6 +201,11 @@ describe("the Connection routes", () => {
       const accessToken = newAccessToken();
       const itemId = newItemId();
       plaid.answer(EXCHANGE, { body: { access_token: accessToken, item_id: itemId } });
+      plaid.answer("/item/get", {
+        body: {
+          item: { item_id: itemId, institution_id: "ins_new", institution_name: "New Bank" },
+        },
+      });
       const body = linked();
 
       const res = await tab.post("/api/plaid/link", body);
@@ -233,6 +243,73 @@ describe("the Connection routes", () => {
           "This bank is already connected as New Bank. A bank has one Connection, so the app did not link it again.",
       });
       expect(plaid.to(EXCHANGE)).toEqual([]);
+    });
+
+    // The browser's bank ID is the Broken Connection's; Plaid's /item/get names another bank.
+    it("says Link again replaced nothing when Plaid names another bank, with no token in the answer", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      const broken = await addConnection(test.database, {
+        provider: "plaid",
+        bankId: "ins_new",
+        bankName: "New Bank",
+        origin: "linked",
+      });
+      await saveSyncState(test.database, broken, { health: "broken" });
+      const accessToken = newAccessToken();
+      const itemId = newItemId();
+      plaid.answer(EXCHANGE, { body: { access_token: accessToken, item_id: itemId } });
+      plaid.answer("/item/get", {
+        body: {
+          item: { item_id: itemId, institution_id: "ins_other", institution_name: "Other Bank" },
+        },
+      });
+
+      const res = await tab.post("/api/plaid/link", linked({ replaces: broken }));
+
+      expect(res.status).toBe(409);
+      const text = await res.text();
+      const added = (await rows("SELECT id FROM connections WHERE bank_id = 'ins_other'"))[0]?.id;
+      expect(JSON.parse(text)).toEqual({
+        connection: { id: added, bankName: "Other Bank" },
+        error:
+          "Plaid linked Other Bank, not the Broken Connection's bank. It was added as a new Connection, and nothing was replaced.",
+      });
+      expect(await rows(`SELECT removed_at FROM connections WHERE id = '${broken}'`)).toEqual([
+        { removed_at: null },
+      ]);
+      for (const secret of [accessToken, itemId]) {
+        expect(text).not.toContain(secret);
+        expect(lines.join("")).not.toContain(secret);
+      }
+    });
+
+    it("says Link again replaced nothing when Plaid does not confirm the bank", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      const broken = await addConnection(test.database, {
+        provider: "plaid",
+        bankId: "ins_new",
+        bankName: "New Bank",
+        origin: "linked",
+      });
+      await saveSyncState(test.database, broken, { health: "broken" });
+      plaid.answer(EXCHANGE, { body: { access_token: newAccessToken(), item_id: newItemId() } });
+      plaid.answer("/item/get", {
+        status: 500,
+        body: plaidFailure("API_ERROR", "INTERNAL_SERVER_ERROR"),
+      });
+
+      const res = await tab.post("/api/plaid/link", linked({ replaces: broken }));
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        error:
+          "Plaid did not confirm which bank was linked, so it was added as a new Connection, and nothing was replaced. If it is the Broken Connection's bank, Remove the Broken Connection.",
+      });
+      expect(await rows(`SELECT removed_at FROM connections WHERE id = '${broken}'`)).toEqual([
+        { removed_at: null },
+      ]);
     });
 
     it("refuses a public token or metadata the browser's link screen does not send", async () => {
@@ -355,7 +432,7 @@ describe("the Connection routes", () => {
     const wrongCode = async () =>
       (await alice.totpCode()).replace(/\d/g, (digit) => String((Number(digit) + 1) % 10));
 
-    it("answers 401 with no session and 403 from another origin, and removes nothing", async () => {
+    it("answers 401 with no session, 403 from another origin, and 415 to a body that is not JSON, and removes nothing", async () => {
       const stranger = new TestBrowser(app, APP_URL, "192.168.1.202");
       expect((await remove(stranger, { code: "000000" })).status).toBe(401);
       const tab = await signedIn();
@@ -371,6 +448,18 @@ describe("the Connection routes", () => {
           )
         ).status,
       ).toBe(403);
+      const plain = { "content-type": "text/plain" };
+      expect((await remove(tab, { code }, plain)).status).toBe(415);
+      expect(
+        (
+          await tab.send(
+            "POST",
+            `/api/connections/${connectionId}/delete-history`,
+            { confirmed: true },
+            plain,
+          )
+        ).status,
+      ).toBe(415);
       expect(plaid.requests).toEqual([]);
       expect(await removedAt()).toBeNull();
     });
@@ -437,6 +526,149 @@ describe("the Connection routes", () => {
       expect(followUpsAsked).toBe(1);
       expect(await rows("SELECT count(*) AS n FROM connections")).toEqual([{ n: 0 }]);
       expect((await deleteHistory({ confirmed: true })).status).toBe(404);
+    });
+  });
+
+  // Spec 02, Repair and New accounts at a bank: Plaid Link in update mode.
+  describe("Repair and Add accounts", () => {
+    let connectionId: string;
+    let accessToken: string;
+
+    beforeEach(async () => {
+      await finishWizard();
+      accessToken = newAccessToken();
+      connectionId = await addConnection(test.database, {
+        provider: "plaid",
+        bankId: "ins_fake",
+        bankName: "Fake Plaid Bank",
+        origin: "linked",
+        sealCredential: (rowId) =>
+          test.secrets.encrypt(accessToken, { rowId, column: "connections.credential" }),
+      });
+    });
+
+    const paths = () =>
+      ["repair", "add-accounts", "update-finished"].map(
+        (action) => `/api/connections/${connectionId}/${action}`,
+      );
+
+    it("answers 401 with no session, 403 from another origin, and 415 to a body that is not JSON", async () => {
+      const stranger = new TestBrowser(app, APP_URL, "192.168.1.203");
+      const tab = await signedIn();
+      for (const path of paths()) {
+        expect((await stranger.post(path, {})).status).toBe(401);
+        expect((await tab.send("POST", path, {}, { origin: "http://evil.example" })).status).toBe(
+          403,
+        );
+        expect((await tab.send("POST", path, {}, { origin: undefined })).status).toBe(403);
+        expect((await tab.send("POST", path, {}, { "content-type": "text/plain" })).status).toBe(
+          415,
+        );
+      }
+      expect(plaid.requests).toEqual([]);
+      expect(syncsStarted).toEqual([]);
+    });
+
+    it("hands out an update-mode link token that is not cached, with no access token in any answer or log line", async () => {
+      await saveSyncState(test.database, connectionId, { health: "needs a member" });
+      const tab = await signedIn();
+      const linkToken = newLinkToken();
+      plaid.answer(LINK_TOKEN, { body: { link_token: linkToken } });
+
+      const repair = await tab.post(`/api/connections/${connectionId}/repair`, {});
+      const added = await tab.post(`/api/connections/${connectionId}/add-accounts`, {});
+
+      for (const res of [repair, added]) {
+        expect(res.status).toBe(200);
+        expect(res.headers.get("cache-control")).toBe("no-store");
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ linkToken });
+        expect(text).not.toContain(accessToken);
+      }
+      const [repairRequest, addRequest] = plaid.to(LINK_TOKEN);
+      expect(repairRequest?.body).toMatchObject({ access_token: accessToken });
+      expect(repairRequest?.body).not.toHaveProperty("products");
+      expect(repairRequest?.body).not.toHaveProperty("update");
+      expect(addRequest?.body).toMatchObject({
+        access_token: accessToken,
+        update: { account_selection_enabled: true },
+      });
+      // The bank module's own log lines are captured too.
+      expect(lines.join("")).toContain("Opened Repair");
+      for (const secret of [accessToken, linkToken]) {
+        expect(lines.join("")).not.toContain(secret);
+      }
+      expect(await rows("SELECT count(*) AS n FROM connections")).toEqual([{ n: 1 }]);
+    });
+
+    it("refuses Repair for a Healthy Connection, and offers Link again for a Broken one", async () => {
+      const tab = await signedIn();
+
+      expect((await tab.post(`/api/connections/${connectionId}/repair`, {})).status).toBe(409);
+      await saveSyncState(test.database, connectionId, { health: "broken" });
+      for (const path of paths()) {
+        const res = await tab.post(path, {});
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({ linkAgain: true });
+      }
+      expect((await tab.post("/api/connections/no-such-connection/repair", {})).status).toBe(404);
+      expect(plaid.requests).toEqual([]);
+    });
+
+    it("refuses every update-mode route for a held Connection, and starts no sync", async () => {
+      const held = await addConnection(test.database, {
+        provider: "plaid",
+        bankId: "ins_fake",
+        bankName: "Fake Plaid Bank",
+        origin: "linked",
+        syncHeld: true,
+      });
+      const tab = await signedIn();
+
+      for (const action of ["repair", "add-accounts", "update-finished"]) {
+        const res = await tab.post(`/api/connections/${held}/${action}`, {});
+        expect(res.status).toBe(409);
+        expect(await res.json()).toEqual({
+          error:
+            "This Connection is not in use: it is a second Connection to a bank another Connection covers, so it never syncs. Remove it.",
+        });
+      }
+      expect(syncsStarted).toEqual([]);
+      expect(plaid.requests).toEqual([]);
+    });
+
+    it("starts the Connection's sync at once when update mode finishes", async () => {
+      await saveSyncState(test.database, connectionId, { health: "needs a member" });
+      const tab = await signedIn();
+
+      const res = await tab.post(`/api/connections/${connectionId}/update-finished`, {});
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ syncing: true });
+      expect(syncsStarted).toEqual([connectionId]);
+      // Asking again at once starts no second sync.
+      const again = await tab.post(`/api/connections/${connectionId}/update-finished`, {});
+      expect(await again.json()).toEqual({ syncing: false });
+      expect(syncsStarted).toEqual([connectionId]);
+    });
+
+    it("says what Plaid answered when it refuses, with no token, and changes nothing", async () => {
+      await saveSyncState(test.database, connectionId, { health: "needs a member" });
+      const tab = await signedIn();
+      plaid.answer(LINK_TOKEN, {
+        status: 400,
+        body: plaidFailure("INVALID_INPUT", "INVALID_ACCESS_TOKEN"),
+      });
+
+      const res = await tab.post(`/api/connections/${connectionId}/repair`, {});
+
+      expect(res.status).toBe(502);
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({
+        error: "Plaid answered INVALID_ACCESS_TOKEN (INVALID_INPUT). Nothing changed.",
+      });
+      expect(text).not.toContain(accessToken);
+      expect(lines.join("")).not.toContain(accessToken);
     });
   });
 });

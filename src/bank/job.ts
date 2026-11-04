@@ -56,7 +56,8 @@ export async function startDueSyncs(
 }
 
 // At startup, each Healthy or Retrying Connection whose last sync attempt is more than 6 hours old
-// syncs at once, back-off or not (spec 02, Sync schedule). Then every due Connection starts.
+// syncs at once, back-off or not (spec 02, Sync schedule). A held one never does. Then every due
+// Connection starts.
 export async function catchUpSyncs(
   now = new Date(),
   start: (connectionId: string) => Promise<void> = startSync,
@@ -64,7 +65,7 @@ export async function catchUpSyncs(
   const { database } = runningBank();
   for (const connection of await listConnections(database)) {
     if (connection.health !== "healthy" && connection.health !== "retrying") continue;
-    if (connection.removedAt !== null) continue;
+    if (connection.removedAt !== null || connection.syncHeld) continue;
     const attempt = connection.lastSyncAttemptAt;
     if (attempt === null || now.getTime() - attempt.getTime() > CATCH_UP_AFTER_MS) {
       await saveSyncState(database, connection.id, { nextSyncAt: now });
