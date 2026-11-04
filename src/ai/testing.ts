@@ -82,10 +82,13 @@ export class CapturingFetch {
   };
 }
 
-// How a test model answers its one call: a 1-token reply, a 401 as for a rejected key, or a
-// failure. Each failure holds the key and the gateway token, in its message, its request, and its
-// config, as an AI provider SDK's error can.
-export type StubAnswer = "work" | "reject" | "fail" | "throw";
+// How a test model answers its one call: a 1-token reply, a 401 as for a rejected key, a 429 as
+// for a rate limit, a 500, a thrown error, or no answer until the call is aborted. Each failure
+// holds the key and the gateway token, in its message, its request, and its config, as an AI
+// provider SDK's error can.
+export type StubAnswer = "work" | "reject" | "rate limit" | "fail" | "throw" | "hang";
+
+const STUB_STATUS = { reject: 401, "rate limit": 429, fail: 500 } as const;
 
 // A reply's token counts, as an AI provider reports them.
 export type StubUsage = {
@@ -121,6 +124,7 @@ export class StubModels {
             maxOutputTokens: options.maxOutputTokens,
           });
           await this.beforeAnswer();
+          if (this.answers[tier] === "hang") await aborted(options.abortSignal);
           return this.answer(tier, connection);
         },
         doStream: async (options) => {
@@ -171,13 +175,13 @@ export class StubModels {
       "cf-aig-authorization": `Bearer ${connection.gatewayToken ?? ""}`,
     };
     const answer = this.answers[tier];
-    if (answer === "reject" || answer === "fail") {
+    if (answer === "reject" || answer === "rate limit" || answer === "fail") {
       throw Object.assign(
         new APICallError({
           message: `Refused the key ${secrets}`,
           url: "https://ai.example.test/v1/chat/completions",
           requestBodyValues: { headers },
-          statusCode: answer === "reject" ? 401 : 500,
+          statusCode: STUB_STATUS[answer],
           responseHeaders: headers,
           responseBody: secrets,
         }),
@@ -199,4 +203,14 @@ export class StubModels {
       warnings: [],
     };
   }
+}
+
+// Waits until the call is aborted, then throws as fetch does.
+function aborted(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise((_, reject) => {
+    const abort = () =>
+      reject(Object.assign(new Error("The call was aborted."), { name: "AbortError" }));
+    if (signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }

@@ -1,10 +1,25 @@
-import { APICallError, generateText, type LanguageModel, RetryError, wrapLanguageModel } from "ai";
+import {
+  APICallError,
+  EmptyResponseBodyError,
+  generateText,
+  InvalidResponseDataError,
+  JSONParseError,
+  type LanguageModel,
+  NoContentGeneratedError,
+  NoObjectGeneratedError,
+  NoOutputGeneratedError,
+  Output,
+  RetryError,
+  TypeValidationError,
+  wrapLanguageModel,
+} from "ai";
 import { type Database, listAccounts, listMembersByJoinOrder } from "../db/index.ts";
 import { readHouseholdFacts } from "../household/index.ts";
 import type { Logger } from "../log.ts";
-import type { AiTier, ModelCheck, ModelUse, TierModels } from "./ai-view.ts";
+import type { AiTier, ModelCheck, TierModels } from "./ai-view.ts";
 import { costMiddleware, type OutboundCall } from "./outbound.ts";
-import { MEMBER_TYPED, type PrivacyFacts, privacyFilter } from "./privacy.ts";
+import { type PrivacyFacts, privacyFilter } from "./privacy.ts";
+import { type AiCall, buildPrompt } from "./prompt.ts";
 import {
   type AiConnection,
   type AiModelMaker,
@@ -111,70 +126,109 @@ export async function checkModel(model: LanguageModel, logger: Logger): Promise<
   }
 }
 
-// One message of a call. Attached notes travel inside a message's text. `typed` marks text a
-// Member wrote, such as a Chat message, a note a Member wrote, or an earlier AI reply in a Chat's
-// history: the privacy filter does its best on it, but never refuses the call over it (spec 08,
-// Privacy filter). Without it, the text is app-built, and the filter's final check reads it.
-export type AiMessage = { role: "user" | "assistant"; text: string; typed?: boolean };
+// Spec 08, Failures: what went wrong when an AI call failed. "key rejected" is the AI provider's
+// 401 or 403. Every other failure is an AI error: no answer from the AI provider ("network"), no
+// reply within 120 seconds, a rate limit, a server error, or a reply that fails its schema. Any
+// other refusal by the AI provider, such as a 400, counts as a server error.
+export type AiFailure = "network" | "timeout" | "rate limit" | "server error" | "bad reply";
 
-// One AI call: the fixed rules, then the messages, such as the Household summary, the task text,
-// a Quick batch, or a Chat turn. The use picks the model tier, the gate, and the line in the
-// month's cost.
-//
-// A call takes no tools and no response schema for now: the type says so, and callModel refuses
-// one at run time. The leak check skips tool and response schemas, so the Chat ticket must build
-// them only from constants in the code, never from Household data.
-export type AiCall = {
-  use: ModelUse;
-  system: string;
-  messages: AiMessage[];
-  maxOutputTokens?: number;
-  tools?: never;
-  toolChoice?: never;
-  output?: never;
-  responseFormat?: never;
-  schema?: never;
-};
-
-const CALL_KEYS: ReadonlySet<string> = new Set(["use", "system", "messages", "maxOutputTokens"]);
-const MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "text", "typed"]);
-
-const onlyKeys = (value: object, keys: ReadonlySet<string>) =>
-  Object.keys(value).every((key) => keys.has(key));
-
-// Refuses anything an AiCall does not hold, such as tools or a response schema.
-function checkCall(call: AiCall): void {
-  const plain =
-    onlyKeys(call, CALL_KEYS) &&
-    typeof call.system === "string" &&
-    Array.isArray(call.messages) &&
-    call.messages.every(
-      (message) =>
-        typeof message === "object" &&
-        message !== null &&
-        onlyKeys(message, MESSAGE_KEYS) &&
-        (message.role === "user" || message.role === "assistant") &&
-        typeof message.text === "string" &&
-        (message.typed === undefined || typeof message.typed === "boolean"),
-    );
-  if (!plain) {
-    throw new TypeError("An AI call holds only text messages: no tools and no response schema.");
+// A failed AI call. It holds the kind of failure and the HTTP status, never the AI SDK's error,
+// which can hold the prompt, the reply, the request's headers, and the key.
+export class AiCallError extends Error {
+  readonly failure: AiFailure | "key rejected";
+  readonly status: number | undefined;
+  constructor(failure: AiFailure | "key rejected", status?: number) {
+    super(`The AI call failed: ${failure}.`);
+    this.name = "AiCallError";
+    this.failure = failure;
+    this.status = status;
   }
 }
 
-// One call with a model from privateModels.
-export async function callModel(model: LanguageModel, call: AiCall): Promise<{ text: string }> {
-  checkCall(call);
-  const { text } = await generateText({
-    model,
-    system: call.system,
-    messages: call.messages.map((message) => ({
-      role: message.role,
-      content: message.text,
-      ...(message.typed === true ? { providerOptions: MEMBER_TYPED } : {}),
-    })),
-    ...(call.maxOutputTokens === undefined ? {} : { maxOutputTokens: call.maxOutputTokens }),
-    timeout: CALL_TIMEOUT_MS,
-  });
-  return { text };
+// Node's codes for a connection that failed or dropped.
+const NETWORK_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+]);
+
+function networkCode(error: unknown): boolean {
+  let cause = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof cause !== "object" || cause === null) return false;
+    const { code } = cause as { code?: unknown };
+    if (typeof code === "string" && (NETWORK_CODES.has(code) || code.startsWith("UND_ERR_"))) {
+      return true;
+    }
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+// The failure an error stands for, or undefined for an error that is not the AI provider's, such
+// as a privacy refusal, a paused gate, or a database error, which the call path throws on.
+function callErrorOf(error: unknown): AiCallError | undefined {
+  const last = RetryError.isInstance(error) ? error.lastError : error;
+  if (APICallError.isInstance(last)) {
+    const status = last.statusCode;
+    if (status === undefined) return new AiCallError("network");
+    if (status === 401 || status === 403) return new AiCallError("key rejected", status);
+    if (status === 429) return new AiCallError("rate limit", status);
+    if (status === 408) return new AiCallError("timeout", status);
+    return new AiCallError("server error", status);
+  }
+  if (
+    NoObjectGeneratedError.isInstance(last) ||
+    NoOutputGeneratedError.isInstance(last) ||
+    NoContentGeneratedError.isInstance(last) ||
+    JSONParseError.isInstance(last) ||
+    TypeValidationError.isInstance(last) ||
+    InvalidResponseDataError.isInstance(last) ||
+    EmptyResponseBodyError.isInstance(last)
+  ) {
+    return new AiCallError("bad reply");
+  }
+  return networkCode(last) ? new AiCallError("network") : undefined;
+}
+
+// One call with a model from privateModels: the prompt in its one order, its use's reply limit,
+// and, with a schema, a structured reply checked against it. The AI SDK makes no retry of its own:
+// background uses retry on their own schedule, and Chat and reading a Goal never retry by
+// themselves (spec 08, Failures). Throws an AiCallError when the AI provider fails.
+export async function callModel<OUTPUT>(
+  model: LanguageModel,
+  call: AiCall<OUTPUT>,
+): Promise<{ text: string; output: OUTPUT }> {
+  const prompt = buildPrompt(call);
+  // The timeout is the app's own, so a test's fake clock moves it.
+  const timeout = new AbortController();
+  const timer = setTimeout(
+    () => timeout.abort(new DOMException("No reply within 120 seconds.", "TimeoutError")),
+    CALL_TIMEOUT_MS,
+  );
+  try {
+    const result = await generateText({
+      model,
+      system: prompt.system,
+      messages: prompt.messages,
+      maxOutputTokens: prompt.maxOutputTokens,
+      ...(prompt.providerOptions === undefined ? {} : { providerOptions: prompt.providerOptions }),
+      ...(call.output === undefined ? {} : { output: Output.object({ schema: call.output }) }),
+      maxRetries: 0,
+      abortSignal: timeout.signal,
+    });
+    // The AI SDK checks a structured reply against its schema when it is read.
+    const output = (call.output === undefined ? undefined : result.output) as OUTPUT;
+    return { text: result.text, output };
+  } catch (error) {
+    if (timeout.signal.aborted) throw new AiCallError("timeout");
+    throw callErrorOf(error) ?? error;
+  } finally {
+    clearTimeout(timer);
+  }
 }

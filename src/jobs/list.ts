@@ -1,6 +1,7 @@
 // The job list. Sidequest imports each job class from it by class name, so every job class is
 // exported here under its own name. The server build is one file, so src/server/main.ts
 // re-exports this list and names the server file as the job list.
+import { AiRetryJob } from "../ai/index.ts";
 import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
@@ -11,13 +12,17 @@ import type { ScheduledTask } from "./scheduler.ts";
 export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
 export { TickJob } from "./sidequest.ts";
-export { CpiFetchJob, ProvisionalResultsJob, SyncScheduleJob, UpdateCheckJob };
+export { AiRetryJob, CpiFetchJob, ProvisionalResultsJob, SyncScheduleJob, UpdateCheckJob };
 
 // Every scheduled task. Each task's job is in the list above.
 export const scheduledTasks: readonly ScheduledTask[] = [
   // Starts each Connection's sync job when it is due (spec 02, Sync schedule and Back-off). Each
   // Connection keeps its own next sync time in app.db. Its job logs only when it starts a sync.
   { name: "sync schedule", schedule: everyMinute, job: SyncScheduleJob, quiet: true },
+  // Starts each background AI use's work again once its retry time has passed (spec 08,
+  // Failures). Each use keeps its own retry time in app.db, so a retry missed while the app was
+  // down runs at start. Its job logs only when it starts a retry.
+  { name: "ai retries", schedule: everyMinute, job: AiRetryJob, quiet: true },
   // Decides again each provisional one-sided result whose window has passed (spec 03, Order of
   // decisions), shortly after midnight Household time.
   { name: "provisional results", schedule: daily("00:15"), job: ProvisionalResultsJob },

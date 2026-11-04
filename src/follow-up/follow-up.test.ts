@@ -281,22 +281,29 @@ describe("the follow-up pipeline", () => {
       expect(await countWaitingJobs(FollowUpJob)).toBe(1);
     });
 
-    it("starts a new job at the time a stopping step asks for, which picks up what it left", async () => {
+    it("starts no job when a step stops, and the job its AI retry asks for picks up what it left", async () => {
       let first: string[] = [];
       register("matching", async (unhandled) => {
         if (first.length > 0) return undefined;
         first = await providerIds(unhandled.slice(0, 1));
-        return { handled: unhandled.slice(0, 1), again: new Date(Date.now() + 200) };
+        return { handled: unhandled.slice(0, 1), again: new Date(Date.now() + 60 * 60 * 1000) };
       });
       register("categorization");
       const connectionId = await bank.connect("fake-a");
       bank.fake.addPages("fake-a", { accounts: [CHECKING], added: [txn("t1"), txn("t2")] });
 
+      // No job waits for the retry time, so nothing holds back a sync's follow-up job.
       await startJob(SyncConnectionJob, [connectionId]);
+      await waitFor(() => runs.length === 1);
+      expect(await runThenMark()).toBe(0);
+      expect(runs).toEqual([{ step: "matching", given: ["t1", "t2"] }]);
+
+      // At its retry time, the step's AI retry asks for a follow-up job (src/ai/retries.ts), which
+      // in the app starts one through requestFollowUp.
+      expect(await requestFollowUp()).toBe(true);
 
       await waitFor(() => runs.length === 3);
-      expect(runs).toEqual([
-        { step: "matching", given: ["t1", "t2"] },
+      expect(runs.slice(1)).toEqual([
         { step: "matching", given: ["t1", "t2"].filter((id) => !first.includes(id)) },
         { step: "categorization", given: ["t1", "t2"] },
       ]);

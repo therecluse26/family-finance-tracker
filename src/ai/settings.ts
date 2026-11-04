@@ -13,6 +13,7 @@ import {
   storeMemberPrice,
 } from "../db/index.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
+import { endCondition, type NewNotice, raiseNotice } from "../notify/index.ts";
 import type { SecretPlace, Secrets } from "../secrets/index.ts";
 import {
   type AiProviderName,
@@ -97,11 +98,30 @@ export type AiOptions = {
   cost: AiCost;
   gates?: AiGates;
   logger?: Logger;
+  // System notices: the notify module's, unless a test gives its own.
+  notices?: Partial<AiNotices>;
 };
+
+export type AiNotices = {
+  raise(notice: NewNotice): Promise<unknown>;
+  end(condition: string): Promise<void>;
+};
+
+export function noticesOf(options: Pick<AiOptions, "notices">): AiNotices {
+  return {
+    raise: options.notices?.raise ?? raiseNotice,
+    end: options.notices?.end ?? endCondition,
+  };
+}
+
+// The condition of the System notice that a rejected key raises. It ends when a Member saves a key
+// that works, or removes the AI provider.
+export const KEY_REJECTED_CONDITION = "ai key rejected";
 
 export function aiSettings(options: AiOptions): AiSettings {
   const { database, secrets, cost, makeModels, logger = log } = options;
   const gates = options.gates ?? defaultGates(database, cost);
+  const notices = noticesOf(options);
 
   // Undefined when the ciphertext does not decrypt, such as after a restore with another Master key.
   function readSecret(ciphertext: string, place: SecretPlace): string | undefined {
@@ -119,6 +139,17 @@ export function aiSettings(options: AiOptions): AiSettings {
     if (until !== undefined) return { state: "cost cap", until };
     if (!(await gates.historyLoaded())) return { state: "waits for history" };
     return { state: "on" };
+  }
+
+  // A failed notice never fails the save or the removal that led to it.
+  async function endKeyRejected(): Promise<void> {
+    try {
+      await notices.end(KEY_REJECTED_CONDITION);
+    } catch (error) {
+      logger.warn("The rejected AI key System notice could not be ended", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
   }
 
   async function priceSource(provider: AiProviderName, model: string): Promise<PriceSource> {
@@ -243,6 +274,10 @@ export function aiSettings(options: AiOptions): AiSettings {
       );
       // A Remove AI provider or another save came first while the AI provider answered.
       if (!written) return { saved: false, refusal: "changed" };
+      // A key that works ends the paused AI's System notice.
+      if (stored?.keyRejectedAt != null && quick !== "key rejected" && writer !== "key rejected") {
+        await endKeyRejected();
+      }
       for (const tier of TIERS) {
         const entered = input.prices?.[tier];
         if (entered !== undefined && tablePrice(input.provider, modelOf[tier]) === undefined) {
@@ -255,7 +290,9 @@ export function aiSettings(options: AiOptions): AiSettings {
     },
 
     async remove() {
+      const stored = await readAiSettings(database);
       await removeAiSettings(database);
+      if (stored?.keyRejectedAt != null) await endKeyRejected();
     },
 
     usage: () => cost.usage(),
@@ -268,7 +305,10 @@ export function aiSettings(options: AiOptions): AiSettings {
 }
 
 // The model for one AI use, or why that use takes its no-AI path.
-export type ModelFor = { ready: true; model: LanguageModel } | { ready: false; pause: AiPause };
+// `generation` is the AI settings' generation the model was made from.
+export type ModelFor =
+  | { ready: true; model: LanguageModel; generation: number }
+  | { ready: false; pause: AiPause };
 
 export type AiCalls = {
   // Checks the AI status first. No AI provider, a rejected key, history still loading, the AI
@@ -302,7 +342,7 @@ export function aiCalls(options: AiOptions): AiCalls {
     async modelFor(use, { sendAnyway = false } = {}) {
       const pause = await gate(use, sendAnyway);
       if (pause !== undefined) return { ready: false, pause };
-      const stored = await readAiSettings(database);
+      const { settings: stored, generation } = await readAiSettingsVersion(database);
       if (stored === undefined) return { ready: false, pause: "no AI provider" };
       const tier = USE_TIERS[use];
       const model = tier === "quick" ? stored.quickModel : stored.writerModel;
@@ -322,7 +362,7 @@ export function aiCalls(options: AiOptions): AiCalls {
           cost,
         }),
       );
-      return { ready: true, model: models[tier] };
+      return { ready: true, model: models[tier], generation };
     },
   };
 }

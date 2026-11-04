@@ -1,6 +1,15 @@
 // The db module's interface. Other modules import from here.
 export {
+  clearAiRetry,
+  listDueAiRetries,
+  markAiRetryAsked,
+  readAiRetry,
+  type StoredAiRetry,
+  storeAiFailure,
+} from "./ai-retries.ts";
+export {
   AI_SETTINGS_ROW,
+  markAiKeyRejected,
   readAiSettings,
   readAiSettingsVersion,
   removeAiSettings,

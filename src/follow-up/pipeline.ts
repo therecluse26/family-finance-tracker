@@ -24,9 +24,10 @@ export type FollowUpStepName = (typeof FOLLOW_UP_STEPS)[number];
 
 // What a step did with the Transactions it was given.
 // - Nothing (undefined): it handled every one.
-// - { handled, again }: it handled only `handled`, and the job stops. A new follow-up job starts
-//   at `again`, and every step handles what it has not handled yet. An AI step uses this after a
-//   failed call, with the next retry time from spec 08.
+// - { handled, again }: it handled only `handled`, and the job stops. An AI step uses this after a
+//   failed call, or while its retry is not due, with its retry time from spec 08 as `again`. Its
+//   AI retry starts a new follow-up job at that time (src/ai/retries.ts), and every step handles
+//   what it has not handled yet. The stopped job starts no job itself.
 export type FollowUpStepResult = undefined | { handled: readonly string[]; again: Date };
 
 // A step gets the IDs of every Transaction it has not handled yet, hidden ones included, oldest

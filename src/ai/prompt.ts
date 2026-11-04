@@ -1,0 +1,292 @@
+import type { JSONValue, ModelMessage, TextPart } from "ai";
+import * as z from "zod";
+import { type ModelUse, USE_TIERS } from "./ai-view.ts";
+import { MEMBER_TYPED } from "./privacy.ts";
+import { FIXED_RULES } from "./voice.ts";
+
+// How the one AI call path shapes each prompt (spec 08, Prompt order and caching; Limits on each
+// call). Every prompt keeps one order: the fixed rules, then the Household summary, then the task,
+// then anything that changes. The use sets the reply's token limit and where the cache mark goes.
+// No caller sets either.
+
+// One message of a call. Attached notes travel inside a message's text. `typed` marks text a
+// Member wrote, such as a Chat message, a note a Member wrote, or an earlier AI reply in a Chat's
+// history: the privacy filter does its best on it, but never refuses the call over it (spec 08,
+// Privacy filter). Without it, the text is app-built, and the filter's final check reads it. A
+// typed message never holds app-built text.
+export type AiMessage = { role: "user" | "assistant"; text: string; typed?: boolean };
+
+// One Transaction of a Quick batch, as plain fields, such as its Merchant, amount, and date. It
+// never holds the Transaction's ID: the AI answers each by its row number in the batch.
+export type BatchItem = Readonly<Record<string, string | number | boolean | null>>;
+
+// The schema a structured reply must pass. Optional fields are .nullable(), never .optional(), for
+// OpenAI's strict mode. Counts, such as "4 to 7 cards", are part of it.
+export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
+
+// One AI call. The fixed rules come first, and no call changes them. Then:
+// - summary: the Household summary. Every Writer use has it, and no Quick use does.
+// - task: what this use asks, which stays the same from call to call, such as the instructions
+//   and the fixed Category list. App-built.
+// - batch: a Quick batch's Transactions, at most 100. Each goes out as its own text, a JSON object
+//   with its row number in the batch, so the privacy filter reads each on its own and a removal
+//   never joins two rows.
+// - changes: anything else that changes, such as Alert facts, feedback, or a Chat's turns.
+// - alerts: for Alert advice, how many Alerts the call advises on, which sets its reply limit.
+// - output: the schema of a structured reply. Without it, the reply is text.
+//
+// A call takes no tools for now: the type says so, and the call path refuses one at run time. The
+// leak check skips tool and response schemas, so the Chat ticket must build them only from
+// constants in the code, never from Household data.
+export type AiCall<OUTPUT = undefined> = {
+  use: ModelUse;
+  summary?: string;
+  task: string;
+  batch?: readonly BatchItem[];
+  changes?: readonly AiMessage[];
+  alerts?: number;
+  output?: AiSchema<OUTPUT>;
+  tools?: never;
+  toolChoice?: never;
+  responseFormat?: never;
+};
+
+// Spec 08, Limits on each call: the most reply tokens each use may take.
+const QUICK_BATCH_TOKENS = 4_000;
+const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
+  "category fix": QUICK_BATCH_TOKENS,
+  "merchant cleanup": QUICK_BATCH_TOKENS,
+  "unclear transfer": QUICK_BATCH_TOKENS,
+  "reimbursement linking": QUICK_BATCH_TOKENS,
+  "reading a goal": 300,
+  "insight cards": 1_000,
+  "monthly review": 4_000,
+  "budget tailoring": 1_500,
+  chat: 1_500,
+};
+const ALERT_TOKENS = 300;
+const ALERT_CALL_TOKENS = 1_200;
+
+// A Quick batch holds up to 100 Transactions (spec 08, Limits on each call).
+export const QUICK_BATCH_SIZE = 100;
+
+// The Quick-tier uses that run in batches inside one sync job. Only they and Chat get cache marks
+// (spec 08, Prompt order and caching): the rest run once, hours or days apart, so a cache write
+// would be wasted.
+const QUICK_BATCH_USES: ReadonlySet<ModelUse> = new Set([
+  "category fix",
+  "merchant cleanup",
+  "unclear transfer",
+  "reimbursement linking",
+]);
+
+// Anthropic's 5-minute cache, and no other.
+const CACHE_MARK = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } as const;
+// OpenAI caches long prompts on its own unless told not to. With "explicit", it caches only where a
+// call places a mark, and a one-shot call places none.
+const NO_AUTOMATIC_CACHE = { openai: { promptCacheOptions: { mode: "explicit" } } } as const;
+
+// The cache mark ends after the Household summary for Chat, after the tool definitions, which
+// AI providers place before the messages. For Quick batches it ends after the task.
+function cacheMarkAfter(use: ModelUse): "summary" | "task" | undefined {
+  if (use === "chat") return "summary";
+  return QUICK_BATCH_USES.has(use) ? "task" : undefined;
+}
+
+export function replyTokens(call: Pick<AiCall<unknown>, "use" | "alerts">): number {
+  if (call.use !== "alert advice") return REPLY_TOKENS[call.use];
+  return Math.min(ALERT_TOKENS * (call.alerts ?? 0), ALERT_CALL_TOKENS);
+}
+
+const CALL_KEYS: ReadonlySet<string> = new Set([
+  "use",
+  "summary",
+  "task",
+  "batch",
+  "changes",
+  "alerts",
+  "output",
+]);
+const MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "text", "typed"]);
+// An ID's field name, such as id, transactionId, transaction_id, uuid, or accountGuid.
+const ID_FIELD = /(?:^|_)(?:id|uuid|guid)$|(?:Id|ID|Uuid|UUID|Guid|GUID)$/;
+
+const onlyKeys = (value: object, keys: ReadonlySet<string>) =>
+  Object.keys(value).every((key) => keys.has(key));
+
+const isMessage = (message: unknown): message is AiMessage =>
+  typeof message === "object" &&
+  message !== null &&
+  onlyKeys(message, MESSAGE_KEYS) &&
+  "role" in message &&
+  (message.role === "user" || message.role === "assistant") &&
+  "text" in message &&
+  typeof message.text === "string" &&
+  (!("typed" in message) || message.typed === undefined || typeof message.typed === "boolean");
+
+const isBatchItem = (item: unknown): item is BatchItem =>
+  typeof item === "object" &&
+  item !== null &&
+  !Array.isArray(item) &&
+  Object.entries(item).every(
+    ([field, value]) =>
+      field !== "row" &&
+      !ID_FIELD.test(field) &&
+      (value === null || ["string", "number", "boolean"].includes(typeof value)),
+  );
+
+// Whether every object in a JSON schema lists each of its fields as required: an optional field
+// is .nullable() instead.
+function everyFieldRequired(node: unknown): boolean {
+  if (Array.isArray(node)) return node.every(everyFieldRequired);
+  if (node === null || typeof node !== "object") return true;
+  const { properties, required } = node as { properties?: unknown; required?: unknown };
+  if (typeof properties === "object" && properties !== null) {
+    const listed = new Set(Array.isArray(required) ? required : []);
+    if (!Object.keys(properties).every((field) => listed.has(field))) return false;
+  }
+  return Object.values(node).every(everyFieldRequired);
+}
+
+function checkSchema(schema: unknown): void {
+  if (!(schema instanceof z.ZodType)) throw new TypeError("A reply schema is a Zod schema.");
+  let json: unknown;
+  try {
+    json = z.toJSONSchema(schema);
+  } catch {
+    throw new TypeError("A reply schema must have a JSON Schema form.");
+  }
+  if (!everyFieldRequired(json)) {
+    throw new TypeError("A reply schema's optional fields are .nullable(), never .optional().");
+  }
+}
+
+// Refuses anything an AiCall does not hold, such as tools or a response schema of its own, and a
+// call whose parts do not fit its use.
+export function checkCall(call: AiCall<unknown>): void {
+  const tier = USE_TIERS[call.use];
+  const plain =
+    tier !== undefined &&
+    onlyKeys(call, CALL_KEYS) &&
+    typeof call.task === "string" &&
+    (call.summary === undefined || typeof call.summary === "string") &&
+    (call.changes === undefined ||
+      (Array.isArray(call.changes) && call.changes.every(isMessage))) &&
+    (call.batch === undefined || (Array.isArray(call.batch) && call.batch.every(isBatchItem)));
+  if (!plain) {
+    throw new TypeError(
+      "An AI call holds only its summary, task, batch, and text messages: no tools and no IDs.",
+    );
+  }
+  if ((call.summary !== undefined) !== (tier === "writer")) {
+    throw new TypeError("Every Writer use, and no Quick use, has the Household summary.");
+  }
+  if (
+    call.batch !== undefined &&
+    (!QUICK_BATCH_USES.has(call.use) ||
+      call.batch.length === 0 ||
+      call.batch.length > QUICK_BATCH_SIZE)
+  ) {
+    throw new TypeError("A Quick batch holds 1 to 100 Transactions, for a Quick batch use.");
+  }
+  const advice = call.use === "alert advice";
+  if (
+    advice
+      ? !Number.isSafeInteger(call.alerts) || (call.alerts ?? 0) < 1
+      : call.alerts !== undefined
+  ) {
+    throw new TypeError("Alert advice, and only Alert advice, says how many Alerts it covers.");
+  }
+  if (call.output !== undefined) checkSchema(call.output);
+}
+
+export type BuiltPrompt = {
+  system: string;
+  messages: ModelMessage[];
+  maxOutputTokens: number;
+  providerOptions: Record<string, Record<string, JSONValue>> | undefined;
+};
+
+const userText = (text: string, cached: boolean): ModelMessage => ({
+  role: "user",
+  content: text,
+  ...(cached ? { providerOptions: CACHE_MARK } : {}),
+});
+
+// Every control character, and the line and paragraph separators.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it replaces.
+const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
+
+// A batch field's text as the AI reads it: well-formed, with a space for each control character.
+const plainField = (text: string) => text.toWellFormed().replace(CONTROL, " ");
+
+// One Transaction of a Quick batch as JSON. The privacy filter reads this JSON text, and the AI
+// model reads the decoded values, so both must hold the same characters: JSON writes a newline as
+// "\n" and a lone surrogate as "\ud800", and that letter would break the filter's digit runs and
+// stick to a name. With every control character a space and every text well-formed, the JSON holds
+// no escape but \" and \\, which hold no letter or digit. A row that still holds another is
+// refused.
+function batchRow(row: number, item: BatchItem): string {
+  const fields = Object.entries(item).map(([field, value]) => [
+    plainField(field),
+    typeof value === "string" ? plainField(value) : value,
+  ]);
+  const text = JSON.stringify(Object.fromEntries([["row", row], ...fields]));
+  if (text.replace(/\\[\\"]/g, "").includes("\\")) {
+    throw new TypeError("A Quick batch row's JSON holds an escape the AI reads differently.");
+  }
+  return text;
+}
+
+// The prompt in its one order, with its reply limit and cache mark.
+export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
+  checkCall(call);
+  const markAfter = cacheMarkAfter(call.use);
+  const messages: ModelMessage[] = [];
+  if (call.summary !== undefined) messages.push(userText(call.summary, markAfter === "summary"));
+  messages.push(userText(call.task, markAfter === "task"));
+  if (call.batch !== undefined) {
+    messages.push({
+      role: "user",
+      content: call.batch.map(
+        (item, index): TextPart => ({
+          type: "text",
+          text: batchRow(index + 1, item),
+        }),
+      ),
+    });
+  }
+  for (const message of call.changes ?? []) {
+    messages.push({
+      role: message.role,
+      content: message.text,
+      ...(message.typed === true ? { providerOptions: MEMBER_TYPED } : {}),
+    });
+  }
+  return {
+    system: FIXED_RULES,
+    messages,
+    maxOutputTokens: replyTokens(call),
+    providerOptions: markAfter === undefined ? NO_AUTOMATIC_CACHE : undefined,
+  };
+}
+
+// Whether the answers hold each row of a batch of `rows` once.
+function eachRowOnce(answers: readonly { row: number }[], rows: number): boolean {
+  const seen = new Set(answers.map(({ row }) => row));
+  return seen.size === rows && answers.every(({ row }) => row >= 1 && row <= rows);
+}
+
+// The reply schema of a Quick batch: one answer per row, each row of the batch once. `answer` is
+// the schema of one row's answer, an object without `row`.
+export function batchReply<Shape extends z.ZodRawShape>(answer: z.ZodObject<Shape>, rows: number) {
+  return z.object({
+    answers: z
+      .array(answer.extend({ row: z.number().int() }))
+      .length(rows)
+      .refine(
+        (answers) => eachRowOnce(answers as readonly { row: number }[], rows),
+        "Each row of the batch is answered once.",
+      ),
+  });
+}

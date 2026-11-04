@@ -1,9 +1,14 @@
+import { FOLLOW_UP_AI_USES, startAiRetries } from "../ai/index.ts";
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import type { Database } from "../db/index.ts";
-import { type FollowUpStepName, startFollowUpPipeline } from "../follow-up/index.ts";
+import {
+  askForFollowUp,
+  type FollowUpStepName,
+  startFollowUpPipeline,
+} from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startNotify } from "../notify/index.ts";
@@ -51,6 +56,14 @@ export const APP_MODULES: readonly AppModule[] = [
   {
     name: "startFollowUpPipeline",
     start: ({ database, startJob }) => startFollowUpPipeline({ database, startJob }),
+  },
+  {
+    name: "startAiRetries",
+    start: ({ database }) =>
+      startAiRetries({
+        database,
+        runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
+      }),
   },
   {
     name: "startMoneyMovement",

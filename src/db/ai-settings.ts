@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Database } from "./client.ts";
 import { aiSettings } from "./schema.ts";
 
@@ -59,6 +59,28 @@ export async function storeAiSettings(
           .update(aiSettings)
           .set(next)
           .where(and(eq(aiSettings.id, AI_SETTINGS_ROW), eq(aiSettings.generation, generation)));
+  return result.rowsAffected === 1;
+}
+
+// Notes that the AI provider rejected the key a call used, read at `generation`. A save or a Remove
+// AI provider since then changed the key, so it marks nothing. True when it marked the key now,
+// and false when it was already marked.
+export async function markAiKeyRejected(
+  database: Database,
+  generation: number,
+  at: Date,
+): Promise<boolean> {
+  const result = await database
+    .update(aiSettings)
+    .set({ keyRejectedAt: at })
+    .where(
+      and(
+        eq(aiSettings.id, AI_SETTINGS_ROW),
+        eq(aiSettings.generation, generation),
+        isNotNull(aiSettings.provider),
+        isNull(aiSettings.keyRejectedAt),
+      ),
+    );
   return result.rowsAffected === 1;
 }
 

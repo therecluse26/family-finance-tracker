@@ -5,15 +5,17 @@ import { addUnconnectedAccount, loginTables } from "../db/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
 import { createLogger } from "../log.ts";
 import type { AiProviderName, AiSettingsInput, AiTier } from "./ai-view.ts";
-import { type AiCall, privateModels } from "./call.ts";
+import { privateModels } from "./call.ts";
 import { type AiCost, aiCost } from "./cost.ts";
 import { householdAi } from "./household-ai.ts";
 import type { OutboundCall } from "./outbound.ts";
 import { memberPrice } from "./prices.ts";
 import { PrivacyRefusal } from "./privacy.ts";
+import type { AiCall } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { aiSettings } from "./settings.ts";
 import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
+import { FIXED_RULES } from "./voice.ts";
 
 // The one AI call path (spec 08, Privacy filter; Counting cost), on a fetch that captures each
 // request as it leaves, and on AI SDK test models. No test calls an AI provider. The Household's
@@ -235,7 +237,7 @@ const PROBED: [string, string][] = [
   ["Card 4111 ~~~~ 1111 .... 1111 ---- 1111 + 77", "Card [removed]"],
 ];
 
-const SYSTEM = "You help Dana and Ravi. Never name a company.";
+const TASK = "You help Dana and Ravi. Never name a company.";
 const SUMMARY = [
   "Household summary: Dana (dana.w@example.com) and Ravi, ages 41, 39 and 8, ZIP 10001.",
   "Ally savings 4821 (Rainy day fund) holds $12,400.50 on 2026-10-31.",
@@ -255,6 +257,22 @@ const REPLY = {
   },
   warnings: [],
 };
+
+// Every text the request sends after the system prompt, in order: the summary, the task, then each
+// change. Anthropic joins a call's user messages that come one after another into one message.
+function sentTexts(body: Record<string, unknown> | undefined): string[] {
+  return ((body?.messages ?? []) as { content: { type: string; text?: string }[] }[]).flatMap(
+    (message) => message.content.flatMap((part) => (part.type === "text" ? [part.text ?? ""] : [])),
+  );
+}
+
+// A call that reads a Goal: no summary and no cache mark, so the request holds the task, then the
+// changes.
+const goalCall = (task: string, changes: AiCall["changes"]): AiCall => ({
+  use: "reading a goal",
+  task,
+  changes,
+});
 
 const CONNECTION = {
   provider: "anthropic" as const,
@@ -356,9 +374,9 @@ describe("the one AI call path", () => {
 
   const call: AiCall = {
     use: "chat",
-    system: SYSTEM,
-    messages: [
-      { role: "user" as const, text: SUMMARY },
+    summary: SUMMARY,
+    task: TASK,
+    changes: [
       { role: "assistant" as const, text: "Dana spent less than Ravi in October." },
       { role: "user" as const, text: NOTE },
     ],
@@ -373,9 +391,7 @@ describe("the one AI call path", () => {
     const label = (await ai.accountLabels()).get(rainyDayFund);
     const sent = capture.requests.at(-1);
     expect(sent?.url).toBe("https://api.anthropic.com/v1/messages");
-    expect(sent?.body.system).toEqual([
-      { type: "text", text: "You help Member A and Member B. Never name a company." },
-    ]);
+    expect(sent?.body.system).toEqual([{ type: "text", text: FIXED_RULES }]);
     expect(sent?.body.messages).toEqual([
       {
         role: "user",
@@ -386,7 +402,9 @@ describe("the one AI call path", () => {
               "Household summary: Member A ([removed]) and Member B, ages [removed], ZIP [removed].",
               `Ally savings [removed] (${label}) holds $12,400.50 on 2026-10-31.`,
             ].join("\n"),
+            cache_control: { type: "ephemeral", ttl: "5m" },
           },
+          { type: "text", text: "You help Member A and Member B. Never name a company." },
         ],
       },
       {
@@ -661,17 +679,12 @@ describe("the one AI call path", () => {
   ])("sends %j as %j", async (written, sent) => {
     const ai = await connect("anthropic");
 
-    expect(
-      await ai.generate({
-        use: "chat",
-        system: "Help.",
-        messages: [{ role: "user", text: written }],
-      }),
-    ).toEqual({ ready: true, text: "O" });
+    expect(await ai.generate(goalCall("Help.", [{ role: "user", text: written }]))).toEqual({
+      ready: true,
+      text: "O",
+    });
 
-    expect(capture.requests.at(-1)?.body.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: sent }] },
-    ]);
+    expect(sentTexts(capture.requests.at(-1)?.body)).toEqual(["Help.", sent]);
   });
 
   it.each([
@@ -682,56 +695,40 @@ describe("the one AI call path", () => {
     const sent: [string, unknown][] = [];
 
     for (const [written] of rows) {
-      await ai.generate({
-        use: "chat",
-        system: "Help.",
-        messages: [{ role: "user", text: written }],
-      });
+      await ai.generate(goalCall("Help.", [{ role: "user", text: written }]));
       const body = capture.requests.at(-1)?.body;
-      expect(body?.system).toEqual([{ type: "text", text: "Help." }]);
-      const messages = body?.messages as { content: { text: string }[] }[];
-      sent.push([written, messages.length === 1 ? messages[0]?.content[0]?.text : messages]);
+      expect(body?.system).toEqual([{ type: "text", text: FIXED_RULES }]);
+      const [task, ...texts] = sentTexts(body);
+      expect(task).toBe("Help.");
+      sent.push([written, texts.length === 1 ? texts[0] : texts]);
     }
 
     expect(sent).toEqual(rows);
   });
 
-  it("filters the system prompt and each message, and refuses a fact split between them", async () => {
+  it("filters the task and each message, and refuses a fact split between them", async () => {
     const ai = await connect("anthropic");
 
-    await ai.generate({
-      use: "chat",
-      system: "Help Dana (ages 41, 39 and 8), card 4111\u20142222\u20143333\u20145555, zip 10001.",
-      messages: [
-        { role: "user", text: "I am Dana" },
-        { role: "assistant", text: "Hi Ravi, your card 4111 -- 2222 -- 3333 -- 4821" },
-        { role: "user", text: "zip 10001" },
-      ],
-    });
-    expect(capture.requests.at(-1)?.body).toMatchObject({
-      system: [
-        { type: "text", text: "Help Member A (ages [removed]), card [removed], zip [removed]." },
-      ],
-      messages: [
-        { role: "user", content: [{ type: "text", text: "I am Member A" }] },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "Hi Member B, your card [removed]" }],
-        },
-        { role: "user", content: [{ type: "text", text: "zip [removed]" }] },
-      ],
-    });
+    await ai.generate(
+      goalCall(
+        "Help Dana (ages 41, 39 and 8), card 4111\u20142222\u20143333\u20145555, zip 10001.",
+        [
+          { role: "user", text: "I am Dana" },
+          { role: "assistant", text: "Hi Ravi, your card 4111 -- 2222 -- 3333 -- 4821" },
+          { role: "user", text: "zip 10001" },
+        ],
+      ),
+    );
+    expect(sentTexts(capture.requests.at(-1)?.body)).toEqual([
+      "Help Member A (ages [removed]), card [removed], zip [removed].",
+      "I am Member A",
+      "Hi Member B, your card [removed]",
+      "zip [removed]",
+    ]);
 
     // Each half of a card number goes, as each holds 8 digits.
-    await ai.generate({
-      use: "chat",
-      system: "Card 4111 1111",
-      messages: [{ role: "user", text: "1111 1111 end" }],
-    });
-    expect(capture.requests.at(-1)?.body).toMatchObject({
-      system: [{ type: "text", text: "Card [removed]" }],
-      messages: [{ role: "user", content: [{ type: "text", text: "[removed] end" }] }],
-    });
+    await ai.generate(goalCall("Card 4111 1111", [{ role: "user", text: "1111 1111 end" }]));
+    expect(sentTexts(capture.requests.at(-1)?.body)).toEqual(["Card [removed]", "[removed] end"]);
 
     // A fact that no single app-built part holds is found in the prompt read as one text, and
     // refused.
@@ -742,14 +739,15 @@ describe("the one AI call path", () => {
       ["Paid Da", "na yesterday"],
     ]) {
       await expect(
-        ai.generate({
-          use: "chat",
-          system: "Help.",
-          messages: messages.map((text, index) => ({
-            role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
-            text,
-          })),
-        }),
+        ai.generate(
+          goalCall(
+            "Help.",
+            messages.map((text, index) => ({
+              role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+              text,
+            })),
+          ),
+        ),
       ).rejects.toThrow(PrivacyRefusal);
     }
     expect(capture.requests).toHaveLength(sentBefore);
@@ -759,19 +757,16 @@ describe("the one AI call path", () => {
     const ai = await connect("anthropic");
     // A card number and two stored ages, each split across a Chat's messages.
     const history = ["Card 4111 11", "11 1111 1", "111. We are 8 and", "41 now"];
-    const chat = (typed: boolean): AiCall => ({
-      use: "chat",
-      system: "Help.",
-      messages: history.map((text, index) => ({
-        role: index % 2 === 0 ? "user" : "assistant",
-        text,
-        ...(typed ? { typed } : {}),
-      })),
-    });
-    const sentTexts = () =>
-      ((capture.requests.at(-1)?.body.messages ?? []) as { content: { text: string }[] }[]).map(
-        (message) => message.content[0]?.text,
+    const chat = (typed: boolean): AiCall =>
+      goalCall(
+        "Help.",
+        history.map((text, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          text,
+          ...(typed ? { typed } : {}),
+        })),
       );
+    const sentChanges = () => sentTexts(capture.requests.at(-1)?.body).slice(1);
 
     // As app-built text, the final check finds both and refuses the call.
     const sentBefore = capture.requests.length;
@@ -780,18 +775,16 @@ describe("the one AI call path", () => {
 
     // As Member-typed text, the call goes out, and the filter's mark does not.
     expect(await ai.generate(chat(true))).toEqual({ ready: true, text: "O" });
-    expect(sentTexts()).toEqual(history);
+    expect(sentChanges()).toEqual(history);
     expect(JSON.stringify(capture.requests.at(-1)?.body)).not.toContain("privacyFilter");
 
     // The filter still does its best on each message.
-    await ai.generate({
-      use: "chat",
-      system: "Help.",
-      messages: [
+    await ai.generate(
+      goalCall("Help.", [
         { role: "user", text: "I am 41, Ravi is 39. Card 4111 1111 1111 1111", typed: true },
-      ],
-    });
-    expect(sentTexts()).toEqual(["I am 41, Member B is [removed]. Card [removed]"]);
+      ]),
+    );
+    expect(sentChanges()).toEqual(["I am 41, Member B is [removed]. Card [removed]"]);
   });
 
   it.each([false, true])(
@@ -803,8 +796,9 @@ describe("the one AI call path", () => {
       expect(
         await ai.generate({
           use: "chat",
-          system: "Help.",
-          messages: history.map((text, index) => ({
+          summary: "Spending this month: $2,310.",
+          task: "Answer the Member.",
+          changes: history.map((text, index) => ({
             role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
             text,
             typed,
@@ -904,6 +898,27 @@ describe("the one AI call path", () => {
     });
   });
 
+  // A Quick batch row goes out as JSON. The filter must read the characters the AI reads, not
+  // JSON's letter escapes, such as "\n" for a newline.
+  it.each([
+    ["Card 4111\n1111\n1111\n1111", "Card [removed]"],
+    ["Card 4111\t1111\t1111\t1111", "Card [removed]"],
+    ["Card 4111\u000B1111\u000B1111\u000B1111", "Card [removed]"],
+    ["Card 4111\r\n1111 1111\u00851111", "Card [removed]"],
+    ["VENMO\nWHITFIELD", "VENMO Member A"],
+    ["PAID\tWhitfield", "PAID Member A"],
+    ["PAID Ravi\u000COkafor", "PAID Member B"],
+  ])("sends the batch field %j as %j", async (memo, sent) => {
+    const ai = await connect("anthropic");
+
+    await ai.generate({ use: "category fix", task: "Fix.", batch: [{ memo }] });
+
+    expect(sentTexts(capture.requests.at(-1)?.body)).toEqual([
+      "Fix.",
+      JSON.stringify({ row: 1, memo: sent }),
+    ]);
+  });
+
   it("takes no tools and no response schema, so none goes out", async () => {
     const ai = await connect("anthropic");
     const parameters = jsonSchema({ type: "object", properties: { name: { const: "Dana" } } });
@@ -920,7 +935,7 @@ describe("the one AI call path", () => {
       ai.generate({
         ...call,
         // @ts-expect-error A message holds only its role and text.
-        messages: [{ role: "user", text: "Hi", providerOptions: { anthropic: {} } }],
+        changes: [{ role: "user", text: "Hi", providerOptions: { anthropic: {} } }],
       }),
     ).rejects.toThrow(TypeError);
 
@@ -958,7 +973,7 @@ describe("the one AI call path", () => {
   it("shows Members their names in AI text, and labels each Account", async () => {
     const ai = householdAi(options());
 
-    expect(await ai.showMemberNames("Member B spent less than Member A.")).toBe(
+    expect(await ai.forScreen("Member B spent less than Member A.")).toBe(
       "Ravi Okafor spent less than Dana Whitfield.",
     );
     expect([...(await ai.accountLabels()).values()].sort()).toEqual([

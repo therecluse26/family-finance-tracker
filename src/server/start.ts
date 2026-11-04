@@ -1,4 +1,4 @@
-import { aiCost, aiSettings } from "../ai/index.ts";
+import { aiCost, aiSettings, FOLLOW_UP_AI_USES, startAiRetries } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
 import {
   type BankDataAdapter,
@@ -11,7 +11,7 @@ import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
-import { requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
+import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
@@ -65,6 +65,11 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const adapters = options.bankAdapters ?? [plaidAdapter({ database, secrets })];
     const bank = startBank({ database, secrets, adapters, timeZone });
     const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });
+    // A background AI use in the follow-up job retries in a new follow-up job.
+    const aiRetries = startAiRetries({
+      database,
+      runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
+    });
     const moneyMovement = startMoneyMovement({ database });
     const categorization = startCategorization({ database });
     const recurring = startRecurringCharges({ database });
@@ -78,6 +83,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       recurring.stop();
       categorization.stop();
       moneyMovement.stop();
+      aiRetries.stop();
       followUp.stop();
       bank.stop();
       notify.stop();

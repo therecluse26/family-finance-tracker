@@ -21,10 +21,34 @@ export {
   type ModelUse,
   onGateway,
 } from "./ai-view.ts";
-export type { AiCall, AiMessage } from "./call.ts";
+export { AiCallError, type AiFailure } from "./call.ts";
 export { type AiCost, aiCost, type CountedCall } from "./cost.ts";
 export { type AiReply, type HouseholdAi, householdAi } from "./household-ai.ts";
 export { type AiPause, AiPausedError } from "./outbound.ts";
 export { PrivacyRefusal } from "./privacy.ts";
+export {
+  type AiCall,
+  type AiMessage,
+  type AiSchema,
+  type BatchItem,
+  batchReply,
+  QUICK_BATCH_SIZE,
+} from "./prompt.ts";
 export type { AiConnection, AiModelMaker } from "./providers.ts";
-export { type AiGates, type AiOptions, aiSettings, defaultGates } from "./settings.ts";
+export {
+  AiRetryJob,
+  type AiRetryRunner,
+  FOLLOW_UP_AI_USES,
+  RETRY_DELAYS_MS,
+  runAiRetries,
+  startAiRetries,
+} from "./retries.ts";
+export {
+  type AiGates,
+  type AiNotices,
+  type AiOptions,
+  aiSettings,
+  defaultGates,
+  KEY_REJECTED_CONDITION,
+} from "./settings.ts";
+export { FIXED_RULES, plainVoice } from "./voice.ts";

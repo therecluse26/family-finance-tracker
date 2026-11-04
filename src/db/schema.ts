@@ -391,6 +391,17 @@ export const aiModelPrices = sqliteTable(
   (table) => [primaryKey({ columns: [table.provider, table.model] })],
 );
 
+// The AI retry of each background AI use whose last call failed (spec 08, Failures): how many
+// calls in a row failed, and when the next try is due. A use has a row only while it waits for a
+// retry. The AI retry job asks for the use's work again once retry_at has passed, and notes that
+// in asked_at, so it asks once for each retry time.
+export const aiRetries = sqliteTable("ai_retries", {
+  use: text("use", { enum: AI_USE_NAMES }).primaryKey(),
+  failures: integer("failures").notNull(),
+  retryAt: moment("retry_at").notNull(),
+  askedAt: moment("asked_at"),
+});
+
 // One link to one bank through one Bank-data provider (spec 02, Connections). bank_id is not
 // unique: a bank can be linked again after its Connection is removed, and "Link again" on a Broken
 // Connection links the same bank. The duplicate check before a token exchange belongs to linking.
