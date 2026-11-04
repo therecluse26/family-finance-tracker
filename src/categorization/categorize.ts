@@ -52,7 +52,7 @@ type RecordPart = CategoryRecord["parts"][number];
 // a Reimbursement, so the cascade leaves them alone.
 function coveredByCascade(part: RecordPart): boolean {
   if (part.type === "Spending") return true;
-  return part.type === "Refund" && (part.category === null || part.categorySource !== null);
+  return part.type === "Refund" && !part.linked;
 }
 
 // The Category of one part. A part of a tracked loan payment keeps Money movement's Category, and

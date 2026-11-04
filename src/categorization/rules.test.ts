@@ -189,7 +189,8 @@ describe("Category rules", () => {
   });
 
   it("makes a Transfer Spending by hand, while the rule sets only the Category", async () => {
-    const income = buy("income", "2026-10-03", { amount: 4_000 });
+    // Money in from the Merchant, with no purchase before it and no provider category: Income.
+    const income = buy("income", "2026-09-30", { amount: 4_000, category: null });
     await sync({ added: [buy("moved", "2026-10-01"), income] });
     await setTransactionType(bank.database, await idOf("moved"), "Transfer");
     await runFollowUp(NOW);

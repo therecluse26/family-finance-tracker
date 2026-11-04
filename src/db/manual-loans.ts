@@ -1,5 +1,19 @@
-import { and, asc, eq, gt, inArray, isNull, like, ne, notExists } from "drizzle-orm";
-import type { Database } from "./client.ts";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  like,
+  lt,
+  lte,
+  ne,
+  notExists,
+  or,
+} from "drizzle-orm";
+import type { Database, Queries } from "./client.ts";
 import type { LoanType } from "./loans.ts";
 import {
   householdAccounts,
@@ -38,6 +52,8 @@ export type ManualLoanFields = {
 
 export type StoredManualLoan = ManualLoanFields & {
   id: string;
+  // A Closed loan (spec 02, Closed Accounts), such as one paid off.
+  closed: boolean;
   // Every balance a Member typed, oldest first. Owed money is negative.
   balances: { date: string; balance: number }[];
 };
@@ -125,6 +141,7 @@ export async function listManualLoans(
       regularPayment: householdAccounts.regularPayment,
       escrow: householdAccounts.escrow,
       loanType: householdAccounts.loanType,
+      closedAt: householdAccounts.closedAt,
     })
     .from(householdAccounts)
     .where(
@@ -146,8 +163,9 @@ export async function listManualLoans(
       ),
     )
     .orderBy(asc(typedBalances.date));
-  return rows.map((row) => ({
+  return rows.map(({ closedAt, ...row }) => ({
     ...row,
+    closed: closedAt !== null,
     subtype: row.subtype as ManualLoanType,
     apr: row.apr ?? 0,
     balances: balances
@@ -156,8 +174,8 @@ export async function listManualLoans(
   }));
 }
 
-// A loan payout the app may link to a Manual loan (spec 03, Loan payouts): shown, posted money in
-// under a LOAN_DISBURSEMENTS_* code, on an Account that is not a loan, with no Transfer pair, no
+// A loan payout the app may link to a Manual loan (spec 03, Loan payouts): shown money in, pending
+// or posted, under a LOAN_DISBURSEMENTS_* code, on an Account that is not a loan, with no Transfer pair, no
 // Refund or Reimbursement link, and no link to a Manual loan yet.
 export async function listUnlinkedLoanPayouts(database: Database) {
   return database
@@ -175,7 +193,6 @@ export async function listUnlinkedLoanPayouts(database: Database) {
         like(transactions.providerCategory, "LOAN_DISBURSEMENTS_%"),
         gt(transactions.amount, 0),
         isNull(transactions.hiddenReason),
-        eq(transactions.pending, false),
         ne(householdAccounts.kind, "loan"),
         notExists(
           database
@@ -195,6 +212,83 @@ export async function listUnlinkedLoanPayouts(database: Database) {
             .select({ id: spendingLinks.id })
             .from(spendingLinks)
             .where(eq(spendingLinks.transactionId, transactions.id)),
+        ),
+      ),
+    )
+    .orderBy(asc(transactions.postedDate), asc(transactions.id));
+}
+
+// Closes an open Manual loan, as paid off or by a Member's hand. Writes only through `database`,
+// so it may run inside a transaction. False when no open Manual loan has the ID.
+export async function closeManualLoan(
+  database: Queries,
+  id: string,
+  closing: { reason: "paid off" | "closed by a member"; at: Date },
+): Promise<boolean> {
+  const closed = await database
+    .update(householdAccounts)
+    .set({ closedAt: closing.at, closedReason: closing.reason })
+    .where(and(eq(householdAccounts.id, id), isManualLoan, isNull(householdAccounts.closedAt)))
+    .returning({ id: householdAccounts.id });
+  return closed.length === 1;
+}
+
+// A payment the app may link to a Manual loan (spec 02, Finding payments): shown money out, pending
+// or posted, on an Account that is not a loan, with no link of any kind on either side. Every one,
+// or those on these Accounts between two dates, oldest first.
+export async function listLoanPaymentCandidates(
+  database: Database,
+  within?: { accountIds: readonly string[]; from: string; to: string },
+) {
+  if (within !== undefined && within.accountIds.length === 0) return [];
+  return database
+    .select({
+      id: transactions.id,
+      accountId: transactions.accountId,
+      amount: transactions.amount,
+      postedDate: transactions.postedDate,
+      description: transactions.description,
+      merchantName: transactions.merchantName,
+      merchantId: transactions.merchantId,
+      merchantCleanName: transactions.merchantCleanName,
+      counterparties: transactions.counterparties,
+    })
+    .from(transactions)
+    .innerJoin(householdAccounts, eq(householdAccounts.id, transactions.accountId))
+    .where(
+      and(
+        lt(transactions.amount, 0),
+        isNull(transactions.hiddenReason),
+        ne(householdAccounts.kind, "loan"),
+        within === undefined
+          ? undefined
+          : and(
+              inArray(transactions.accountId, [...new Set(within.accountIds)]),
+              gte(transactions.postedDate, within.from),
+              lte(transactions.postedDate, within.to),
+            ),
+        notExists(
+          database
+            .select({ id: loanLinks.id })
+            .from(loanLinks)
+            .where(eq(loanLinks.transactionId, transactions.id)),
+        ),
+        notExists(
+          database
+            .select({ id: transferLinks.id })
+            .from(transferLinks)
+            .where(eq(transferLinks.outTransactionId, transactions.id)),
+        ),
+        notExists(
+          database
+            .select({ id: spendingLinks.id })
+            .from(spendingLinks)
+            .where(
+              or(
+                eq(spendingLinks.transactionId, transactions.id),
+                eq(spendingLinks.spendingTransactionId, transactions.id),
+              ),
+            ),
         ),
       ),
     )

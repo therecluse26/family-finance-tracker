@@ -20,6 +20,15 @@ export function daysBetween(from: string, to: string): number {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const dateOf = (year: number, month: number, day: number) => `${year}-${pad(month)}-${pad(day)}`;
+
+// The same day `months` months later. A day the month lacks means its last day: Dec 31 plus two
+// months is Feb 28, or Feb 29 in a leap year.
+export function addMonths(date: string, months: number): string {
+  const [year = 0, month = 1, day = 1] = date.split("-").map(Number);
+  const first = new Date(Date.UTC(year, month - 1 + months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return dateOf(first.getUTCFullYear(), first.getUTCMonth() + 1, Math.min(day, last));
+}
 const weekday = (date: string) => new Date(`${date}T00:00:00.000Z`).getUTCDay();
 
 // The nth given weekday (0 is Sunday) of a month, or the last one when n is -1.

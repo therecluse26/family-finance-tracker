@@ -52,9 +52,10 @@ export type TransferCandidateFilter =
   | { ids: readonly string[] }
   | { amounts: readonly number[]; from: string; to: string };
 
-// The Transactions that could pair: each shown, posted Transaction that the filter names. Pending
-// Transactions wait until they post. An excluded Account's Transactions still pair: money between
-// it and an included Account is a Transfer (spec 03, Transaction types).
+// The Transactions that could pair: each shown Transaction that the filter names. Pending
+// Transactions pair at once, and their links carry over when they post (spec 03, Pending
+// Transactions). An excluded Account's Transactions still pair: money between it and an included
+// Account is a Transfer (spec 03, Transaction types).
 export async function listTransferCandidates(
   database: Database,
   filter: TransferCandidateFilter,
@@ -88,14 +89,7 @@ export async function listTransferCandidates(
       })
       .from(transactions)
       .innerJoin(householdAccounts, eq(householdAccounts.id, transactions.accountId))
-      .where(
-        and(
-          where,
-          ne(transactions.amount, 0),
-          isNull(transactions.hiddenReason),
-          eq(transactions.pending, false),
-        ),
-      );
+      .where(and(where, ne(transactions.amount, 0), isNull(transactions.hiddenReason)));
     found.push(...rows);
   }
   return found;
@@ -275,6 +269,10 @@ export async function listUnlinkedTransferDecisions(database: Database): Promise
           SELECT 1 FROM ${loanLinks}
           WHERE ${loanLinks.transactionId} = "transaction_decisions"."transaction_id"
         )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${spendingLinks}
+          WHERE ${spendingLinks.transactionId} = "transaction_decisions"."transaction_id"
+        )`,
       ),
     );
   return rows.map((row) => row.id);
@@ -355,8 +353,8 @@ export async function listLinkedOtherwise(
   return found;
 }
 
-// Each shown Transaction linked to one of these Manual loans, with its date and amount, oldest
-// first.
+// Each shown Transaction linked to one of these Manual loans, with its date, amount, Account and
+// Merchant, oldest first.
 export async function listLoanLinkedTransactions(
   database: Database,
   loanAccountIds: readonly string[],
@@ -369,6 +367,9 @@ export async function listLoanLinkedTransactions(
       madeBy: loanLinks.madeBy,
       amount: transactions.amount,
       postedDate: transactions.postedDate,
+      accountId: transactions.accountId,
+      merchantId: transactions.merchantId,
+      merchantCleanName: transactions.merchantCleanName,
     })
     .from(loanLinks)
     .innerJoin(transactions, eq(transactions.id, loanLinks.transactionId))
@@ -518,4 +519,103 @@ export async function endOtherLinks(
       await tx.delete(loanLinks).where(inArray(loanLinks.id, chunk));
     }
   });
+}
+
+// Pending to posted (spec 03, Pending Transactions; spec 02, Changes to synced data): moves every
+// link and every refusal that uses the pending Transaction `from` to the posted one `to`. A link
+// whose place `to` already holds, as one side of a Transfer pair or as a Refund, Reimbursement, or
+// loan payment, ends instead. Matching then checks each carried link's hard filters again. Writes
+// only through `database`, so it runs inside the sync page's transaction. Returns the Transactions
+// on the other sides, which Matching decides again.
+export async function carryLinks(database: Queries, from: string, to: string): Promise<string[]> {
+  const others = new Set<string>();
+  const taken = (await listTransferLinksOf(database, [to])).length > 0;
+  for (const link of await listTransferLinksOf(database, [from])) {
+    others.add(link.outTransactionId === from ? link.inTransactionId : link.outTransactionId);
+    if (taken) {
+      await database.delete(transferLinks).where(eq(transferLinks.id, link.id));
+      continue;
+    }
+    await database
+      .update(transferLinks)
+      .set(link.outTransactionId === from ? { outTransactionId: to } : { inTransactionId: to })
+      .where(eq(transferLinks.id, link.id));
+  }
+  for (const link of await listSpendingLinksOf(database, [from])) {
+    if (link.transactionId === from) {
+      others.add(link.spendingTransactionId);
+      const [held] = await database
+        .select({ id: spendingLinks.id })
+        .from(spendingLinks)
+        .where(eq(spendingLinks.transactionId, to));
+      if (held === undefined && link.spendingTransactionId !== to) {
+        await database
+          .update(spendingLinks)
+          .set({ transactionId: to })
+          .where(eq(spendingLinks.id, link.id));
+      } else {
+        await database.delete(spendingLinks).where(eq(spendingLinks.id, link.id));
+      }
+    } else {
+      others.add(link.transactionId);
+      await database
+        .update(spendingLinks)
+        .set({ spendingTransactionId: to })
+        .where(eq(spendingLinks.id, link.id));
+    }
+  }
+  const [held] = await database
+    .select({ id: loanLinks.id })
+    .from(loanLinks)
+    .where(eq(loanLinks.transactionId, to));
+  if (held === undefined) {
+    await database
+      .update(loanLinks)
+      .set({ transactionId: to })
+      .where(eq(loanLinks.transactionId, from));
+  } else {
+    await database.delete(loanLinks).where(eq(loanLinks.transactionId, from));
+  }
+  // The app never makes an undone link again, on the posted record either.
+  const refusedPairs = await database
+    .select()
+    .from(refusedTransferLinks)
+    .where(
+      or(
+        eq(refusedTransferLinks.outTransactionId, from),
+        eq(refusedTransferLinks.inTransactionId, from),
+      ),
+    );
+  if (refusedPairs.length > 0) {
+    const moved = (id: string) => (id === from ? to : id);
+    await database
+      .insert(refusedTransferLinks)
+      .values(
+        refusedPairs.map((row) => ({
+          ...row,
+          outTransactionId: moved(row.outTransactionId),
+          inTransactionId: moved(row.inTransactionId),
+        })),
+      )
+      .onConflictDoNothing();
+  }
+  const refused = await database
+    .select()
+    .from(refusedLinks)
+    .where(or(eq(refusedLinks.transactionId, from), eq(refusedLinks.otherId, from)));
+  if (refused.length > 0) {
+    await database
+      .insert(refusedLinks)
+      .values(
+        refused.map((row) => ({
+          ...row,
+          transactionId: row.transactionId === from ? to : row.transactionId,
+          otherId: row.otherId === from ? to : row.otherId,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+  others.delete(from);
+  others.delete(to);
+  return [...others];
 }

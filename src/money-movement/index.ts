@@ -2,6 +2,14 @@
 
 export { addBusinessDays, federalReserveHolidays, isBusinessDay } from "./business-days.ts";
 export { type HandLink, type HandLinkResult, linkByHand, undoLink } from "./hand-links.ts";
+export {
+  MISSED_PAYMENT_KIND,
+  POSSIBLE_PAYMENT_KIND,
+  registerUnclearLoanPaymentJudge,
+  type UnclearLoanPaymentAnswer,
+  type UnclearLoanPaymentJudge,
+  updateMissedLoanPayments,
+} from "./loan-payments.ts";
 export { type LoanSettings, readLoanSettings } from "./loans.ts";
 export {
   addManualLoan,
@@ -35,7 +43,6 @@ export {
   type DecisionRule,
   type DecisionStep,
   type Part,
-  registerDecisionRule,
   whole,
 } from "./order.ts";
 export { type MonthTotals, monthOf, totalsByMonth } from "./totals.ts";

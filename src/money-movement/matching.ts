@@ -41,6 +41,14 @@ import {
   registerReviewKind,
   settleReviewItems,
 } from "../review/index.ts";
+import {
+  findManualLoanPayments,
+  MISSED_PAYMENT_KIND,
+  missedPaymentKind,
+  POSSIBLE_PAYMENT_KIND,
+  possiblePaymentKind,
+  updateMissedLoanPayments,
+} from "./loan-payments.ts";
 import { isLoan, type LoanSettings, loanFactsReader, readLoanSettings } from "./loans.ts";
 import { linkManualLoanPayouts, manualLoanFactsReader } from "./manual-loans.ts";
 import { ONE_SIDED_KIND, ONE_SIDED_STEPS, oneSidedKind } from "./one-sided.ts";
@@ -52,6 +60,7 @@ import {
   type Part,
 } from "./order.ts";
 import { endBrokenOtherLinks, readOtherLinkEvidence } from "./other-links.ts";
+import { linkRefunds, readSpendingAllocations, reducingIds } from "./refunds.ts";
 import { type PairingResult, pairTransfers, type TransferSignal } from "./transfers.ts";
 import type { HandSetType } from "./types.ts";
 import {
@@ -99,11 +108,12 @@ async function unclearLoanPayments(
   );
 }
 
-// What the order reads besides each Transaction, read once a run. A Matching run passes its
-// pairing, which the Review list does not show yet.
+// What the order reads besides each Transaction, read once a run for the records it decides. A
+// Matching run passes its pairing, which the Review list does not show yet.
 async function decisionContext(
   database: Database,
   now: Date,
+  records: readonly DecisionRecord[],
   pairing?: PairingResult,
 ): Promise<DecisionContext> {
   const today = await householdToday(database, now);
@@ -119,6 +129,7 @@ async function decisionContext(
     manualLoanFacts: manualLoanFactsReader(database),
     loanPayouts: loanPayoutsReader(database),
     unclearLoanPayments: await unclearLoanPayments(database, accounts, pairing),
+    spendingAllocations: await readSpendingAllocations(database, records),
   };
 }
 
@@ -137,7 +148,7 @@ async function decideAll(
   now: Date,
   pairing?: PairingResult,
 ): Promise<Decided[]> {
-  const context = await decisionContext(database, now, pairing);
+  const context = await decisionContext(database, now, records, pairing);
   const decided: Decided[] = [];
   for (const { hidden, ...record } of records) {
     const { step, parts, provisionalUntil, unconnectedAccountId, asks, offersManualLoan } =
@@ -370,23 +381,69 @@ export async function runMatching(
   const gone = records.filter((record) => record.hidden).map((record) => record.id);
   await removeDecisions(database, gone);
   const decided = await decideAll(database, shown, now, pairing);
-  await storeResults(
-    database,
-    decided.map((result) => ({
+  const withCarried = (results: readonly Decided[]) =>
+    results.map((result) => ({
       ...result,
       stored: carryOver(result.stored, pending.get(result.stored.transactionId)),
-    })),
-    now,
-    gone,
-  );
+    }));
+  await storeResults(database, withCarried(decided), now, gone);
+  // Refunds link at once, to Spending that is now decided (spec 03, Refunds), and so do the
+  // payments the app finds for a Manual loan (spec 02, Finding payments). Each Refund and
+  // Reimbursement on Spending that this run decided, or that a link of this run reduces, is
+  // decided again, as the amount its link reduces may have changed; so is every payment on a loan
+  // whose links changed, as its interest counts from the balance the ones before it left. This
+  // includes a Refund or Reimbursement this run decided too: it read its Spending's parts before
+  // they were stored.
+  const steps = shown.map((record, index) => ({ record, step: decided[index]?.stored.step ?? "" }));
+  const linked = await linkRefunds(database, steps, now);
+  const paid = await findManualLoanPayments(database, steps, now);
+  const reducing = await reducingIds(database, [...shown.map((record) => record.id), ...linked]);
+  const reduced = (
+    await readDecisionRecords(database, [...new Set([...reducing, ...linked, ...paid])])
+  ).filter((record) => !record.hidden);
+  if (reduced.length > 0) {
+    await storeResults(database, withCarried(await decideAll(database, reduced, now)), now);
+  }
   const settled = await updatePairItems(database, pairing);
-  await tellDecidedAgain(shown.filter((record) => !handled.has(record.id)));
+  const told = new Set<string>();
+  await tellDecidedAgain(
+    [...shown, ...reduced].filter((record) => {
+      if (handled.has(record.id) || told.has(record.id)) return false;
+      told.add(record.id);
+      return true;
+    }),
+  );
   await decideSettledPairsAgain(
     database,
     settled.filter((id) => !shown.some((record) => record.id === id)),
     now,
   );
   await decideLoanPaymentsAgain(database, shown, now);
+  await updateLoanPaymentItems(database, records, paid, now);
+}
+
+// A payment the Review list asks about settles once it links to a Manual loan or no longer shows.
+// When this run changed a loan's links, its missed-payment item may settle too. Only the daily task
+// opens one.
+async function updateLoanPaymentItems(
+  database: Database,
+  records: readonly DecisionRecord[],
+  paid: readonly string[],
+  now: Date,
+): Promise<void> {
+  const settled = records
+    .filter((record) => record.hidden || record.loanLink !== null)
+    .map((record) => record.id);
+  if (settled.length > 0) {
+    await settleReviewItems(
+      database,
+      { kind: POSSIBLE_PAYMENT_KIND, subjectIds: settled },
+      "linked, or no longer shows",
+    );
+  }
+  if (paid.length > 0 || records.some((record) => record.loanLink !== null)) {
+    await updateMissedLoanPayments(database, now, "settle");
+  }
 }
 
 // An Unclear pair that settled without a link leaves its paying side to count again on its own.
@@ -587,7 +644,7 @@ export async function setTransactionType(
   const { hidden, ...updated } = { ...record, handSet: { ...record.handSet, type } };
   const { step, parts, provisionalUntil } = await decide({
     ...updated,
-    ...(await decisionContext(database, now)),
+    ...(await decisionContext(database, now, [record])),
   });
   return { step, parts, provisionalUntil: provisionalUntil ?? null };
 }
@@ -600,6 +657,7 @@ export class ProvisionalResultsJob extends Job {
   override async run(): Promise<void> {
     if (running === undefined) throw new Error("Money movement is not running.");
     await decideProvisionalAgain(running.database);
+    await updateMissedLoanPayments(running.database, new Date());
   }
 }
 
@@ -661,6 +719,11 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
     registerReviewKind(PAIR_GUESS_KIND, pairKind),
     registerReviewKind(ONE_SIDED_KIND, oneSidedKind(started.database)),
     registerReviewKind(UNTRACKED_LOAN_KIND, untrackedLoanKind),
+    registerReviewKind(POSSIBLE_PAYMENT_KIND, {
+      ...possiblePaymentKind,
+      afterAnswer: () => askForFollowUp(),
+    }),
+    registerReviewKind(MISSED_PAYMENT_KIND, missedPaymentKind),
   ];
   return {
     stop() {

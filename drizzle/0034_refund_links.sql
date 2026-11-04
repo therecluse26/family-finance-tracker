@@ -1,0 +1,1 @@
+ALTER TABLE `transaction_parts` ADD `linked` integer DEFAULT false NOT NULL;

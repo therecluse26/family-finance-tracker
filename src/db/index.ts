@@ -141,6 +141,7 @@ export {
 } from "./household-facts.ts";
 export {
   type AnyLink,
+  carryLinks,
   endOtherLinks,
   isOtherLinkRefused,
   type LinkEvidence,
@@ -186,6 +187,8 @@ export {
 export { loginTables } from "./login-tables.ts";
 export {
   addManualLoan,
+  closeManualLoan,
+  listLoanPaymentCandidates,
   listManualLoans,
   listUnlinkedLoanPayouts,
   MANUAL_LOAN_TYPES,
@@ -230,6 +233,14 @@ export {
   replaceRecurringCharges,
   type StoredRecurringCharge,
 } from "./recurring-charges.ts";
+export {
+  listRefundPurchases,
+  listRefusedOtherLinks,
+  type ReducingLink,
+  type RefundPurchase,
+  readSpendingToReduce,
+  storeAppRefundLinks,
+} from "./refunds.ts";
 export {
   addReviewItem,
   addReviewItems,

@@ -309,79 +309,99 @@ describe("the link routes", () => {
     expect({ ...unchanged.rows[0] }).toEqual({ name: "Account acc-car", member_apr: null });
   });
 
-  it("refuses a Refund, Reimbursement, or loan link on a pending Transaction until it posts", async () => {
+  it("links a pending Transaction by hand, and carries the link when it posts", async () => {
     await addManualLoan();
-    fake.addPages(BANK, {
-      added: [
-        fakeTxn({
-          id: "pending-back",
-          accountId: checking.id,
-          amount: 2_000,
-          postedDate: "2026-10-12",
-          pending: true,
-        }),
-        fakeTxn({
-          id: "pending-shoes",
-          accountId: checking.id,
-          amount: -6_000,
-          postedDate: "2026-10-11",
-          pending: true,
-        }),
-        fakeTxn({
-          id: "pending-lender",
-          accountId: checking.id,
-          amount: -40_000,
-          postedDate: "2026-10-12",
-          pending: true,
-        }),
-      ],
+    const pendingBack = fakeTxn({
+      id: "pending-back",
+      accountId: checking.id,
+      amount: 2_000,
+      postedDate: "2026-10-12",
+      pending: true,
     });
+    const pendingShoes = fakeTxn({
+      id: "pending-shoes",
+      accountId: checking.id,
+      amount: -6_000,
+      postedDate: "2026-10-08",
+      pending: true,
+    });
+    const pendingLender = fakeTxn({
+      id: "pending-lender",
+      accountId: checking.id,
+      amount: -40_000,
+      postedDate: "2026-10-12",
+      pending: true,
+    });
+    fake.addPages(BANK, { added: [pendingBack, pendingShoes, pendingLender] });
     await sync();
-    const rows = await test.database.$client.execute(
-      "SELECT id, provider_transaction_id FROM transactions",
-    );
-    ids = new Map(rows.rows.map((row) => [String(row.provider_transaction_id), String(row.id)]));
+    const readIds = async () => {
+      const rows = await test.database.$client.execute(
+        "SELECT id, provider_transaction_id FROM transactions",
+      );
+      ids = new Map(rows.rows.map((row) => [String(row.provider_transaction_id), String(row.id)]));
+    };
+    await readIds();
     const post = (body: unknown) => browser.send("POST", "/api/links", body);
 
-    for (const kind of ["Refund", "Reimbursement"]) {
-      for (const [money, spent] of [
-        ["pending-back", "shoes"],
-        ["back", "pending-shoes"],
-      ]) {
-        const answer = await post({
-          kind,
-          transactionId: id(money ?? ""),
-          spendingTransactionId: id(spent ?? ""),
-        });
-        expect(answer.status).toBe(400);
-        expect(await answer.json()).toEqual({
-          error: "A pending Transaction links once it posts.",
-        });
-      }
+    for (const body of [
+      { kind: "Refund", transactionId: id("pending-back"), spendingTransactionId: id("shoes") },
+      {
+        kind: "Reimbursement",
+        transactionId: id("back"),
+        spendingTransactionId: id("pending-shoes"),
+      },
+      { kind: "loan", transactionId: id("pending-lender"), loanAccountId: "manual-loan" },
+    ]) {
+      expect((await post(body)).status).toBe(200);
     }
-    const loan = await post({
-      kind: "loan",
-      transactionId: id("pending-lender"),
-      loanAccountId: "manual-loan",
-    });
-    expect(loan.status).toBe(400);
-    expect(await count("spending_links")).toBe(0);
-    expect(await count("loan_links")).toBe(0);
 
-    // The posted ones link.
-    expect(
-      (
-        await post({
-          kind: "Refund",
-          transactionId: id("back"),
-          spendingTransactionId: id("shoes"),
-        })
-      ).status,
-    ).toBe(200);
-    expect(
-      (await post({ kind: "loan", transactionId: id("lender"), loanAccountId: "manual-loan" }))
-        .status,
-    ).toBe(200);
+    // Each one posts: the posted record points back, and takes the pending one's links.
+    const posted = (txn: typeof pendingBack) => ({
+      ...txn,
+      id: `${txn.id}-posted`,
+      pending: false,
+      pendingTransactionId: txn.id,
+    });
+    fake.addPages(BANK, {
+      added: [posted(pendingBack), posted(pendingShoes), posted(pendingLender)],
+      removed: [{ id: "pending-back" }, { id: "pending-shoes" }, { id: "pending-lender" }],
+    });
+    await sync();
+    await readIds();
+
+    const links = await test.database.$client.execute(
+      `SELECT kind, transaction_id, spending_transaction_id AS other, made_by FROM spending_links
+       UNION ALL
+       SELECT 'loan', transaction_id, loan_account_id, made_by FROM loan_links
+       ORDER BY 1`,
+    );
+    expect(links.rows.map((row) => ({ ...row }))).toEqual([
+      {
+        kind: "Refund",
+        transaction_id: id("pending-back-posted"),
+        other: id("shoes"),
+        made_by: "Member",
+      },
+      {
+        kind: "Reimbursement",
+        transaction_id: id("back"),
+        other: id("pending-shoes-posted"),
+        made_by: "Member",
+      },
+      {
+        kind: "loan",
+        transaction_id: id("pending-lender-posted"),
+        other: "manual-loan",
+        made_by: "Member",
+      },
+    ]);
+    const hidden = await test.database.$client.execute(
+      "SELECT hidden_reason FROM transactions WHERE pending = 1",
+    );
+    expect(hidden.rows.map((row) => row.hidden_reason)).toEqual(["posted", "posted", "posted"]);
+    expect((await detail("pending-back-posted")).otherLinks.map((link) => link.madeBy)).toEqual([
+      "Member",
+    ]);
   });
 
   it("answers 401 with no session, 403 from another origin, and 415 to a body that is not JSON, and links nothing", async () => {
@@ -431,6 +451,8 @@ describe("the link routes", () => {
         escrow: null,
         loanType: "purchase loan",
         setBy: "app",
+        currentBalance: car.balance,
+        closed: false,
       });
       const edited = await browser.send("PUT", `/api/manual-loans/${loan.id}`, {
         ...car,
@@ -449,6 +471,8 @@ describe("the link routes", () => {
             escrow: null,
             loanType: "cash loan",
             setBy: "Member",
+            currentBalance: 950_000,
+            closed: false,
           },
         ],
       });

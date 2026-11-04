@@ -8,6 +8,8 @@ import {
   readDecisionRecords,
 } from "../db/index.ts";
 import { log } from "../log.ts";
+import { passesRefundFilters } from "./refunds.ts";
+import { purchaseDate } from "./totals.ts";
 
 // Refund, Reimbursement, and Manual loan links after a provider change (spec 03, Undo and hand
 // links). A deleted Transaction's links end with it in app.db. A link whose Transaction no longer
@@ -27,6 +29,8 @@ export async function loanLinkedIds(
 // hard filters:
 // - a Refund or Reimbursement is money in, its Spending is money out, both show, and the Spending
 //   posted first;
+// - a Refund the app linked is on its purchase's Account, from the same Merchant, at most 120 days
+//   after it;
 // - a loan's payment or payout shows, and moves money.
 // Returns the Transactions to decide again: each side of an ended link, and every Transaction
 // linked to a Manual loan whose links changed or ended.
@@ -55,7 +59,8 @@ export async function endBrokenOtherLinks(
       spent.hidden ||
       money.amount <= 0 ||
       spent.amount >= 0 ||
-      spent.postedDate > money.postedDate
+      purchaseDate(spent) > money.postedDate ||
+      (link.kind === "Refund" && link.madeBy !== "Member" && !passesRefundFilters(money, spent))
     );
   });
   const endedLoans = loans.filter((link) => {

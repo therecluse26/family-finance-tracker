@@ -17,6 +17,7 @@ import { followUpAgain } from "../follow-up/index.ts";
 import { log } from "../log.ts";
 import { followUpSoon } from "./matching.ts";
 import { loanLinkedIds } from "./other-links.ts";
+import { purchaseDate } from "./totals.ts";
 import { passesHandFilters } from "./transfers.ts";
 
 // Hand links and Undo (spec 03, Undo and hand links). A Member links Transactions by hand, of any
@@ -39,7 +40,6 @@ const REFUSED = {
   spending:
     "A Refund or a Reimbursement is money in, linked to Spending that took money out on or before its date.",
   loan: "A loan link ties a Transaction that moves money to a Manual loan.",
-  pending: "A pending Transaction links once it posts.",
 } as const;
 
 const refused = (reason: string): HandLinkResult => ({ outcome: "refused", reason });
@@ -54,7 +54,8 @@ async function checkHandLink(
     const shown = await readDecisionRecords(database, sides);
     if (shown.length !== 2 || shown.some((record) => record.hidden))
       return { outcome: "not found" };
-    // Pairing reads only posted Transactions on Accounts that are not excluded.
+    // Pairing reads pending and posted Transactions; a pending one's link carries over when it
+    // posts.
     const found = new Map(
       (await listTransferCandidates(database, { ids: sides })).map((txn) => [txn.id, txn]),
     );
@@ -68,9 +69,6 @@ async function checkHandLink(
   if (link.kind === "loan") {
     const [record] = await readDecisionRecords(database, [link.transactionId]);
     if (record === undefined || record.hidden) return { outcome: "not found" };
-    // Until a link moves to the posted record that takes a pending one's place, only posted
-    // Transactions link, as a Transfer pair does.
-    if (record.pending) return refused(REFUSED.pending);
     const accounts = new Map(
       (await listDecisionAccounts(database)).map((account) => [account.id, account]),
     );
@@ -92,8 +90,7 @@ async function checkHandLink(
   if (money === undefined || spent === undefined || money.hidden || spent.hidden) {
     return { outcome: "not found" };
   }
-  if (money.pending || spent.pending) return refused(REFUSED.pending);
-  if (money.amount <= 0 || spent.amount >= 0 || spent.postedDate > money.postedDate) {
+  if (money.amount <= 0 || spent.amount >= 0 || purchaseDate(spent) > money.postedDate) {
     return refused(REFUSED.spending);
   }
   return undefined;

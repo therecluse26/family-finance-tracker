@@ -1,11 +1,12 @@
 import { aliasedTable, and, asc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import type { Database, Queries } from "./client.ts";
-import type { LinkMaker, TransferLinkMaker } from "./links.ts";
+import type { LinkMaker, SpendingLinkKind, TransferLinkMaker } from "./links.ts";
 import {
   householdAccounts,
   loanLinks,
   members,
+  spendingLinks,
   transactionDecisions,
   transactionParts,
   transactions,
@@ -28,7 +29,10 @@ export type CategoryConfidence = NonNullable<StoredPart["categoryConfidence"]>;
 // unless the part carries it over from the pending Transaction it replaces.
 export type NewPart = Pick<StoredPart, "type" | "amount" | "category"> &
   Partial<
-    Pick<StoredPart, "keepsCategory" | "categorySource" | "categoryConfidence" | "categoryNeedsAi">
+    Pick<
+      StoredPart,
+      "keepsCategory" | "linked" | "categorySource" | "categoryConfidence" | "categoryNeedsAi"
+    >
   >;
 
 export type StoredDecision = {
@@ -49,6 +53,7 @@ export type DecisionRecord = {
   pending: boolean;
   description: string;
   merchantName: string | null;
+  merchantId: string | null;
   merchantCleanName: string | null;
   providerCategory: string | null;
   // The other parties named on it, with their types, such as "payment_app".
@@ -60,6 +65,8 @@ export type DecisionRecord = {
   otherSide: { transactionId: string; accountId: string; postedDate: string } | null;
   // The Manual loan it links to, as its payment or payout, and who made the link; or null.
   loanLink: { loanAccountId: string; madeBy: LinkMaker } | null;
+  // The Spending it reduces, as a Refund or a Reimbursement, and who made the link; or null.
+  spendingLink: { kind: SpendingLinkKind; spendingTransactionId: string; madeBy: LinkMaker } | null;
   hidden: boolean;
 };
 
@@ -155,6 +162,7 @@ export async function readDecisionRecords(
         pending: transactions.pending,
         description: transactions.description,
         merchantName: transactions.merchantName,
+        merchantId: transactions.merchantId,
         merchantCleanName: transactions.merchantCleanName,
         providerCategory: transactions.providerCategory,
         counterparties: transactions.counterparties,
@@ -165,6 +173,9 @@ export async function readDecisionRecords(
         otherPostedDate: other.postedDate,
         loanAccountId: loanLinks.loanAccountId,
         loanLinkMadeBy: loanLinks.madeBy,
+        spendingLinkKind: spendingLinks.kind,
+        spendingTransactionId: spendingLinks.spendingTransactionId,
+        spendingLinkMadeBy: spendingLinks.madeBy,
         hiddenReason: transactions.hiddenReason,
       })
       .from(transactions)
@@ -189,6 +200,7 @@ export async function readDecisionRecords(
         ),
       )
       .leftJoin(loanLinks, eq(loanLinks.transactionId, transactions.id))
+      .leftJoin(spendingLinks, eq(spendingLinks.transactionId, transactions.id))
       .where(inArray(transactions.id, chunk));
     for (const {
       hiddenReason,
@@ -197,6 +209,9 @@ export async function readDecisionRecords(
       otherPostedDate,
       loanAccountId,
       loanLinkMadeBy,
+      spendingLinkKind,
+      spendingTransactionId,
+      spendingLinkMadeBy,
       ...row
     } of rows) {
       const otherSide =
@@ -207,7 +222,17 @@ export async function readDecisionRecords(
         loanAccountId === null || loanLinkMadeBy === null
           ? null
           : { loanAccountId, madeBy: loanLinkMadeBy };
-      found.set(row.id, { ...row, otherSide, loanLink, hidden: hiddenReason !== null });
+      const spendingLink =
+        spendingLinkKind === null || spendingTransactionId === null || spendingLinkMadeBy === null
+          ? null
+          : { kind: spendingLinkKind, spendingTransactionId, madeBy: spendingLinkMadeBy };
+      found.set(row.id, {
+        ...row,
+        otherSide,
+        loanLink,
+        spendingLink,
+        hidden: hiddenReason !== null,
+      });
     }
   }
   return ids.flatMap((id) => found.get(id) ?? []);
@@ -253,15 +278,23 @@ export async function readDecision(
     .from(transactionDecisions)
     .where(eq(transactionDecisions.transactionId, transactionId));
   if (decision === undefined) return undefined;
-  const parts = await database
+  const rows = await database
     .select({
       type: transactionParts.type,
       amount: transactionParts.amount,
       category: transactionParts.category,
+      linked: transactionParts.linked,
     })
     .from(transactionParts)
     .where(eq(transactionParts.transactionId, transactionId))
     .orderBy(asc(transactionParts.part));
+  // A linked part shows its Spending's Category.
+  const spending = rows.some((row) => row.linked)
+    ? (await readLinkedSpending(database, [transactionId])).get(transactionId)
+    : undefined;
+  const parts = rows.map(({ linked, ...part }) =>
+    linked ? { ...part, linked, category: spending?.category ?? null } : part,
+  );
   return { ...decision, parts };
 }
 
@@ -290,19 +323,69 @@ export async function listDecidedAt(
   return rows.map((row) => row.id);
 }
 
+type LinkedSpending = {
+  postedDate: string;
+  authorizedDate: string | null;
+  category: string | null;
+};
+
+// The Spending that each linked Refund or Reimbursement reduces, by the money in's ID: its dates,
+// which give the month, and the Category of its first Spending part that has one. Reads every
+// link, or the links of these Transactions.
+async function readLinkedSpending(
+  database: Queries,
+  moneyIds?: readonly string[],
+): Promise<Map<string, LinkedSpending>> {
+  const spent = aliasedTable(transactions, "spent");
+  const firstCategory = sql<string | null>`(
+    SELECT ${transactionParts.category} FROM ${transactionParts}
+    WHERE ${transactionParts.transactionId} = ${spent.id}
+      AND ${transactionParts.type} = 'Spending'
+      AND ${transactionParts.category} IS NOT NULL
+    ORDER BY ${transactionParts.part} LIMIT 1
+  )`;
+  const select = () =>
+    database
+      .select({
+        moneyId: spendingLinks.transactionId,
+        postedDate: spent.postedDate,
+        authorizedDate: spent.authorizedDate,
+        category: firstCategory,
+      })
+      .from(spendingLinks)
+      .innerJoin(spent, eq(spent.id, spendingLinks.spendingTransactionId));
+  const rows: Awaited<ReturnType<typeof select>> = [];
+  if (moneyIds === undefined) rows.push(...(await select()));
+  for (const chunk of chunks(moneyIds ?? [])) {
+    rows.push(...(await select().where(inArray(spendingLinks.transactionId, chunk))));
+  }
+  return new Map(rows.map(({ moneyId, ...spending }) => [moneyId, spending]));
+}
+
 // Every part of every posted Transaction that is not hidden, with the dates its month comes from.
+// A linked Refund or Reimbursement part has its Spending's dates and Category instead (spec 03,
+// Which month a link changes). While its link is gone, before Matching decides it again, it keeps
+// its own.
 export async function listPostedParts(database: Database) {
-  return database
+  const rows = await database
     .select({
+      transactionId: transactionParts.transactionId,
       type: transactionParts.type,
       amount: transactionParts.amount,
       category: transactionParts.category,
+      linked: transactionParts.linked,
       postedDate: transactions.postedDate,
       authorizedDate: transactions.authorizedDate,
     })
     .from(transactionParts)
     .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))
     .where(and(eq(transactions.pending, false), isNull(transactions.hiddenReason)));
+  if (!rows.some((row) => row.linked)) return rows;
+  const spending = await readLinkedSpending(database);
+  return rows.map((row) => {
+    const found = row.linked ? spending.get(row.transactionId) : undefined;
+    return found === undefined ? row : { ...row, ...found };
+  });
 }
 
 // The parts of the pending Transaction that each posted one replaces, with their Categories' provenance,
@@ -345,7 +428,10 @@ export type CategoryRecord = {
   providerCategory: string | null;
   providerCategoryConfidence: string | null;
   handSet: Record<string, unknown>;
-  parts: Pick<StoredPart, "part" | "type" | "category" | "keepsCategory" | "categorySource">[];
+  parts: Pick<
+    StoredPart,
+    "part" | "type" | "category" | "keepsCategory" | "linked" | "categorySource"
+  >[];
 };
 
 // The Transactions with these IDs, in the order given. An unknown ID is left out.
@@ -370,6 +456,7 @@ export async function readCategoryRecords(
           type: transactionParts.type,
           category: transactionParts.category,
           keepsCategory: transactionParts.keepsCategory,
+          linked: transactionParts.linked,
           categorySource: transactionParts.categorySource,
         },
       })

@@ -840,6 +840,10 @@ export const transactionParts = sqliteTable(
     // True for a part of a tracked loan payment: it keeps Money movement's Category, and only a
     // hand edit changes it (spec 04, Categories that Money movement names).
     keepsCategory: integer("keeps_category", { mode: "boolean" }).notNull().default(false),
+    // True for the part of a Refund or Reimbursement that its spending_links row reduces. It takes
+    // that Spending's Category and month, so its own Category stays null (spec 03, Which month a
+    // link changes).
+    linked: integer("linked", { mode: "boolean" }).notNull().default(false),
     // The step of the categorization cascade that chose the Category, and its confidence (spec 04,
     // Provenance). Null until the categorization step has handled the part.
     categorySource: text("category_source", {

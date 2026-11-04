@@ -11,14 +11,14 @@ import {
   paymentToPerson,
   zelleWithMember,
 } from "./payment-apps.ts";
+import { linkedTreatment, refundLink, unlinkedRefund } from "./refunds.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";
 import { type ManualLoanOffer, untrackedLoanPayment } from "./untracked-loans.ts";
 
 // The order of decisions (spec 03, Order of decisions): each Transaction's type comes from an
 // ordered list of steps, and the first step that fits wins. Steps 1 to 4 apply to every
-// Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Steps 1 to 4,
-// 5.1 to 5.7, 6.1 to 6.3, 6.5 to 6.7, and 6.9 are built in; later tickets register their rules in
-// the other steps. An empty step is skipped.
+// Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Every step is
+// built in.
 
 export const DECISION_STEPS = [
   { step: "1", name: "a type a Member set by hand" },
@@ -50,12 +50,15 @@ export type DecisionStep = (typeof DECISION_STEPS)[number]["step"];
 // until the categorization step picks one, unless a Money movement rule names it, such as Cash; a
 // hand-set Category or a Category rule still wins over a named one. A part of a tracked loan
 // payment sets `keepsCategory`: only a hand edit changes its Category (spec 04, Categories that
-// Money movement names).
+// Money movement names). The part of a Refund or Reimbursement that its link reduces sets `linked`:
+// it has no Category of its own, and counts with its Spending's Category and month (spec 03, Which
+// month a link changes).
 export type Part = {
   type: TransactionType;
   amount: number;
   category: Category | null;
   keepsCategory?: boolean;
+  linked?: boolean;
 };
 
 // A rule's answer. The parts add up to the Transaction's amount. A one-sided result may be
@@ -93,6 +96,9 @@ export type DecisionContext = {
   loanPayouts(): Promise<LoanPayouts>;
   // Money out on the paying side of an Unclear pair with a connected loan, open on the Review list.
   unclearLoanPayments: ReadonlySet<string>;
+  // How much each linked Refund or Reimbursement among the Transactions decided reduces its
+  // Spending, by the money in's ID (spec 03, Link shapes).
+  spendingAllocations: ReadonlyMap<string, number>;
 };
 
 // What a rule reads: the Transaction, and its context.
@@ -126,13 +132,16 @@ const handSetType: DecisionRule = (txn) =>
 const loanLinkTreatment = (txn: DecisionInput, loanId: string): Promise<Decision> =>
   manualLoanTreatment(txn, loanId);
 
-// Step 2. A Transfer or Manual loan link a Member made by hand. The Accounts on a Transfer's two
-// sides decide how it counts. A Refund or Reimbursement link counts once its ticket adds them. A
-// Transaction on an excluded Account goes on to step 3.
+// Step 2. A Transfer, Manual loan, Refund, or Reimbursement link a Member made by hand. The
+// Accounts on a Transfer's two sides decide how it counts. A Refund or Reimbursement reduces its
+// Spending, down to $0. A Transaction on an excluded Account goes on to step 3.
 const handLink: DecisionRule = (txn) => {
   if (ownExcluded(txn)) return undefined;
   if (txn.transferLink === "Member") return pairTreatment(txn);
   if (txn.loanLink?.madeBy === "Member") return loanLinkTreatment(txn, txn.loanLink.loanAccountId);
+  if (txn.spendingLink?.madeBy === "Member" && txn.amount > 0) {
+    return linkedTreatment(txn, txn.spendingLink.kind);
+  }
   return undefined;
 };
 
@@ -152,7 +161,7 @@ const transferPair: DecisionRule = (txn) => {
 const manualLoanLink: DecisionRule = (txn) =>
   txn.loanLink !== null ? loanLinkTreatment(txn, txn.loanLink.loanAccountId) : undefined;
 
-const BUILT_IN = new Map<DecisionStep, DecisionRule>([
+const RULES = new Map<DecisionStep, DecisionRule>([
   ["1", handSetType],
   ["2", handLink],
   ["3", transferPair],
@@ -167,24 +176,13 @@ const BUILT_IN = new Map<DecisionStep, DecisionRule>([
   ["6.1", cardRewards],
   ["6.2", loanPayout],
   ["6.3", zelleWithMember],
+  ["6.4", refundLink],
   ["6.5", moneyFromPerson],
   ["6.6", cardPaymentReceived],
   ["6.7", oneSidedTransfer],
+  ["6.8", unlinkedRefund],
   ["6.9", (txn) => whole(txn, "Income")],
 ]);
-
-const registered = new Map<DecisionStep, DecisionRule>();
-
-// Registers a later ticket's rule in its step. Returns a function that removes it again.
-export function registerDecisionRule(step: DecisionStep, rule: DecisionRule): () => void {
-  if (BUILT_IN.has(step) || registered.has(step)) {
-    throw new Error(`Step ${step} of the order of decisions already has a rule.`);
-  }
-  registered.set(step, rule);
-  return () => {
-    if (registered.get(step) === rule) registered.delete(step);
-  };
-}
 
 // Money out is a negative amount. A $0 Transaction goes through the money-out steps.
 const appliesTo = (step: DecisionStep, amount: number) =>
@@ -205,6 +203,12 @@ function checkDecision(step: DecisionStep, txn: DecisionInput, decision: Decisio
     if (part.keepsCategory === true && (part.type !== "Spending" || part.category === null)) {
       throw new Error(`Step ${step} kept a Category on a part that has none to keep.`);
     }
+    if (
+      part.linked === true &&
+      ((part.type !== "Refund" && part.type !== "Reimbursement") || part.category !== null)
+    ) {
+      throw new Error(`Step ${step} linked a part that no link reduces.`);
+    }
   }
 }
 
@@ -212,7 +216,7 @@ function checkDecision(step: DecisionStep, txn: DecisionInput, decision: Decisio
 export async function decide(txn: DecisionInput): Promise<Decision & { step: DecisionStep }> {
   for (const { step } of DECISION_STEPS) {
     if (!appliesTo(step, txn.amount)) continue;
-    const rule = BUILT_IN.get(step) ?? registered.get(step);
+    const rule = RULES.get(step);
     if (rule === undefined) continue;
     const decision = await rule(txn);
     if (decision === undefined) continue;

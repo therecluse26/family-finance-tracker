@@ -460,7 +460,7 @@ export async function pairTransfers(
   const byId = new Map(found.map((candidate) => [candidate.id, candidate]));
   const result: PairingResult = { changed: new Set(), looked: new Set(seeds), items: [] };
 
-  // A link ends when a side no longer shows or is pending, or it fails a hard filter; a Member's
+  // A link ends when a side no longer shows, or it fails a hard filter; a Member's
   // link skips the window (spec 03, Undo and hand links). A side on an excluded Account still
   // counts. Otherwise a link the AI or a Member made stays, and its sides stay out of pairing.
   const ended = touching.filter((link) => {

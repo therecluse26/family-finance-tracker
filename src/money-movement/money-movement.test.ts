@@ -7,16 +7,13 @@ import { listConnections } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { scheduledTasks } from "../jobs/list.ts";
 import {
-  type DecisionInput,
   decideProvisionalAgain,
   type MonthTotals,
   readTransactionDecision,
-  registerDecisionRule,
   runMatching,
   setTransactionType,
   startMoneyMovement,
   totalsByMonth,
-  whole,
 } from "./index.ts";
 
 // The order of decisions, the hand-set type, provisional results, and totals by type (spec 03,
@@ -43,9 +40,6 @@ describe("money movement", () => {
   };
   const decisionOf = async (providerId: string) =>
     readTransactionDecision(bank.database, await idOf(providerId));
-  const register = (...args: Parameters<typeof registerDecisionRule>) => {
-    stops.push(registerDecisionRule(...args));
-  };
   // Syncs one more page into a demo bank, then runs the follow-up job.
   const syncMore = async (bankId: string, page: Parameters<TestBank["fake"]["addPages"]>[1]) => {
     bank.fake.addPages(bankId, page);
@@ -79,8 +73,9 @@ describe("money movement", () => {
       );
       // Except the Transfer pairs that step 3 links, card payments at steps 5.1 and 6.6, cash at
       // step 5.3, payment-app lines at steps 5.5 and 6.5, the one-sided Transfers at steps 5.6 and
-      // 6.7, the loan payout at step 6.2, and the untracked loan payments at step 5.2. The demo has
-      // no Member, so no Zelle line names one.
+      // 6.7, the loan payout at step 6.2, the untracked loan payments at step 5.2, and the Refunds,
+      // linked at step 6.4 or unlinked at step 6.8. The demo has no Member, so no Zelle line names
+      // one.
       const transferWording = `(t.description LIKE '%transfer%' OR t.description LIKE '%xfer%'
         OR coalesce(t.provider_category, '') GLOB 'TRANSFER_IN_*'
         OR coalesce(t.provider_category, '') GLOB 'TRANSFER_OUT_*')`;
@@ -110,6 +105,8 @@ describe("money movement", () => {
                 AND ${transferWording} AND NOT ${paymentApp} AND NOT ${linked})
               OR (d.step = '6.2' AND p.type = 'Transfer'
                 AND t.provider_category GLOB 'LOAN_DISBURSEMENTS_*')
+              OR (d.step = '6.4' AND p.type = 'Refund' AND p.linked = 1 AND t.merchant_clean_name IS NOT NULL)
+              OR (d.step = '6.8' AND p.type = 'Refund' AND p.linked = 0 AND t.merchant_clean_name IS NOT NULL)
               OR (d.step = '5.2' AND t.amount < 0 AND NOT ${linked}
                 AND t.provider_category GLOB 'LOAN_PAYMENTS_*')`,
         ),
@@ -130,21 +127,13 @@ describe("money movement", () => {
       ).toBe(0);
     });
 
-    it("lets the first step that fits win, and skips an empty step", async () => {
-      // Step 6.4 comes before the built-in payment-app rule at step 6.5, and claims every
-      // payment-app line of money in.
-      register("6.4", (txn) =>
-        /venmo|zelle|paypal|cash app/i.test(txn.description) ? whole(txn, "Saving") : undefined,
-      );
-
+    it("lets the first step that fits win", async () => {
       await runFollowUp(NOW);
 
       const at = (step: string) =>
         count(`SELECT count(*) AS n FROM transaction_decisions WHERE step = '${step}'`);
-      expect(await at("6.4")).toBeGreaterThan(0);
-      expect(await at("6.5")).toBe(0);
-      // Step 6.8 is empty, so money in passes it by.
-      expect(await at("6.8")).toBe(0);
+      // Payment-app lines of money in are money from a person at step 6.5, before Income.
+      expect(await at("6.5")).toBeGreaterThan(0);
       expect(await at("6.9")).toBeGreaterThan(0);
       // Steps 5.x never see money in, and steps 6.x never see money out.
       expect(
@@ -153,9 +142,6 @@ describe("money movement", () => {
            WHERE (t.amount > 0 AND d.step GLOB '5.*') OR (t.amount <= 0 AND d.step GLOB '6.*')`,
         ),
       ).toBe(0);
-      expect(() => register("5.7", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
-      expect(() => register("5.3", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
-      expect(() => register("5.2", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
     });
 
     it("keeps a hand-set type through every re-run, even when a sync changes the Transaction", async () => {
@@ -255,51 +241,53 @@ describe("money movement", () => {
   describe("provisional results", () => {
     const CHECKING = fakeAccount({ id: "acc-checking", name: "Everyday Checking" });
 
-    // A one-sided Transfer that waits 3 days for its pair. Once the window has passed, the rule no
-    // longer fits, and the Transaction falls through to Spending.
-    const oneSided = (txn: DecisionInput) => {
-      if (!txn.description.startsWith("SWEEP")) return undefined;
-      const end = new Date(`${txn.postedDate}T00:00:00Z`);
-      end.setUTCDate(end.getUTCDate() + 3);
-      const until = end.toISOString().slice(0, 10);
-      return txn.today <= until
-        ? { ...whole(txn, "Transfer"), provisionalUntil: until }
-        : undefined;
-    };
-
     it("decides a provisional result again once its window has passed, with no sync", async () => {
-      register("6.4", oneSided);
+      // A payment to a card the app does not track waits 4 business days for its pair, as a
+      // Transfer. Then it is Spending in Miscellaneous.
       const connectionId = await bank.connect("fake-first-bank");
       bank.fake.addPages("fake-first-bank", {
         accounts: [CHECKING],
         added: [
-          fakeTxn({
-            id: "xfer",
-            accountId: CHECKING.id,
-            amount: 20_000,
-            postedDate: "2026-10-09",
-            description: "SWEEP FROM SAVINGS",
-          }),
+          {
+            ...fakeTxn({
+              id: "card-payment",
+              accountId: CHECKING.id,
+              amount: -20_000,
+              postedDate: "2026-10-09",
+              description: "PAYMENT TO STORE CARD",
+            }),
+            category: {
+              name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT",
+              confidence: "HIGH",
+              version: "v2",
+              mcc: null,
+            },
+          },
         ],
       });
       await syncConnection(connectionId, () => new Date("2026-10-10T15:00:00Z"));
-      // Matching, on the day after the Transfer posted.
-      await runMatching(bank.database, [await idOf("xfer")], new Date("2026-10-10T15:00:00Z"));
-      expect(await decisionOf("xfer")).toEqual({
-        step: "6.4",
-        provisionalUntil: "2026-10-12",
-        parts: [{ type: "Transfer", amount: 20_000, category: null }],
+      // Matching, on the day after the payment posted.
+      await runMatching(
+        bank.database,
+        [await idOf("card-payment")],
+        new Date("2026-10-10T15:00:00Z"),
+      );
+      // Monday, October 12, is a Federal Reserve holiday.
+      expect(await decisionOf("card-payment")).toEqual({
+        step: "5.1",
+        provisionalUntil: "2026-10-16",
+        parts: [{ type: "Transfer", amount: -20_000, category: null }],
       });
 
       // On the window's last day it stays.
-      expect(await decideProvisionalAgain(bank.database, new Date("2026-10-12T23:00:00Z"))).toBe(0);
-      expect((await decisionOf("xfer"))?.step).toBe("6.4");
+      expect(await decideProvisionalAgain(bank.database, new Date("2026-10-16T23:00:00Z"))).toBe(0);
+      expect((await decisionOf("card-payment"))?.parts[0]?.type).toBe("Transfer");
 
-      expect(await decideProvisionalAgain(bank.database, new Date("2026-10-13T12:00:00Z"))).toBe(1);
-      expect(await decisionOf("xfer")).toEqual({
-        step: "6.9",
+      expect(await decideProvisionalAgain(bank.database, new Date("2026-10-17T12:00:00Z"))).toBe(1);
+      expect(await decisionOf("card-payment")).toEqual({
+        step: "5.1",
         provisionalUntil: null,
-        parts: [{ type: "Income", amount: 20_000, category: null }],
+        parts: [{ type: "Spending", amount: -20_000, category: "Miscellaneous" }],
       });
       // Nothing is left to decide again.
       expect(await decideProvisionalAgain(bank.database, new Date("2026-10-14T12:00:00Z"))).toBe(0);
@@ -314,31 +302,28 @@ describe("money movement", () => {
     const CHECKING = fakeAccount({ id: "acc-checking", name: "Everyday Checking" });
 
     it("sums Spending, Income, and Saving by month, by Category, and by Category group", async () => {
-      // Rules for the test, keyed on the description: what later tickets will decide. A buy now pay
-      // later payment is Spending in General goods at step 5.2.
-      register("6.4", (txn) =>
-        txn.description === "PAY IN 4 REFUND"
-          ? { parts: [{ type: "Refund", amount: txn.amount, category: "General goods" }] }
-          : undefined,
-      );
-      register("6.8", (txn) =>
-        txn.description === "BROKERAGE" ? whole(txn, "Saving") : undefined,
-      );
+      // A buy now pay later payment is Spending in General goods at step 5.2, and the Refund from
+      // the same Merchant links to it at step 6.4. Money in from a brokerage reduces Saving.
       const connectionId = await bank.connect("fake-first-bank");
       const txn = (id: string, amount: number, postedDate: string, description: string) =>
         fakeTxn({ id, accountId: CHECKING.id, amount, postedDate, description });
+      const code = (name: string) => ({ name, confidence: "HIGH", version: "v2", mcc: null });
       bank.fake.addPages("fake-first-bank", {
         accounts: [CHECKING],
         added: [
           txn("pay", 300_000, "2026-09-01", "PAYROLL"),
           {
             ...txn("bnpl", -10_000, "2026-09-03", "PAY IN 4"),
-            category: { name: "LOAN_PAYMENTS_BNPL", confidence: "HIGH", version: "v2", mcc: null },
+            merchantName: "Pay In Four",
+            category: code("LOAN_PAYMENTS_BNPL"),
           },
-          txn("refund", 2_000, "2026-09-05", "PAY IN 4 REFUND"),
+          { ...txn("refund", 2_000, "2026-09-05", "PAY IN 4 REFUND"), merchantName: "Pay In Four" },
           txn("other", -4_000, "2026-09-06", "SOMETHING"),
           txn("save", -50_000, "2026-09-10", "BROKERAGE"),
-          txn("take-out", 80_000, "2026-09-20", "BROKERAGE"),
+          {
+            ...txn("take-out", 80_000, "2026-09-20", "BROKERAGE"),
+            category: code("TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS"),
+          },
           txn("move", -7_000, "2026-10-01", "MOVE"),
         ],
       });

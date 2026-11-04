@@ -26,6 +26,7 @@ import { calendarDateIn } from "../format.ts";
 import { saveDailyBalance } from "./balances.ts";
 import type { Database, Queries } from "./client.ts";
 import { markTransactionsUnhandled } from "./follow-up.ts";
+import { carryLinks } from "./links.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
 import {
   connections,
@@ -483,8 +484,9 @@ export async function storeSyncPage(
       const replaced = split !== null && record.postedDate < split;
       let handSet = found?.handSet ?? {};
 
-      // Pending to posted: the posted record takes the pending one's hand-set fields, and the
-      // pending one is hidden with the reason "posted".
+      // Pending to posted: the posted record takes the pending one's hand-set fields and links,
+      // and the pending one is hidden with the reason "posted". The other side of each carried
+      // link is handled again, so Matching checks the link's hard filters.
       const pending =
         !record.pending && record.pendingTransactionId !== null
           ? await findTransaction(tx, connection.id, record.pendingTransactionId)
@@ -497,9 +499,10 @@ export async function storeSyncPage(
         }
       }
 
+      const id = found?.id ?? crypto.randomUUID();
       if (found === undefined) {
         await tx.insert(transactions).values({
-          id: crypto.randomUUID(),
+          id,
           connectionId: connection.id,
           providerTransactionId: record.id,
           ...fields,
@@ -516,6 +519,9 @@ export async function storeSyncPage(
         await unmark(found);
         if (replaced && found.hiddenReason === null) await hide(found, "replaced by re-link");
         counts.changed += 1;
+      }
+      if (pending !== undefined && pending.id !== id) {
+        await markTransactionsUnhandled(tx, await carryLinks(tx, pending.id, id));
       }
     }
 

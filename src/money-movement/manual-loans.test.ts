@@ -116,6 +116,8 @@ describe("Manual loans", () => {
       escrow: null,
       loanType: "purchase loan",
       setBy: "app",
+      currentBalance: 1_000_000,
+      closed: false,
     });
     const rows = await bank.database.$client.execute({
       sql: "SELECT kind, connection_id FROM household_accounts WHERE id = ?",
@@ -149,10 +151,10 @@ describe("Manual loans", () => {
       { type: "Spending", amount: -6_200, category: "Interest and fees" },
       { type: "Spending", amount: -43_800, category: "Car" },
     ]);
-    // 30 days from the October payment.
+    // 30 days from the October payment, on the $9,562 that it left: $57.37.
     expect(await partsOf("nov")).toEqual([
-      { type: "Spending", amount: -6_000, category: "Interest and fees" },
-      { type: "Spending", amount: -44_000, category: "Car" },
+      { type: "Spending", amount: -5_737, category: "Interest and fees" },
+      { type: "Spending", amount: -44_263, category: "Car" },
     ]);
 
     // A Cash loan's principal is a Transfer.

@@ -10,10 +10,9 @@ import { merchantKey } from "../merchants/index.ts";
 import {
   addManualLoan,
   linkByHand,
-  registerDecisionRule,
+  readTransactionDecision,
   setTransactionType,
   startMoneyMovement,
-  whole,
 } from "../money-movement/index.ts";
 import { answerReviewItem, openReviewItems, otherReviewChoices } from "../review/index.ts";
 import { BEST_GUESS_KIND, registerCascadeStep, startCategorization } from "./index.ts";
@@ -509,31 +508,33 @@ describe("the categorization cascade", () => {
 
   describe("Refunds", () => {
     it("runs an unlinked Refund through the cascade as if it were Spending, and leaves a linked one", async () => {
-      register(
-        registerDecisionRule("6.4", (txn) =>
-          txn.description === "LINKED REFUND"
-            ? { parts: [{ type: "Refund", amount: txn.amount, category: "Clothing" }] }
-            : undefined,
-        ),
-      );
-      register(
-        registerDecisionRule("6.8", (txn) =>
-          txn.merchantCleanName === null ? undefined : whole(txn, "Refund"),
-        ),
-      );
-      const refund = (id: string, description: string): TxnRecord => ({
-        ...buy(id, "2026-10-05", { code: "FOOD_AND_DRINK_RESTAURANT" }),
+      // The linked Refund has a purchase at its Merchant; the unlinked one's Merchant has none.
+      const refund = (id: string, merchant: string): TxnRecord => ({
+        ...buy(id, "2026-10-05", { merchant, code: "FOOD_AND_DRINK_RESTAURANT" }),
         amount: 2_500,
-        description,
+        description: "REFUND",
       });
 
-      await sync({ added: [refund("unlinked", "REFUND"), refund("linked", "LINKED REFUND")] });
+      await sync({
+        added: [
+          buy("purchase", "2026-10-01", {
+            merchant: "Shoe Barn",
+            code: "GENERAL_MERCHANDISE_CLOTHING_AND_ACCESSORIES",
+          }),
+          refund("unlinked", "Corner Bistro"),
+          refund("linked", "Shoe Barn"),
+        ],
+      });
 
       expect(await partsOf("unlinked")).toMatchObject([
         { type: "Refund", category: "Restaurants", source: "provider", confidence: "high" },
       ]);
+      // The linked part has no Category of its own: it counts with its purchase's.
       expect(await partsOf("linked")).toMatchObject([
-        { type: "Refund", category: "Clothing", source: null, confidence: null },
+        { type: "Refund", category: null, source: null, confidence: null },
+      ]);
+      expect((await readTransactionDecision(bank.database, await idOf("linked")))?.parts).toEqual([
+        { type: "Refund", amount: 2_500, category: "Clothing", linked: true },
       ]);
     });
   });

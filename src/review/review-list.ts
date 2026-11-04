@@ -107,9 +107,13 @@ function storedItem(item: NewItem) {
   };
 }
 
-// Opens an item of a registered kind, and returns its ID.
-export async function openReviewItem(database: Database, item: NewItem): Promise<string> {
-  return addReviewItem(database, storedItem(item), new Date());
+// Opens an item of a registered kind, and returns its ID. `at` is when it opened.
+export async function openReviewItem(
+  database: Database,
+  item: NewItem,
+  at = new Date(),
+): Promise<string> {
+  return addReviewItem(database, storedItem(item), at);
 }
 
 // Opens several items at once, in one transaction, and returns their IDs in order.
@@ -125,6 +129,14 @@ export async function openReviewItemBatch(
 // Every open item, newest first.
 export async function openReviewItems(database: Database): Promise<ReviewItem[]> {
   return (await listOpenReviewItems(database)).map(itemOf);
+}
+
+// Every open item of one kind, newest first.
+export async function openReviewItemsOfKind(
+  database: Database,
+  kind: string,
+): Promise<ReviewItem[]> {
+  return (await listOpenReviewItemsOfKind(database, kind)).map(itemOf);
 }
 
 export function countReviewItems(database: Database): Promise<number> {
@@ -241,5 +253,18 @@ export async function settleReviewItems(
 // Whether an item of the kind was ever opened about each subject, open or closed now. A kind that
 // asks only once reads it before it opens another.
 export async function everAskedAbout(database: Database, kind: string): Promise<Set<string>> {
-  return new Set((await listReviewItemSubjects(database, kind)).flat());
+  return new Set((await listReviewItemSubjects(database, kind)).flatMap((item) => item.subjectIds));
+}
+
+// When an item of the kind last opened about each subject, open or closed now. A kind that asks
+// again after a later event reads it before it opens another.
+export async function lastAskedAbout(database: Database, kind: string): Promise<Map<string, Date>> {
+  const last = new Map<string, Date>();
+  for (const item of await listReviewItemSubjects(database, kind)) {
+    for (const id of item.subjectIds) {
+      const seen = last.get(id);
+      if (seen === undefined || seen < item.createdAt) last.set(id, item.createdAt);
+    }
+  }
+  return last;
 }
