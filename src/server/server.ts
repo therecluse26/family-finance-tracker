@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import type { AiSettings } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
@@ -19,6 +20,7 @@ export function startServer(options: {
   database: Database;
   secrets: Secrets;
   plaid?: PlaidSettings;
+  ai?: AiSettings;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
@@ -29,7 +31,10 @@ export function startServer(options: {
           options.auth,
           options.database,
           options.secrets,
-          { ...(options.plaid === undefined ? {} : { plaid: options.plaid }) },
+          {
+            ...(options.plaid === undefined ? {} : { plaid: options.plaid }),
+            ...(options.ai === undefined ? {} : { ai: options.ai }),
+          },
         ).fetch,
         port: options.port,
       },

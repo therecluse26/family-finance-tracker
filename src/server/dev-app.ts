@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
 import { plaidSettings } from "../bank/index.ts";
 import { applyMigrations, openDatabase } from "../db/index.ts";
@@ -30,5 +31,6 @@ export async function createDevApp(
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
   return createApp(webRoot, security, auth, database, secrets, {
     plaid: plaidSettings({ database, secrets }),
+    ai: aiSettings({ database, secrets }),
   });
 }

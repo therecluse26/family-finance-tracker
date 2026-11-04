@@ -1,0 +1,241 @@
+import { APICallError, generateText, type LanguageModel, RetryError } from "ai";
+import {
+  AI_SETTINGS_ROW,
+  type Database,
+  listConnections,
+  readAiSettings,
+  readAiSettingsVersion,
+  removeAiSettings,
+  type StoredAiSettings,
+  storeAiSettings,
+} from "../db/index.ts";
+import { type Logger, log, registerSecretValue } from "../log.ts";
+import type { SecretPlace, Secrets } from "../secrets/index.ts";
+import {
+  type AiSettings,
+  type AiStatus,
+  type AiTier,
+  type AiView,
+  baseUrlProblem,
+  type ModelCheck,
+  onGateway,
+} from "./ai-view.ts";
+import {
+  type AiConnection,
+  type AiModelMaker,
+  type AiModels,
+  makeFetchModels,
+} from "./providers.ts";
+
+// The Household's one AI provider (spec 08, AI settings page). The API key and the gateway token
+// are Master-key secrets: the app encrypts them, and never shows or logs them again.
+
+// Each ciphertext decrypts only in ai_settings' one row, in its own column.
+const KEY_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.api_key" };
+const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.gateway_token" };
+
+// Spec 08, Failures: no reply within 120 seconds is an AI error.
+const CALL_TIMEOUT_MS = 120_000;
+
+// What stops AI besides the key. T20 (#46) brings the gate on loaded history, and T77 (#103) the
+// AI cost cap.
+export type AiGates = {
+  historyLoaded(): Promise<boolean>;
+  // The date AI starts again, YYYY-MM-DD, while the month's cost is at the AI cost cap.
+  costCapPausedUntil(): Promise<string | undefined>;
+};
+
+// Until T20's gate: AI waits while any Connection's history is loading.
+export function defaultGates(database: Database): AiGates {
+  return {
+    historyLoaded: async () =>
+      (await listConnections(database)).every((connection) => connection.historyLoaded),
+    costCapPausedUntil: async () => undefined,
+  };
+}
+
+// The HTTP status of a failed call, and nothing else: an AI SDK error also holds the request and
+// the response, and a provider error can hold the key in its headers or config.
+function statusOf(error: unknown): number | undefined {
+  const last = RetryError.isInstance(error) ? error.lastError : error;
+  return APICallError.isInstance(last) ? last.statusCode : undefined;
+}
+
+// One call with a 1-token reply, and no retry. A 401 or 403 means the AI provider rejected the key.
+// T77 (#103) counts these calls toward the month's cost.
+async function checkModel(model: LanguageModel, logger: Logger): Promise<ModelCheck> {
+  try {
+    await generateText({
+      model,
+      prompt: "Reply with OK.",
+      maxOutputTokens: 1,
+      maxRetries: 0,
+      timeout: CALL_TIMEOUT_MS,
+    });
+    return "worked";
+  } catch (error) {
+    const status = statusOf(error);
+    if (status === 401 || status === 403) return "key rejected";
+    logger.warn("The AI provider did not answer the check on save", { status: status ?? null });
+    return "failed";
+  }
+}
+
+function decryptConnection(stored: StoredAiSettings, secrets: Secrets): AiConnection {
+  return {
+    provider: stored.provider,
+    apiKey: stored.apiKey === null ? undefined : secrets.decrypt(stored.apiKey, KEY_PLACE),
+    baseUrl: stored.baseUrl,
+    gatewayToken:
+      stored.gatewayToken === null ? undefined : secrets.decrypt(stored.gatewayToken, TOKEN_PLACE),
+  };
+}
+
+export function aiSettings(options: {
+  database: Database;
+  secrets: Secrets;
+  makeModels?: AiModelMaker;
+  gates?: AiGates;
+  logger?: Logger;
+}): AiSettings {
+  const { database, secrets, makeModels = makeFetchModels(), logger = log } = options;
+  const gates = options.gates ?? defaultGates(database);
+
+  // Undefined when the ciphertext does not decrypt, such as after a restore with another Master key.
+  function readSecret(ciphertext: string, place: SecretPlace): string | undefined {
+    try {
+      return secrets.decrypt(ciphertext, place);
+    } catch {
+      logger.warn("A stored AI secret cannot be read", { column: place.column });
+      return undefined;
+    }
+  }
+
+  async function status(stored: StoredAiSettings): Promise<AiStatus> {
+    if (stored.keyRejectedAt !== null) return { state: "key rejected" };
+    const until = await gates.costCapPausedUntil();
+    if (until !== undefined) return { state: "cost cap", until };
+    if (!(await gates.historyLoaded())) return { state: "waits for history" };
+    return { state: "on" };
+  }
+
+  async function view(): Promise<AiView | undefined> {
+    const stored = await readAiSettings(database);
+    if (stored === undefined) return undefined;
+    return {
+      provider: stored.provider,
+      keySet: stored.apiKey !== null,
+      baseUrl: stored.baseUrl,
+      gatewayTokenSet: stored.gatewayToken !== null,
+      quickModel: stored.quickModel,
+      writerModel: stored.writerModel,
+      status: await status(stored),
+    };
+  }
+
+  return {
+    view,
+
+    async save(input, { freshCode }) {
+      const { settings: stored, generation } = await readAiSettingsVersion(database);
+      // A stored key or token goes only to the AI provider and base URL it was entered for.
+      const sameDestination =
+        stored !== undefined &&
+        stored.provider === input.provider &&
+        stored.baseUrl === input.baseUrl;
+      const gateway = onGateway(input.baseUrl);
+      if (!gateway && typeof input.gatewayToken === "string") {
+        throw new TypeError("A gateway token needs a Cloudflare AI Gateway base URL.");
+      }
+      if (input.provider === "openai-compatible" && input.baseUrl === null) {
+        throw new TypeError("An OpenAI-compatible endpoint needs a base URL.");
+      }
+      if (input.baseUrl !== null && baseUrlProblem(input.baseUrl) !== undefined) {
+        throw new TypeError("The app does not send a key to this base URL.");
+      }
+
+      const changesSecrets =
+        !sameDestination || input.apiKey !== undefined || typeof input.gatewayToken === "string";
+      if (changesSecrets && !freshCode) return { saved: false, refusal: "code needed" };
+
+      // A stored secret is read only when this save keeps it, so a new key replaces one that no
+      // longer decrypts. One that is kept but cannot be read must be entered again.
+      const storedKey = input.apiKey === undefined && sameDestination ? stored.apiKey : null;
+      const keptKey = storedKey === null ? undefined : readSecret(storedKey, KEY_PLACE);
+      const apiKey = input.apiKey ?? keptKey;
+      if (
+        (storedKey !== null && keptKey === undefined) ||
+        (apiKey === undefined && input.provider !== "openai-compatible")
+      ) {
+        return { saved: false, refusal: "key needed" };
+      }
+      const storedToken =
+        gateway && input.gatewayToken === undefined && sameDestination ? stored.gatewayToken : null;
+      const keptToken = storedToken === null ? undefined : readSecret(storedToken, TOKEN_PLACE);
+      if (storedToken !== null && keptToken === undefined) {
+        return { saved: false, refusal: "token needed" };
+      }
+      const gatewayToken = !gateway ? undefined : (input.gatewayToken ?? keptToken);
+      // Before the AI provider sees them, so no log line can hold them.
+      for (const secret of [apiKey, gatewayToken]) {
+        if (secret !== undefined) registerSecretValue(secret);
+      }
+
+      const connection: AiConnection = {
+        provider: input.provider,
+        apiKey,
+        baseUrl: input.baseUrl,
+        gatewayToken,
+      };
+      const models: AiModels = makeModels(connection, {
+        quick: input.quickModel,
+        writer: input.writerModel,
+      });
+      const [quick, writer] = await Promise.all([
+        checkModel(models.quick, logger),
+        checkModel(models.writer, logger),
+      ]);
+      const check: Record<AiTier, ModelCheck> = { quick, writer };
+
+      const written = await storeAiSettings(
+        database,
+        {
+          provider: input.provider,
+          apiKey: apiKey === undefined ? null : secrets.encrypt(apiKey, KEY_PLACE),
+          baseUrl: input.baseUrl,
+          gatewayToken:
+            gatewayToken === undefined ? null : secrets.encrypt(gatewayToken, TOKEN_PLACE),
+          quickModel: input.quickModel,
+          writerModel: input.writerModel,
+          keyRejectedAt: quick === "key rejected" || writer === "key rejected" ? new Date() : null,
+        },
+        generation,
+      );
+      // A Remove AI provider or another save came first while the AI provider answered.
+      if (!written) return { saved: false, refusal: "changed" };
+      const ai = await view();
+      if (ai === undefined) throw new Error("The AI settings were not saved.");
+      return { saved: true, check, ai };
+    },
+
+    async remove() {
+      await removeAiSettings(database);
+    },
+  };
+}
+
+// The Household's models, for every AI use, or undefined with no AI provider, and every use takes
+// its no-AI path. Decrypting registers the key and the token with the logger, which refuses them
+// from then on.
+export async function readAiModels(
+  database: Database,
+  secrets: Secrets,
+  makeModels: AiModelMaker = makeFetchModels(),
+): Promise<AiModels | undefined> {
+  const stored = await readAiSettings(database);
+  if (stored === undefined) return undefined;
+  return makeModels(decryptConnection(stored, secrets), {
+    quick: stored.quickModel,
+    writer: stored.writerModel,
+  });
+}

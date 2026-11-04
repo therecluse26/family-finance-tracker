@@ -237,6 +237,39 @@ export const noticeDeliveries = sqliteTable("notice_deliveries", {
   createdAt: moment("created_at").notNull(),
 });
 
+// The Household's one AI provider (spec 08, AI settings page). It has at most one row, whose ID is
+// 1. Removing the AI provider empties the row but keeps it, with its generation.
+export const aiSettings = sqliteTable(
+  "ai_settings",
+  {
+    id: integer("id").primaryKey(),
+    // Empty, with both models, after Remove AI provider.
+    provider: text("provider", {
+      enum: ["anthropic", "openai", "openrouter", "openai-compatible"],
+    }),
+    // The API key, encrypted with the Master key and bound to this row and column. Empty only for
+    // an OpenAI-compatible endpoint that needs no key.
+    apiKey: text("api_key"),
+    baseUrl: text("base_url"),
+    // The Cloudflare AI Gateway token, stored like the API key.
+    gatewayToken: text("gateway_token"),
+    quickModel: text("quick_model"),
+    writerModel: text("writer_model"),
+    // When the AI provider last answered 401 or 403. Empty once a call works again.
+    keyRejectedAt: moment("key_rejected_at"),
+    // Goes up by 1 on each save and each Remove AI provider. A save writes only when the row is
+    // still at the generation it read before its checks, so it never undoes a later change.
+    generation: integer("generation").notNull().default(0),
+  },
+  (table) => [
+    check("ai_settings_one_row", sql`${table.id} = 1`),
+    check(
+      "ai_settings_whole",
+      sql`(${table.provider} IS NULL) = (${table.quickModel} IS NULL) AND (${table.provider} IS NULL) = (${table.writerModel} IS NULL)`,
+    ),
+  ],
+);
+
 // One link to one bank through one Bank-data provider (spec 02, Connections). bank_id is not
 // unique: a bank can be linked again after its Connection is removed, and "Link again" on a Broken
 // Connection links the same bank. The duplicate check before a token exchange belongs to linking.

@@ -1,0 +1,382 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AiView, aiSettings, onGateway, readAiModels } from "../ai/index.ts";
+import { newAiKey, StubModels } from "../ai/testing.ts";
+import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
+import { markSetupStep } from "../db/index.ts";
+import { createLogger } from "../log.ts";
+import { createApp } from "./app.ts";
+import { loadSecurity } from "./security-mode.ts";
+import { type App, TestBrowser } from "./testing.ts";
+
+// Settings → AI's routes, through the app's HTTP interface, on AI SDK test models with made-up
+// keys (spec 08, AI settings page; spec 09, Signing in).
+
+const APP_URL = "http://nas.local:8080";
+const TOTP_STEP_MS = 30_000;
+const GATEWAY = "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai";
+
+let webRoot: string;
+
+beforeAll(() => {
+  webRoot = mkdtempSync(join(tmpdir(), "fft-ai-web-"));
+  writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
+});
+
+afterAll(() => {
+  rmSync(webRoot, { recursive: true, force: true });
+});
+
+describe("the AI routes", () => {
+  let test: TestAuth;
+  let app: App;
+  let stub: StubModels;
+  let lines: string[];
+  let alice: TestMember;
+  let clients = 0;
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    lines = [];
+    const logger = createLogger((line) => lines.push(line), { throwOnSecretField: true });
+    test = await newTestAuth(APP_URL, logger);
+    stub = new StubModels();
+    app = createApp(
+      webRoot,
+      await loadSecurity({ APP_URL }, { logger }),
+      test.auth,
+      test.database,
+      test.secrets,
+      {
+        ai: aiSettings({
+          database: test.database,
+          secrets: test.secrets,
+          makeModels: stub.makeModels,
+          logger,
+        }),
+      },
+    );
+    alice = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    test.close();
+  });
+
+  async function finishWizard(): Promise<void> {
+    await markSetupStep(test.database, "master key", "done");
+    await markSetupStep(test.database, "household facts", "done");
+  }
+
+  // Signed in, with the clock moved on one TOTP step, so the next code is fresh.
+  async function signedIn(): Promise<TestBrowser> {
+    clients += 1;
+    const tab = new TestBrowser(app, APP_URL, `192.168.1.${clients}`);
+    await tab.signIn(alice);
+    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
+    return tab;
+  }
+
+  const openai = (more: Record<string, unknown> = {}) => ({
+    provider: "openai",
+    apiKey: newAiKey(),
+    baseUrl: null,
+    quickModel: "gpt-6-luna",
+    writerModel: "gpt-6.1-terra",
+    ...more,
+  });
+
+  const save = async (tab: TestBrowser, body: Record<string, unknown>, code?: string) =>
+    tab.post("/api/ai/settings", { ...body, code: code ?? (await alice.totpCode()) });
+
+  const shown = async (tab: TestBrowser) =>
+    ((await (await tab.get("/api/ai/settings")).json()) as { ai: AiView | null }).ai;
+
+  const models = () => readAiModels(test.database, test.secrets, stub.makeModels);
+
+  it("answers 401 to a browser with no session, on every route", async () => {
+    await finishWizard();
+    const tab = new TestBrowser(app, APP_URL, "192.168.1.200");
+
+    expect((await tab.get("/api/ai/settings")).status).toBe(401);
+    expect((await save(tab, openai())).status).toBe(401);
+    expect((await tab.post("/api/ai/remove", {})).status).toBe(401);
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("refuses to store a key until the wizard's required steps are done", async () => {
+    const tab = await signedIn();
+    await markSetupStep(test.database, "master key", "done");
+
+    expect((await save(tab, openai())).status).toBe(409);
+    expect(stub.calls).toEqual([]);
+    expect(await models()).toBeUndefined();
+  });
+
+  it("checks both models on save, shows the result, and never shows the key again", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const gatewayToken = newAiKey();
+    const body = openai({ baseUrl: GATEWAY, gatewayToken });
+
+    const res = await save(tab, body);
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({
+      check: { quick: "worked", writer: "worked" },
+      ai: {
+        provider: "openai",
+        keySet: true,
+        baseUrl: GATEWAY,
+        gatewayTokenSet: true,
+        quickModel: "gpt-6-luna",
+        writerModel: "gpt-6.1-terra",
+        status: { state: "on" },
+      },
+    });
+    const later = JSON.stringify(await shown(tab));
+    for (const secret of [body.apiKey, gatewayToken]) {
+      expect(text).not.toContain(secret);
+      expect(later).not.toContain(secret);
+      expect(lines.join("")).not.toContain(secret);
+    }
+    expect(stub.connections).toEqual([
+      {
+        provider: "openai",
+        apiKey: body.apiKey,
+        baseUrl: GATEWAY,
+        gatewayToken,
+      },
+    ]);
+  });
+
+  it("asks for a fresh TOTP code, or a backup code, to change the key", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const code = await alice.totpCode();
+    const wrong = code.replace(/\d/g, (digit) => String((Number(digit) + 1) % 10));
+    const { code: _none, ...noCode } = { ...openai(), code: undefined };
+
+    expect((await tab.post("/api/ai/settings", noCode)).status).toBe(400);
+    expect((await save(tab, openai(), wrong)).status).toBe(401);
+    expect(stub.calls).toEqual([]);
+
+    const first = openai();
+    expect((await save(tab, first, code)).status).toBe(200);
+    const second = openai();
+    expect((await save(tab, second, code)).status).toBe(401);
+    expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
+    expect((await save(tab, second, alice.backupCodes[0])).status).toBe(200);
+    expect(stub.connections.at(-1)?.apiKey).toBe(second.apiKey);
+  });
+
+  it("changes the models with no code, and keeps the key", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const first = openai();
+    await save(tab, first);
+    const { apiKey: _key, ...kept } = first;
+
+    const res = await tab.post("/api/ai/settings", { ...kept, writerModel: "gpt-6.1-sol" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ai: { writerModel: "gpt-6.1-sol", keySet: true } });
+    expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
+  });
+
+  it("refuses every code after 5 wrong ones in 15 minutes, with 429", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const wrong = (await alice.totpCode()).replace(/\d/g, (digit) =>
+      String((Number(digit) + 1) % 10),
+    );
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i += 1) statuses.push((await save(tab, openai(), wrong)).status);
+    const refused = await save(tab, openai());
+
+    expect(statuses).toEqual([401, 401, 401, 401, 401]);
+    expect(refused.status).toBe(429);
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("refuses fields that cannot be sent as written, before it checks the code", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+
+    for (const body of [
+      openai({ provider: "gemini" }),
+      openai({ apiKey: "two words" }),
+      openai({ apiKey: "line\nbreak" }),
+      openai({ quickModel: "" }),
+      openai({ baseUrl: "ftp://files.example/v1" }),
+      openai({ baseUrl: "https://user:pass@proxy.example/v1" }),
+      openai({ baseUrl: "https://proxy.example/v1?key=x" }),
+      openai({ provider: "openai-compatible", baseUrl: null }),
+      openai({ gatewayToken: newAiKey() }),
+      openai({ baseUrl: "https://proxy.example/v1", gatewayToken: newAiKey() }),
+    ]) {
+      expect([body, (await save(tab, body, "000000")).status]).toEqual([body, 400]);
+    }
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("sends a key over plain http only to this computer or a private network", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const compatible = (baseUrl: string) =>
+      openai({ provider: "openai-compatible", baseUrl, apiKey: undefined });
+
+    for (const baseUrl of [
+      "http://api.example.com/v1",
+      "http://8.8.8.8/v1",
+      "http://[2001:db8::1]/v1",
+      "http://172.32.0.1/v1",
+      "http://ollama.example/v1",
+    ]) {
+      const res = await save(tab, compatible(baseUrl));
+      expect([baseUrl, res.status, await res.json()]).toEqual([
+        baseUrl,
+        400,
+        {
+          error:
+            "Use https:// for this base URL. http:// works only for this computer or a private network.",
+        },
+      ]);
+    }
+    expect(stub.calls).toEqual([]);
+
+    for (const baseUrl of [
+      "http://localhost:11434/v1",
+      "http://127.0.0.1:11434/v1",
+      "http://[::1]:11434/v1",
+      "http://10.0.0.5:11434/v1",
+      "http://172.16.0.5:11434/v1",
+      "http://192.168.1.20:11434/v1",
+      "http://[fd12::5]:11434/v1",
+      "http://ollama:11434/v1",
+      "http://ollama.local:11434/v1",
+      "http://host.docker.internal:11434/v1",
+      "https://api.example.com/v1",
+    ]) {
+      // Each change of base URL takes a fresh code.
+      vi.setSystemTime(Date.now() + TOTP_STEP_MS);
+      expect([baseUrl, (await save(tab, compatible(baseUrl))).status]).toEqual([baseUrl, 200]);
+    }
+  });
+
+  it("sends the gateway token only over https to Cloudflare AI Gateway", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const plain = GATEWAY.replace("https://", "http://");
+
+    const res = await save(tab, openai({ baseUrl: plain, gatewayToken: newAiKey() }));
+
+    expect(res.status).toBe(400);
+    expect(onGateway(plain)).toBe(false);
+    expect(onGateway(GATEWAY)).toBe(true);
+    expect(onGateway(GATEWAY.replace("https://", "wss://"))).toBe(false);
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("never calls a link-local address, such as a cloud metadata address, as written", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+
+    for (const baseUrl of [
+      "http://169.254.169.254/v1",
+      "https://169.254.169.254/v1",
+      "http://169.254.0.1:11434/v1",
+      // Other ways to write 169.254.169.254, which the URL parser turns into it.
+      "http://2852039166/v1",
+      "http://0xa9.0xfe.0xa9.0xfe/v1",
+      "http://169.254.169.254./v1",
+      "http://[fe80::1]/v1",
+      "https://[febf::1]/v1",
+      "http://[::ffff:169.254.169.254]/v1",
+      "https://[64:ff9b::169.254.169.254]/v1",
+      "http://[fd00:ec2::254]/v1",
+      "http://metadata.google.internal/v1",
+      "http://metadata/v1",
+    ]) {
+      const res = await save(
+        tab,
+        openai({ provider: "openai-compatible", baseUrl, apiKey: undefined }),
+      );
+      expect([baseUrl, res.status, await res.json()]).toEqual([
+        baseUrl,
+        400,
+        { error: "The app does not call a link-local address, such as a cloud metadata address." },
+      ]);
+    }
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("answers 409 and stores nothing when Remove AI provider comes during the check", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    await save(tab, openai());
+    const { apiKey: _key, ...kept } = openai();
+    stub.beforeAnswer = async () => {
+      stub.beforeAnswer = async () => {};
+      expect((await tab.post("/api/ai/remove", {})).status).toBe(200);
+    };
+
+    const res = await tab.post("/api/ai/settings", { ...kept, writerModel: "gpt-6.1-sol" });
+
+    expect(res.status).toBe(409);
+    expect(await shown(tab)).toBeNull();
+    expect(await models()).toBeUndefined();
+  });
+
+  it("asks for the key again, and takes a new one, when the stored key cannot be read", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const first = openai();
+    await save(tab, first);
+    await test.database.$client.execute("UPDATE ai_settings SET api_key = 'v1.not-a-ciphertext'");
+    const { apiKey: _key, ...kept } = first;
+
+    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
+    const again = await save(tab, kept);
+    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
+    const fresh = openai();
+    const replaced = await save(tab, fresh);
+
+    expect([again.status, await again.json()]).toEqual([400, { error: "Enter the API key." }]);
+    expect(replaced.status).toBe(200);
+    expect(stub.connections.at(-1)).toMatchObject({ apiKey: fresh.apiKey });
+  });
+
+  it("takes only a JSON body, and changes only from APP_URL's origin", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    const body = { ...openai(), code: await alice.totpCode() };
+
+    const text = await tab.send("POST", "/api/ai/settings", body, { "content-type": "text/plain" });
+    expect(text.status).toBe(415);
+    for (const origin of ["http://evil.example", `${APP_URL}.evil.example`, undefined]) {
+      expect((await tab.send("POST", "/api/ai/settings", body, { origin })).status).toBe(403);
+      expect((await tab.send("POST", "/api/ai/remove", {}, { origin })).status).toBe(403);
+    }
+    expect(stub.calls).toEqual([]);
+  });
+
+  it("removes the AI provider, so every use takes its no-AI path", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+    await save(tab, openai());
+    expect(await models()).toBeDefined();
+
+    const res = await tab.post("/api/ai/remove", {});
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ai: null });
+    expect(await shown(tab)).toBeNull();
+    expect(await models()).toBeUndefined();
+  });
+});

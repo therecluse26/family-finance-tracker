@@ -5,6 +5,7 @@ import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
+import { Ai } from "./pages/settings/Ai.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
 import { Household } from "./pages/settings/Household.tsx";
@@ -20,6 +21,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   "my-login": MyLogin,
   banks: Banks,
   "backups-and-data": BackupsAndData,
+  ai: Ai,
 };
 
 const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {

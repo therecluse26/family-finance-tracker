@@ -1,3 +1,4 @@
+import { aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
 import { type BankDataAdapter, plaidSettings, startBank } from "../bank/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
@@ -76,6 +77,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         database,
         secrets,
         plaid: plaidSettings({ database, secrets }),
+        ai: aiSettings({ database, secrets }),
       });
       return {
         port: server.port,

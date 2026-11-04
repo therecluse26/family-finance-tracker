@@ -1,0 +1,205 @@
+// The Household's AI provider, as Settings → AI sees it (spec 08, AI settings page). The API key
+// and the gateway token are never in it: only whether each is set. This file imports nothing, so
+// the web app's type check can follow it.
+
+export const AI_PROVIDERS = ["anthropic", "openai", "openrouter", "openai-compatible"] as const;
+
+export type AiProviderName = (typeof AI_PROVIDERS)[number];
+
+export const AI_PROVIDER_LABELS: Record<AiProviderName, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  "openai-compatible": "OpenAI-compatible endpoint",
+};
+
+// Spec 08, Model tiers.
+export type AiTier = "quick" | "writer";
+
+export type TierModels = Record<AiTier, string>;
+
+// Haiku 5.5 and Sonnet 5.5, and GPT-6 Luna and GPT-6.1 Terra, by each provider's published model
+// ID (plan call 13). OpenRouter serves the Anthropic pair under its own IDs. An OpenAI-compatible
+// endpoint has no defaults: the Member names both models. This is the one place the app names a
+// model; change the defaults here.
+export const DEFAULT_MODELS: Record<AiProviderName, TierModels | undefined> = {
+  anthropic: { quick: "claude-haiku-5-5", writer: "claude-sonnet-5-5" },
+  openai: { quick: "gpt-6-luna", writer: "gpt-6.1-terra" },
+  openrouter: { quick: "anthropic/claude-haiku-5.5", writer: "anthropic/claude-sonnet-5.5" },
+  "openai-compatible": undefined,
+};
+
+// Where the Member sets a monthly usage limit at the AI provider. The app does not check it.
+export const USAGE_LIMIT_LINKS: Record<AiProviderName, { label: string; url: string } | undefined> =
+  {
+    anthropic: {
+      label: "Anthropic workspace limit",
+      url: "https://platform.claude.com/settings/workspaces",
+    },
+    openai: {
+      label: "OpenAI project limit",
+      url: "https://platform.openai.com/settings/organization/projects",
+    },
+    openrouter: { label: "OpenRouter key limit", url: "https://openrouter.ai/settings/keys" },
+    "openai-compatible": undefined,
+  };
+
+// A base URL on this host is a Cloudflare AI Gateway.
+export const GATEWAY_HOST = "gateway.ai.cloudflare.com";
+
+// Only over https: the gateway token goes nowhere else.
+export function onGateway(baseUrl: string | null): boolean {
+  if (baseUrl === null) return false;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" && url.hostname === GATEWAY_HOST;
+  } catch {
+    return false;
+  }
+}
+
+// Why the app refuses a base URL. "link-local": the host is a link-local address, such as a cloud
+// metadata address, which can hand out the server's own credentials. "plain http": http:// to a
+// host that is not on this computer or a private network, so the key would cross the internet
+// unencrypted. http:// stays open for a local model server, such as Ollama.
+export type BaseUrlProblem = "link-local" | "plain http";
+
+// Judged on the host as written, with no DNS lookup. The URL parser has already turned other ways
+// of writing an IPv4 address, such as 2852039166, into a.b.c.d.
+export function baseUrlProblem(baseUrl: string): BaseUrlProblem | undefined {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return undefined;
+  }
+  const kind = hostKind(url.hostname);
+  if (kind === "link-local") return "link-local";
+  if (url.protocol === "http:" && kind !== "local") return "plain http";
+  return undefined;
+}
+
+type HostKind = "link-local" | "local" | "public";
+
+// Names of cloud metadata services, which answer on a link-local address.
+const METADATA_NAMES = new Set([
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog",
+  "instance-data",
+  "instance-data.ec2.internal",
+]);
+
+// Name endings kept for private networks: mDNS, ICANN's private-use .internal, and home networks.
+const PRIVATE_NAME_ENDINGS = [".localhost", ".local", ".internal", ".home.arpa"];
+
+function hostKind(hostname: string): HostKind {
+  const v6 = ipv6Of(hostname);
+  if (v6 !== undefined) return ipv6Kind(v6);
+  const v4 = ipv4Of(hostname);
+  if (v4 !== undefined) return ipv4Kind(v4);
+  const name = hostname.replace(/\.$/, "");
+  if (METADATA_NAMES.has(name)) return "link-local";
+  // A name with no dot, such as a Docker Compose service, resolves only on a private network.
+  if (name === "localhost" || !name.includes(".")) return "local";
+  return PRIVATE_NAME_ENDINGS.some((ending) => name.endsWith(ending)) ? "local" : "public";
+}
+
+function ipv4Of(host: string): number[] | undefined {
+  const parts = host.split(".");
+  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part))) return undefined;
+  return parts.map(Number);
+}
+
+function ipv4Kind([a = 0, b = 0]: number[]): HostKind {
+  if (a === 169 && b === 254) return "link-local";
+  const local =
+    a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return local ? "local" : "public";
+}
+
+// The eight 16-bit words of an IPv6 host, which the URL parser writes as [hex words with ::].
+function ipv6Of(host: string): number[] | undefined {
+  if (!host.startsWith("[") || !host.endsWith("]")) return undefined;
+  const halves = host.slice(1, -1).split("::");
+  if (halves.length > 2) return undefined;
+  const words = (text: string) =>
+    text === "" ? [] : text.split(":").map((word) => Number.parseInt(word, 16));
+  const front = words(halves[0] ?? "");
+  if (halves.length === 1) return front.length === 8 ? front : undefined;
+  const back = words(halves[1] ?? "");
+  return [...front, ...Array<number>(8 - front.length - back.length).fill(0), ...back];
+}
+
+// AWS's metadata service on IPv6.
+const AWS_METADATA_V6 = [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254];
+
+function ipv6Kind(words: number[]): HostKind {
+  const [first = 0, , , , , sixth = 0, seventh = 0, eighth = 0] = words;
+  const zeroUpTo = (count: number) => words.slice(0, count).every((word) => word === 0);
+  // An IPv4 address inside IPv6, ::ffff:a.b.c.d or the old ::a.b.c.d, is judged as that address.
+  const loopback = zeroUpTo(7) && eighth === 1;
+  // So is one behind NAT64's well-known prefix, 64:ff9b::a.b.c.d.
+  const nat64 = first === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((w) => w === 0);
+  if (nat64 || (zeroUpTo(5) && (sixth === 0xffff || (sixth === 0 && !zeroUpTo(7))))) {
+    return ipv4Kind([seventh >> 8, seventh & 0xff, eighth >> 8, eighth & 0xff]);
+  }
+  if (loopback) return "local";
+  if (words.every((word, index) => word === AWS_METADATA_V6[index])) return "link-local";
+  if ((first & 0xffc0) === 0xfe80) return "link-local";
+  if ((first & 0xfe00) === 0xfc00) return "local";
+  return "public";
+}
+
+// The status line. "cost cap" pauses AI until `until`, a calendar date written YYYY-MM-DD.
+export type AiStatus =
+  | { state: "on" }
+  | { state: "waits for history" }
+  | { state: "cost cap"; until: string }
+  | { state: "key rejected" };
+
+export type AiView = {
+  provider: AiProviderName;
+  keySet: boolean;
+  baseUrl: string | null;
+  gatewayTokenSet: boolean;
+  quickModel: string;
+  writerModel: string;
+  status: AiStatus;
+};
+
+// What a Member saves. An API key or gateway token left out keeps the one stored; a gateway token
+// of null removes it. A change of AI provider or base URL keeps neither, so a stored key never goes
+// to a host it was not entered for.
+export type AiSettingsInput = {
+  provider: AiProviderName;
+  apiKey?: string;
+  baseUrl: string | null;
+  gatewayToken?: string | null;
+  quickModel: string;
+  writerModel: string;
+};
+
+// What the one call to a model on save did.
+export type ModelCheck = "worked" | "key rejected" | "failed";
+
+export type AiSave =
+  | { saved: true; check: Record<AiTier, ModelCheck>; ai: AiView }
+  // The AI provider needs an API key, and none is given or kept.
+  | { saved: false; refusal: "key needed" }
+  // The stored gateway token cannot be read, and no new one is given.
+  | { saved: false; refusal: "token needed" }
+  // A Remove AI provider or another save changed the settings while this save checked them.
+  | { saved: false; refusal: "changed" }
+  // The change touches a secret or where it goes, so it needs a fresh TOTP or backup code.
+  | { saved: false; refusal: "code needed" };
+
+export type AiSettings = {
+  // Undefined when no AI provider is set up.
+  view(): Promise<AiView | undefined>;
+  // Checks both models with one call each, then saves. `freshCode` says the route has checked a
+  // fresh TOTP or backup code from the Member.
+  save(input: AiSettingsInput, options: { freshCode: boolean }): Promise<AiSave>;
+  // Deletes the AI provider and its key. Every use falls back to its no-AI path.
+  remove(): Promise<void>;
+};

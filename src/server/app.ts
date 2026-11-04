@@ -1,6 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import type { AiSettings } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
@@ -63,16 +64,17 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
   };
 }
 
-// Before the routes under /api/plaid/. No Plaid key or token is stored until the first-run
-// wizard's required steps are done (spec 12): until then, every route but a GET answers 409. They
-// take only JSON bodies, so a form on another site cannot post to them. An app made with no Plaid
-// settings answers 404.
-function plaidRoutes(
+// Before the routes under /api/plaid/ and /api/ai/, which store Master-key secrets. No Plaid key,
+// Plaid token, or AI key is stored until the first-run wizard's required steps are done (spec 12):
+// until then, every route but a GET answers 409. They take only JSON bodies, so a form on another
+// site cannot post to them. An app made without the service answers 404.
+function secretRoutes<Name extends "plaid" | "ai">(
   database: Database,
-  plaid: PlaidSettings | undefined,
+  name: Name,
+  service: ServerEnv["Variables"][Name] | undefined,
 ): MiddlewareHandler<ServerEnv> {
   return async (c, next) => {
-    if (plaid === undefined) return c.json({ error: "Not found" }, 404);
+    if (service === undefined) return c.json({ error: "Not found" }, 404);
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       if ((await readSetupState(database)).wizard) {
         return c.json({ error: "Finish the first-run wizard first." }, 409);
@@ -81,7 +83,7 @@ function plaidRoutes(
         return c.json({ error: "Send JSON." }, 415);
       }
     }
-    c.set("plaid", plaid);
+    c.set(name, service);
     await next();
   };
 }
@@ -116,7 +118,7 @@ export function createApp(
   auth: Auth,
   database: Database,
   secrets: Secrets,
-  services: { plaid?: PlaidSettings } = {},
+  services: { plaid?: PlaidSettings; ai?: AiSettings } = {},
 ) {
   const bank = bankViews(database);
   const masterKey = masterKeyRoutes(database, secrets);
@@ -146,7 +148,8 @@ export function createApp(
         await next();
       })
       .use("/api/*", masterKeyFirst)
-      .use("/api/plaid/*", plaidRoutes(database, services.plaid))
+      .use("/api/plaid/*", secretRoutes(database, "plaid", services.plaid))
+      .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .route("/api", api)
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
       .use(serveStatic({ root: webRoot }))

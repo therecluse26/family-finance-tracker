@@ -1,5 +1,13 @@
 // The db module's interface. Other modules import from here.
 export {
+  AI_SETTINGS_ROW,
+  readAiSettings,
+  readAiSettingsVersion,
+  removeAiSettings,
+  type StoredAiSettings,
+  storeAiSettings,
+} from "./ai-settings.ts";
+export {
   listDailyBalances,
   listPostedDayTotals,
   type StoredDailyBalance,

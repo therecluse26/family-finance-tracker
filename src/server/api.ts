@@ -1,5 +1,6 @@
 import { type Context, Hono } from "hono";
 import * as z from "zod";
+import { AI_PROVIDERS, baseUrlProblem, onGateway } from "../ai/ai-view.ts";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { HAND_SET_TYPES } from "../money-movement/types.ts";
@@ -111,6 +112,64 @@ const UNCONNECTED_REFUSED =
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
 
 const itemsUsedBody = z.object({ itemsUsed: z.number().int().min(0).max(PLAID_ITEM_LIMIT) });
+
+// An AI API key, gateway token, or model ID: visible ASCII with no spaces, so it fits in a header
+// and a JSON body as written.
+const VISIBLE_ASCII = /^[\x21-\x7e]+$/;
+const aiSecret = z.string().trim().min(1).max(512).regex(VISIBLE_ASCII);
+const modelId = z.string().trim().min(1).max(200).regex(VISIBLE_ASCII);
+
+// Changing the API key, the gateway token, the AI provider, or the base URL takes a fresh TOTP or
+// backup code, checked when `code` is given. An API key or gateway token left out keeps the one
+// stored.
+const aiSettingsBody = z.object({
+  provider: z.enum(AI_PROVIDERS),
+  apiKey: aiSecret.optional(),
+  baseUrl: z.string().trim().max(2048).nullable(),
+  gatewayToken: aiSecret.nullable().optional(),
+  quickModel: modelId,
+  writerModel: modelId,
+  code: z.string().trim().min(1).max(64).optional(),
+});
+
+// A base URL as the AI SDK takes it: http or https, with no login, query, or fragment, and no
+// trailing slash. Empty is none. Undefined when it is not such a URL.
+function aiBaseUrl(text: string | null): string | null | undefined {
+  if (text === null || text === "") return null;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return undefined;
+  }
+  const plain =
+    (url.protocol === "https:" || url.protocol === "http:") &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === "";
+  return plain ? url.href.replace(/\/+$/, "") : undefined;
+}
+
+const BASE_URL_REFUSALS = {
+  "link-local": "The app does not call a link-local address, such as a cloud metadata address.",
+  "plain http":
+    "Use https:// for this base URL. http:// works only for this computer or a private network.",
+} as const;
+
+// The answer to each save refusal.
+const SAVE_REFUSALS = {
+  "key needed": { status: 400, error: "Enter the API key." },
+  "token needed": { status: 400, error: "Enter the gateway token." },
+  "code needed": {
+    status: 400,
+    error: "Enter a code from your authenticator app, or a backup code.",
+  },
+  changed: {
+    status: 409,
+    error: "The AI settings changed while the app checked them. Check and save again.",
+  },
+} as const;
 
 // The body as JSON, or undefined when it is not JSON.
 async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
@@ -302,6 +361,44 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "That is not a choice for this item." }, 400);
     }
     return c.json({ answered: true }, 200);
+  })
+  // The API key and the gateway token are never in an answer: only whether each is set.
+  .get("/ai/settings", async (c) => c.json({ ai: (await c.var.ai.view()) ?? null }))
+  .post("/ai/settings", async (c) => {
+    const body = aiSettingsBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Check the AI provider's fields." }, 400);
+    const { code, ...fields } = body.data;
+    const baseUrl = aiBaseUrl(fields.baseUrl);
+    if (baseUrl === undefined) {
+      return c.json({ error: "Enter the base URL as an http or https address." }, 400);
+    }
+    if (fields.provider === "openai-compatible" && baseUrl === null) {
+      return c.json({ error: "An OpenAI-compatible endpoint needs a base URL." }, 400);
+    }
+    const problem = baseUrl === null ? undefined : baseUrlProblem(baseUrl);
+    if (problem !== undefined) return c.json({ error: BASE_URL_REFUSALS[problem] }, 400);
+    if (typeof fields.gatewayToken === "string" && !onGateway(baseUrl)) {
+      return c.json({ error: "A gateway token needs a Cloudflare AI Gateway base URL." }, 400);
+    }
+    let freshCode = false;
+    if (code !== undefined) {
+      const fresh = await c.var.checkFreshCode(code);
+      if (fresh === "too many tries") {
+        return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+      }
+      if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+      freshCode = true;
+    }
+    const saved = await c.var.ai.save({ ...fields, baseUrl }, { freshCode });
+    if (!saved.saved) {
+      const { status, error } = SAVE_REFUSALS[saved.refusal];
+      return c.json({ error }, status);
+    }
+    return c.json({ check: saved.check, ai: saved.ai });
+  })
+  .post("/ai/remove", async (c) => {
+    await c.var.ai.remove();
+    return c.json({ ai: null });
   });
 
 export type Api = typeof api;

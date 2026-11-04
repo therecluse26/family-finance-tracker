@@ -113,6 +113,13 @@
       "when": 1793727394404,
       "tag": "0015_transaction_types",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1793801395836,
+      "tag": "0016_ai_settings",
+      "breakpoints": true
     }
   ]
 }

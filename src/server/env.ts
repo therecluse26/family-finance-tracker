@@ -1,3 +1,4 @@
+import type { AiSettings } from "../ai/ai-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
@@ -34,5 +35,7 @@ export type ServerEnv = {
     household: HouseholdRoutes;
     // Transaction types and totals by type.
     moneyMovement: MoneyMovementRoutes;
+    // The Household's AI provider, for the routes under /api/ai/.
+    ai: AiSettings;
   };
 };
