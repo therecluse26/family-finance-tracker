@@ -229,6 +229,12 @@ export const api = new Hono<ServerEnv>()
     if (query === undefined) return c.json({ error: "Write dates as YYYY-MM-DD." }, 400);
     return c.json({ transactions: await c.var.bank.transactions(query) });
   })
+  // One Transaction, with its type and its Transfer link's evidence (spec 03, Evidence).
+  .get("/transactions/:id", async (c) => {
+    const detail = await c.var.moneyMovement.transaction(c.req.param("id"));
+    if (detail === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json(detail);
+  })
   // A Member sets a Transaction's type by hand (spec 03, Transaction types). It wins over every
   // rule and survives every re-run.
   .put("/transactions/:id/type", async (c) => {

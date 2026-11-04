@@ -58,22 +58,54 @@ export {
 } from "./client.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
 export {
+  type CategoryConfidence,
+  type CategoryRecord,
+  type CategorySource,
   type DecisionRecord,
+  listMerchantHistory,
   listPostedParts,
   listProvisionalPassed,
+  type MerchantHistoryRow,
+  type NewPart,
+  type PartCategory,
   type PartType,
+  readCategoryRecords,
   readDecision,
   readDecisionRecords,
+  readPendingParts,
   removeDecisions,
   type StoredDecision,
+  type StoredPart,
   storeDecisions,
+  storePartCategories,
 } from "./decisions.ts";
-export { listUnhandledTransactions, markTransactionsHandled } from "./follow-up.ts";
+export {
+  listUnhandledTransactions,
+  markTransactionsHandled,
+  markTransactionsUnhandled,
+} from "./follow-up.ts";
 export {
   readHouseholdFacts,
   type StoredHouseholdFacts,
   storeHouseholdFacts,
 } from "./household-facts.ts";
+export {
+  linkTransferByHand,
+  listRefusedTransferLinks,
+  listTransferCandidates,
+  listTransferLinkDates,
+  listTransferLinksOf,
+  listUnlinkedTransferDecisions,
+  type NewTransferLink,
+  readTransferLink,
+  refuseTransferLink,
+  type StoredTransferLink,
+  saveTransferLinks,
+  type TransferCandidate,
+  type TransferCandidateFilter,
+  type TransferLinkMaker,
+  type TransferPair,
+} from "./links.ts";
 export { loginTables } from "./login-tables.ts";
 export {
   type MasterKeyCheck,

@@ -1,12 +1,20 @@
 // The money-movement module's interface (spec 03, Money movement). Other modules import from here.
+
+export { addBusinessDays, federalReserveHolidays, isBusinessDay } from "./business-days.ts";
 export {
+  type DecidedAgain,
   decideProvisionalAgain,
+  PAIR_GUESS_KIND,
   ProvisionalResultsJob,
   readTransactionDecision,
+  readTransactionDetail,
+  registerDecidedAgain,
   runMatching,
   setTransactionType,
   startMoneyMovement,
   type TransactionDecision,
+  type TransferLinkEvidence,
+  UNCLEAR_PAIR_KIND,
 } from "./matching.ts";
 export {
   DECISION_STEPS,
@@ -19,6 +27,14 @@ export {
   whole,
 } from "./order.ts";
 export { type MonthTotals, monthOf, totalsByMonth } from "./totals.ts";
+export {
+  isCardReward,
+  registerUnclearPairJudge,
+  TRANSFER_SIGNALS,
+  type TransferSignal,
+  type UnclearPairAnswer,
+  type UnclearPairJudge,
+} from "./transfers.ts";
 export {
   HAND_SET_TYPES,
   type HandSetType,

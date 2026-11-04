@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import type { Database } from "./client.ts";
+import { aliasedTable, and, asc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import type { Database, Queries } from "./client.ts";
+import { type TransferLinkMaker, transferLinkMaker } from "./links.ts";
 import { transactionDecisions, transactionParts, transactions } from "./schema.ts";
 
 // Each Transaction's type and parts (spec 03, Order of decisions). The money-movement module
@@ -11,12 +12,22 @@ const IDS_PER_QUERY = 500;
 export type StoredPart = typeof transactionParts.$inferSelect;
 export type PartType = StoredPart["type"];
 
+export type CategorySource = NonNullable<StoredPart["categorySource"]>;
+export type CategoryConfidence = NonNullable<StoredPart["categoryConfidence"]>;
+
+// A part as a decision stores it. The categorization step fills the Category's provenance later,
+// unless the part carries it over from the pending Transaction it replaces.
+export type NewPart = Pick<StoredPart, "type" | "amount" | "category"> &
+  Partial<
+    Pick<StoredPart, "keepsCategory" | "categorySource" | "categoryConfidence" | "categoryNeedsAi">
+  >;
+
 export type StoredDecision = {
   transactionId: string;
   step: string;
   provisionalUntil: string | null;
   decidedAt: Date;
-  parts: { type: PartType; amount: number; category: string | null }[];
+  parts: NewPart[];
 };
 
 // What the order of decisions reads of a Transaction.
@@ -32,10 +43,9 @@ export type DecisionRecord = {
   merchantCleanName: string | null;
   providerCategory: string | null;
   handSet: Record<string, unknown>;
+  // Who made the Transfer link that uses it, or null when it has none.
+  transferLink: TransferLinkMaker | null;
   hidden: boolean;
-  // Whether Matching has decided it, and the sum of its parts when it has.
-  decided: boolean;
-  decidedAmount: number | null;
 };
 
 function chunks<T>(items: readonly T[]): T[][] {
@@ -66,18 +76,13 @@ export async function readDecisionRecords(
         merchantCleanName: transactions.merchantCleanName,
         providerCategory: transactions.providerCategory,
         handSet: transactions.handSet,
+        transferLink: transferLinkMaker,
         hiddenReason: transactions.hiddenReason,
-        decidedAt: transactionDecisions.decidedAt,
-        decidedAmount: sql<number | null>`(
-          SELECT sum(${transactionParts.amount}) FROM ${transactionParts}
-          WHERE ${transactionParts.transactionId} = ${transactions.id}
-        )`,
       })
       .from(transactions)
-      .leftJoin(transactionDecisions, eq(transactionDecisions.transactionId, transactions.id))
       .where(inArray(transactions.id, chunk));
-    for (const { hiddenReason, decidedAt, ...row } of rows) {
-      found.set(row.id, { ...row, hidden: hiddenReason !== null, decided: decidedAt !== null });
+    for (const { hiddenReason, ...row } of rows) {
+      found.set(row.id, { ...row, hidden: hiddenReason !== null });
     }
   }
   return ids.flatMap((id) => found.get(id) ?? []);
@@ -159,4 +164,150 @@ export async function listPostedParts(database: Database) {
     .from(transactionParts)
     .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))
     .where(and(eq(transactions.pending, false), isNull(transactions.hiddenReason)));
+}
+
+// The parts of the pending Transaction that each posted one replaces, with their Categories' provenance,
+// by the posted Transaction's ID (spec 03, Pending Transactions). Read before Matching removes the
+// hidden pending Transaction's result.
+export async function readPendingParts(
+  database: Database,
+  postedIds: readonly string[],
+): Promise<Map<string, StoredPart[]>> {
+  const pending = aliasedTable(transactions, "pending");
+  const found = new Map<string, StoredPart[]>();
+  for (const chunk of chunks(postedIds)) {
+    const rows = await database
+      .select({ postedId: transactions.id, part: transactionParts })
+      .from(transactions)
+      .innerJoin(
+        pending,
+        and(
+          eq(pending.connectionId, transactions.connectionId),
+          eq(pending.providerTransactionId, transactions.pendingTransactionId),
+        ),
+      )
+      .innerJoin(transactionParts, eq(transactionParts.transactionId, pending.id))
+      .where(and(inArray(transactions.id, chunk), isNotNull(transactions.pendingTransactionId)))
+      .orderBy(asc(transactionParts.part));
+    for (const { postedId, part } of rows) {
+      found.set(postedId, [...(found.get(postedId) ?? []), part]);
+    }
+  }
+  return found;
+}
+
+// What the categorization cascade reads of a Transaction, with its parts.
+export type CategoryRecord = {
+  id: string;
+  postedDate: string;
+  hidden: boolean;
+  merchantId: string | null;
+  merchantCleanName: string | null;
+  providerCategory: string | null;
+  providerCategoryConfidence: string | null;
+  handSet: Record<string, unknown>;
+  parts: Pick<StoredPart, "part" | "type" | "category" | "keepsCategory" | "categorySource">[];
+};
+
+// The Transactions with these IDs, in the order given. An unknown ID is left out.
+export async function readCategoryRecords(
+  database: Queries,
+  ids: readonly string[],
+): Promise<CategoryRecord[]> {
+  const found = new Map<string, CategoryRecord>();
+  for (const chunk of chunks(ids)) {
+    const rows = await database
+      .select({
+        id: transactions.id,
+        postedDate: transactions.postedDate,
+        hiddenReason: transactions.hiddenReason,
+        merchantId: transactions.merchantId,
+        merchantCleanName: transactions.merchantCleanName,
+        providerCategory: transactions.providerCategory,
+        providerCategoryConfidence: transactions.providerCategoryConfidence,
+        handSet: transactions.handSet,
+        part: {
+          part: transactionParts.part,
+          type: transactionParts.type,
+          category: transactionParts.category,
+          keepsCategory: transactionParts.keepsCategory,
+          categorySource: transactionParts.categorySource,
+        },
+      })
+      .from(transactions)
+      .leftJoin(transactionParts, eq(transactionParts.transactionId, transactions.id))
+      .where(inArray(transactions.id, chunk))
+      .orderBy(asc(transactionParts.part));
+    for (const { hiddenReason, part, ...row } of rows) {
+      const record = found.get(row.id) ?? { ...row, hidden: hiddenReason !== null, parts: [] };
+      if (part !== null) record.parts.push(part);
+      found.set(row.id, record);
+    }
+  }
+  return ids.flatMap((id) => found.get(id) ?? []);
+}
+
+// One Spending Transaction in a Merchant's history: its first Spending part's Category and how
+// that Category was chosen. Loan payment parts are left out.
+export type MerchantHistoryRow = {
+  id: string;
+  postedDate: string;
+  merchantId: string | null;
+  merchantCleanName: string;
+  category: string;
+  categorySource: CategorySource | null;
+};
+
+// Every shown Spending Transaction with a Merchant and a Category, oldest first.
+export async function listMerchantHistory(database: Queries): Promise<MerchantHistoryRow[]> {
+  const rows = await database
+    .select({
+      id: transactions.id,
+      postedDate: transactions.postedDate,
+      merchantId: transactions.merchantId,
+      merchantCleanName: sql<string>`${transactions.merchantCleanName}`,
+      category: sql<string>`${transactionParts.category}`,
+      categorySource: transactionParts.categorySource,
+    })
+    .from(transactionParts)
+    .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))
+    .where(
+      and(
+        eq(transactionParts.type, "Spending"),
+        isNotNull(transactionParts.category),
+        eq(transactionParts.keepsCategory, false),
+        isNull(transactions.hiddenReason),
+        isNotNull(transactions.merchantCleanName),
+      ),
+    )
+    .orderBy(asc(transactions.postedDate), asc(transactions.id), asc(transactionParts.part));
+  // A Transaction with several Spending parts counts once, with its first.
+  return rows.filter((row, index) => index === 0 || rows[index - 1]?.id !== row.id);
+}
+
+export type PartCategory = {
+  transactionId: string;
+  part: number;
+  category: string;
+  categorySource: CategorySource;
+  categoryConfidence: CategoryConfidence;
+  categoryNeedsAi: boolean;
+};
+
+// Saves the Category the categorization step chose for each part.
+export async function storePartCategories(
+  database: Queries,
+  choices: readonly PartCategory[],
+): Promise<void> {
+  if (choices.length === 0) return;
+  await database.transaction(async (tx) => {
+    for (const { transactionId, part, ...choice } of choices) {
+      await tx
+        .update(transactionParts)
+        .set(choice)
+        .where(
+          and(eq(transactionParts.transactionId, transactionId), eq(transactionParts.part, part)),
+        );
+    }
+  });
 }

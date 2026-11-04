@@ -77,14 +77,19 @@ describe("money movement", () => {
       expect(await count("SELECT count(*) AS n FROM transaction_decisions")).toBe(
         await count(`SELECT count(*) AS n ${shown}`),
       );
+      // Except the Transfer pairs that step 3 links.
+      const linked = `EXISTS (SELECT 1 FROM transfer_links l
+        WHERE t.id IN (l.out_transaction_id, l.in_transaction_id))`;
       expect(
         await count(
           `SELECT count(*) AS n FROM transaction_decisions d JOIN transactions t ON t.id = d.transaction_id
            JOIN transaction_parts p ON p.transaction_id = d.transaction_id
-           WHERE (t.amount <= 0 AND d.step = '5.7' AND p.type = 'Spending')
-              OR (t.amount > 0 AND d.step = '6.9' AND p.type = 'Income')`,
+           WHERE (t.amount <= 0 AND d.step = '5.7' AND p.type = 'Spending' AND NOT ${linked})
+              OR (t.amount > 0 AND d.step = '6.9' AND p.type = 'Income' AND NOT ${linked})
+              OR (d.step = '3' AND p.type = 'Transfer' AND ${linked})`,
         ),
       ).toBe(await count(`SELECT count(*) AS n ${shown}`));
+      expect(await count("SELECT count(*) AS n FROM transfer_links")).toBeGreaterThan(0);
       // One part each, for the whole amount.
       expect(
         await count(
@@ -108,10 +113,10 @@ describe("money movement", () => {
       expect(
         await count("SELECT count(*) AS n FROM transaction_decisions WHERE step = '5.3'"),
       ).toBeGreaterThan(0);
-      // Steps 5.x never see money in.
+      // Steps 5.x never see money in. Paired Transfers stop at step 3.
       expect(
         await count(
-          "SELECT count(*) AS n FROM transaction_decisions d JOIN transactions t ON t.id = d.transaction_id WHERE t.amount > 0 AND d.step <> '6.9'",
+          "SELECT count(*) AS n FROM transaction_decisions d JOIN transactions t ON t.id = d.transaction_id WHERE t.amount > 0 AND d.step NOT IN ('3', '6.9')",
         ),
       ).toBe(0);
       expect(() => register("5.7", (txn) => whole(txn, "Income"))).toThrow(/already has a rule/);
@@ -130,6 +135,11 @@ describe("money movement", () => {
         provisionalUntil: null,
         parts: [{ type: "Transfer", amount: dinner.amount, category: null }],
       });
+      // The follow-up job stores it, so Matching never runs beside a sync.
+      expect(await decisionOf(dinner.id)).toMatchObject({ step: "5.7" });
+      expect(bank.followUpsAsked()).toBe(1);
+      await runFollowUp(NOW);
+      expect(await decisionOf(dinner.id)).toEqual(set);
 
       // A rule that would claim it, and a sync that changes its description and then its amount.
       register("5.6", (txn) => whole(txn, "Saving"));
@@ -290,6 +300,7 @@ describe("money movement", () => {
       await syncConnection(connectionId, () => new Date("2026-10-02T15:00:00Z"));
       await runFollowUp(() => new Date("2026-10-02T15:00:00Z"));
       await setTransactionType(bank.database, await idOf("move"), "Transfer");
+      await runFollowUp(() => new Date("2026-10-02T15:00:00Z"));
 
       const totals = await totalsByMonth(bank.database);
 

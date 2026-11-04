@@ -1,8 +1,9 @@
 import { aiCost, aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
 import { type BankDataAdapter, catchUpSyncs, plaidSettings, startBank } from "../bank/index.ts";
+import { startCategorization } from "../categorization/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
-import { startFollowUpPipeline } from "../follow-up/index.ts";
+import { requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
@@ -52,9 +53,11 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const timeZone = () => householdTimeZone(database);
     const notify = startNotify({ database });
     const bank = startBank({ database, secrets, adapters: options.bankAdapters ?? [], timeZone });
-    const followUp = startFollowUpPipeline({ database });
+    const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });
     const moneyMovement = startMoneyMovement({ database });
+    const categorization = startCategorization({ database });
     const stopModules = () => {
+      categorization.stop();
       moneyMovement.stop();
       followUp.stop();
       bank.stop();

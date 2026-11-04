@@ -496,6 +496,8 @@ export const transactions = sqliteTable(
       table.providerTransactionId,
     ),
     index("transactions_account_posted_date").on(table.accountId, table.postedDate),
+    // Transfer pairing reads the Transactions of one amount around some dates.
+    index("transactions_amount_posted_date").on(table.amount, table.postedDate),
   ],
 );
 
@@ -564,6 +566,61 @@ export const unconnectedAssignments = sqliteTable(
   (table) => [index("unconnected_assignments_account_id").on(table.accountId)],
 );
 
+// Transfer pairs between two of the Household's Accounts, with their evidence (spec 03, Links,
+// Evidence, Transfers). Each Transaction joins at most one pair. A pair ends when either
+// Transaction is deleted.
+export const transferLinks = sqliteTable(
+  "transfer_links",
+  {
+    id: text("id").primaryKey(),
+    // The side that takes money out, and the side that brings it in.
+    outTransactionId: text("out_transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    inTransactionId: text("in_transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    // Strong when at least one strong signal matched, else Unclear.
+    tier: text("tier", { enum: ["Strong", "Unclear"] }).notNull(),
+    // Each strong signal that matched, as JSON.
+    signals: text("signals", { mode: "json" }).$type<string[]>().notNull(),
+    // The AI's answer and confidence, when the app asked it.
+    aiAnswer: text("ai_answer", { enum: ["yes", "no"] }),
+    aiConfidence: text("ai_confidence", { enum: ["high", "medium", "low"] }),
+    // Who made the link. Re-matching changes only the app's links.
+    madeBy: text("made_by", { enum: ["app", "AI", "Member"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    // True when the app picked it from two equally good sets of pairs.
+    uncertain: integer("uncertain", { mode: "boolean" }).notNull().default(false),
+    createdAt: moment("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("transfer_links_out_transaction_id").on(table.outTransactionId),
+    uniqueIndex("transfer_links_in_transaction_id").on(table.inTransactionId),
+  ],
+);
+
+// Transfer pairs that a Member undid, or the AI rejected with high confidence. The app never makes
+// them again (spec 03, Undo and hand links, Global pairing).
+export const refusedTransferLinks = sqliteTable(
+  "refused_transfer_links",
+  {
+    outTransactionId: text("out_transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    inTransactionId: text("in_transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    refusedBy: text("refused_by", { enum: ["AI", "Member"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    refusedAt: moment("refused_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.outTransactionId, table.inTransactionId] }),
+    index("refused_transfer_links_in_transaction_id").on(table.inTransactionId),
+  ],
+);
+
 // Each Transaction's type, as the order of decisions last decided it (spec 03, Order of
 // decisions). Its parts are in transaction_parts. A hidden Transaction has none.
 export const transactionDecisions = sqliteTable(
@@ -596,8 +653,30 @@ export const transactionParts = sqliteTable(
     // The Transaction's sign: money into the Account is positive.
     amount: cents("amount").notNull(),
     // Null until the categorization step picks one, and always null for Transfers, Income, and
-    // Saving.
+    // Saving. A Money movement rule may name it, such as Cash.
     category: text("category"),
+    // True for a part of a tracked loan payment: it keeps Money movement's Category, and only a
+    // hand edit changes it (spec 04, Categories that Money movement names).
+    keepsCategory: integer("keeps_category", { mode: "boolean" }).notNull().default(false),
+    // The step of the categorization cascade that chose the Category, and its confidence (spec 04,
+    // Provenance). Null until the categorization step has handled the part.
+    categorySource: text("category_source", {
+      enum: [
+        "hand-set",
+        "Category rule",
+        "provider",
+        "Merchant history",
+        "AI",
+        "best guess",
+        "money movement",
+      ],
+    }),
+    categoryConfidence: text("category_confidence", {
+      enum: ["certain", "very high", "high", "medium", "low"],
+    }),
+    // Set when a no-AI path chose the Category, so the AI decides it once AI is back (spec 03, AI
+    // decisions and the no-AI path).
+    categoryNeedsAi: integer("category_needs_ai", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [primaryKey({ columns: [table.transactionId, table.part] })],
 );

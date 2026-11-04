@@ -1,4 +1,10 @@
-import { type Database, listUnhandledTransactions, markTransactionsHandled } from "../db/index.ts";
+import {
+  type Database,
+  listUnhandledTransactions,
+  markTransactionsHandled,
+  markTransactionsUnhandled,
+  type Queries,
+} from "../db/index.ts";
 import { log } from "../log.ts";
 
 // The follow-up pipeline (spec 10, The follow-up pipeline; spec 02, After a sync). A sync that
@@ -37,18 +43,36 @@ export function registerFollowUpStep(name: FollowUpStepName, step: FollowUpStep)
   };
 }
 
-let services: { database: Database } | undefined;
+let services: { database: Database; startJob: () => Promise<unknown> } | undefined;
 
-// Gives the follow-up pipeline app.db. The start calls it before jobs run.
-export function startFollowUpPipeline(options: { database: Database }): { stop(): void } {
+// Gives the follow-up pipeline app.db, and the way to start a follow-up job: requestFollowUp in the
+// app. The start calls it before jobs run.
+export function startFollowUpPipeline(options: {
+  database: Database;
+  startJob: () => Promise<unknown>;
+}): { stop(): void } {
   if (services !== undefined) throw new Error("The follow-up pipeline is already running.");
-  const started = { database: options.database };
+  const started = { database: options.database, startJob: options.startJob };
   services = started;
   return {
     stop() {
       if (services === started) services = undefined;
     },
   };
+}
+
+// A Member's answer or edit changed these Transactions: every step handles them again, as after a
+// sync that changes them. Writes only through `database`, so it may run inside the change's
+// transaction. Call askForFollowUp after it commits.
+export function followUpAgain(database: Queries, transactionIds: readonly string[]): Promise<void> {
+  return markTransactionsUnhandled(database, transactionIds);
+}
+
+// Starts a follow-up job, unless one already waits. Jobs run one at a time, so the steps never run
+// beside a sync or another follow-up job.
+export async function askForFollowUp(): Promise<void> {
+  if (services === undefined) throw new Error("The follow-up pipeline is not running.");
+  await services.startJob();
 }
 
 // The result of one follow-up run: when the next one must start, if a step stopped the run.

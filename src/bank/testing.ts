@@ -25,6 +25,9 @@ export type TestBank = {
   fake: FakeBankAdapter;
   // A new Connection to a fake bank, with no sync yet.
   connect(bankId: string, bankName?: string): Promise<string>;
+  // How many times the app asked for a follow-up job outside a sync. No job runs: a test calls
+  // runFollowUp itself.
+  followUpsAsked(): number;
   close(): void;
 };
 
@@ -40,7 +43,13 @@ export async function newTestBank(options: { timeZone?: string } = {}): Promise<
     timeZone: async () => options.timeZone,
   });
   const notify = startNotify({ database: db.database });
-  const followUp = startFollowUpPipeline({ database: db.database });
+  let asked = 0;
+  const followUp = startFollowUpPipeline({
+    database: db.database,
+    startJob: async () => {
+      asked += 1;
+    },
+  });
   return {
     database: db.database,
     secrets,
@@ -53,6 +62,7 @@ export async function newTestBank(options: { timeZone?: string } = {}): Promise<
         origin: "linked",
         syncMinute: 7,
       }),
+    followUpsAsked: () => asked,
     close() {
       followUp.stop();
       notify.stop();

@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
-import type { Database } from "./client.ts";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import type { Database, Queries } from "./client.ts";
 import { followUpMarks, transactions } from "./schema.ts";
 
 // Each follow-up step's handled marks (spec 10, The follow-up pipeline). The follow-up module
@@ -37,5 +37,17 @@ export async function markTransactionsHandled(
       .insert(followUpMarks)
       .values(chunk.map((transactionId) => ({ step, transactionId, handledAt: at })))
       .onConflictDoNothing();
+  }
+}
+
+// Makes these Transactions unhandled for every step again, as a sync that changes them does. Writes
+// only through `database`, so it may run inside a Review list answer's transaction.
+export async function markTransactionsUnhandled(
+  database: Queries,
+  transactionIds: readonly string[],
+): Promise<void> {
+  for (let start = 0; start < transactionIds.length; start += MARKS_PER_INSERT) {
+    const chunk = transactionIds.slice(start, start + MARKS_PER_INSERT);
+    await database.delete(followUpMarks).where(inArray(followUpMarks.transactionId, chunk));
   }
 }

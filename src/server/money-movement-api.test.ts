@@ -6,15 +6,19 @@ import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
 import { addConnection, markSetupStep } from "../db/index.ts";
-import { startFollowUpPipeline } from "../follow-up/index.ts";
+import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { runMatching, startMoneyMovement } from "../money-movement/index.ts";
 import { createApp } from "./app.ts";
-import type { MonthTotalsView, TransactionDecisionView } from "./money-movement-views.ts";
+import type {
+  MonthTotalsView,
+  TransactionDecisionView,
+  TransactionDetailView,
+} from "./money-movement-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
-// The hand-set type and totals routes, through the app's HTTP interface, on Transactions the fake
+// The Transaction, hand-set type, and totals routes, through the app's HTTP interface, on Transactions the fake
 // adapter synced.
 
 const APP_URL = "http://nas.local:8080";
@@ -52,7 +56,8 @@ describe("the money-movement routes", () => {
     const fake = new FakeBankAdapter();
     stops = [
       startBank({ database: test.database, secrets: test.secrets, adapters: [fake] }).stop,
-      startFollowUpPipeline({ database: test.database }).stop,
+      // The follow-up job runs at once.
+      startFollowUpPipeline({ database: test.database, startJob: () => runFollowUp() }).stop,
       startMoneyMovement({ database: test.database }).stop,
     ];
     const member = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
@@ -61,12 +66,21 @@ describe("the money-movement routes", () => {
     await browser.signIn(member);
 
     const checking = fakeAccount({ id: "acc-checking", name: "Everyday Checking" });
+    const savings = fakeAccount({ id: "acc-savings", subtype: "savings", mask: "2222" });
     fake.addPages(BANK, {
-      accounts: [checking],
+      accounts: [checking, savings],
       added: [
         fakeTxn({ id: "pay", accountId: checking.id, amount: 320_000, postedDate: "2026-10-01" }),
         fakeTxn({ id: "rent", accountId: checking.id, amount: -150_000, postedDate: "2026-10-02" }),
         fakeTxn({ id: "gone", accountId: checking.id, amount: -999, postedDate: "2026-10-04" }),
+        fakeTxn({
+          id: "save-out",
+          accountId: checking.id,
+          amount: -50_000,
+          postedDate: "2026-10-03",
+          description: "TRANSFER TO SAVINGS 2222",
+        }),
+        fakeTxn({ id: "save-in", accountId: savings.id, amount: 50_000, postedDate: "2026-10-03" }),
       ],
     });
     fake.addPages(BANK, { removed: [{ id: "gone" }], historyLoaded: true });
@@ -147,7 +161,52 @@ describe("the money-movement routes", () => {
     ]);
   });
 
+  it("returns a Transaction with its type and its Transfer link's evidence", async () => {
+    const res = await browser.get(`/api/transactions/${ids.get("save-in")}`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      transaction: {
+        id: ids.get("save-in") ?? "",
+        accountId: expect.any(String),
+        amount: 50_000,
+        postedDate: "2026-10-03",
+        authorizedDate: null,
+        pending: false,
+        description: "FAKE save-in",
+        merchantName: null,
+      },
+      decision: {
+        step: "3",
+        provisionalUntil: null,
+        parts: [{ type: "Transfer", amount: 50_000, category: null }],
+      },
+      transferLink: {
+        otherTransactionId: ids.get("save-out") ?? "",
+        tier: "Strong",
+        signals: ["last 4 digits"],
+        aiAnswer: null,
+        aiConfidence: null,
+        madeBy: "app",
+        uncertain: false,
+      },
+    } satisfies TransactionDetailView);
+    const rent = (await (
+      await browser.get(`/api/transactions/${ids.get("rent")}`)
+    ).json()) as TransactionDetailView;
+    expect(rent.transferLink).toBeNull();
+    expect((await browser.get(`/api/transactions/${ids.get("gone")}`)).status).toBe(404);
+    expect((await browser.get("/api/transactions/no-such-id")).status).toBe(404);
+  });
+
   it("answers no one who is signed out", async () => {
+    expect(
+      (
+        await new TestBrowser(app, APP_URL, "192.168.1.21").get(
+          `/api/transactions/${ids.get("rent")}`,
+        )
+      ).status,
+    ).toBe(401);
     const stranger = new TestBrowser(app, APP_URL, "192.168.1.21");
 
     expect((await stranger.get("/api/totals")).status).toBe(401);

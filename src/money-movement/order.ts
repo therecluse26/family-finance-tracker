@@ -4,9 +4,9 @@ import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.
 
 // The order of decisions (spec 03, Order of decisions): each Transaction's type comes from an
 // ordered list of steps, and the first step that fits wins. Steps 1 to 4 apply to every
-// Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. This ticket fills
-// steps 1, 5.7, and 6.9; later tickets register their rules in the other steps. An empty step is
-// skipped.
+// Transaction, steps 5.1 to 5.7 to money out, and steps 6.1 to 6.9 to money in. Steps 1, 2, 3,
+// 5.7, and 6.9 are built in; later tickets register their rules in the other steps. An empty step
+// is skipped.
 
 export const DECISION_STEPS = [
   { step: "1", name: "a type a Member set by hand" },
@@ -34,9 +34,17 @@ export const DECISION_STEPS = [
 export type DecisionStep = (typeof DECISION_STEPS)[number]["step"];
 
 // One part of a Transaction. Amounts have the Transaction's sign: money into the Account is
-// positive. Only Spending, Refunds, and Reimbursements have a Category, and a Spending part has
-// none until the categorization step picks one.
-export type Part = { type: TransactionType; amount: number; category: Category | null };
+// positive. Only Spending, Refunds, and Reimbursements have a Category. A Spending part has none
+// until the categorization step picks one, unless a Money movement rule names it, such as Cash; a
+// hand-set Category or a Category rule still wins over a named one. A part of a tracked loan
+// payment sets `keepsCategory`: only a hand edit changes its Category (spec 04, Categories that
+// Money movement names).
+export type Part = {
+  type: TransactionType;
+  amount: number;
+  category: Category | null;
+  keepsCategory?: boolean;
+};
 
 // A rule's answer. The parts add up to the Transaction's amount. A one-sided result may be
 // provisional to the end of a day, the last day of its window; a daily task decides it again
@@ -44,7 +52,7 @@ export type Part = { type: TransactionType; amount: number; category: Category |
 export type Decision = { parts: Part[]; provisionalUntil?: string };
 
 // What a rule reads: the Transaction, and the Household's date.
-export type DecisionInput = Omit<DecisionRecord, "hidden" | "decided" | "decidedAmount"> & {
+export type DecisionInput = Omit<DecisionRecord, "hidden"> & {
   today: string;
 };
 
@@ -66,8 +74,18 @@ export function isHandSetType(value: unknown): value is HandSetType {
 const handSetType: DecisionRule = (txn) =>
   isHandSetType(txn.handSet.type) ? whole(txn, txn.handSet.type) : undefined;
 
+// Step 2. A Transfer link a Member made by hand. Other kinds of hand link come with their tickets.
+const handLink: DecisionRule = (txn) =>
+  txn.transferLink === "Member" ? whole(txn, "Transfer") : undefined;
+
+// Step 3. A Transfer pair that pairing or the AI linked (spec 03, Transfers).
+const transferPair: DecisionRule = (txn) =>
+  txn.transferLink === "app" || txn.transferLink === "AI" ? whole(txn, "Transfer") : undefined;
+
 const BUILT_IN = new Map<DecisionStep, DecisionRule>([
   ["1", handSetType],
+  ["2", handLink],
+  ["3", transferPair],
   ["5.7", (txn) => whole(txn, "Spending")],
   ["6.9", (txn) => whole(txn, "Income")],
 ]);
@@ -99,6 +117,9 @@ function checkDecision(step: DecisionStep, txn: DecisionInput, decision: Decisio
       part.type !== "Transfer" && part.type !== "Income" && part.type !== "Saving";
     if (part.category !== null && !takesCategory) {
       throw new Error(`Step ${step} gave a ${part.type} part a Category.`);
+    }
+    if (part.keepsCategory === true && (part.type !== "Spending" || part.category === null)) {
+      throw new Error(`Step ${step} kept a Category on a part that has none to keep.`);
     }
   }
 }

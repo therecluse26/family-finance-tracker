@@ -47,6 +47,13 @@ export type ReviewKind = {
     choice: ReviewChoice,
     answering: { memberId: string; database: Queries },
   ): Promise<void>;
+  // Optional work after the answer's transaction commits, outside the queue, such as starting a
+  // follow-up job. If it fails, the app logs the error and the item stays answered.
+  afterAnswer?(
+    item: ReviewItem,
+    choice: ReviewChoice,
+    answered: { memberId: string; database: Database },
+  ): Promise<void>;
 };
 
 const kinds = new Map<string, ReviewKind>();
@@ -146,13 +153,14 @@ export type ReviewAnswerResult = "answered" | "not open" | "not a choice";
 // the item closes as answered, in one transaction: an answer that fails partway leaves the item
 // open with nothing applied, and two answers, or an answer and a settling event, never both close
 // it.
-export function answerReviewItem(
+export async function answerReviewItem(
   database: Database,
   id: string,
   value: string,
   memberId: string,
 ): Promise<ReviewAnswerResult> {
-  return oneAtATime(async () => {
+  let applied: { kind: ReviewKind; item: ReviewItem; choice: ReviewChoice } | undefined;
+  const answered = await oneAtATime(async (): Promise<ReviewAnswerResult> => {
     const result = await answerOpenReviewItem(
       database,
       id,
@@ -168,6 +176,7 @@ export function answerReviewItem(
             : (await kind.otherChoices(item)).find((other) => other.value === value);
         if (choice === undefined) return undefined;
         await kind.answer(item, choice, { memberId, database: tx });
+        applied = { kind, item, choice };
         return choice;
       },
       memberId,
@@ -177,6 +186,18 @@ export function answerReviewItem(
     if (result === "answered") log.info("A Member answered a Review list item", { itemId: id });
     return result;
   });
+  if (answered === "answered" && applied !== undefined) {
+    try {
+      await applied.kind.afterAnswer?.(applied.item, applied.choice, { memberId, database });
+    } catch (error) {
+      log.error("The work after a Review list answer failed", {
+        itemId: id,
+        kind: applied.item.kind,
+        error,
+      });
+    }
+  }
+  return answered;
 }
 
 // A later event settled every open item of this kind about this Transaction or loan, such as a

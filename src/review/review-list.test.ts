@@ -272,6 +272,22 @@ describe("the Review list", () => {
     expect(await handSet()).toEqual({ t1: {}, t2: {}, t3: {} });
   });
 
+  it("answers, and logs the error, when the work after a committed answer fails", async () => {
+    unregister();
+    const after = vi.fn(async () => {
+      throw new Error("The follow-up job could not start.");
+    });
+    unregister = registerReviewKind(KIND, { ...categoryGuess, afterAnswer: after });
+    const id = await guess("t1");
+
+    const res = await answer(id, "restaurants");
+
+    expect(res.status).toBe(200);
+    expect(after).toHaveBeenCalledOnce();
+    expect(await openCount()).toBe(0);
+    expect(await handSet()).toEqual({ t1: { category: "restaurants" }, t2: {}, t3: {} });
+  });
+
   it("keeps an answered result when an event settles the item during the answer", async () => {
     const id = await guess("t1");
     let settling: Promise<number> | undefined;
