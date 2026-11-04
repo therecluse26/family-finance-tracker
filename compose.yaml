@@ -1,0 +1,66 @@
+# The self-hoster's Compose file (spec 12, The folder). It sits next to .env, secrets/, data/, and
+# backups/. Start the app with `docker compose up -d`, and run the fft command with
+# `docker compose run --rm app fft <command>`.
+#
+# HTTPS (spec 12, HTTPS). The setup guide gives APP_URL and TRUSTED_PROXIES for each way.
+#   1. Tailscale Serve: keep the app port on 127.0.0.1, as below.
+#   2. Caddy: delete the app's `ports` lines, and start with `docker compose --profile caddy up -d`.
+#   3. Plain HTTP on the home network: change 127.0.0.1 to 0.0.0.0 in the app's `ports` line.
+
+services:
+  app:
+    # The major version: it gets fixes, but never a breaking change.
+    image: ghcr.io/therecluse26/family-finance-tracker:1
+    restart: unless-stopped
+    # The app gives itself 10 seconds to stop. Docker's default of 10 seconds would race it.
+    stop_grace_period: 15s
+    environment:
+      APP_URL: ${APP_URL:?Set APP_URL in .env, such as APP_URL=https://money.example.com}
+      PORT: ${PORT:-3000}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    ports:
+      - 127.0.0.1:${PORT:-3000}:${PORT:-3000}
+    volumes:
+      - ./secrets:/run/secrets
+      - ./data:/data
+      - ./backups:/backups
+    healthcheck:
+      # Compose runs the check with `docker exec`, as root. The entrypoint drops it to the app's
+      # user, and skips the owner change the start already made.
+      test:
+        - CMD
+        - fft-entrypoint
+        - --no-chown
+        - node
+        - --eval
+        - >-
+          fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/healthz')
+          .then((response) => process.exit(response.ok ? 0 : 1), () => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # Migrations run at start, after a safety copy.
+      start_period: 60s
+
+  # Optional: HTTPS for a public domain. Caddy gets a certificate for APP_URL's host.
+  caddy:
+    # Caddy 2, pinned by the digest of its multi-arch index. Bump the digest to take Caddy fixes.
+    image: caddy:2@sha256:36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e
+    profiles: [caddy]
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${APP_URL} --to app:${PORT:-3000}
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy-data:
+  caddy-config:

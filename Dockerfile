@@ -1,6 +1,10 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26-slim AS base
+# Node.js 26 on Debian slim, pinned by the digest of its amd64 and arm64 index. Bump both parts
+# together.
+ARG NODE_IMAGE=node:26-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39
+
+FROM ${NODE_IMAGE} AS base
 RUN npm install --global pnpm@12.9.0
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -21,9 +25,21 @@ COPY . .
 RUN pnpm build
 
 FROM native-build AS prod-deps
-RUN pnpm install --frozen-lockfile --prod
+# Of better-sqlite3's build folder, only the compiled module stays. Its objects, its static SQLite
+# library, and its test extension are build leftovers. Its deps folder holds the SQLite source it
+# compiles from, which nothing reads at run time.
+RUN pnpm install --frozen-lockfile --prod \
+  && for package in node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3; do \
+    build="$package/build" \
+    && find "$build" -mindepth 1 ! -path "$build/Release" ! -path "$build/Release/better_sqlite3.node" \
+      -delete \
+    && test -f "$build/Release/better_sqlite3.node" \
+    && rm -r "$package/deps" || exit 1; \
+  done
 
-FROM node:26-slim
+FROM ${NODE_IMAGE}
+LABEL org.opencontainers.image.source="https://github.com/therecluse26/family-finance-tracker"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json LICENSE ./
@@ -34,9 +50,13 @@ RUN chmod -R go-w /app/node_modules
 COPY --from=build /app/dist ./dist
 COPY drizzle ./drizzle
 RUN mkdir /data && chown node:node /data
-# The fft command: `docker compose run --rm app fft <command>`.
-RUN printf '#!/bin/sh\nexec node /app/dist/fft.js "$@"\n' > /usr/local/bin/fft \
+# The container starts as root. The entrypoint gives /data, /backups, and /run/secrets to UID
+# 1000, or to PUID and PGID, then runs the command as that user.
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/fft-entrypoint
+# The fft command: `docker compose run --rm app fft <command>`. It goes through the entrypoint, so
+# `docker exec`, which skips the entrypoint, still runs it as the app's user and never as root.
+RUN printf '#!/bin/sh\nexec fft-entrypoint node /app/dist/fft.js "$@"\n' > /usr/local/bin/fft \
   && chmod 755 /usr/local/bin/fft
-USER node
 EXPOSE 3000
+ENTRYPOINT ["fft-entrypoint"]
 CMD ["node", "dist/server.js"]

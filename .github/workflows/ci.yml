@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+    # A release tag, such as v1.2.3. The publish job pushes the image once every other job passes.
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -110,21 +112,31 @@ jobs:
           persist-credentials: false
       - name: Build the image
         run: docker build --tag family-finance-tracker:ci .
-      - name: GET /healthz answers 200
+      - name: GET /healthz answers 200, and / serves the web app
         run: |
-          # A throwaway Master key, made for this run, in the file the app reads by default. The
-          # app runs as the image's node user, so that user must be able to read it.
+          # curl --fail then fails the step on a status that is not 2xx, not only grep.
+          set -o pipefail
+          # A throwaway Master key, made for this run, in the file the app reads by default. It is
+          # mounted read-only, as a platform's secret file is, so the entrypoint cannot give it to
+          # the app's user. That user must then be able to read it.
           openssl rand -hex 32 > "$RUNNER_TEMP/master.key"
           chmod 644 "$RUNNER_TEMP/master.key"
           docker run --detach --name app --env PORT=8080 --env APP_URL=http://127.0.0.1:8080 \
             --mount "type=bind,source=$RUNNER_TEMP/master.key,target=/run/secrets/master.key,readonly" \
             --publish 8080:8080 family-finance-tracker:ci
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:8080/healthz; then exit 0; fi
+            if curl --fail --silent --show-error http://127.0.0.1:8080/healthz; then break; fi
             sleep 1
           done
-          docker logs app
-          exit 1
+          if ! curl --fail --silent --show-error http://127.0.0.1:8080/healthz; then
+            docker logs app
+            exit 1
+          fi
+          # The web app answers / and any page path that is not a file.
+          for path in / /no/such/page; do
+            curl --fail --silent --show-error --output /dev/null --write-out '%{content_type}\n' \
+              "http://127.0.0.1:8080$path" | grep '^text/html'
+          done
       - name: The image has the fft command
         run: |
           # It prints a throwaway Master key, which only grep reads.
@@ -138,9 +150,114 @@ jobs:
             echo "$writable" | head -20
             exit 1
           fi
+      - name: The image holds no native build leftovers
+        run: |
+          # better-sqlite3's deps folder holds the SQLite source it compiles from.
+          leftovers=$(docker run --rm --entrypoint find family-finance-tracker:ci /app/node_modules \
+            \( -name '*.a' -o -name '*.o' -o -name test_extension.node \
+            -o -path '*/better-sqlite3/deps' \) -print)
+          if [ -n "$leftovers" ]; then
+            echo "$leftovers" | head -20
+            exit 1
+          fi
       - name: The image holds its notices, and the app serves the browser's
         run: |
+          set -o pipefail
           docker run --rm --entrypoint grep family-finance-tracker:ci --quiet '^hono ' dist/THIRD-PARTY-NOTICES.txt
           curl --fail --silent --show-error --output notices.txt --write-out '%{content_type}\n' \
             http://127.0.0.1:8080/third-party-notices.txt | grep '^text/plain'
           grep --quiet '^react ' notices.txt
+      - name: compose.yaml starts the app as UID 1000, and PUID and PGID change it
+        run: scripts/compose-smoke-test.sh family-finance-tracker:ci
+
+  platforms:
+    name: Docker image for amd64 and arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+      # The arm64 build runs under QEMU and compiles better-sqlite3, so it is slow. The GitHub
+      # Actions cache keeps its layers. A pull request's cache is its own; main never reads it.
+      - name: Build for both platforms, with no push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish:
+    name: Publish the image
+    # Only a v* tag publishes, and only after every other job passes on the tagged commit.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [check, licenses, audit, secrets, image, platforms]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The three image names
+        id: names
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Only a release tag, such as v1.2.3, publishes. A pre-release must never become latest.
+          if ! [[ "$TAG" =~ ^v(([0-9]+)\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "$TAG is not a release tag, such as v1.2.3." >&2
+            exit 1
+          fi
+          image=ghcr.io/therecluse26/family-finance-tracker
+          {
+            echo "version=${BASH_REMATCH[1]}"
+            echo "tags<<EOF"
+            echo "$image:${BASH_REMATCH[1]}"
+            echo "$image:${BASH_REMATCH[2]}"
+            echo "$image:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+      - name: Sign in to GitHub's container registry
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+      # A release builds from scratch, so it reads no cache that another run wrote.
+      - name: Build for both platforms, and push the three names
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          no-cache: true
+          pull: true
+          tags: ${{ steps.names.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.names.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Sign out of the registry
+        if: always()
+        run: docker logout ghcr.io

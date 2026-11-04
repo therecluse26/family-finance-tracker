@@ -22,7 +22,8 @@ const SEAMS: Record<string, readonly string[]> = {
 const OWNED_BY_NONE = new Set(["@ai-sdk/react"]);
 
 // Synchronous SQLite drivers. Every query goes through @libsql/client in src/db, and is awaited.
-const IMPORTED_BY_NONE = new Set(["libsql", "better-sqlite3", "node:sqlite"]);
+// node:module holds createRequire, which loads packages past this check.
+const IMPORTED_BY_NONE = new Set(["libsql", "better-sqlite3", "node:sqlite", "node:module"]);
 
 // Drizzle's driver entry points, such as drizzle-orm/better-sqlite3, are its folders that hold a
 // driver.js. Only its libSQL driver may be used.
@@ -62,12 +63,63 @@ function packageName(specifier: string): string | undefined {
   return first.startsWith("@") ? `${first}/${second}` : first;
 }
 
-function importedSpecifiers(file: SourceFile): string[] {
-  const { module, errors } = parseSync(file.path, file.code);
-  if (errors.length > 0) throw new Error(`${file.path} could not be parsed: ${errors[0]?.message}`);
+// Ways to load a package without an import, which this check reads. No file may use them.
+// This check guards against drift, not against a determined author: a loader reached by a computed
+// name, such as process["getBuiltinModule"], still gets past it.
+const LOADERS = new Set(["createRequire", "getBuiltinModule"]);
+
+type Parsed = ReturnType<typeof parseSync>;
+
+function parse(file: SourceFile): Parsed {
+  const parsed = parseSync(file.path, file.code);
+  const [error] = parsed.errors;
+  if (error !== undefined) throw new Error(`${file.path} could not be parsed: ${error.message}`);
+  return parsed;
+}
+
+// The LOADERS that a parsed file names, such as in `m.createRequire(import.meta.url)("plaid")`.
+function loadersIn(node: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(node)) {
+    for (const child of node) loadersIn(child, found);
+  } else if (typeof node === "object" && node !== null) {
+    const { type, name } = node as { type?: unknown; name?: unknown };
+    if (type === "Identifier" && typeof name === "string" && LOADERS.has(name)) found.add(name);
+    for (const child of Object.values(node)) loadersIn(child, found);
+  }
+  return found;
+}
+
+// A plain string, such as "plaid" or `plaid`, with no ${} in it.
+const PLAIN_STRING = /^(["'`])[^"'`$]*\1$/;
+
+// The files that may import node:module, with the reason.
+const MAY_IMPORT_NODE_MODULE = new Map([
+  ["src/seams.test.ts", "This check reads Node's list of built-in modules from it."],
+]);
+
+// The files that may hold an import() whose specifier is not a plain string, how many each may
+// hold, and the reason. A file with more than its count has every such import() flagged.
+const MAY_IMPORT_COMPUTED = new Map([
+  [
+    "src/jobs/sidequest.ts",
+    {
+      count: 1,
+      reason: "Sidequest loads job classes from the job list's URL, so the jobs module imports it.",
+    },
+  ],
+]);
+
+// The import() calls in a file whose specifier is not a plain string, which this check cannot read.
+function computedImports(file: SourceFile, { module }: Parsed): string[] {
+  return module.dynamicImports
+    .map(({ moduleRequest }) => file.code.slice(moduleRequest.start, moduleRequest.end))
+    .filter((text) => !PLAIN_STRING.test(text));
+}
+
+function importedSpecifiers(file: SourceFile, { module }: Parsed): string[] {
   const dynamic = module.dynamicImports
     .map(({ moduleRequest }) => file.code.slice(moduleRequest.start, moduleRequest.end))
-    .filter((text) => /^(["'`])[^"'`$]*\1$/.test(text))
+    .filter((text) => PLAIN_STRING.test(text))
     .map((text) => text.slice(1, -1));
   return [
     ...module.staticImports.map((entry) => entry.moduleRequest.value),
@@ -86,7 +138,20 @@ function moduleOf(path: string): string | undefined {
 function findSeamBreaches(files: SourceFile[]): string[] {
   const breaches = new Set<string>();
   for (const file of files) {
-    for (const specifier of importedSpecifiers(file)) {
+    const parsed = parse(file);
+    for (const loader of loadersIn(parsed.program)) {
+      breaches.add(`${file.path} uses ${loader}, which loads packages past this check`);
+    }
+    const computed = computedImports(file, parsed);
+    if (computed.length > (MAY_IMPORT_COMPUTED.get(file.path)?.count ?? 0)) {
+      for (const specifier of computed) {
+        breaches.add(`${file.path} imports ${specifier}, which this check cannot read`);
+      }
+    }
+    for (const specifier of importedSpecifiers(file, parsed)) {
+      if (packageName(specifier) === "node:module" && MAY_IMPORT_NODE_MODULE.has(file.path)) {
+        continue;
+      }
       if (importedByNone(specifier)) {
         breaches.add(`${file.path} imports ${specifier}, which no module may import`);
         continue;
@@ -173,6 +238,91 @@ describe("module seams", () => {
     expect(findSeamBreaches(files)).toEqual([
       "src/server/start.ts imports sidequest, which only src/jobs may import",
       "src/bank/sync.ts imports @sidequest/core, which only src/jobs may import",
+    ]);
+  });
+
+  it("flags createRequire and getBuiltinModule, which load packages without an import", () => {
+    const files: SourceFile[] = [
+      {
+        path: "src/server/plaid.ts",
+        code: [
+          'import { createRequire } from "node:module";',
+          'const { PlaidApi } = createRequire(import.meta.url)("plaid");',
+        ].join("\n"),
+      },
+      {
+        path: "src/jobs/load.ts",
+        code: 'const mod = await import("node:module");\nmod.createRequire(import.meta.url);',
+      },
+      {
+        path: "src/auth/keys.ts",
+        code: 'const { randomBytes } = process.getBuiltinModule("node:crypto");',
+      },
+      {
+        path: "src/db/note.ts",
+        code: '// createRequire is not used here.\nconst s = "createRequire";',
+      },
+    ];
+
+    expect(findSeamBreaches(files)).toEqual([
+      "src/server/plaid.ts uses createRequire, which loads packages past this check",
+      "src/server/plaid.ts imports node:module, which no module may import",
+      "src/jobs/load.ts uses createRequire, which loads packages past this check",
+      "src/jobs/load.ts imports node:module, which no module may import",
+      "src/auth/keys.ts uses getBuiltinModule, which loads packages past this check",
+    ]);
+  });
+
+  it("flags node:module in any file but this check, which reads Node's built-in modules", () => {
+    const files: SourceFile[] = [
+      { path: "src/seams.test.ts", code: 'import { builtinModules } from "node:module";' },
+      { path: "src/db/builtins.ts", code: 'import { builtinModules } from "module";' },
+      {
+        path: "scripts/load.ts",
+        code: [
+          'import * as m from "node:module";',
+          'm["createRequire"](import.meta.url)("plaid");',
+        ].join("\n"),
+      },
+    ];
+
+    expect(findSeamBreaches(files)).toEqual([
+      "src/db/builtins.ts imports module, which no module may import",
+      "scripts/load.ts imports node:module, which no module may import",
+    ]);
+  });
+
+  it("flags an import() it cannot read, but for the job list's one in src/jobs/sidequest.ts", () => {
+    const files: SourceFile[] = [
+      { path: "src/jobs/sidequest.ts", code: "const list = await import(url);" },
+      { path: "src/jobs/load.ts", code: "const list = await import(url);" },
+      { path: "src/server/bank.ts", code: 'const name = "plaid";\nawait import(name);' },
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: this code uses ${}.
+      { path: "src/ai/model.ts", code: "await import(`@ai-sdk/${provider}`);" },
+      { path: "src/web/main.tsx", code: 'await import("pla" + "id");' },
+      { path: "src/db/client.ts", code: "await import(`@libsql/client`);" },
+    ];
+
+    expect(findSeamBreaches(files)).toEqual([
+      "src/jobs/load.ts imports url, which this check cannot read",
+      "src/server/bank.ts imports name, which this check cannot read",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: this code uses ${}.
+      "src/ai/model.ts imports `@ai-sdk/${provider}`, which this check cannot read",
+      'src/web/main.tsx imports "pla" + "id", which this check cannot read',
+    ]);
+  });
+
+  it("flags every import() it cannot read in src/jobs/sidequest.ts once it holds a second", () => {
+    const files: SourceFile[] = [
+      {
+        path: "src/jobs/sidequest.ts",
+        code: "const list = await import(url);\nconst plaid = await import(name);",
+      },
+    ];
+
+    expect(findSeamBreaches(files)).toEqual([
+      "src/jobs/sidequest.ts imports url, which this check cannot read",
+      "src/jobs/sidequest.ts imports name, which this check cannot read",
     ]);
   });
 
