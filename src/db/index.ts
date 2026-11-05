@@ -269,6 +269,14 @@ export {
   storeHouseholdSummary,
 } from "./household-summary.ts";
 export {
+  holdsNewPostedTransaction,
+  type InsightCardRow,
+  listInsightCards,
+  type NewInsightCard,
+  replaceInsightCards,
+  storeInsightCardDone,
+} from "./insight-cards.ts";
+export {
   type AiLinkAnswer,
   type AiLinkKind,
   type AnyLink,
@@ -382,6 +390,7 @@ export {
   listBankNames,
   listDueProposals,
   listOpenProposals,
+  listProposalsClosedSince,
   listUndoableProposals,
   type NewProposal,
   type ProposalBudgetRow,

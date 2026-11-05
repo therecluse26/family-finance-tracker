@@ -5,9 +5,18 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { AiSettings, AiView } from "../ai/index.ts";
 import { type AlertFacts, alertText, decideAlerts } from "../anomalies/index.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
-import { type AlertKind, type AlertState, markSetupStep, storeAlerts } from "../db/index.ts";
+import {
+  type AlertKind,
+  type AlertState,
+  markSetupStep,
+  type NewInsightCard,
+  replaceInsightCards,
+  storeAlerts,
+  storeMonthlyReview,
+} from "../db/index.ts";
 import { createLogger } from "../log.ts";
-import { loadAiBox, markAlertNoteDone } from "../web/ai-box.ts";
+import { fixtureReview } from "../monthly-review/testing.ts";
+import { loadAiBox, markAlertNoteDone, markInsightCardDone } from "../web/ai-box.ts";
 import type { AiBoxGroupName, AiBoxNoteView, AiBoxView } from "./ai-box-views.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -15,7 +24,7 @@ import { type App, TestBrowser } from "./testing.ts";
 
 // The dashboard's AI box, "This week" (spec 07, 1. AI box), through the app's HTTP interface:
 // Alert notes from the Alerts in app.db, their groups and order, the 7-day exit, Done for every
-// Member, and the no-AI note.
+// Member, and the no-AI note; then the Insight cards after them.
 
 const APP_URL = "http://nas.local:8080";
 // Oct 20, 2026, 4 PM UTC. With no Household time zone, the app's date is UTC's.
@@ -436,5 +445,211 @@ describe('the AI box, "This week"', () => {
     expect(await doneRows()).toEqual([
       expect.objectContaining({ alert_id: "duplicate", member_id: null }),
     ]);
+  });
+
+  describe("Insight cards", () => {
+    // A run's card, as the insights module stores it.
+    const card = (id: string, fields: Partial<NewInsightCard> = {}): NewInsightCard => ({
+      id,
+      position: 0,
+      writtenAt: new Date(NOW.getTime() - 60 * 60 * 1000),
+      month: "2026-10",
+      group: "worth_acting_on",
+      about: "Restaurants",
+      figure: 84,
+      figureKind: "dollars",
+      figureLabel: "on delivery fees",
+      title: "Delivery fees add up",
+      why: "Six delivery orders this month each paid a fee.",
+      nextStep: "Pick up two orders a week instead.",
+      picture: { type: "days", category: "Restaurants" },
+      ...fields,
+    });
+    const cardDone = (id: string, body: unknown, browser = alice, headers = {}) =>
+      browser.send(
+        "PUT",
+        `/api/ai-box/insight-cards/${encodeURIComponent(id)}/done`,
+        body,
+        headers,
+      );
+    const cardRows = async () =>
+      (
+        await test.database.$client.execute(
+          "SELECT id, done_at, done_by FROM insight_cards ORDER BY position",
+        )
+      ).rows;
+
+    beforeEach(async () => {
+      await replaceInsightCards(test.database, [
+        card("save-delivery"),
+        card("good-groceries", {
+          position: 1,
+          group: "good_news",
+          about: "Groceries",
+          figure: 3,
+          figureKind: "count",
+          figureLabel: "months under Budget",
+          title: "Groceries stayed under Budget",
+          picture: null,
+        }),
+        card("heads-insurance", {
+          position: 2,
+          group: "heads_up",
+          about: "Insurance",
+          figure: null,
+          figureLabel: "a label with no figure",
+          title: "Car insurance renews next month",
+          picture: { type: "recurring", category: "Insurance" },
+        }),
+        card("save-subscriptions", {
+          position: 3,
+          figure: 12.5,
+          figureKind: "percent",
+          figureLabel: "of Spending",
+          about: "Subscriptions",
+          title: "Subscriptions grew",
+          picture: { type: "cards" },
+        }),
+      ]);
+    });
+
+    it("go after the Alert notes and the review link in each group, in the AI's order, and count toward the heading", async () => {
+      await addAlert("over-budget", "Over Budget", 2);
+      await addAlert("large", "Large purchase", 3);
+      await storeMonthlyReview(test.database, {
+        month: "2026-09",
+        writtenAt: new Date(NOW.getTime() - DAY_MS),
+        review: fixtureReview({ writtenOn: "2026-10-19" }),
+      });
+      const box = await view();
+
+      expect(
+        box.groups.map((group) => ({
+          name: group.name,
+          notes: group.notes.map((note) => note.id),
+        })),
+      ).toEqual([
+        { name: "Worth acting on", notes: ["over-budget", "save-delivery", "save-subscriptions"] },
+        { name: "Heads up", notes: ["large", "2026-09", "heads-insurance"] },
+        { name: "Good news", notes: ["good-groceries"] },
+      ]);
+      expect(box.worthActingOn).toBe(3);
+      const byId = new Map(
+        box.groups.flatMap((group) => group.notes).map((note) => [note.id, note as unknown]),
+      );
+      expect(byId.get("save-delivery")).toEqual({
+        kind: "Insight card",
+        id: "save-delivery",
+        figure: "$84",
+        figureLabel: "on delivery fees",
+        about: "Restaurants",
+        title: "Delivery fees add up",
+        why: "Six delivery orders this month each paid a fee.",
+        picture: { type: "days", category: "Restaurants" },
+        month: "2026-10",
+        nextStep: "Pick up two orders a week instead.",
+        done: false,
+      });
+      expect(byId.get("save-subscriptions")).toMatchObject({
+        figure: "13%",
+        picture: { type: "cards" },
+      });
+      // No figure shows no label either.
+      expect(byId.get("heads-insurance")).toMatchObject({ figure: "", figureLabel: "" });
+      expect(byId.get("good-groceries")).toMatchObject({ figure: "3", picture: null });
+    });
+
+    it("stay while AI is paused, and with no AI provider", async () => {
+      aiView = aiOn({ state: "cost cap", until: "2026-11-01" });
+      expect((await view()).groups.flatMap((group) => group.notes)).toHaveLength(4);
+      aiView = undefined;
+      expect((await view()).groups.flatMap((group) => group.notes)).toHaveLength(4);
+    });
+
+    it("are marked Done for every Member with no AI call, and cleared when tapped again", async () => {
+      const res = await cardDone("save-delivery", { done: true });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ done: true });
+
+      const box = await view(bob);
+      expect(box.groups[0]?.notes.map((note) => [note.id, note.done])).toEqual([
+        ["save-delivery", true],
+        ["save-subscriptions", false],
+      ]);
+      expect(box.worthActingOn).toBe(1);
+      const [marked] = await cardRows();
+      expect(marked?.done_by).toBe(aliceMember.id);
+
+      // A second Done keeps the first mark; Bob's "Done ✓" clears it for Alice too.
+      expect((await cardDone("save-delivery", { done: true }, bob)).status).toBe(200);
+      expect((await cardRows())[0]?.done_by).toBe(aliceMember.id);
+      expect((await cardDone("save-delivery", { done: false }, bob)).status).toBe(200);
+      expect((await view()).worthActingOn).toBe(2);
+      expect((await cardRows()).every((row) => row.done_at === null)).toBe(true);
+
+      const calls = await test.database.$client.execute("SELECT count(*) AS n FROM ai_calls");
+      expect(calls.rows[0]?.n).toBe(0);
+    });
+
+    it("answer 404 to a card no longer in the box, or an Alert's ID, and change nothing", async () => {
+      await addAlert("over-budget", "Over Budget", 1);
+      // A new run replaces every card: the old IDs are gone.
+      await replaceInsightCards(test.database, [card("next-run")]);
+
+      for (const id of ["save-delivery", "over-budget", "no-such-card"]) {
+        const res = await cardDone(id, { done: true });
+        expect(res.status, id).toBe(404);
+        expect(await res.json()).toEqual({ error: "No Insight card in the AI box has this ID." });
+      }
+      expect(await cardRows()).toEqual([
+        expect.objectContaining({ id: "next-run", done_at: null }),
+      ]);
+      // And an Insight card's ID marks no Alert note.
+      expect((await done("next-run", { done: true })).status).toBe(404);
+    });
+
+    it("answer 401 with no session, 403 from another origin or none, 415 to a body that is not JSON, and 400 to a bad body, and change nothing", async () => {
+      const signedOut = new TestBrowser(app, APP_URL, "192.168.1.22");
+
+      expect((await cardDone("save-delivery", { done: true }, signedOut)).status).toBe(401);
+      for (const origin of WRONG_ORIGINS) {
+        expect((await cardDone("save-delivery", { done: true }, alice, { origin })).status).toBe(
+          403,
+        );
+      }
+      expect(
+        (await cardDone("save-delivery", { done: true }, alice, { "content-type": "text/plain" }))
+          .status,
+      ).toBe(415);
+      for (const body of [{}, { done: "yes" }, { done: true, more: 1 }, []]) {
+        expect((await cardDone("save-delivery", body)).status).toBe(400);
+      }
+      expect((await cardRows()).every((row) => row.done_at === null && row.done_by === null)).toBe(
+        true,
+      );
+    });
+
+    it("mark through the page's own request, and keep the mark when the Member who made it leaves", async () => {
+      vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input instanceof Request ? input.url : input), APP_URL);
+        const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const type = new Headers(init?.headers).get("content-type") ?? undefined;
+        return alice.send(init?.method ?? "GET", `${url.pathname}${url.search}`, body, {
+          "content-type": type,
+        });
+      });
+      expect(await markInsightCardDone("save-delivery", true)).toBeUndefined();
+      expect(await markInsightCardDone("no-such-card", true)).toBe(
+        "No Insight card in the AI box has this ID.",
+      );
+
+      await test.database.$client.execute({
+        sql: "DELETE FROM members WHERE id = ?",
+        args: [aliceMember.id],
+      });
+      const [kept] = await cardRows();
+      expect(kept).toMatchObject({ id: "save-delivery", done_by: null });
+      expect(kept?.done_at).not.toBeNull();
+    });
   });
 });

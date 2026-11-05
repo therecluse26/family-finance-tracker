@@ -1,6 +1,7 @@
-// What the AI box routes answer. This file imports only another views file, so the web app's type
+// What the AI box routes answer. This file imports only other views files, so the web app's type
 // check can follow it through api.ts.
 
+import type { PictureChoice } from "../pictures/picture-view.ts";
 import type { ProposalView } from "./proposals-views.ts";
 
 export type AiBoxGroupName = "Worth acting on" | "Heads up" | "Good news";
@@ -46,6 +47,27 @@ export type AiBoxReviewLinkView = {
   createdAt: string;
 };
 
+// An Insight card in the AI box (spec 07, 1. AI box): every word is the AI's, in the group the AI
+// picked, after the Alert notes, in the AI's order.
+export type AiBoxInsightCardView = {
+  kind: "Insight card";
+  id: string;
+  // The left column: the figure, or empty with none, and its label.
+  figure: string;
+  figureLabel: string;
+  about: string;
+  title: string;
+  // The reason "Why?" opens, with the card's picture under it.
+  why: string;
+  // A choice from the picture menu, drawn for `month`, YYYY-MM. Null for no picture.
+  picture: PictureChoice | null;
+  month: string;
+  // The words after "Next step:". A Good news card's say what the news means, with no label.
+  nextStep: string;
+  // Marked Done for every Member.
+  done: boolean;
+};
+
 export type AiBoxView = {
   // The notes in "Worth acting on" that are not Done, for the heading. Every open Proposal counts.
   worthActingOn: number;
@@ -54,7 +76,7 @@ export type AiBoxView = {
   // in the AI's order.
   groups: {
     name: AiBoxGroupName;
-    notes: (AiBoxProposalView | AiBoxNoteView | AiBoxReviewLinkView)[];
+    notes: (AiBoxProposalView | AiBoxNoteView | AiBoxReviewLinkView | AiBoxInsightCardView)[];
   }[];
   // True with no AI provider: the box shows "Set up AI for insights".
   setUpAi: boolean;
@@ -71,4 +93,7 @@ export type AiBoxRoutes = {
   // Marks a review link Done for every Member, so it leaves the box, or clears the mark. It makes
   // no AI call. False when no review link in the box has the month.
   markReviewLink(month: string, memberId: string, done: boolean): Promise<boolean>;
+  // Marks an Insight card Done for every Member, or clears the mark. It makes no AI call: the next
+  // Insight card run reads it as feedback. False when no current card has the ID.
+  markInsightCard(cardId: string, memberId: string, done: boolean): Promise<boolean>;
 };

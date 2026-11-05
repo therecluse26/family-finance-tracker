@@ -22,6 +22,7 @@ import {
   startFollowUpPipeline,
 } from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
+import { startInsightCards } from "../insights/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startNotify } from "../notify/index.ts";
 import { StubSmtp } from "../notify/testing.ts";
@@ -196,6 +197,26 @@ export const APP_MODULES: readonly AppModule[] = [
       name: "alerts",
       path: "Alerts step on the full history",
       buildLimitMs: 5_000,
+    },
+  },
+  {
+    name: "startInsightCards",
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startInsightCards({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+        now: HISTORY_NOW,
+      }),
+    // With no AI provider the run takes the no-AI path after it builds the Household summary.
+    step: {
+      name: "insight card check",
+      path: "Insight card check on the full history",
+      buildLimitMs: 10_000,
     },
   },
   {

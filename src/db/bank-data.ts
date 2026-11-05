@@ -44,6 +44,7 @@ import {
   historyWait,
   householdAccounts,
   householdSummary,
+  insightCards,
   loanLinks,
   merchantNameAnswers,
   recurringCharges,
@@ -520,13 +521,19 @@ export async function storeSyncPage(
           ...fields,
           handSet,
           historyLoad: !connection.historyLoaded,
+          postedSeenAt: record.pending ? null : at,
           ...(replaced ? { hiddenReason: "replaced by re-link" as const, hiddenAt: at } : {}),
         });
         counts.added += 1;
       } else if (!holds(found, { ...fields, handSet })) {
         await tx
           .update(transactions)
-          .set({ ...fields, handSet })
+          .set({
+            ...fields,
+            handSet,
+            // A pending record that turns posted in place is posted from now on.
+            ...(found.pending && !record.pending ? { postedSeenAt: at } : {}),
+          })
           .where(eq(transactions.id, found.id));
         await unmark(found);
         if (replaced && found.hiddenReason === null) await hide(found, "replaced by re-link");
@@ -896,6 +903,9 @@ export async function deleteRemovedConnection(
     // Today's Household summary holds numbers and Merchants from this history, so the next Writer
     // use builds it again without them.
     await tx.delete(householdSummary);
+    // The Insight cards can hold the same, so they go too, with their Done marks. The AI box shows
+    // none until the next run.
+    await tx.delete(insightCards);
     const [carried] = await tx
       .select({ id: transactions.id })
       .from(transactions)

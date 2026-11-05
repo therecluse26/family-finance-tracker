@@ -379,6 +379,13 @@
       "when": 1793912155127,
       "tag": "0053_budget_tailoring",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1793912495327,
+      "tag": "0054_insight_cards",
+      "breakpoints": true
     }
   ]
 }

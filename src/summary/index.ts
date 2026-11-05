@@ -11,6 +11,8 @@ export {
   type HouseholdSummary,
   householdSummary,
   NOT_A_PROBLEM_MARKS,
+  plainLine,
+  proposalParts,
   SUMMARY_TOKENS,
   type SummaryOptions,
   summaryTokens,

@@ -1,10 +1,12 @@
 import type { AiSettings } from "../ai/index.ts";
 import { alertNotes, markAlertNote } from "../anomalies/index.ts";
 import type { Database } from "../db/index.ts";
+import { insightCards, markInsightCard } from "../insights/index.ts";
 import { markReviewLink, reviewLinks } from "../monthly-review/index.ts";
 import { openProposals } from "../proposals/index.ts";
 import type {
   AiBoxGroupName,
+  AiBoxInsightCardView,
   AiBoxNoteView,
   AiBoxProposalView,
   AiBoxReviewLinkView,
@@ -14,9 +16,10 @@ import type {
 import { proposalView } from "./proposals.ts";
 
 // The dashboard's AI box, "This week" (spec 07, 1. AI box): every current note, in three groups.
-// Open Proposals come from the proposals module, Alert notes from the anomalies module, and the
-// Monthly review's link from the monthly-review module; the AI
-// provider's status gives the "Set up AI for insights" note and the paused line.
+// Open Proposals come from the proposals module, Alert notes from the anomalies module, the
+// Monthly review's link from the monthly-review module, and Insight cards from the insights module;
+// the AI provider's status gives the "Set up AI for insights" note and the paused line. The last
+// Insight cards stay while AI is paused.
 
 const GROUPS: AiBoxGroupName[] = ["Worth acting on", "Heads up", "Good news"];
 
@@ -44,7 +47,6 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
           return { kind: "Proposal", id: view.id, createdAt: view.createdAt, proposal: view };
         },
       );
-      // Insight cards go after the Alert notes, when they come.
       const notes: (AiBoxNoteView & { group: AiBoxGroupName })[] = (
         await alertNotes(database, now)
       ).map((note) => ({
@@ -66,18 +68,24 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
         id: link.month,
         createdAt: link.writtenAt.toISOString(),
       }));
+      // Insight cards go after the Alert notes, in the AI's order.
+      const cards: (AiBoxInsightCardView & { group: AiBoxGroupName })[] = (
+        await insightCards(database)
+      ).map((card) => ({ kind: "Insight card", ...card }));
       const groups = GROUPS.flatMap((name) => {
         const inGroup = [
           ...(name === "Worth acting on" ? proposals : []),
           ...notes.filter((note) => note.group === name).map(({ group, ...note }) => note),
           ...(name === "Heads up" ? links : []),
+          ...cards.filter((card) => card.group === name).map(({ group, ...card }) => card),
         ];
         return inGroup.length === 0 ? [] : [{ name, notes: inGroup }];
       });
       return {
         worthActingOn:
           proposals.length +
-          notes.filter((note) => note.group === "Worth acting on" && !note.done).length,
+          [...notes, ...cards].filter((note) => note.group === "Worth acting on" && !note.done)
+            .length,
         groups,
         ...(await paused()),
       };
@@ -89,6 +97,10 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
 
     markReviewLink(month, memberId, done) {
       return markReviewLink(database, { month, memberId, done }, new Date());
+    },
+
+    markInsightCard(cardId, memberId, done) {
+      return markInsightCard(database, { cardId, memberId, done }, new Date());
     },
   };
 }

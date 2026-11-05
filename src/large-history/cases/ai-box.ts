@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import type { AlertFacts } from "../../anomalies/index.ts";
-import { storeAlerts } from "../../db/index.ts";
+import { replaceInsightCards, storeAlerts } from "../../db/index.ts";
 import type { AiBoxView } from "../../server/ai-box-views.ts";
 import { timedCase } from "../index.ts";
 
@@ -16,8 +16,8 @@ const FACTS: AlertFacts = {
   latest: { merchant: { id: null, name: "Corner Bistro" }, amount: 4_250, date: "2026-10-19" },
 };
 
-// The AI box over the full history, which holds every Alert found in it, and 500 Alerts from the
-// last 7 days, one of them Done.
+// The AI box over the full history, which holds every Alert found in it, 500 Alerts from the
+// last 7 days, one of them Done, and a run's 7 Insight cards, one of them Done.
 timedCase('the dashboard\'s AI box, "This week"', async (history, time) => {
   const now = Date.now();
   await storeAlerts(
@@ -34,6 +34,29 @@ timedCase('the dashboard\'s AI box, "This week"', async (history, time) => {
     })),
   );
 
+  await replaceInsightCards(
+    history.database,
+    Array.from({ length: 7 }, (_, index) => ({
+      id: `bench-card-${index}`,
+      position: index,
+      writtenAt: new Date(now - 60_000),
+      month: "2026-10",
+      group: "heads_up" as const,
+      about: "Restaurants",
+      figure: 84 + index,
+      figureKind: "dollars" as const,
+      figureLabel: "on delivery fees",
+      title: `Delivery fees add up ${index}`,
+      why: "Six delivery orders this month each paid a fee.",
+      nextStep: "Pick up two orders a week instead.",
+      picture: { type: "days" as const, category: "Restaurants" },
+    })),
+  );
+  const cardMarked = await time.request("PUT /api/ai-box/insight-cards/:id/done", () =>
+    history.browser.send("PUT", "/api/ai-box/insight-cards/bench-card-0/done", { done: true }),
+  );
+  expect(cardMarked).toEqual({ done: true });
+
   const marked = await time.request("PUT /api/ai-box/alert-notes/:id/done", () =>
     history.browser.send("PUT", "/api/ai-box/alert-notes/bench-note-0/done", { done: true }),
   );
@@ -43,5 +66,9 @@ timedCase('the dashboard\'s AI box, "This week"', async (history, time) => {
     history.browser.get("/api/ai-box"),
   )) as AiBoxView;
   expect(box.groups[0]?.notes).toHaveLength(500);
+  const cards = box.groups
+    .flatMap((group) => group.notes)
+    .filter((note) => note.kind === "Insight card");
+  expect(cards).toHaveLength(7);
   expect(box.worthActingOn).toBe(499);
 });

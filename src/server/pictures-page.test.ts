@@ -148,6 +148,9 @@ describe("the pictures on the demo household", () => {
       `month=${MONTH}&type=days`,
       `month=${MONTH}&type=days&category=Groceries&merchant=Pasta%20Corner`,
       `month=${MONTH}&type=days${"&merchant=Pasta%20Corner".repeat(6)}`,
+      // A field the picture does not name is refused.
+      `month=${MONTH}&type=cards&category=Groceries`,
+      `month=${MONTH}&type=trend&category=Groceries&merchant=Pasta%20Corner`,
     ]) {
       const answer = await browser.get(`/api/picture?${query}`);
       expect(answer.status, query).toBe(400);
@@ -260,6 +263,51 @@ describe("the pictures on the demo household", () => {
     ]);
     expect(drawn(picture)).toBe(
       "Streamflix $17.99 Tunebox $11.99 Entertainment: 2 monthly Recurring charges, $30 a month",
+    );
+  });
+
+  // The read filters behind the pictures, each on its own: what the app does not show, no picture
+  // shows.
+  it("marks no day for a hidden Transaction", async () => {
+    const found = await test.database.$client.execute(`
+      SELECT t.id FROM transactions t JOIN transaction_parts p ON p.transaction_id = t.id
+      WHERE p.category = 'Groceries' AND coalesce(t.authorized_date, t.posted_date) = '2026-10-09'`);
+    expect(found.rows).toHaveLength(1);
+    await test.database.$client.execute({
+      sql: `UPDATE transactions SET hidden_reason = 'removed by provider', hidden_at = ?
+            WHERE id = ?`,
+      args: [NOW.toISOString(), String(found.rows[0]?.id)],
+    });
+
+    const picture = await read({ type: "days", category: "Groceries" });
+    expect(picture?.type === "days" && picture.days.map((day) => day.date)).toEqual(
+      ["02", "16", "23", "29"].map((day) => `${MONTH}-${day}`),
+    );
+  });
+
+  it("leaves out a Closed credit card", async () => {
+    const { accounts } = (await (await browser.get("/api/accounts")).json()) as {
+      accounts: AccountView[];
+    };
+    const chase = accounts.find((account) => account.name === "Chase Card");
+    expect((await browser.send("POST", `/api/accounts/${chase?.id}/close`, {})).status).toBe(200);
+
+    expect(drawn(await read({ type: "cards" }))).toBe(
+      "Rewards Card $814 · 28% APR Home Store Card $907 · 27% APR " +
+        "Each card's balance owed and APR.",
+    );
+  });
+
+  it("leaves out a Recurring charge a Member ended", async () => {
+    const { charges } = (await (await browser.get("/api/recurring-charges")).json()) as {
+      charges: { id: string; merchantName: string }[];
+    };
+    const tunebox = charges.find((charge) => charge.merchantName === "Tunebox");
+    const ended = await browser.send("POST", `/api/recurring-charges/${tunebox?.id}/end`, {});
+    expect(ended.status).toBe(200);
+
+    expect(drawn(await read({ type: "recurring", category: "Entertainment" }))).toBe(
+      "Streamflix $17.99 Entertainment: 1 monthly Recurring charge, $18 a month",
     );
   });
 

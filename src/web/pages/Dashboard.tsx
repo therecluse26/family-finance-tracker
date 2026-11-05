@@ -14,6 +14,7 @@ import {
 import { STATUS_ICON, wholeDollars } from "../../format.ts";
 import type {
   AiBoxGroupName,
+  AiBoxInsightCardView,
   AiBoxNoteView,
   AiBoxReviewLinkView,
   AiBoxView,
@@ -23,6 +24,7 @@ import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts"
 import type { ComingUpView } from "../../server/coming-up-views.ts";
 import {
   markAlertNoteDone,
+  markInsightCardDone,
   NOTHING_NEW,
   pausedLine,
   SET_UP_AI,
@@ -30,6 +32,7 @@ import {
 } from "../ai-box.ts";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
+import { Picture } from "../components/Picture.tsx";
 import { ProposalCard } from "../components/Proposal.tsx";
 import { AiMark, Status, TONE_COLOR } from "../components/Status.tsx";
 import {
@@ -309,7 +312,11 @@ function TrendLine(props: { trend: NumberTile["tile"]["trend"] }) {
   return (
     <div aria-hidden="true" className="mt-2 h-8 w-full" data-slot="trend">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={props.trend} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <LineChart
+          accessibilityLayer={false}
+          data={props.trend}
+          margin={{ top: 2, right: 2, bottom: 2, left: 2 }}
+        >
           <YAxis hide domain={["dataMin", "dataMax"]} />
           <Line
             dataKey="amount"
@@ -397,7 +404,11 @@ function GroupChart(props: { bars: GroupBar[] }) {
   return (
     <div aria-hidden="true" className="mt-2 h-16 w-full" data-slot="group-chart">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={props.bars} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+        <BarChart
+          accessibilityLayer={false}
+          data={props.bars}
+          margin={{ top: 4, right: 0, bottom: 0, left: 0 }}
+        >
           <XAxis dataKey="label" hide />
           <XAxis dataKey="label" xAxisId="budget" hide />
           <YAxis hide domain={[0, "auto"]} />
@@ -680,9 +691,12 @@ function GroupStatus(props: { name: AiBoxGroupName }) {
 
 // One note: its number and label, what it is about and its title, "Why?" that opens the reason in
 // place, the AI's Next step when there is one, and "Done" and "Ask about this". A done note fades
-// and stays until it leaves the box.
+// and stays until it leaves the box. An Insight card is the AI's words throughout, with the "AI"
+// mark; its picture shows under "Why?", and a Good news card's last words say what the news means,
+// with no "Next step:" label.
 function AiNote(props: {
-  note: AiBoxNoteView;
+  note: AiBoxNoteView | AiBoxInsightCardView;
+  goodNews: boolean;
   busy: boolean;
   onDone: (done: boolean) => void;
   whyOpen?: boolean;
@@ -690,6 +704,7 @@ function AiNote(props: {
   const { note } = props;
   const [whyOpen, setWhyOpen] = useState(props.whyOpen ?? false);
   const whyId = useId();
+  const card = note.kind === "Insight card" ? note : undefined;
   return (
     <li
       className={`flex gap-3 rounded border border-gray-100 p-2 wrap-anywhere ${note.done ? "opacity-50" : ""}`}
@@ -708,6 +723,12 @@ function AiNote(props: {
         </p>
         <p className="font-medium" data-slot="note-title">
           {note.title}
+          {card === undefined ? null : (
+            <>
+              {" "}
+              <AiMark />
+            </>
+          )}
         </p>
         <button
           type="button"
@@ -719,15 +740,34 @@ function AiNote(props: {
           {whyOpen ? "Hide why" : "Why?"}
         </button>
         <div id={whyId} hidden={!whyOpen} className="text-sm text-gray-700" data-slot="note-why">
-          {note.why.map((line, part) => (
-            // Two parts of a merged Alert may read the same, so each line is keyed by its place.
-            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
-            <p key={part}>{line}</p>
-          ))}
+          {note.kind === "Alert note" ? (
+            note.why.map((line, part) => (
+              // Two parts of a merged Alert may read the same, so each line is keyed by its place.
+              // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
+              <p key={part}>{line}</p>
+            ))
+          ) : (
+            <>
+              <p>
+                {note.why} <AiMark />
+              </p>
+              {/* Drawn when "Why?" opens, so a closed card asks for no picture. */}
+              {note.picture === null ? null : (
+                <div className="mt-1" data-slot="note-picture">
+                  {whyOpen ? <Picture choice={note.picture} month={note.month} /> : null}
+                </div>
+              )}
+            </>
+          )}
         </div>
         {note.nextStep === null ? null : (
           <p className="mt-1 text-sm" data-slot="next-step">
-            <span className="font-medium">Next step:</span> {note.nextStep} <AiMark />
+            {card !== undefined && props.goodNews ? null : (
+              <>
+                <span className="font-medium">Next step:</span>{" "}
+              </>
+            )}
+            {note.nextStep} <AiMark />
           </p>
         )}
         <div className="mt-2 flex flex-wrap gap-2">
@@ -782,9 +822,12 @@ export function AiBox(props: {
   const [error, setError] = useState<string | undefined>();
   const paused = pausedLine(view.paused, props.today);
 
-  async function done(id: string, mark: boolean) {
-    setBusy(id);
-    const failed = await markAlertNoteDone(id, mark);
+  async function done(note: AiBoxNoteView | AiBoxInsightCardView, mark: boolean) {
+    setBusy(note.id);
+    const failed =
+      note.kind === "Insight card"
+        ? await markInsightCardDone(note.id, mark)
+        : await markAlertNoteDone(note.id, mark);
     setBusy(undefined);
     setError(failed);
     if (failed === undefined) props.onChanged();
@@ -840,8 +883,9 @@ export function AiBox(props: {
                   <AiNote
                     key={note.id}
                     note={note}
+                    goodNews={group.name === "Good news"}
                     busy={busy === note.id}
-                    onDone={(mark) => void done(note.id, mark)}
+                    onDone={(mark) => void done(note, mark)}
                     {...(props.whyOpen === note.id ? { whyOpen: true } : {})}
                   />
                 ),

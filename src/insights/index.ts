@@ -1,0 +1,21 @@
+// The insights module's interface (spec 08, Insight cards). Other modules import from here.
+export {
+  CARD_GROUPS,
+  type CardGroup,
+  checkInsightCards,
+  FIGURE_KINDS,
+  INSIGHT_CARDS_HOUR,
+  INSIGHT_CARDS_REPLY,
+  INSIGHT_CARDS_TASK,
+  type InsightCard,
+  type InsightCardOptions,
+  type InsightCardRun,
+  type InsightCardsReply,
+  insightCards,
+  insightCardsDue,
+  MAX_INSIGHT_CARDS,
+  MIN_INSIGHT_CARDS,
+  markInsightCard,
+  startInsightCards,
+  writeInsightCards,
+} from "./cards.ts";

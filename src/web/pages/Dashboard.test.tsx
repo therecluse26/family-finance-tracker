@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { compile } from "tailwindcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  AiBoxInsightCardView,
   AiBoxNoteView,
   AiBoxProposalView,
   AiBoxReviewLinkView,
@@ -1240,6 +1241,71 @@ describe('the AI box, "This week"', () => {
     expect(slotHtml(html, "review-link")).toContain('href="/reviews/2026-10"');
     // The link counts in no "worth acting on" heading.
     expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
+  });
+
+  it("shows Insight cards after the Alert notes in each group, in the AI's order, each with the AI mark", () => {
+    const card = (fields: Partial<AiBoxInsightCardView>): AiBoxInsightCardView => ({
+      kind: "Insight card",
+      id: "c1",
+      figure: "$84",
+      figureLabel: "on takeout fees",
+      about: "Restaurants",
+      title: "Delivery fees add up",
+      why: "Six delivery orders this month each paid a fee.",
+      picture: { type: "days", category: "Restaurants" },
+      month: "2026-10",
+      nextStep: "Pick up two orders a week instead.",
+      done: false,
+      ...fields,
+    });
+    const [worth, headsUp] = AI_BOX.groups;
+    const html = box(
+      {
+        worthActingOn: 2,
+        groups: [
+          { name: "Worth acting on", notes: [...(worth?.notes ?? []), card({})] },
+          ...(headsUp === undefined ? [] : [headsUp]),
+          {
+            name: "Good news",
+            notes: [
+              card({
+                id: "c2",
+                figure: "3",
+                figureLabel: "months under Budget",
+                about: "Groceries",
+                title: "Groceries stayed under Budget",
+                why: "Groceries came in under Budget in Aug, Sep and Oct.",
+                picture: null,
+                nextStep: "That leaves room for the Goal.",
+              }),
+              card({ id: "c3", figure: "", figureLabel: "", title: "Saved on fuel", done: true }),
+            ],
+          },
+        ],
+      },
+      "c1",
+    );
+
+    const worthItems = listItems(html, "Worth acting on");
+    expect(worthItems).toHaveLength(3);
+    expect(worthItems[2]).toBe(
+      "$84 on takeout fees Restaurants Delivery fees add up AI Hide why Six delivery orders this month each paid a fee. AI Next step: Pick up two orders a week instead. AI Done Ask about this",
+    );
+    // The picture shows under "Why?", inside the reason it opens.
+    const [, , acting, , groceries, fuel] = notes(html);
+    expect(slotHtml(acting ?? "", "note-why")).toContain('data-slot="note-picture"');
+
+    // A Good news card's last words carry no "Next step:" label, and a card with no picture or
+    // no figure shows neither.
+    const good = listItems(html, "Good news");
+    expect(good[0]).toBe(
+      "3 months under Budget Groceries Groceries stayed under Budget AI Why? Groceries came in under Budget in Aug, Sep and Oct. AI That leaves room for the Goal. AI Done Ask about this",
+    );
+    expect(groceries).not.toContain('data-slot="note-picture"');
+    expect(slotText(fuel ?? "", "note-figure")).toBe("");
+    expect(faded(fuel ?? "")).toBe(true);
+    expect(text(fuel ?? "")).toContain("Done ✓ Ask about this");
+    expect(text(html)).toMatch(/◆ Worth acting on 3 .* ● Heads up 1 .* ✓ Good news 2 /);
   });
 
   it("shows Good news last", () => {

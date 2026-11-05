@@ -28,6 +28,7 @@ import { startGoal } from "../goals/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
 import type { LogFields, Logger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
+import { propose } from "../proposals/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import {
   HISTORY_MONTHS,
@@ -603,6 +604,75 @@ describe("the Household summary on the demo Household", () => {
       // One more month would not fit.
       expect(summaryTokens(text)).toBeGreaterThan(SUMMARY_TOKENS - 200);
     } finally {
+      now = NOW;
+    }
+  });
+
+  it("lists each open Proposal, with the app's amounts as typed parts the filter leaves alone", async () => {
+    // A Goal with no Goal amount yet, for a Goal amount Proposal.
+    const groceries = await addGoal(bank.database, {
+      words: "Spend less on groceries",
+      authorId: "member-1",
+      date: "2026-11-27",
+      target: { kind: "Category", category: "Groceries" },
+      change: null,
+      deadline: null,
+    });
+    const card = (await listAccounts(bank.database)).find(
+      (account) => account.name === "Rewards Card",
+    );
+    const setMask = (mask: string | null) =>
+      bank.database.$client.execute({
+        sql: "UPDATE household_accounts SET mask = ? WHERE id = ?",
+        args: [mask, card?.id ?? ""],
+      });
+    now = new Date("2026-11-27T14:00:00.000Z");
+    try {
+      const amount = await propose(
+        bank.database,
+        {
+          kind: "Goal amount",
+          source: "Monthly review",
+          runId: "review-2026-10",
+          reason: "A set amount shows how far along the Goal is.",
+          goalId: groceries,
+          goalAmount: 482_100,
+        },
+        now,
+      );
+      const goal = await propose(
+        bank.database,
+        {
+          kind: "new Goal",
+          source: "Monthly review",
+          runId: "review-2026-10",
+          reason: "Lunches out were a third of Restaurants.",
+          words: "Pack lunch\u0007three days a week",
+        },
+        now,
+      );
+      expect([amount.outcome, goal.outcome]).toEqual(["shown", "shown"]);
+      // The Goal amount's digits are a card's last 4.
+      await setMask("4821");
+
+      const { text, parts } = await summary().today();
+      const section = text.slice(text.indexOf("## Proposals"));
+      expect(section.split("\n").slice(0, 3)).toEqual([
+        "## Proposals",
+        '- Made 2026-11-27: Goal amount, from Monthly review: Goal amount of 4821.00 for the Goal "Spend less on groceries". Reason: "A set amount shows how far along the Goal is."',
+        '- Made 2026-11-27: new Goal, from Monthly review: new Goal "Pack lunch three days a week". Reason: "Lunches out were a third of Restaurants."',
+      ]);
+
+      await ai.generate({ use: "insight cards", summary: parts, task: "Write the cards." });
+      expect(summaryTheModelRead(stub)).toContain("Goal amount of 4821.00 for the Goal");
+      await ai.generate({ use: "insight cards", summary: text, task: "Write the cards." });
+      expect(summaryTheModelRead(stub)).not.toContain("Goal amount of 4821");
+    } finally {
+      await setMask(
+        DEMO_BANKS.flatMap((each) => each.accounts).find(
+          (account) => account.name === "Rewards Card",
+        )?.mask ?? null,
+      );
       now = NOW;
     }
   });

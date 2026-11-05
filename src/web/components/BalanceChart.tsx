@@ -49,7 +49,11 @@ export function BalanceChart(props: { points: readonly BalancePointView[]; today
     <figure className="mt-3">
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <LineChart
+            accessibilityLayer={false}
+            data={rows}
+            margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+          >
             <CartesianGrid stroke="#e5e7eb" vertical={false} />
             <XAxis
               dataKey="date"

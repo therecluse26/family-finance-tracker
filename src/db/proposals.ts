@@ -1,4 +1,16 @@
-import { and, asc, count, eq, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  notExists,
+  sql,
+} from "drizzle-orm";
 import { listBudgetsInEffect, type StoredBudget } from "./budgets.ts";
 import type { Database, Queries } from "./client.ts";
 import type { GoalStart, NewGoal, StoredGoal } from "./goals.ts";
@@ -174,6 +186,25 @@ export async function listOpenProposals(database: Database): Promise<ProposalRow
     .from(proposals)
     .where(eq(proposals.status, "open"))
     .orderBy(asc(proposals.createdAt), asc(sql`rowid`));
+  return withBudgets(database, rows);
+}
+
+// The Proposals a Member accepted or skipped after `since`, or ever with no `since`, in the order
+// they closed.
+export async function listProposalsClosedSince(
+  database: Database,
+  since: Date | undefined,
+): Promise<ProposalRow[]> {
+  const rows = await database
+    .select()
+    .from(proposals)
+    .where(
+      and(
+        inArray(proposals.status, ["accepted", "skipped"]),
+        since === undefined ? undefined : gt(proposals.closedAt, since),
+      ),
+    )
+    .orderBy(asc(proposals.closedAt), asc(sql`rowid`));
   return withBudgets(database, rows);
 }
 

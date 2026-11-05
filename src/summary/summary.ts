@@ -21,6 +21,7 @@ import { calendarDateIn } from "../format.ts";
 import { type Goal, readGoalsWithProgress } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { type Logger, log } from "../log.ts";
+import { openProposals, type Proposal } from "../proposals/index.ts";
 import {
   addDays,
   addMonths,
@@ -516,6 +517,19 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     accountLabels,
   });
 
+  // Open Proposals, oldest first.
+  const proposals = (await openProposals(database, now)).reverse();
+  const proposalPart: Line[] = [
+    [""],
+    ["## Proposals"],
+    ...(proposals.length === 0
+      ? [["- None open."]]
+      : proposals.map(
+          (proposal) =>
+            line`- Made ${day(calendarDateIn(proposal.createdAt, timeZone))}: ${proposalLine(proposal)}`,
+        )),
+  ];
+
   return {
     head: [...head, ...categoryPart],
     history,
@@ -527,13 +541,39 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
       ...chargePart,
       ...goalPart,
       ...alertPart,
-      [""],
-      ["## Proposals"],
-      // The app makes no Proposal yet (spec 05, Proposals), so none is open.
-      ["- None open."],
+      ...proposalPart,
     ],
   };
 }
+
+// One Proposal (spec 08, Proposals): its kind and source, the change, with each amount typed, and
+// the AI's reason. A Goal's words and the reason are text, which the filter reads.
+function proposalLine(proposal: Proposal): Line {
+  const change =
+    proposal.kind === "Budget change"
+      ? joined(
+          proposal.budgets.map((budget) => {
+            const each = budget.period === "yearly" ? " a year" : " a month";
+            const was: Line =
+              budget.from === null ? ["no Budget"] : line`${money(budget.from)}${each}`;
+            return line`${budget.category} Budget from ${was} to ${money(budget.to)}${each}`;
+          }),
+          "; ",
+        )
+      : proposal.goal !== null
+        ? line`Goal amount of ${money(proposal.goal.goalAmount)} for the Goal "${plain(proposal.goal.words)}"`
+        : line`new Goal "${plain(proposal.words ?? "")}"`;
+  return line`${proposal.kind}, from ${proposal.source}: ${change}. Reason: "${plain(proposal.reason)}"`;
+}
+
+// One Proposal as a Writer use sends it, such as in an Insight card run's feedback.
+export function proposalParts(proposal: Proposal): SummaryPart[] {
+  return [...built(proposalLine(proposal)).parts];
+}
+
+// Text a Member, a bank, or the AI wrote, as one plain line: well-formed, with a space for each
+// control character.
+export const plainLine = (text: string): string => plain(text);
 
 // One active Goal: its words, its author by label, the AI's reading, its progress, and its status.
 function goalLine(

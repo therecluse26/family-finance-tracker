@@ -26,6 +26,7 @@ import { startCategorization } from "../categorization/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
+import { startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -135,12 +136,15 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const budgets = startBudgets({ database, tailorDraft: tailorFirstDraft });
     const overspending = startOverspendingChecks({ database });
     const alertSending = startAlertSending({ database, ai });
+    // The follow-up job's last step: the day's Insight card run, on the Writer tier.
+    const insights = startInsightCards({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {
       backups?.stop();
       updateCheck.stop();
       cpiFetch.stop();
+      insights.stop();
       alertSending.stop();
       overspending.stop();
       budgets.stop();

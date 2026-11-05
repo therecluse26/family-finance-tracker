@@ -830,6 +830,17 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ done }, 200);
   })
+  // Done on an Insight card marks it for every Member; {"done": false} clears the mark. It makes no
+  // AI call: the next Insight card run reads it as feedback.
+  .put("/ai-box/insight-cards/:id/done", jsonOnly, async (c) => {
+    const body = noteDoneBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send done as true or false." }, 400);
+    const { done } = body.data;
+    if (!(await c.var.aiBox.markInsightCard(c.req.param("id"), c.var.member.id, done))) {
+      return c.json({ error: "No Insight card in the AI box has this ID." }, 404);
+    }
+    return c.json({ done }, 200);
+  })
   // Accept on a Proposal (spec 08, Lifecycle): it applies the change, and records the Member and
   // the time. It makes no AI call.
   .post("/proposals/:id/accept", jsonOnly, async (c) => {

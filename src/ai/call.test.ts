@@ -12,7 +12,7 @@ import { householdAi } from "./household-ai.ts";
 import type { OutboundCall } from "./outbound.ts";
 import { memberPrice } from "./prices.ts";
 import { PrivacyRefusal } from "./privacy.ts";
-import { type AiCall, aiTool } from "./prompt.ts";
+import { type AiCall, type AiMessage, aiTool } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { aiSettings } from "./settings.ts";
 import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
@@ -1132,6 +1132,20 @@ describe("the one AI call path", () => {
           changes: [{ role: "user", text: "Hi", providerOptions: { anthropic: {} } }],
         }),
       ).rejects.toThrow(TypeError);
+      // A change given as parts is the app's: from the user only, never marked typed, and each
+      // part text or a typed value.
+      for (const change of [
+        { role: "assistant", parts: ["Hi"] },
+        { role: "user", parts: ["Hi"], typed: true },
+        { role: "user", parts: ["Hi"], text: "Hi" },
+        { role: "user", parts: [{ amount: 4821 }] },
+        { role: "user", parts: "Hi" },
+      ]) {
+        await expect(
+          ai.generate({ ...call, changes: [change as AiMessage] }),
+          JSON.stringify(change),
+        ).rejects.toThrow(TypeError);
+      }
 
       // Only the two checks on save.
       expect(capture.requests).toHaveLength(2);

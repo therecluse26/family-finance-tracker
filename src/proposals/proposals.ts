@@ -11,6 +11,7 @@ import {
   listDueProposals,
   listGoals,
   listOpenProposals,
+  listProposalsClosedSince,
   listUndoableProposals,
   type ProposalKind,
   type ProposalRow,
@@ -344,6 +345,28 @@ export async function openReviewProposals(
 export async function undoableProposals(database: Database, now = new Date()): Promise<Proposal[]> {
   const month = (await householdDay(database, now)).slice(0, 7);
   return cardsOf(database, await listUndoableProposals(database, month), month);
+}
+
+// A Proposal a Member accepted or skipped, and when.
+export type ClosedProposal = Proposal & { status: "accepted" | "skipped"; closedAt: Date };
+
+// The Proposals a Member accepted or skipped after `since`, or ever with no `since`, in the order
+// they closed: feedback for the next Insight card run (spec 08, Insight cards).
+export async function closedProposals(
+  database: Database,
+  since: Date | undefined,
+  now = new Date(),
+): Promise<ClosedProposal[]> {
+  const month = (await householdDay(database, now)).slice(0, 7);
+  const rows = await listProposalsClosedSince(database, since);
+  const cards = await cardsOf(database, rows, month);
+  return cards.flatMap((card, index) => {
+    const row = rows[index];
+    if (row?.closedAt == null || (row.status !== "accepted" && row.status !== "skipped")) {
+      return [];
+    }
+    return [{ ...card, status: row.status, closedAt: row.closedAt }];
+  });
 }
 
 // A Member's Edit before "Save and accept": the amount of any of a Budget change's Categories, a

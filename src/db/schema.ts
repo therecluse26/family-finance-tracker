@@ -716,6 +716,10 @@ export const transactions = sqliteTable(
     // The "history load" mark: the Transaction arrived while its Connection's history loaded, for
     // a bank added later too. An Anomaly it fires is "found in history" (spec 06, When checks run).
     historyLoad: integer("history_load", { mode: "boolean" }).notNull().default(false),
+    // When a sync first stored the Transaction as posted: a new posted record, or a pending one
+    // that turned posted. A change to a posted one, or a Member's edit, keeps it. The day's Insight
+    // card run starts only from a sync that brings one (spec 08, Insight cards).
+    postedSeenAt: moment("posted_seen_at"),
   },
   (table) => [
     uniqueIndex("transactions_connection_provider_id").on(
@@ -1607,4 +1611,33 @@ export const budgetTailoringRuns = sqliteTable(
       .on(table.kind)
       .where(sql`${table.kind} = 'Tailoring'`),
   ],
+);
+
+// The current Insight cards in the dashboard's AI box (spec 08, Insight cards): the 4 to 7 cards
+// the last Insight card run wrote, in the AI's order. A new run replaces the whole set. Each text
+// is the AI's, as the screen shows it. Done marks a card for every Member, with who and when.
+export const insightCards = sqliteTable(
+  "insight_cards",
+  {
+    id: text("id").primaryKey(),
+    // The card's place in the AI's order, from 1.
+    position: integer("position").notNull(),
+    // When the run wrote it, and the Household's month then, YYYY-MM, which its picture shows.
+    writtenAt: moment("written_at").notNull(),
+    month: text("month").notNull(),
+    group: text("card_group", { enum: ["worth_acting_on", "heads_up", "good_news"] }).notNull(),
+    about: text("about").notNull(),
+    // The key number, or null.
+    figure: real("figure"),
+    figureKind: text("figure_kind", { enum: ["dollars", "count", "percent"] }).notNull(),
+    figureLabel: text("figure_label").notNull(),
+    title: text("title").notNull(),
+    why: text("why").notNull(),
+    nextStep: text("next_step").notNull(),
+    // A choice from the picture menu, the pictures module's PictureChoice, or null.
+    picture: text("picture", { mode: "json" }).$type<Record<string, unknown>>(),
+    doneAt: moment("done_at"),
+    doneBy: text("done_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [uniqueIndex("insight_cards_position").on(table.position)],
 );
