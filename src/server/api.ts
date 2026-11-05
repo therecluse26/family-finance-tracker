@@ -138,6 +138,9 @@ const budgetEditBody = z.object({ amount: z.number().int().min(0).max(MAX_BUDGET
 
 const NO_BUDGET = "This Category has no Budget to change.";
 
+// A Member's mark on a Goal (spec 05, Rules).
+const goalStatusBody = z.object({ status: z.enum(["done", "dropped"]) }).strict();
+
 // An Unconnected account (spec 02, Unconnected accounts). An empty institution name or last 4
 // digits is none. A balance is whole cents.
 const MAX_BALANCE_CENTS = 100_000_000_000;
@@ -973,6 +976,20 @@ export const api = new Hono<ServerEnv>()
     const accepted = await c.var.budgets.acceptAll(c.var.member.id);
     if (accepted === undefined) return c.json({ error: "There is no draft to accept yet." }, 404);
     return c.json({ accepted }, 200);
+  })
+  // Every Goal with its progress (spec 05, Goals): the active Goals first, then the done list, then
+  // the dropped list.
+  .get("/goals", async (c) => c.json({ goals: await c.var.goals.list() }))
+  // A Member marks an active Goal done or dropped.
+  .post("/goals/:id/status", jsonOnly, async (c) => {
+    const body = goalStatusBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Mark the Goal done or dropped." }, 400);
+    const goal = await c.var.goals.mark(c.req.param("id"), body.data.status, c.var.member.id);
+    if (goal === undefined) return c.json({ error: "No Goal has this ID." }, 404);
+    if (goal === "not active") {
+      return c.json({ error: "Only an active Goal can be marked done or dropped." }, 409);
+    }
+    return c.json({ goal }, 200);
   })
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))

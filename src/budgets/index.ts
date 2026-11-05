@@ -30,10 +30,12 @@ export {
   type CategoryProjection,
   findLargePurchases,
   type LargePurchase,
+  type ProjectionFacts,
   type ProjectionTerms,
   projectCategories,
   projectedSpending,
   projectMerchant,
+  readProjectionFacts,
 } from "./projection.ts";
 export {
   type BudgetSpending,

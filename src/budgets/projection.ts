@@ -122,6 +122,17 @@ async function readSpendingFacts(
   return { today, posted, charges, loanPayments, recurringIds, merchants, purchases };
 }
 
+// What the projection reads on `now`, with each Transaction's Merchant: for a caller that projects
+// several Categories and Merchants on one day and reads it once.
+export type ProjectionFacts = SpendingFacts;
+
+export function readProjectionFacts(
+  database: Database,
+  now = new Date(),
+): Promise<ProjectionFacts> {
+  return readSpendingFacts(database, now, true);
+}
+
 // The Large purchases among this month's purchases.
 function largeIn(facts: SpendingFacts, month: string): Set<string> {
   const large = new Set<string>();
@@ -175,18 +186,20 @@ export type CategoryProjection = {
 };
 
 // Each Category's Spending and P in `month`, written YYYY-MM, on `now`'s day, Household time.
-// `budgets` holds each monthly Budget, for O's 50% test.
+// `budgets` holds each monthly Budget, for O's 50% test. `read`, when given, is the facts read on
+// `now`.
 export async function projectCategories(
   database: Database,
   month: string,
   budgets: ReadonlyMap<Category, number>,
   now = new Date(),
+  read?: ProjectionFacts,
 ): Promise<{
   today: string;
   categories: Map<Category, CategoryProjection>;
   totals: MonthTotals[];
 }> {
-  const facts = await readSpendingFacts(database, now);
+  const facts = read ?? (await readSpendingFacts(database, now));
   const all = await totalsByMonth(database);
   const totals = all.find((each) => each.month === month);
   const { day, days, current } = monthDay(month, facts.today);
@@ -249,14 +262,15 @@ export async function projectCategories(
 
 // A Merchant's Spending and P in `month`, for a Goal: the same rule on that Merchant's Spending,
 // with Large purchases as its only one-offs. A Refund or Reimbursement linked to its Spending
-// counts at that Spending's Merchant.
+// counts at that Spending's Merchant. `read`, when given, is the facts read on `now`.
 export async function projectMerchant(
   database: Database,
   merchant: Merchant,
   month: string,
   now = new Date(),
+  read?: ProjectionFacts,
 ): Promise<CategoryProjection> {
-  const facts = await readSpendingFacts(database, now, true);
+  const facts = read ?? (await readSpendingFacts(database, now, true));
   const { day, days, current } = monthDay(month, facts.today);
   const large = largeIn(facts, month);
   const atMerchant = (id: string) => sameMerchant(facts.merchants.get(id) ?? null, merchant);

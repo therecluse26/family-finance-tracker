@@ -20,6 +20,7 @@ import { benchmarkRoutes } from "./benchmarks.ts";
 import { budgetRoutes } from "./budgets.ts";
 import { categoryRoutes } from "./categories.ts";
 import type { ServerEnv } from "./env.ts";
+import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
 import { masterKeyRoutes } from "./master-key.ts";
 import { moneyMovementRoutes } from "./money-movement.ts";
@@ -153,6 +154,7 @@ export function createApp(
   const about = aboutRoutes(database);
   const benchmarks = benchmarkRoutes(database);
   const budgets = budgetRoutes(database);
+  const goals = goalRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -181,6 +183,7 @@ export function createApp(
         c.set("about", about);
         c.set("benchmarks", benchmarks);
         c.set("budgets", budgets);
+        c.set("goals", goals);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

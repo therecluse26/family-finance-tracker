@@ -1218,3 +1218,35 @@ export const anomalyChecks = sqliteTable(
   },
   (table) => [check("anomaly_checks_one_row", sql`${table.id} = 1`)],
 );
+
+// Goals (spec 05, Goals): the Member's own words, the author, the Goal's date, a status, the AI's
+// reading, and the Goal amount. The reading names its Category, Merchant, Accounts or loan by
+// value, with no foreign key: a removed Account leaves the Goal as it is.
+export const goals = sqliteTable(
+  "goals",
+  {
+    id: text("id").primaryKey(),
+    words: text("words").notNull(),
+    authorId: text("author_id").references(() => members.id, { onDelete: "set null" }),
+    // The Goal's date, in the Household time zone.
+    date: calendarDate("date").notNull(),
+    status: text("status", { enum: ["active", "done", "dropped"] }).notNull(),
+    // The day it became done or dropped, in the Household time zone, and the Member who marked it.
+    // A Goal the app set to done has no Member.
+    endedOn: calendarDate("ended_on"),
+    endedBy: text("ended_by").references(() => members.id, { onDelete: "set null" }),
+    // The AI's reading. Each field is empty when the words do not say. The target and the change
+    // are JSON: the goals module's GoalTarget and GoalChange.
+    target: text("target", { mode: "json" }).$type<Record<string, unknown>>(),
+    change: text("change", { mode: "json" }).$type<Record<string, unknown>>(),
+    deadline: calendarDate("deadline"),
+    // The Goal amount in whole cents, empty until it is set, and the start (spec 05, Progress): the
+    // day it took effect, and the balance on that day, or the loan's balance owed. A spend less
+    // Goal keeps the baseline its Goal amount was set against.
+    goalAmount: cents("goal_amount"),
+    startsOn: calendarDate("starts_on"),
+    startBalance: cents("start_balance"),
+    baseline: cents("baseline"),
+  },
+  (table) => [index("goals_status").on(table.status)],
+);

@@ -170,6 +170,19 @@ export {
   readLastFollowUpChange,
 } from "./follow-up.ts";
 export {
+  addGoal,
+  endGoals,
+  type GoalStart,
+  type GoalStatus,
+  listGoals,
+  listSpendingPartsSince,
+  type NewGoal,
+  readGoal,
+  type StoredGoal,
+  storeGoalStart,
+  sumSavingSince,
+} from "./goals.ts";
+export {
   claimFirstRunDone,
   claimFirstRunRestart,
   claimFirstRunRetry,
