@@ -1,7 +1,14 @@
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BackupsView } from "../../../server/backups-views.ts";
-import { BackupLines, backUpNow, sizeLabel } from "./BackupsAndData.tsx";
+import {
+  BackupLines,
+  backUpNow,
+  DownloadMyData,
+  downloadMyData,
+  exportFileName,
+  sizeLabel,
+} from "./BackupsAndData.tsx";
 
 // Settings, Backups and data: the backup lines as the browser first paints them, and the request
 // "Back up now" sends.
@@ -86,5 +93,50 @@ describe("Settings, Backups and data: the request Back up now sends", () => {
     expect(requests).toEqual([
       { method: "POST", path: "/api/backups/now", type: "application/json", body: "{}" },
     ]);
+  });
+});
+
+// POST /api/export answers 415 without a JSON content type, so the page must send one.
+// src/server/data-export-api.test.ts sends this same request.
+describe("Settings, Backups and data: Download my data", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("says the file is not encrypted before the download, and asks for a code", () => {
+    const html = text(renderToString(<DownloadMyData />));
+
+    expect(html).toContain("The file is not encrypted.");
+    expect(html).toContain("enter a code from your authenticator app, or a backup code");
+    expect(html.indexOf("not encrypted")).toBeLessThan(html.lastIndexOf("Download my data"));
+  });
+
+  it("sends the code as JSON", async () => {
+    const requests: { method: string; path: string; type: string | null; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      requests.push({
+        method: init.method ?? "GET",
+        path: String(input),
+        type: new Headers(init.headers).get("content-type"),
+        body: init.body,
+      });
+      return new Response("", { headers: { "content-type": "application/zip" } });
+    });
+
+    await downloadMyData("123456");
+
+    expect(requests).toEqual([
+      { method: "POST", path: "/api/export", type: "application/json", body: '{"code":"123456"}' },
+    ]);
+  });
+
+  it("names the file as the server does, with plain characters only", () => {
+    const named = (disposition: string) =>
+      exportFileName(new Response("", { headers: { "content-disposition": disposition } }));
+
+    expect(named('attachment; filename="family-finance-data-2026-11-05.zip"')).toBe(
+      "family-finance-data-2026-11-05.zip",
+    );
+    expect(named('attachment; filename="../x y.zip"')).toBe("family-finance-data.zip");
   });
 });

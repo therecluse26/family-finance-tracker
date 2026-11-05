@@ -82,12 +82,17 @@ describe("the app shell", () => {
     ]);
   });
 
-  it("gives Backups and data its Back up now button and its Check my master key form", () => {
+  it("gives Backups and data its Back up now button, its Check my master key form, and its Download my data form", () => {
     const html = render("/settings/backups-and-data");
 
-    expect(texts(html, "h3")).toEqual(["Backups", "Check my master key"]);
-    expect(texts(html, "button")).toEqual(["Back up now", "Check my master key"]);
+    expect(texts(html, "h3")).toEqual(["Backups", "Check my master key", "Download my data"]);
+    expect(texts(html, "button")).toEqual([
+      "Back up now",
+      "Check my master key",
+      "Download my data",
+    ]);
     expect(html).toMatch(/<textarea[^>]*autoComplete="off"[^>]*spellCheck="false"/i);
+    expect(html).toMatch(/<input[^>]*inputMode="numeric"[^>]*autoComplete="one-time-code"/i);
   });
 
   it("shows the Master key in groups of 4, and who last checked it and when", () => {

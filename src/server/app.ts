@@ -28,6 +28,7 @@ import { budgetRoutes } from "./budgets.ts";
 import { categoryRoutes } from "./categories.ts";
 import { chatRoutes } from "./chat.ts";
 import { comingUpRoutes } from "./coming-up.ts";
+import { dataExportRoutes } from "./data-export.ts";
 import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
@@ -208,6 +209,7 @@ export function createApp(
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
+  const dataExport = dataExportRoutes(database, bank, security.logger);
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
@@ -246,6 +248,7 @@ export function createApp(
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);
+        c.set("dataExport", dataExport);
         await next();
       })
       .use("/api/*", masterKeyFirst)

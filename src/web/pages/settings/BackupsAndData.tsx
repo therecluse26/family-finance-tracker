@@ -2,14 +2,23 @@ import { type FormEvent, useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { BackupsView } from "../../../server/backups-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, PasteField } from "../../components/Fields.tsx";
+import { BUTTON, ErrorLine, FIELD, PasteField } from "../../components/Fields.tsx";
 import { lastCheckText, sendPastedKey } from "../../master-key.ts";
 
-// Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11), and
-// "Check my master key" (spec 09, The Master key). The data export comes with its own ticket.
+// Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11),
+// "Check my master key" (spec 09, The Master key), and "Download my data" (spec 11, Data export).
 
 // "Back up now" sends an empty JSON body: the route takes only JSON.
 export const backUpNow = () => api.backups.now.$post({ json: {} });
+
+// "Download my data" sends the code as JSON: the route takes only JSON.
+export const downloadMyData = (code: string) => api.export.$post({ json: { code } });
+
+// The file name the server gave the ZIP, or a plain one.
+export function exportFileName(res: Response): string {
+  const named = /filename="([\w.-]+)"/.exec(res.headers.get("content-disposition") ?? "");
+  return named?.[1] ?? "family-finance-data.zip";
+}
 
 // "3.2 MB", "820 KB", or "512 bytes".
 export function sizeLabel(bytes: number): string {
@@ -158,12 +167,83 @@ function CheckMasterKey() {
   );
 }
 
+// The data export asks for a fresh code, and says before the download that the file is not
+// encrypted (spec 11, Data export).
+export function DownloadMyData() {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    setDone(undefined);
+    downloadMyData(code.trim())
+      .then(async (res) => {
+        setCode("");
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+          setError(typeof body.error === "string" ? body.error : "That did not work.");
+          return;
+        }
+        const name = exportFileName(res);
+        const url = URL.createObjectURL(await res.blob());
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name;
+        link.click();
+        // Some browsers read the file after click() returns.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        setDone(`Downloaded ${name}.`);
+      })
+      .catch(() => setError("The download did not finish. Try again."))
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <form className="mt-4" onSubmit={submit}>
+      <h3 className="font-semibold">Download my data</h3>
+      <p className="mt-2">
+        One ZIP file: your Transactions, Accounts, Budgets, Goals, and Category rules as CSV files,
+        and all the app's data in data.json. It holds no keys, passwords, or codes.
+      </p>
+      <p className="mt-2 font-medium">
+        The file is not encrypted. Anyone who has it can read your Household's money. Keep it
+        somewhere safe.
+      </p>
+      <label className="mt-3 block">
+        To download, enter a code from your authenticator app, or a backup code
+        <input
+          className={FIELD}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
+      </label>
+      <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+        Download my data
+      </button>
+      {done === undefined ? null : (
+        <p className="mt-3 text-green-700" role="status">
+          {done}
+        </p>
+      )}
+      <ErrorLine error={error} />
+    </form>
+  );
+}
+
 export function BackupsAndData() {
   return (
     <>
       <h2 className="text-xl font-semibold">Backups and data</h2>
       <Backups />
       <CheckMasterKey />
+      <DownloadMyData />
     </>
   );
 }

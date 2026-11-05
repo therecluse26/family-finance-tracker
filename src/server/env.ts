@@ -19,6 +19,7 @@ import type { BudgetRoutes } from "./budgets-views.ts";
 import type { CategoryRoutes } from "./category-views.ts";
 import type { ChatRoutes } from "./chat-views.ts";
 import type { ComingUpRoutes } from "./coming-up-views.ts";
+import type { DataExportRoutes } from "./data-export-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
@@ -73,6 +74,8 @@ export type ServerEnv = {
     about: AboutRoutes;
     // Settings, Backups and data: the backup folder, the last backup, and "Back up now".
     backups: BackupRoutes;
+    // Settings, Backups and data: "Download my data".
+    dataExport: DataExportRoutes;
     // Each Category's Benchmark.
     benchmarks: BenchmarkRoutes;
     // Each Category's Budget for a month.

@@ -208,6 +208,16 @@ export {
   readNewestCpi,
   storeCpiValues,
 } from "./cpi.ts";
+export {
+  EXPORTED_TABLES,
+  type ExportedBudget,
+  type ExportedTable,
+  type ExportedTransaction,
+  listEveryBudget,
+  NEVER_EXPORTED_TABLES,
+  readExportedJson,
+  readExportedTransactions,
+} from "./data-export.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
 export {
   type CategoryConfidence,

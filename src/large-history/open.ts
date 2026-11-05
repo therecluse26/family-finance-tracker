@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StubModels } from "../ai/testing.ts";
 import { createAuth } from "../auth/auth.ts";
-import { addMember } from "../auth/testing.ts";
+import { addMember, type TestMember } from "../auth/testing.ts";
 import { FakeBankAdapter } from "../bank/fake.ts";
 import {
   closeDatabase,
@@ -35,6 +35,8 @@ export type LargeHistory = {
   // A signed-in Member's browser on the app's HTTP interface.
   browser: TestBrowser;
   memberId: string;
+  // That Member, with a TOTP secret and backup codes, for a route that asks for a fresh code.
+  member: TestMember;
   // The AI SDK test models behind the app's AI. No AI provider is set up until a case saves one.
   ai: StubModels;
   // How many times the app asked for a follow-up job. No job runs: a caller runs runFollowUp.
@@ -108,6 +110,7 @@ export async function openLargeHistory(): Promise<LargeHistory> {
       build: built.report,
       browser,
       memberId: member.id,
+      member,
       followUpsAsked: () => asked,
       close,
     };

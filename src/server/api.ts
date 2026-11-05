@@ -1258,6 +1258,24 @@ export const api = new Hono<ServerEnv>()
     if (!result.ok) return c.json({ error: BACKUP_FAILURES[result.failure], backups }, 500);
     return c.json({ backup: { file: result.file, at: result.at }, backups }, 200);
   })
+  // "Download my data" (spec 11, Data export): any Member, with a fresh TOTP or backup code, since
+  // a data export is a sensitive action (spec 09). The ZIP is not encrypted, and streams as it is
+  // written.
+  .post("/export", jsonOnly, async (c) => {
+    const body = codeBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    const fresh = await c.var.checkFreshCode(body.data.code);
+    if (fresh === "too many tries") {
+      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    }
+    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+    const { fileName, stream } = await c.var.dataExport.download();
+    return c.body(stream, 200, {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${fileName}"`,
+      "Cache-Control": "no-store",
+    });
+  })
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.
   .get("/benchmarks", async (c) => c.json(await c.var.benchmarks.benchmarks()))

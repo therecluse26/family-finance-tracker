@@ -1,3 +1,4 @@
+import { crc32, inflateRawSync } from "node:zlib";
 import type { TestMember } from "../auth/testing.ts";
 import type { createApp } from "./app.ts";
 
@@ -74,4 +75,55 @@ export class TestBrowser {
   async isSignedIn(): Promise<boolean> {
     return (await this.get("/api/ping")).status === 200;
   }
+}
+
+// Each file in a .zip archive, by name, in the order the directory lists them. It checks what a
+// strict reader checks: each local header matches the directory, each data descriptor follows its
+// data, each CRC-32 and size is right, and the directory ends the archive.
+export function readZip(archive: Uint8Array): Map<string, Uint8Array> {
+  const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+  const end = archive.length - 22;
+  if (view.getUint32(end, true) !== 0x06054b50) throw new Error("No end of the .zip directory.");
+  const count = view.getUint16(end + 10, true);
+  const directorySize = view.getUint32(end + 12, true);
+  let at = view.getUint32(end + 16, true);
+  if (at + directorySize !== end) throw new Error("The .zip directory does not end the archive.");
+  const files = new Map<string, Uint8Array>();
+  for (let i = 0; i < count; i++) {
+    if (view.getUint32(at, true) !== 0x02014b50) throw new Error("The .zip directory is broken.");
+    const flags = view.getUint16(at + 8, true);
+    const method = view.getUint16(at + 10, true);
+    const crc = view.getUint32(at + 16, true);
+    const compressed = view.getUint32(at + 20, true);
+    const size = view.getUint32(at + 24, true);
+    const nameLength = view.getUint16(at + 28, true);
+    const local = view.getUint32(at + 42, true);
+    const name = new TextDecoder("utf-8", { fatal: true }).decode(
+      archive.subarray(at + 46, at + 46 + nameLength),
+    );
+    if (view.getUint32(local, true) !== 0x04034b50) throw new Error(`${name}: no local header.`);
+    if (view.getUint16(local + 6, true) !== flags || view.getUint16(local + 8, true) !== method) {
+      throw new Error(`${name}: the local header does not match the directory.`);
+    }
+    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    const data = archive.subarray(start, start + compressed);
+    const content = method === 8 ? new Uint8Array(inflateRawSync(data)) : data;
+    if (content.length !== size || crc32(content) !== crc) {
+      throw new Error(`${name}: the size or CRC-32 is wrong.`);
+    }
+    if (flags & 0x0008) {
+      const descriptor = start + compressed;
+      if (
+        view.getUint32(descriptor, true) !== 0x08074b50 ||
+        view.getUint32(descriptor + 4, true) !== crc ||
+        view.getUint32(descriptor + 8, true) !== compressed ||
+        view.getUint32(descriptor + 12, true) !== size
+      ) {
+        throw new Error(`${name}: the data descriptor is wrong.`);
+      }
+    }
+    files.set(name, content);
+    at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+  }
+  return files;
 }
