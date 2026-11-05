@@ -8,6 +8,13 @@ export {
   mergedAlertList,
 } from "./alert-list.ts";
 export {
+  ALERT_NOTE_MS,
+  type AlertNote,
+  type AlertNoteGroup,
+  alertNotes,
+  markAlertNote,
+} from "./alert-notes.ts";
+export {
   ANOMALY_CHECKS_CAP,
   ANOMALY_CHECKS_STOPPED,
   checkAnomalies,

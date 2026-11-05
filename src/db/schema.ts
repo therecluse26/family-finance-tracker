@@ -1324,6 +1324,16 @@ export const alertPresses = sqliteTable(
   (table) => [index("alert_presses_alert_id").on(table.alertId)],
 );
 
+// The Alert notes marked Done in the dashboard's AI box (spec 07, 1. AI box): one row per Alert,
+// for every Member, with who marked it and when. Tapping "Done ✓" again deletes the row.
+export const alertNotesDone = sqliteTable("alert_notes_done", {
+  alertId: text("alert_id")
+    .primaryKey()
+    .references(() => alerts.id, { onDelete: "cascade" }),
+  memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+  doneAt: moment("done_at").notNull(),
+});
+
 // The Anomaly checks' failed tries in a row. A run that fails counts one; the run that reaches the
 // cap gives up on its Transactions and raises one System notice. It has at most one row, whose ID
 // is 1.

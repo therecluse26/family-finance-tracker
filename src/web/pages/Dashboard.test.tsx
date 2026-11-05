@@ -3,6 +3,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { compile } from "tailwindcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AiBoxNoteView, AiBoxView } from "../../server/ai-box-views.ts";
 import type { ConnectionView, NumberTilesView } from "../../server/bank-views.ts";
 import type {
   BudgetStatusView,
@@ -258,6 +259,57 @@ const GOALS: GoalsAnswer = {
   ],
 };
 
+const note = (fields: Partial<AiBoxNoteView> = {}): AiBoxNoteView => ({
+  kind: "Alert note",
+  id: "a1",
+  createdAt: "2026-10-19T14:00:00.000Z",
+  figure: "$36.00",
+  figureLabel: "interest on Oct 9",
+  about: "Rewards Card ··4821",
+  title: "Card interest on Rewards Card ··4821",
+  why: ["Card interest: $36.00 on Rewards Card ··4821 on Oct 9."],
+  nextStep: null,
+  done: false,
+  ...fields,
+});
+
+// Two Alert notes worth acting on, one of them Done, and one heads up. AI is on.
+const AI_BOX: AiBoxView = {
+  worthActingOn: 1,
+  groups: [
+    {
+      name: "Worth acting on",
+      notes: [
+        note({
+          id: "a2",
+          figure: "$120",
+          figureLabel: "over Budget",
+          about: "Restaurants",
+          title: "Restaurants is over Budget for Oct 2026",
+          why: ["Restaurants is over Budget for Oct 2026: $600 of $480. Latest: $42.50 on Oct 19."],
+          nextStep: "Skip one takeout night this week.",
+        }),
+        note({ done: true }),
+      ],
+    },
+    {
+      name: "Heads up",
+      notes: [
+        note({
+          id: "a3",
+          figure: "$15.99",
+          figureLabel: "next on Nov 14",
+          about: "Streamflix",
+          title: "New Recurring charge at Streamflix?",
+          why: ["New Recurring charge? Streamflix, $15.99 on Sep 14 and Oct 14."],
+        }),
+      ],
+    },
+  ],
+  setUpAi: false,
+  paused: null,
+};
+
 const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   timeZone: ZONE,
   month: dashboardMonth(NOW, ZONE),
@@ -269,10 +321,11 @@ const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   usualMonth: USUAL_MONTH,
   comingUp: COMING_UP,
   goals: GOALS,
+  aiBox: AI_BOX,
   ...fields,
 });
 
-function render(shown: DashboardData, openGroup?: string): string {
+function render(shown: DashboardData, openGroup?: string, whyOpen?: string): string {
   const page = (
     <DashboardReport
       data={shown}
@@ -280,6 +333,7 @@ function render(shown: DashboardData, openGroup?: string): string {
       onRetry={() => {}}
       onChanged={() => {}}
       {...(openGroup === undefined ? {} : { openGroup })}
+      {...(whyOpen === undefined ? {} : { whyOpen })}
     />
   );
   const router = createMemoryRouter([{ path: "/", element: page }], { initialEntries: ["/"] });
@@ -1023,6 +1077,151 @@ async function layoutOf(html: string) {
     return style;
   };
 }
+
+describe('the AI box, "This week"', () => {
+  // The AI box's HTML: the box in the left column.
+  const aiBox = (html: string) => {
+    const end = html.lastIndexOf("</section>", html.indexOf('data-slot="right-column"'));
+    return html.slice(html.indexOf('<section aria-label="This week"'), end + "</section>".length);
+  };
+  // True when the note's own row is faded.
+  const faded = (item: string) =>
+    (/^<li class="([^"]*)"/.exec(item)?.[1] ?? "").split(" ").includes("opacity-50");
+  const box = (view: Partial<AiBoxView> = {}, whyOpen?: string) =>
+    aiBox(render(data({ aiBox: { ...AI_BOX, ...view } }), undefined, whyOpen));
+  const notes = (html: string) =>
+    [...html.matchAll(/<li[^>]*data-slot="ai-note"[^>]*>(.*?)<\/li>/gs)].map((item) => item[0]);
+
+  it("is labelled This week, counts the notes worth acting on that are not Done, and shows each group in order with its count", () => {
+    const html = box();
+
+    expect(html).toContain('aria-label="This week"');
+    expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
+    expect(text(html)).toMatch(/^This week 1 thing worth acting on ◆ Worth acting on 2 /);
+    expect(listItems(html, "Worth acting on")).toHaveLength(2);
+    expect(listItems(html, "Heads up")).toHaveLength(1);
+    expect(text(html).indexOf("◆ Worth acting on 2")).toBeLessThan(
+      text(html).indexOf("● Heads up 1"),
+    );
+    // An empty group is hidden; nothing hides behind "Show all".
+    expect(text(html)).not.toContain("Good news");
+    expect(text(html)).not.toContain("Show all");
+    expect(html).not.toContain('data-slot="nothing-new"');
+    expect(html).not.toContain('data-slot="set-up-ai"');
+    expect(html).not.toContain('data-slot="ai-paused"');
+
+    const two = box({ worthActingOn: 2 });
+    expect(slotText(two, "ai-heading")).toBe("2 things worth acting on");
+    const none = box({ worthActingOn: 0 });
+    expect(slotText(none, "ai-heading")).toBe("0 things worth acting on");
+  });
+
+  it("shows a note's number and label, what it is about and its title, Why?, the AI's Next step, Done, and Ask about this", () => {
+    const [overBudget, done] = notes(box());
+
+    expect(text(overBudget ?? "")).toBe(
+      "$120 over Budget Restaurants Restaurants is over Budget for Oct 2026 Why? Restaurants is over Budget for Oct 2026: $600 of $480. Latest: $42.50 on Oct 19. Next step: Skip one takeout night this week. AI Done Ask about this",
+    );
+    expect(slotText(overBudget ?? "", "note-figure")).toBe("$120 over Budget");
+    // "Why?" opens the reason in place; until then it is hidden.
+    expect(overBudget).toMatch(/aria-expanded="false"/);
+    expect(overBudget).toMatch(/<div id="[^"]+" hidden=""[^>]*data-slot="note-why"/);
+    expect(overBudget).toContain('aria-pressed="false"');
+    expect(faded(overBudget ?? "")).toBe(false);
+
+    // Without advice, an Alert note has no Next step line.
+    expect(done).not.toContain('data-slot="next-step"');
+    expect(text(done ?? "")).not.toContain("Next step");
+  });
+
+  it('opens the reason with "Hide why"', () => {
+    const [overBudget] = notes(box({}, "a2"));
+
+    expect(overBudget).toMatch(/aria-expanded="true"/);
+    expect(text(overBudget ?? "")).toContain("Hide why Restaurants is over Budget");
+    expect(overBudget).not.toMatch(/hidden=""[^>]*data-slot="note-why"/);
+  });
+
+  it('fades a done note in place, with "Done ✓" to clear the mark', () => {
+    const [, done] = notes(box());
+
+    expect(faded(done ?? "")).toBe(true);
+    expect(done).toContain('aria-pressed="true"');
+    expect(text(done ?? "")).toContain("Done ✓ Ask about this");
+  });
+
+  it('shows "Set up AI for insights", linking to the AI settings, with no AI provider', () => {
+    const html = box({ setUpAi: true });
+
+    expect(slotText(html, "set-up-ai")).toBe("Set up AI for insights");
+    expect(slotHtml(html, "set-up-ai")).toContain('href="/settings/ai"');
+    expect(notes(html)).toHaveLength(3);
+  });
+
+  it("says when AI is paused, under the heading", () => {
+    const capped = box({ paused: { reason: "cost cap", until: "2026-11-01" } });
+    expect(slotText(capped, "ai-paused")).toBe("AI paused until Nov 1");
+    expect(text(capped)).toMatch(/^This week 1 thing worth acting on AI paused until Nov 1 ◆/);
+
+    const rejected = box({ paused: { reason: "key rejected" } });
+    expect(slotText(rejected, "ai-paused")).toBe("AI paused: check the AI key");
+  });
+
+  it('says "Nothing new this week." with no notes', () => {
+    const html = box({ worthActingOn: 0, groups: [] });
+
+    expect(slotText(html, "nothing-new")).toBe("Nothing new this week.");
+    expect(notes(html)).toEqual([]);
+    expect(html).not.toContain('data-slot="ai-group"');
+
+    // With no AI provider, the set-up note shows as well.
+    const noAi = box({ worthActingOn: 0, groups: [], setUpAi: true });
+    expect(text(noAi)).toBe(
+      "This week 0 things worth acting on Nothing new this week. Set up AI for insights",
+    );
+  });
+
+  it("shows Good news last", () => {
+    const html = box({
+      groups: [
+        ...AI_BOX.groups,
+        { name: "Good news", notes: [note({ id: "a4", title: "Good news note" })] },
+      ],
+    });
+
+    expect(text(html)).toMatch(/◆ Worth acting on 2 .* ● Heads up 1 .* ✓ Good news 1 /);
+  });
+
+  it("lets the number column grow to fit a large number, and breaks a long word in a note", async () => {
+    const html = box({
+      groups: [
+        {
+          name: "Heads up",
+          notes: [
+            note({
+              figure: "$12,450.00",
+              about: "Northwindtradingcompanyoutletstores",
+              title: "Large purchase at Northwindtradingcompanyoutletstores",
+            }),
+          ],
+        },
+      ],
+    });
+    const styleOf = await layoutOf(html);
+
+    // No fixed width: the column is at least 5rem, and as wide as "$12,450.00" on one line. The
+    // test build has no theme, so it emits no spacing sizes: the classes say it.
+    const columnClasses = (/class="([^"]*)"[^>]*data-slot="note-figure"/.exec(html)?.[1] ?? "")
+      .split(" ")
+      .filter((name) => /^(?:min-|max-)?w-/.test(name));
+    expect(columnClasses.sort()).toEqual(["max-w-32", "min-w-20"]);
+    expect(styleOf("note-figure", 375).get("flex-shrink")).toBe("0");
+    expect(styleOf("note-number", 375).get("white-space")).toBe("nowrap");
+    expect(slotText(html, "note-number")).toBe("$12,450.00");
+    // A Merchant name with no space breaks inside the note, so the page never scrolls sideways.
+    expect(styleOf("ai-note", 375).get("overflow-wrap")).toBe("anywhere");
+  });
+});
 
 const BOXES = /data-slot="(ai-box|left-to-spend|goals|number-tiles|usual-month|coming-up)"/g;
 

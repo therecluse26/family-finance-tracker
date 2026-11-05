@@ -8,6 +8,7 @@ import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
 import type { PictureRoutes } from "../pictures/picture-view.ts";
 import type { AboutRoutes } from "./about-views.ts";
+import type { AiBoxRoutes } from "./ai-box-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
@@ -77,6 +78,8 @@ export type ServerEnv = {
     comingUp: ComingUpRoutes;
     // Top Merchants, ranked by Spending.
     topMerchants: TopMerchantRoutes;
+    // The dashboard's AI box, "This week".
+    aiBox: AiBoxRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.

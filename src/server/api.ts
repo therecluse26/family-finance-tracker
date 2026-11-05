@@ -141,6 +141,9 @@ const budgetEditBody = z.object({ amount: z.number().int().min(0).max(MAX_BUDGET
 
 const NO_BUDGET = "This Category has no Budget to change.";
 
+// Done on a note in the AI box, or "Done ✓" tapped again to clear the mark.
+const noteDoneBody = z.object({ done: z.boolean() }).strict();
+
 // A Member's mark on a Goal (spec 05, Rules).
 const goalStatusBody = z.object({ status: z.enum(["done", "dropped"]) }).strict();
 
@@ -739,6 +742,19 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: 'Choose "This month" or "Last 12 months".' }, 400);
     }
     return c.json(await c.var.topMerchants.view(period.data), 200);
+  })
+  // The AI box, "This week" (spec 07, 1. AI box): every current note, in three groups.
+  .get("/ai-box", async (c) => c.json(await c.var.aiBox.view()))
+  // Done on an Alert note marks it for every Member; {"done": false} clears the mark. It makes no
+  // AI call.
+  .put("/ai-box/alert-notes/:id/done", jsonOnly, async (c) => {
+    const body = noteDoneBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send done as true or false." }, 400);
+    const { done } = body.data;
+    if (!(await c.var.aiBox.markAlertNote(c.req.param("id"), c.var.member.id, done))) {
+      return c.json({ error: "No Alert note in the AI box has this ID." }, 404);
+    }
+    return c.json({ done }, 200);
   })
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
   // Progress per Connection while its history loads (spec 02, First history load).

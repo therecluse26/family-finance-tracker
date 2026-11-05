@@ -15,6 +15,7 @@ import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { aboutRoutes } from "./about.ts";
+import { aiBoxRoutes } from "./ai-box.ts";
 import { alertRoutes } from "./alerts.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
@@ -165,6 +166,7 @@ export function createApp(
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);
   const topMerchants = topMerchantRoutes(database);
+  const aiBox = aiBoxRoutes(database, services.ai);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -198,6 +200,7 @@ export function createApp(
         c.set("comingUp", comingUp);
         c.set("channels", channels);
         c.set("topMerchants", topMerchants);
+        c.set("aiBox", aiBox);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

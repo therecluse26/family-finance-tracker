@@ -10,6 +10,7 @@ import {
   timeLabel,
   wholeDollars,
 } from "../format.ts";
+import type { AiBoxView } from "../server/ai-box-views.ts";
 import type {
   ConnectionView,
   HistoryStatusView,
@@ -20,6 +21,7 @@ import type { BudgetsView, MonthBudgetView, UsualMonthView } from "../server/bud
 import type { ComingUpRowView, ComingUpView } from "../server/coming-up-views.ts";
 import type { HouseholdFactsView } from "../server/household-views.ts";
 import type { NoticeView } from "../server/notice-views.ts";
+import { loadAiBox } from "./ai-box.ts";
 import { api } from "./api.ts";
 import { browserZone } from "./browser-zone.ts";
 import { type GoalsAnswer, loadGoals } from "./goals.ts";
@@ -466,6 +468,7 @@ export type DashboardData = {
   usualMonth: UsualMonthView;
   comingUp: ComingUpView;
   goals: GoalsAnswer;
+  aiBox: AiBoxView;
 };
 
 async function read<T>(res: Promise<Response>): Promise<T> {
@@ -477,13 +480,14 @@ async function read<T>(res: Promise<Response>): Promise<T> {
 // Everything the dashboard shows, in the Household's month on `now`. Until the wizard sets the
 // Household time zone, the browser's stands in.
 export async function loadDashboard(now = new Date()): Promise<DashboardData> {
-  const [household, connections, history, notices, comingUp, goals] = await Promise.all([
+  const [household, connections, history, notices, comingUp, goals, aiBox] = await Promise.all([
     read<{ facts: HouseholdFactsView | null }>(api.household.$get()),
     read<{ connections: ConnectionView[] }>(api.connections.$get()),
     read<HistoryStatusView>(api["history-status"].$get()),
     read<{ notices: NoticeView[] }>(api.notices.$get()),
     read<ComingUpView>(api["coming-up"].$get()),
     loadGoals(),
+    loadAiBox(),
   ]);
   const timeZone = household.facts?.timeZone ?? browserZone();
   const month = dashboardMonth(now, timeZone);
@@ -503,6 +507,7 @@ export async function loadDashboard(now = new Date()): Promise<DashboardData> {
     usualMonth,
     comingUp,
     goals,
+    aiBox,
   };
 }
 

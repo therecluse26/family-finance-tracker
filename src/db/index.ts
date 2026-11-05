@@ -1,4 +1,5 @@
 // The db module's interface. Other modules import from here.
+export { type AlertNoteRow, listAlertNoteRows, storeAlertNoteDone } from "./ai-box.ts";
 export {
   clearAiRetry,
   listDueAiRetries,

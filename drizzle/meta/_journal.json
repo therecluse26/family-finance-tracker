@@ -330,6 +330,13 @@
       "when": 1793894382072,
       "tag": "0046_alert_email",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1793898020896,
+      "tag": "0047_alert_notes_done",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { Link } from "react-router";
 import {
   Bar,
@@ -12,12 +12,20 @@ import {
   YAxis,
 } from "recharts";
 import { STATUS_ICON, wholeDollars } from "../../format.ts";
+import type { AiBoxGroupName, AiBoxNoteView, AiBoxView } from "../../server/ai-box-views.ts";
 import type { NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
 import type { ComingUpView } from "../../server/coming-up-views.ts";
+import {
+  markAlertNoteDone,
+  NOTHING_NEW,
+  pausedLine,
+  SET_UP_AI,
+  worthActingOnHeading,
+} from "../ai-box.ts";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
-import { Status, TONE_COLOR } from "../components/Status.tsx";
+import { AiMark, Status, TONE_COLOR } from "../components/Status.tsx";
 import {
   barShare,
   closeNotice,
@@ -51,7 +59,7 @@ import {
   type YearlyRow,
   yearlyLine,
 } from "../dashboard.ts";
-import { activeGoals, type GoalsAnswer, onTrackLine } from "../goals.ts";
+import { AI_SETTINGS, activeGoals, type GoalsAnswer, onTrackLine } from "../goals.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
 import { GoalCard, NeedsAiLink } from "./Goals.tsx";
@@ -59,8 +67,7 @@ import { UpdateMode } from "./settings/Connections.tsx";
 
 // The dashboard (spec 07, The dashboard): the header, the status lines, then a box for each part.
 // From 900 px wide, the AI box is the left column and stays in view while the right column
-// scrolls. Narrower, every box stacks in one column, the AI box first. The AI box comes with its
-// own ticket.
+// scrolls. Narrower, every box stacks in one column, the AI box first.
 
 const BOX = "rounded border border-gray-200 p-4";
 
@@ -645,17 +652,165 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
   );
 }
 
-// --- Layout ------------------------------------------------------------------------------------
+// --- AI box ------------------------------------------------------------------------------------
 
-// A box that its own ticket fills.
-function Slot(props: { title: string; slot: string }) {
+const NOTE_BUTTON = "rounded border border-gray-300 px-2 py-0.5 text-sm disabled:opacity-50";
+
+function GroupStatus(props: { name: AiBoxGroupName }) {
+  switch (props.name) {
+    case "Worth acting on":
+      return <Status tone="serious" word="Worth acting on" />;
+    case "Heads up":
+      return <Status tone="accent" word="Heads up" />;
+    case "Good news":
+      return <Status tone="good" word="Good news" />;
+  }
+}
+
+// One note: its number and label, what it is about and its title, "Why?" that opens the reason in
+// place, the AI's Next step when there is one, and "Done" and "Ask about this". A done note fades
+// and stays until it leaves the box.
+function AiNote(props: {
+  note: AiBoxNoteView;
+  busy: boolean;
+  onDone: (done: boolean) => void;
+  whyOpen?: boolean;
+}) {
+  const { note } = props;
+  const [whyOpen, setWhyOpen] = useState(props.whyOpen ?? false);
+  const whyId = useId();
   return (
-    <section aria-label={props.title} className={BOX} data-slot={props.slot}>
-      <h2 className="font-semibold">{props.title}</h2>
-      <p className="text-sm text-gray-500">Not built yet.</p>
+    <li
+      className={`flex gap-3 rounded border border-gray-100 p-2 wrap-anywhere ${note.done ? "opacity-50" : ""}`}
+      data-slot="ai-note"
+    >
+      {/* The column grows to fit its number, such as "$12,450.00", which never breaks. */}
+      <div className="min-w-20 max-w-32 shrink-0 text-center" data-slot="note-figure">
+        <p className="text-lg font-semibold whitespace-nowrap tabular-nums" data-slot="note-number">
+          {note.figure}
+        </p>
+        <p className="text-xs text-gray-600">{note.figureLabel}</p>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-gray-600" data-slot="note-about">
+          {note.about}
+        </p>
+        <p className="font-medium" data-slot="note-title">
+          {note.title}
+        </p>
+        <button
+          type="button"
+          className="text-sm text-blue-700 underline"
+          aria-expanded={whyOpen}
+          aria-controls={whyId}
+          onClick={() => setWhyOpen(!whyOpen)}
+        >
+          {whyOpen ? "Hide why" : "Why?"}
+        </button>
+        <div id={whyId} hidden={!whyOpen} className="text-sm text-gray-700" data-slot="note-why">
+          {note.why.map((line, part) => (
+            // Two parts of a merged Alert may read the same, so each line is keyed by its place.
+            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
+            <p key={part}>{line}</p>
+          ))}
+        </div>
+        {note.nextStep === null ? null : (
+          <p className="mt-1 text-sm" data-slot="next-step">
+            <span className="font-medium">Next step:</span> {note.nextStep} <AiMark />
+          </p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            aria-pressed={note.done}
+            disabled={props.busy}
+            onClick={() => props.onDone(!note.done)}
+          >
+            {note.done ? "Done ✓" : "Done"}
+          </button>
+          {/* Opening a Chat thread with the note attached comes with Chat. */}
+          <button type="button" className={NOTE_BUTTON} disabled>
+            Ask about this
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// The AI box, "This week" (spec 07, 1. AI box): the heading counts the notes worth acting on that
+// are not Done; then each group that has notes, in order, with its count. Nothing hides behind
+// "Show all". With no AI provider, one more note links to the AI settings.
+export function AiBox(props: {
+  view: AiBoxView;
+  today: string;
+  onChanged: () => void;
+  // The note whose reason shows when it first draws.
+  whyOpen?: string;
+}) {
+  const { view } = props;
+  const [busy, setBusy] = useState<string | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  const paused = pausedLine(view.paused, props.today);
+
+  async function done(id: string, mark: boolean) {
+    setBusy(id);
+    const failed = await markAlertNoteDone(id, mark);
+    setBusy(undefined);
+    setError(failed);
+    if (failed === undefined) props.onChanged();
+  }
+
+  return (
+    <section aria-label="This week" className={BOX} data-slot="ai-box">
+      <p className="text-sm font-semibold text-gray-600">This week</p>
+      <h2 className="text-lg font-semibold" data-slot="ai-heading">
+        {worthActingOnHeading(view.worthActingOn)}
+      </h2>
+      {paused === undefined ? null : (
+        <p className="text-sm text-gray-600" data-slot="ai-paused">
+          {paused}
+        </p>
+      )}
+      <ErrorLine error={error} />
+      {view.groups.length === 0 ? (
+        <p className="mt-3 text-gray-600" data-slot="nothing-new">
+          {NOTHING_NEW}
+        </p>
+      ) : (
+        view.groups.map((group) => (
+          <section key={group.name} className="mt-3" data-slot="ai-group">
+            <h3 className="flex items-baseline gap-2 font-semibold">
+              <GroupStatus name={group.name} />
+              <span className="text-sm font-normal text-gray-600">{group.notes.length}</span>
+            </h3>
+            <ul aria-label={group.name} className="mt-2 flex flex-col gap-2">
+              {group.notes.map((note) => (
+                <AiNote
+                  key={note.id}
+                  note={note}
+                  busy={busy === note.id}
+                  onDone={(mark) => void done(note.id, mark)}
+                  {...(props.whyOpen === note.id ? { whyOpen: true } : {})}
+                />
+              ))}
+            </ul>
+          </section>
+        ))
+      )}
+      {view.setUpAi ? (
+        <p className="mt-3 rounded border border-gray-100 p-2" data-slot="set-up-ai">
+          <Link className="text-blue-700 underline" to={AI_SETTINGS}>
+            {SET_UP_AI}
+          </Link>
+        </p>
+      ) : null}
     </section>
   );
 }
+
+// --- Layout ------------------------------------------------------------------------------------
 
 // The two columns: the AI box, then the right column. One column below 900 px, the AI box first.
 export function DashboardColumns(props: {
@@ -695,6 +850,8 @@ export function DashboardReport(props: {
   onChanged: () => void;
   // The Category group whose Budgets "A usual month" shows when it first draws.
   openGroup?: string;
+  // The AI box note whose reason shows when it first draws.
+  whyOpen?: string;
 }) {
   const { data } = props;
   return (
@@ -710,7 +867,14 @@ export function DashboardReport(props: {
         onChanged={props.onChanged}
       />
       <DashboardColumns
-        ai={<Slot title="This week" slot="ai-box" />}
+        ai={
+          <AiBox
+            view={data.aiBox}
+            today={data.month.today}
+            onChanged={props.onChanged}
+            {...(props.whyOpen === undefined ? {} : { whyOpen: props.whyOpen })}
+          />
+        }
         leftToSpend={<LeftToSpendBox left={leftToSpend(data.budgets)} month={data.month} />}
         goals={<GoalsBox answer={data.goals} />}
         numberTiles={<NumberTilesBox tiles={data.numberTiles} />}
