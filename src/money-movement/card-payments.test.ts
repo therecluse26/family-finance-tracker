@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEMO_BANKS, DEMO_PINECREST, seedDemoHousehold } from "../bank/demo.ts";
 import { type FakePage, fakeTxn } from "../bank/fake.ts";
 import { addUnconnectedAccount, syncConnection } from "../bank/index.ts";
@@ -74,6 +74,9 @@ describe("card payments and card rewards", () => {
   const transfer = (amount: number) => [{ type: "Transfer", amount, category: null }];
 
   beforeEach(async () => {
+    // The follow-up job reads the clock for the Household's date.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW());
     bank = await newTestBank();
     stops = [startMoneyMovement({ database: bank.database }).stop];
     await seedDemoHousehold(bank.database, bank.fake, NOW);
@@ -82,6 +85,7 @@ describe("card payments and card rewards", () => {
   afterEach(() => {
     for (const stop of stops.reverse()) stop();
     bank.close();
+    vi.useRealTimers();
   });
 
   describe("a payment to a card the app tracks", () => {
