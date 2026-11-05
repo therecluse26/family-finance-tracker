@@ -8,12 +8,16 @@ import {
   inArray,
   isNotNull,
   isNull,
+  notExists,
   type SQL,
   sql,
 } from "drizzle-orm";
 import type { Database } from "./client.ts";
 import {
+  alertDecisions,
+  alertParts,
   alertPresses,
+  alertSettings,
   alerts,
   alertTransactions,
   anomalyChecks,
@@ -43,6 +47,8 @@ export type NewAlert = {
 export type StoredAlert = typeof alerts.$inferSelect & {
   transactionIds: string[];
   presses: { memberId: string | null; pressedAt: Date }[];
+  // The merged Alert's first part, for a later part of a merged Alert. Null otherwise.
+  mergedInto: string | null;
 };
 
 // SQLite takes at most 32,766 values in one statement. An Alert row has 8.
@@ -128,11 +134,127 @@ export async function listAlerts(database: Database): Promise<StoredAlert[]> {
     if (each === undefined) presses.set(row.alertId, [press]);
     else each.push(press);
   }
+  const mergedInto = new Map<string, string>();
+  for (const row of await database.select().from(alertParts)) {
+    mergedInto.set(row.alertId, row.mergedInto);
+  }
   return rows.map((row) => ({
     ...row,
     transactionIds: about.get(row.id) ?? [],
     presses: presses.get(row.id) ?? [],
+    mergedInto: mergedInto.get(row.id) ?? null,
   }));
+}
+
+// An Alert the Alerts step has not decided yet.
+export type UndecidedAlert = { id: string; kind: AlertKind; createdAt: Date };
+
+// The Alerts whose state is not decided yet, oldest first.
+export async function listUndecidedAlerts(database: Database): Promise<UndecidedAlert[]> {
+  return database
+    .select({ id: alerts.id, kind: alerts.kind, createdAt: alerts.createdAt })
+    .from(alerts)
+    .where(isNull(alerts.state))
+    .orderBy(asc(alerts.createdAt), asc(alerts.id));
+}
+
+// A sent or held back Alert: an Alert of one part, or a merged Alert's first part.
+export type DecidedAlert = UndecidedAlert & { state: "sent" | "held back (weekly cap)" };
+
+// The sent and held back Alerts created at or after `since`, oldest first. A merged Alert's later
+// parts are left out.
+export async function listDecidedAlertsSince(
+  database: Database,
+  since: Date,
+): Promise<DecidedAlert[]> {
+  const rows = await database
+    .select({
+      id: alerts.id,
+      kind: alerts.kind,
+      createdAt: alerts.createdAt,
+      state: alerts.state,
+    })
+    .from(alerts)
+    .where(
+      and(
+        gte(alerts.createdAt, since),
+        inArray(alerts.state, ["sent", "held back (weekly cap)"]),
+        notExists(
+          database
+            .select({ id: alertParts.alertId })
+            .from(alertParts)
+            .where(eq(alertParts.alertId, alerts.id)),
+        ),
+      ),
+    )
+    .orderBy(asc(alerts.createdAt), asc(alerts.id));
+  return rows.flatMap(({ state, ...row }) =>
+    state === "sent" || state === "held back (weekly cap)" ? [{ ...row, state }] : [],
+  );
+}
+
+// The Alerts step's decision on one Alert: its state, and the merged Alert it joins, if any.
+export type AlertDecision = {
+  id: string;
+  state: "sent" | "held back (weekly cap)";
+  mergedInto: string | null;
+};
+
+// Stores the decisions in one transaction. Only an Alert that is still undecided changes, in its
+// state and in the merged Alert it joins, so a sent or held back Alert never does. Returns the IDs
+// of the Alerts it decided.
+export async function storeAlertDecisions(
+  database: Database,
+  decisions: readonly AlertDecision[],
+): Promise<Set<string>> {
+  const decided = new Set<string>();
+  if (decisions.length === 0) return decided;
+  await database.transaction(async (tx) => {
+    for (const state of ["sent", "held back (weekly cap)"] as const) {
+      const ids = decisions.filter((each) => each.state === state).map((each) => each.id);
+      for (let start = 0; start < ids.length; start += ROWS_PER_INSERT) {
+        const changed = await tx
+          .update(alerts)
+          .set({ state })
+          .where(
+            and(
+              inArray(alerts.id, ids.slice(start, start + ROWS_PER_INSERT)),
+              isNull(alerts.state),
+            ),
+          )
+          .returning({ id: alerts.id });
+        for (const { id } of changed) decided.add(id);
+      }
+    }
+    const parts = decisions.flatMap(({ id, mergedInto }) =>
+      mergedInto === null || !decided.has(id) ? [] : [{ alertId: id, mergedInto }],
+    );
+    for (let start = 0; start < parts.length; start += ROWS_PER_INSERT) {
+      await tx
+        .insert(alertParts)
+        .values(parts.slice(start, start + ROWS_PER_INSERT))
+        .onConflictDoNothing();
+    }
+  });
+  return decided;
+}
+
+const SETTINGS_ROW = 1;
+
+// The weekly cap a Member set, or undefined when none has.
+export async function readWeeklyCap(database: Database): Promise<number | undefined> {
+  const [row] = await database
+    .select({ weeklyCap: alertSettings.weeklyCap })
+    .from(alertSettings)
+    .where(eq(alertSettings.id, SETTINGS_ROW));
+  return row?.weeklyCap;
+}
+
+export async function storeWeeklyCap(database: Database, weeklyCap: number): Promise<void> {
+  await database
+    .insert(alertSettings)
+    .values({ id: SETTINGS_ROW, weeklyCap })
+    .onConflictDoUpdate({ target: alertSettings.id, set: { weeklyCap } });
 }
 
 // The Alerts of these kinds that are about a Category, with their facts, oldest first.
@@ -213,7 +335,7 @@ export async function listSpendingPartsIn(
 }
 
 // A one-row table that counts a check's failed tries in a row.
-type FailureCount = typeof anomalyChecks | typeof overspendingChecks;
+type FailureCount = typeof anomalyChecks | typeof overspendingChecks | typeof alertDecisions;
 
 const FAILURE_COUNT_ROW = 1;
 
@@ -268,4 +390,17 @@ export function restartOverspendingCheckCount(database: Database): Promise<void>
 
 export function clearOverspendingCheckFailures(database: Database): Promise<boolean> {
   return clearFailures(database, overspendingChecks);
+}
+
+// The same three for the Alerts step.
+export function countAlertDecisionFailure(database: Database): Promise<number> {
+  return countFailure(database, alertDecisions);
+}
+
+export function restartAlertDecisionCount(database: Database): Promise<void> {
+  return restartCount(database, alertDecisions);
+}
+
+export function clearAlertDecisionFailures(database: Database): Promise<boolean> {
+  return clearFailures(database, alertDecisions);
 }

@@ -123,3 +123,24 @@ export function alertText(facts: AlertFacts, today: string): string {
     }
   }
 }
+
+// The heading of a merged Alert of `count` parts (spec 06, Merging), such as "2 Categories are over
+// Budget". Each part's line follows it.
+export function mergedHeading(kind: AlertFacts["kind"], count: number): string {
+  switch (kind) {
+    case "Duplicate charge":
+      return `${count} Duplicate charges`;
+    case "Price increase":
+      return `${count} Price increases`;
+    case "New Recurring charge":
+      return `${count} New Recurring charges`;
+    case "Large purchase":
+      return `${count} Large purchases`;
+    case "Over Budget":
+      return `${count} Categories are over Budget`;
+    case "On pace":
+      return `${count} Categories are on pace to go over Budget`;
+    case "Card interest or fee":
+      return `${count} Card interest or fee charges`;
+  }
+}

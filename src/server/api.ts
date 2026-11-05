@@ -219,6 +219,11 @@ function manualLoanOrRefusal(
 // The Update check's switch (spec 12, Updates).
 const updateCheckBody = z.object({ on: z.boolean() }).strict();
 
+// The weekly Alert cap (spec 06, The weekly cap): any whole number from 0.
+const weeklyCapBody = z
+  .object({ weeklyCap: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) })
+  .strict();
+
 // The types a Member may set by hand.
 const transactionTypeBody = z.object({ type: z.enum(HAND_SET_TYPES) });
 
@@ -600,6 +605,14 @@ export const api = new Hono<ServerEnv>()
   })
   // The Alert list (spec 06, The Alert list), newest first.
   .get("/alerts", async (c) => c.json({ alerts: await c.var.alerts.list() }))
+  // Settings, Alerts (spec 06, The weekly cap). Any Member may change the weekly cap.
+  .get("/alert-settings", async (c) => c.json(await c.var.alerts.settings()))
+  .put("/alert-settings/weekly-cap", async (c) => {
+    if (!sentJson(c)) return c.json({ error: "Send JSON." }, 415);
+    const body = weeklyCapBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "The weekly cap is a whole number from 0." }, 400);
+    return c.json(await c.var.alerts.setWeeklyCap(body.data.weeklyCap), 200);
+  })
   // Recurring charges (spec 06), by next expected date.
   .get("/recurring-charges", async (c) => c.json({ charges: await c.var.recurring.list() }))
   // A Member marks a Recurring charge ended. It never comes back by itself.

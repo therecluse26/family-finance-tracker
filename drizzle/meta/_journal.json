@@ -309,6 +309,13 @@
       "when": 1793851095691,
       "tag": "0043_overspending_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1793890487741,
+      "tag": "0044_alert_sending",
+      "breakpoints": true
     }
   ]
 }

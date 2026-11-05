@@ -1,26 +1,39 @@
-import { alertList } from "../anomalies/index.ts";
+import { mergedAlertList, setWeeklyCap, weeklyCap } from "../anomalies/index.ts";
 import type { Database } from "../db/index.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
 
-// The Alert list route, through the anomalies module.
+// The Alert list and Settings, Alerts routes, through the anomalies module.
 export function alertRoutes(database: Database): AlertRoutes {
   return {
     async list() {
-      return (await alertList(database)).map((alert) => ({
+      return (await mergedAlertList(database)).map((alert) => ({
         id: alert.id,
         kind: alert.kind,
         createdAt: alert.createdAt.toISOString(),
-        text: alert.text,
-        facts: alert.facts,
-        transactionIds: alert.transactionIds,
-        category: alert.category,
-        advice: alert.advice,
-        notAProblem: alert.notAProblem.map((press) => ({
-          memberId: press.memberId,
-          pressedAt: press.pressedAt.toISOString(),
+        heading: alert.heading,
+        parts: alert.parts.map((part) => ({
+          id: part.id,
+          createdAt: part.createdAt.toISOString(),
+          text: part.text,
+          facts: part.facts,
+          transactionIds: part.transactionIds,
+          category: part.category,
+          advice: part.advice,
+          notAProblem: part.notAProblem.map((press) => ({
+            memberId: press.memberId,
+            pressedAt: press.pressedAt.toISOString(),
+          })),
         })),
         state: alert.state,
       }));
+    },
+
+    async settings() {
+      return { weeklyCap: await weeklyCap(database) };
+    },
+
+    async setWeeklyCap(cap) {
+      return { weeklyCap: await setWeeklyCap(database, cap) };
     },
   };
 }

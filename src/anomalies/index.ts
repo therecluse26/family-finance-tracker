@@ -1,6 +1,12 @@
 // The anomalies module's interface (spec 06, Anomalies; What an Alert says; The Alert list).
 // Other modules import from here.
-export { type Alert, alertList } from "./alert-list.ts";
+export {
+  type Alert,
+  alertList,
+  alertsHeldBack,
+  type MergedAlert,
+  mergedAlertList,
+} from "./alert-list.ts";
 export {
   ANOMALY_CHECKS_CAP,
   ANOMALY_CHECKS_STOPPED,
@@ -15,8 +21,18 @@ export {
 } from "./overspending.ts";
 export { type PriceIncrease, priceIncreases } from "./price-increase.ts";
 export {
+  ALERT_SENDING_CAP,
+  ALERT_SENDING_STOPPED,
+  DEFAULT_WEEKLY_CAP,
+  decideAlerts,
+  setWeeklyCap,
+  startAlertSending,
+  weeklyCap,
+} from "./sending.ts";
+export {
   type AlertFacts,
   alertText,
   type BudgetFact,
   type MerchantFact,
+  mergedHeading,
 } from "./templates.ts";

@@ -5,7 +5,11 @@ import {
   householdAi,
   startAiRetries,
 } from "../ai/index.ts";
-import { startAnomalyChecks, startOverspendingChecks } from "../anomalies/index.ts";
+import {
+  startAlertSending,
+  startAnomalyChecks,
+  startOverspendingChecks,
+} from "../anomalies/index.ts";
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
@@ -148,6 +152,17 @@ export const APP_MODULES: readonly AppModule[] = [
       name: "overspending checks",
       path: "Overspending checks on the full history",
       buildLimitMs: 10_000,
+    },
+  },
+  {
+    name: "startAlertSending",
+    start: ({ database }) => startAlertSending({ database }),
+    // The history load's Alerts are found in history, so the step has none to decide: the Alerts
+    // step case times it on new ones.
+    step: {
+      name: "alerts",
+      path: "Alerts step on the full history",
+      buildLimitMs: 5_000,
     },
   },
   {

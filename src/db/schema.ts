@@ -1154,7 +1154,8 @@ export const budgetMonthStarts = sqliteTable("budget_month_starts", {
 // sync. Each holds its kind, the template's facts and text, the Transactions or Category it is
 // about, a slot for the AI's advice, and one state. The state is null until the Alerts step
 // decides it, except for an Alert found in a history load, which is "found in history" at once and
-// is never sent.
+// is never sent. Alerts of one kind created on one day merge into one (spec 06, Merging): see
+// alert_parts.
 export const alerts = sqliteTable(
   "alerts",
   {
@@ -1182,6 +1183,48 @@ export const alerts = sqliteTable(
     state: text("state", { enum: ["sent", "held back (weekly cap)", "found in history"] }),
   },
   (table) => [index("alerts_created_at").on(table.createdAt)],
+);
+
+// The later parts of each merged Alert (spec 06, Merging): each names the merged Alert's first
+// part, whose state it shares. Deleting the first part leaves each later part an Alert of its own.
+export const alertParts = sqliteTable(
+  "alert_parts",
+  {
+    alertId: text("alert_id")
+      .primaryKey()
+      .references(() => alerts.id, { onDelete: "cascade" }),
+    mergedInto: text("merged_into")
+      .notNull()
+      .references(() => alerts.id, { onDelete: "cascade" }),
+  },
+  (table) => [index("alert_parts_merged_into").on(table.mergedInto)],
+);
+
+// The Alert settings (spec 06, The weekly cap): how many Alerts the app sends a week. Any Member
+// may change it, to any whole number from 0. It has at most one row, whose ID is 1. With no row,
+// the cap is 3.
+export const alertSettings = sqliteTable(
+  "alert_settings",
+  {
+    id: integer("id").primaryKey(),
+    weeklyCap: integer("weekly_cap").notNull(),
+  },
+  (table) => [
+    check("alert_settings_one_row", sql`${table.id} = 1`),
+    check("alert_settings_weekly_cap", sql`${table.weeklyCap} >= 0`),
+  ],
+);
+
+// The Alerts step's failed tries in a row. A run that fails counts one; the run that reaches the
+// cap leaves its Alerts undecided for a later run and raises one System notice. It has at most one
+// row, whose ID is 1.
+export const alertDecisions = sqliteTable(
+  "alert_decisions",
+  {
+    id: integer("id").primaryKey(),
+    failedTries: integer("failed_tries").notNull().default(0),
+  },
+  (table) => [check("alert_decisions_one_row", sql`${table.id} = 1`)],
 );
 
 // The Transactions an Alert is about. A Transaction fires each Anomaly at most once, so the checks

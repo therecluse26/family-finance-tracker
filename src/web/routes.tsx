@@ -11,6 +11,7 @@ import { SignIn } from "./pages/SignIn.tsx";
 import { About } from "./pages/settings/About.tsx";
 import { Ai } from "./pages/settings/Ai.tsx";
 import { AiUsage } from "./pages/settings/AiUsage.tsx";
+import { Alerts } from "./pages/settings/Alerts.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
 import { Categories } from "./pages/settings/Categories.tsx";
@@ -30,6 +31,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   "my-login": MyLogin,
   banks: Banks,
   categories: Categories,
+  alerts: Alerts,
   "backups-and-data": BackupsAndData,
   ai: Ai,
   about: About,
