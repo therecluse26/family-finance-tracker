@@ -114,6 +114,7 @@ export {
   countTailoringRunFailure,
   dropTailoringRun,
   endTailoringRun,
+  goalRunProposalsId,
   listWaitingTailoringRuns,
   requestTailoringRun,
   type StoredTailoringRun,
@@ -251,6 +252,7 @@ export {
   readGoal,
   type StoredGoal,
   storeGoalStart,
+  storeGoalWords,
   sumSavingSince,
 } from "./goals.ts";
 export {
@@ -273,6 +275,7 @@ export {
   storeHouseholdFacts,
 } from "./household-facts.ts";
 export {
+  dropHouseholdSummary,
   type HabitSpending,
   listAccountBalances,
   listHabitSpending,

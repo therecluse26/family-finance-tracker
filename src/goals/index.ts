@@ -20,3 +20,13 @@ export {
   goalAmountFrom,
   NO_GOAL_AMOUNT,
 } from "./progress.ts";
+export {
+  GOAL_READING_TASK,
+  GOAL_WORDS_LENGTH,
+  type GoalSaveRefusal,
+  type GoalWriting,
+  type GoalWritingOptions,
+  goalReadingReply,
+  goalWriting,
+  READINGS_PER_HOUR,
+} from "./reading.ts";

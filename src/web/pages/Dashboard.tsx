@@ -69,7 +69,14 @@ import {
   type YearlyRow,
   yearlyLine,
 } from "../dashboard.ts";
-import { AI_SETTINGS, activeGoals, type GoalsAnswer, onTrackLine } from "../goals.ts";
+import {
+  ADD_GOAL_PATH,
+  AI_SETTINGS,
+  activeGoals,
+  type GoalsAnswer,
+  onTrackLine,
+  WAITS_FOR_HISTORY,
+} from "../goals.ts";
 import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
@@ -260,8 +267,9 @@ function LeftToSpendNumbers(props: {
 // --- Goals -------------------------------------------------------------------------------------
 
 // The active Goals (spec 07, 3. Goals): "N of M on track", then one equal-height box per Goal in a
-// row. In a narrow box, as on a phone, the boxes stack. The heading has "Add a Goal", or, with no
-// AI provider, says that Goals need one and links to the AI settings.
+// row. In a narrow box, as on a phone, the boxes stack. The heading has "Add a Goal", which opens
+// the Goals page's form, or, with no AI provider, says that Goals need one and links to the AI
+// settings. Until history has loaded, it says that Goals wait for it.
 export function GoalsBox(props: { answer: GoalsAnswer }) {
   const active = activeGoals(props.answer.goals);
   return (
@@ -277,12 +285,16 @@ export function GoalsBox(props: { answer: GoalsAnswer }) {
             </span>
           )}
         </h2>
-        {props.answer.aiProvider ? (
-          <Link className="text-sm text-blue-700 underline" data-slot="add-goal" to="/goals">
+        {!props.answer.aiProvider ? (
+          <NeedsAiLink />
+        ) : props.answer.waitsForHistory ? (
+          <span className="text-sm text-gray-600" data-slot="goals-wait">
+            {WAITS_FOR_HISTORY}
+          </span>
+        ) : (
+          <Link className="text-sm text-blue-700 underline" data-slot="add-goal" to={ADD_GOAL_PATH}>
             Add a Goal
           </Link>
-        ) : (
-          <NeedsAiLink />
         )}
       </div>
       {active.length === 0 ? null : (

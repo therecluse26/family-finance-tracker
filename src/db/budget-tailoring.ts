@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, type SQLWrapper, sql } from "drizzle-orm";
 import type { Database } from "./client.ts";
 import { budgetTailoringRuns, goals } from "./schema.ts";
 
@@ -45,6 +45,17 @@ export async function requestTailoringRun(
     return stored.length > 0;
   });
 }
+
+// The run ID a Goal run's Proposals carry: the run, then its Goal. The run row is deleted when it
+// ends, so new words find the Proposals made for the old ones by this ID.
+export const goalRunProposalsId = (runId: number, goalId: string) =>
+  `Goal run ${runId} of Goal ${goalId}`;
+
+// Whether a Proposal's run ID is a Goal run's for this Goal, in SQL.
+export const isGoalRunOf = (runId: SQLWrapper, goalId: string) => {
+  const suffix = ` of Goal ${goalId}`;
+  return sql`(${runId} LIKE 'Goal run %' AND substr(${runId}, ${-suffix.length}) = ${suffix})`;
+};
 
 // The runs that wait for their AI call, oldest first.
 export function listWaitingTailoringRuns(database: Database): Promise<StoredTailoringRun[]> {

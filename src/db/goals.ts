@@ -5,12 +5,14 @@ import {
   eq,
   inArray,
   isNull,
+  or,
   type SQL,
   type SQLWrapper,
   sql,
 } from "drizzle-orm";
+import { isGoalRunOf } from "./budget-tailoring.ts";
 import type { Database } from "./client.ts";
-import { goals, spendingLinks, transactionParts, transactions } from "./schema.ts";
+import { goals, proposals, spendingLinks, transactionParts, transactions } from "./schema.ts";
 
 // Goals in app.db (spec 05, Goals). The goals module decides; these functions store and read.
 
@@ -57,6 +59,44 @@ export async function storeGoalStart(
     .where(and(eq(goals.id, id), eq(goals.status, "active")))
     .returning({ id: goals.id });
   return updated.length === 1;
+}
+
+// A Goal's new words and the AI's reading of them (spec 05, Rules). The Goal amount and its start
+// are cleared in the same transaction, and the Goal's open Proposals made for the old words close
+// as replaced: its Goal amount Proposals, and its Goal runs' Budget change Proposals. The Goal run
+// for the new words makes their replacements. False when no active Goal has the ID, which changes
+// nothing.
+export async function storeGoalWords(
+  database: Database,
+  id: string,
+  words: Pick<StoredGoal, "words" | "target" | "change" | "deadline">,
+  at: Date,
+): Promise<boolean> {
+  return database.transaction(async (tx) => {
+    const updated = await tx
+      .update(goals)
+      .set({ ...words, goalAmount: null, startsOn: null, startBalance: null, baseline: null })
+      .where(and(eq(goals.id, id), eq(goals.status, "active")))
+      .returning({ id: goals.id });
+    if (updated.length !== 1) return false;
+    await tx
+      .update(proposals)
+      .set({ status: "replaced", closedAt: at })
+      .where(
+        and(
+          eq(proposals.status, "open"),
+          or(
+            and(eq(proposals.kind, "Goal amount"), eq(proposals.goalId, id)),
+            and(
+              eq(proposals.kind, "Budget change"),
+              eq(proposals.source, "Budget tailoring"),
+              isGoalRunOf(proposals.runId, id),
+            ),
+          ),
+        ),
+      );
+    return true;
+  });
 }
 
 // Marks each of these active Goals done or dropped, on `endedOn`. `endedBy` is the Member who

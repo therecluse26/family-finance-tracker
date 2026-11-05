@@ -62,12 +62,30 @@ export type GoalView = {
   progress: GoalProgressView | null;
 };
 
+// Why a Goal's save stored nothing: the HTTP status and the words the page shows. `pause` is
+// "send anyway?" at the AI cost cap, where the page asks first. `tryAgain` is true when the
+// reading failed: the page shows the error with "Try again", and nothing retries by itself.
+export type GoalSaveRefusalView = {
+  status: 400 | 404 | 409 | 429 | 502 | 504;
+  error: string;
+  pause?: string;
+  tryAgain?: true;
+};
+
 export type GoalRoutes = {
   // Every Goal with its progress: the active Goals first, then the done list, then the dropped
   // list.
   list(): Promise<GoalView[]>;
   // True while the Household has an AI provider. Without one, Members cannot add a Goal.
   aiProvider(): Promise<boolean>;
+  // True while every AI use waits for the first history load: Members cannot add a Goal or edit its
+  // words yet.
+  waitsForHistory(): Promise<boolean>;
+  // A new Goal by the Member, or new words for an active Goal, with the AI's reading of them.
+  save(
+    memberId: string,
+    input: { goalId: string | null; words: string; sendAnyway: boolean },
+  ): Promise<{ goal: GoalView } | GoalSaveRefusalView>;
   // A Member marks an active Goal done or dropped. Undefined when no Goal has the ID.
   mark(
     id: string,

@@ -233,6 +233,7 @@ const goal = (fields: Partial<GoalView> = {}): GoalView => ({
 // the done list and one in the dropped list, which the dashboard leaves out.
 const GOALS: GoalsAnswer = {
   aiProvider: true,
+  waitsForHistory: false,
   goals: [
     goal(),
     goal({
@@ -842,7 +843,8 @@ describe("Goals", () => {
       text(/<h2 id="goals"[^>]*>(.*?)<\/h2>/s.exec(box)?.[1]?.replace(/<[^>]+>/g, "") ?? ""),
     ).toBe("Goals 2 of 3 on track");
     expect(slotHtml(html, "add-goal")).toBe("Add a Goal");
-    expect(box).toMatch(/<a (?=[^>]*href="\/goals")[^>]*data-slot="add-goal"/);
+    // It opens the Goals page with the "Add a Goal" form open.
+    expect(box).toMatch(/<a (?=[^>]*href="\/goals\?add=1")[^>]*data-slot="add-goal"/);
     expect(listItems(box, "Active Goals")).toEqual([
       "Alex “Spend less on eating out” ◆ Behind 62% On pace for $540 this month; Goal is $480",
       "Sam “Save $5,000 for the trip by June” ✓ On track 40% estimated $2,000 of $5,000",
@@ -862,6 +864,7 @@ describe("Goals", () => {
       data({
         goals: {
           aiProvider: true,
+          waitsForHistory: false,
           goals: [
             goal({ author: null, authorId: null }),
             goal({ id: "g2", words: "Be better with money", progress: null }),
@@ -900,9 +903,32 @@ describe("Goals", () => {
     expect(listItems(box, "Active Goals")).toHaveLength(3);
   });
 
+  it("says that Goals wait until history has loaded, with no Add a Goal", () => {
+    const html = render(data({ goals: { ...GOALS, waitsForHistory: true } }));
+    const box = slotHtml(html, "goals");
+
+    expect(slotText(html, "goals-wait")).toBe("Goals open when your history has loaded.");
+    expect(box).not.toContain("Add a Goal");
+    expect(listItems(box, "Active Goals")).toHaveLength(3);
+  });
+
+  it("wraps a Goal's one long word, so the dashboard never scrolls sideways", () => {
+    const long = "x".repeat(90);
+    const goals = GOALS.goals.map((shown) => ({ ...shown, words: long }));
+    const box = slotHtml(render(data({ goals: { ...GOALS, goals } })), "goals");
+
+    const wrapped = box.match(
+      new RegExp(
+        `<span class="[^"]*\\bwrap-anywhere\\b[^"]*" data-slot="goal-words">“(?:<!-- -->)?${long}`,
+        "g",
+      ),
+    );
+    expect(wrapped).toHaveLength(listItems(box, "Active Goals").length);
+  });
+
   it("shows only the heading and Add a Goal with no active Goal", () => {
     const ended = GOALS.goals.filter((shown) => shown.list !== "active");
-    const box = slotHtml(render(data({ goals: { aiProvider: true, goals: ended } })), "goals");
+    const box = slotHtml(render(data({ goals: { ...GOALS, goals: ended } })), "goals");
 
     expect(text(box)).toBe("Goals Add a Goal");
     expect(box).not.toContain("<ul");

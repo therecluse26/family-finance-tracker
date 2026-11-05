@@ -31,6 +31,11 @@ export async function storeHouseholdSummary(
     .onConflictDoUpdate({ target: householdSummary.id, set: row });
 }
 
+// Drops the stored summary, so the next Writer use builds it again, such as after a Goal changes.
+export async function dropHouseholdSummary(database: Database): Promise<void> {
+  await database.delete(householdSummary).where(eq(householdSummary.id, SUMMARY_ROW));
+}
+
 // One Spending part as the Habit counts read it: its Transaction, amount spent in whole cents
 // (positive), Category, purchase date, and Merchant.
 export type HabitSpending = {

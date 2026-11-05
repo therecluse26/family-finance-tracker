@@ -5,6 +5,7 @@ import {
   type AppliedGoalChange,
   claimGoalAmount,
   type Database,
+  dropHouseholdSummary,
   expireProposals,
   listBankNames,
   listBudgetsInEffect,
@@ -451,6 +452,8 @@ export async function acceptProposal(
     const refused = await acceptGoalAmount(database, row, memberId, edit.goalAmount, now);
     if (refused !== undefined) return refused;
   }
+  // A new Goal, or a Goal amount, is in the next Writer use's Household summary at once.
+  if (row.kind !== "Budget change") await dropHouseholdSummary(database);
   log.info("A Member accepted a Proposal", {
     kind: row.kind,
     edited: Object.keys(edit).length > 0,
@@ -525,13 +528,17 @@ export async function undoProposal(
   now = new Date(),
 ): Promise<"undone" | "not found" | "already undone" | "not offered"> {
   const today = await householdDay(database, now);
+  const row = await readProposal(database, undo.id);
   const undone = await storeProposalUndo(database, {
     ...undo,
     month: today.slice(0, 7),
     today,
     at: now,
   });
-  if (undone === "undone") log.info("A Member undid a Proposal");
+  if (undone !== "undone") return undone;
+  // A dropped new Goal, or a Goal's amount put back, is in the next Writer use's summary at once.
+  if (row?.kind !== "Budget change") await dropHouseholdSummary(database);
+  log.info("A Member undid a Proposal");
   return undone;
 }
 

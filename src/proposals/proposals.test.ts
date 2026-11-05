@@ -12,10 +12,12 @@ import {
   listBudgetsInEffect,
   type NewBudget,
   readGoal,
+  readHouseholdSummary,
   storeBudgetChangeAccept,
   storeDecisions,
   storeFirstDraft,
   storeGoalAmountApplied,
+  storeHouseholdSummary,
   storeNewGoalAccept,
 } from "../db/index.ts";
 import { readEveryTable } from "../db/testing.ts";
@@ -1014,6 +1016,48 @@ describe("Proposals", () => {
         later,
       );
       expect(await undo(second, later)).toBe("not offered");
+    });
+
+    it("has the next Writer use build the Household summary again after each Goal Accept and Undo", async () => {
+      const day = { day: "2026-10-20", text: "[]" };
+      const stored = () => storeHouseholdSummary(bank.database, day, NOW);
+      const summary = () => readHouseholdSummary(bank.database);
+
+      // A new Goal from Chat, and its Undo, which drops it.
+      await stored();
+      const made = await accept({
+        kind: "new Goal",
+        source: "Chat",
+        runId: run(),
+        reason: "You asked.",
+        words: "Cook at home more",
+      });
+      expect(await summary()).toBeUndefined();
+      await stored();
+      expect(await undo(made)).toBe("undone");
+      expect(await summary()).toBeUndefined();
+
+      // A Goal amount, and its Undo.
+      const goalId = await spendLessGoal();
+      await stored();
+      const amount = await accept({
+        kind: "Goal amount",
+        source: "Budget tailoring",
+        runId: run(),
+        reason: "Twenty percent off.",
+        goalId,
+        goalAmount: $(480),
+      });
+      expect(await summary()).toBeUndefined();
+      await stored();
+      expect(await undo(amount)).toBe("undone");
+      expect(await summary()).toBeUndefined();
+
+      // A Budget change leaves today's summary as it is.
+      await stored();
+      const budget = await accept(budgetChange([{ category: "Clothing", amount: $(150) }]));
+      expect(await undo(budget)).toBe("undone");
+      expect(await summary()).toEqual(day);
     });
 
     it("is not offered for an open, skipped, or unknown Proposal", async () => {

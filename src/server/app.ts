@@ -11,6 +11,7 @@ import {
 } from "../bank/index.ts";
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
+import type { GoalWriting } from "../goals/index.ts";
 import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
@@ -178,6 +179,8 @@ export function createApp(
     push?: PushSettings;
     // Chat's answers. Without it, Chat says AI is not set up.
     chat?: Chat;
+    // Adding a Goal and editing its words, with the AI's reading. Without it, no Goal is added.
+    goalWriting?: GoalWriting;
   } = {},
 ) {
   const bank = bankViews(database);
@@ -193,7 +196,7 @@ export function createApp(
   const backups = backupRoutes();
   const benchmarks = benchmarkRoutes(database);
   const budgets = budgetRoutes(database);
-  const goals = goalRoutes(database);
+  const goals = goalRoutes(database, services.goalWriting);
   const pictures = pictureRoutes(database);
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);

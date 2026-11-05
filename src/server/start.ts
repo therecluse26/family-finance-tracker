@@ -26,6 +26,7 @@ import { startCategorization } from "../categorization/index.ts";
 import { chat } from "../chat/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
+import { goalWriting } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
@@ -42,7 +43,12 @@ import {
 import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { householdSummary } from "../summary/index.ts";
-import { requestTailoringJob, startBudgetTailoring, tailorFirstDraft } from "../tailoring/index.ts";
+import {
+  requestGoalTailoring,
+  requestTailoringJob,
+  startBudgetTailoring,
+  tailorFirstDraft,
+} from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
@@ -189,6 +195,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         smtp: smtpSettings({ database, secrets, address }),
         push: pushSettings({ database, secrets, available: https }),
         chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
+        // Each Goal's reading asks for its Budget tailoring Goal run at once.
+        goalWriting: goalWriting({ database, ai, requestGoalRun: requestGoalTailoring }),
       });
       // The startup check, once the app listens, so a slow or hung backup folder never holds up
       // the start: a daily backup runs when none is from the most recent 3:00 AM, Household time.

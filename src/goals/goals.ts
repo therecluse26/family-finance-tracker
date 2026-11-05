@@ -9,6 +9,7 @@ import {
 import { type Category, isCategory } from "../categories/index.ts";
 import {
   type Database,
+  dropHouseholdSummary,
   endGoals,
   type GoalStatus,
   listAccounts,
@@ -143,7 +144,7 @@ export const readingOf = (goal: StoredGoal): GoalReading => ({
   deadline: goal.deadline,
 });
 
-async function householdDay(database: Database, now: Date): Promise<string> {
+export async function householdDay(database: Database, now: Date): Promise<string> {
   return calendarDateIn(now, (await householdTimeZone(database)) ?? "UTC");
 }
 
@@ -552,6 +553,8 @@ async function goalsWithProgress(database: Database, now: Date, save: boolean): 
       ? await endGoals(database, met, { status: "done", endedOn: facts.today, endedBy: null })
       : met,
   );
+  // A done Goal leaves the AI's context at once: the next Writer use builds the summary again.
+  if (save && done.size > 0) await dropHouseholdSummary(database);
   for (const goal of goals) {
     if (!done.has(goal.id)) continue;
     goal.status = "done";
@@ -581,5 +584,8 @@ export async function markGoal(
   if (goal === undefined) return undefined;
   const today = await householdDay(database, now);
   const ended = await endGoals(database, [id], { status, endedOn: today, endedBy: memberId });
-  return ended.length === 1 ? "marked" : "not active";
+  if (ended.length !== 1) return "not active";
+  // A done or dropped Goal leaves the AI's context at once (spec 05, Rules).
+  await dropHouseholdSummary(database);
+  return "marked";
 }

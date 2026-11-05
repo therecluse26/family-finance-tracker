@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { calendarDateIn, dateLabel, percent } from "../../format.ts";
 import type { AccountView } from "../../server/bank-views.ts";
 import type { GoalView } from "../../server/goals-views.ts";
@@ -11,19 +11,26 @@ import { AiMark, Estimated, Status } from "../components/Status.tsx";
 import {
   AI_SETTINGS,
   authorOf,
+  GOAL_WORDS_LENGTH,
+  type GoalProblem,
   type GoalsAnswer,
   goalStatus,
   loadGoals,
   markGoal,
+  mayWriteGoals,
   NEEDS_AI,
   readingParts,
+  saveGoal,
+  WAITS_FOR_HISTORY,
 } from "../goals.ts";
 import { browserZone } from "./Accounts.tsx";
 
-// The Goals page (spec 07, Goals page): the active Goals first, each with its author, words, date,
-// progress, and the AI's reading, with "Mark done" and "Mark dropped". The done list and the
-// dropped list sit in collapsed sections at the end. Add and Edit the words come with their own
-// ticket.
+// The Goals page (spec 07, Goals page): "Add a Goal", then the active Goals, each with its author,
+// words, date, progress, and the AI's reading, with "Edit the words", "Mark done" and "Mark
+// dropped". The done list and the dropped list sit in collapsed sections at the end. Adding a Goal
+// and editing its words need an AI provider, and wait until history has loaded. A save past the AI
+// cost cap asks "Send anyway?" first; a failed reading shows its error with "Try again", and
+// nothing retries by itself.
 
 const SMALL_BUTTON = "rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50";
 
@@ -47,7 +54,7 @@ export function GoalCard(props: { goal: GoalView }) {
       <span className="block text-sm text-gray-600" data-slot="goal-author">
         {authorOf(goal)}
       </span>
-      <span className="block font-medium" data-slot="goal-words">
+      <span className="block font-medium wrap-anywhere" data-slot="goal-words">
         “{goal.words}”
       </span>
       {progress === null ? null : (
@@ -75,15 +82,108 @@ export function GoalCard(props: { goal: GoalView }) {
   );
 }
 
+// The open "Add a Goal" or "Edit the words" form: the Goal ID it edits, or null for a new Goal, the
+// words typed so far, and what went wrong with the last save. `sentAnyway` is true once the
+// Member said yes to "Send anyway?", so "Try again" sends the same yes.
+export type GoalForm = {
+  goalId: string | null;
+  draft: string;
+  busy: boolean;
+  problem?: GoalProblem;
+  sentAnyway?: boolean;
+};
+
+// What the page does with the form.
+export type GoalFormActions = {
+  form: GoalForm | undefined;
+  onOpen: (goalId: string | null, words: string) => void;
+  onDraft: (draft: string) => void;
+  onSave: (sendAnyway: boolean) => void;
+  onCancel: () => void;
+};
+
+// A Goal in the Member's own words, with "Save", or after a problem, "Send anyway" past the AI
+// cost cap, or "Try again" after a failed reading.
+export function GoalWordsForm(props: { label: string; actions: GoalFormActions; form: GoalForm }) {
+  const { form, actions } = props;
+  const { problem } = form;
+  const id = `goal-words-${form.goalId ?? "new"}`;
+  return (
+    <form
+      className="mt-2"
+      data-slot="goal-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        actions.onSave(false);
+      }}
+    >
+      <label className="block text-sm font-medium" htmlFor={id}>
+        {props.label}
+      </label>
+      <textarea
+        id={id}
+        className="mt-1 block w-full rounded border border-gray-300 p-2"
+        maxLength={GOAL_WORDS_LENGTH}
+        rows={2}
+        placeholder="Such as: Spend 20% less on restaurants"
+        value={form.draft}
+        disabled={form.busy}
+        onChange={(event) => actions.onDraft(event.target.value)}
+      />
+      {problem === undefined ? null : (
+        <p className="mt-1 text-sm text-red-700" data-slot="goal-problem" role="alert">
+          {problem.error}
+        </p>
+      )}
+      <span className="mt-2 flex gap-2">
+        {problem?.sendAnyway === true ? (
+          <button
+            type="button"
+            className={SMALL_BUTTON}
+            disabled={form.busy}
+            onClick={() => actions.onSave(true)}
+          >
+            Send anyway
+          </button>
+        ) : problem?.tryAgain === true ? (
+          <button
+            type="button"
+            className={SMALL_BUTTON}
+            disabled={form.busy}
+            onClick={() => actions.onSave(form.sentAnyway === true)}
+          >
+            Try again
+          </button>
+        ) : (
+          <button type="submit" className={SMALL_BUTTON} disabled={form.busy}>
+            Save
+          </button>
+        )}
+        <button
+          type="button"
+          className={SMALL_BUTTON}
+          disabled={form.busy}
+          onClick={actions.onCancel}
+        >
+          Cancel
+        </button>
+      </span>
+    </form>
+  );
+}
+
 function ActiveGoal(props: {
   goal: GoalView;
   accountNames: ReadonlyMap<string, string>;
   today: string;
   busy: boolean;
   onMark: (status: "done" | "dropped") => void;
+  // "Edit the words", while a Member may write Goals.
+  writing: GoalFormActions | undefined;
 }) {
-  const { goal, today } = props;
+  const { goal, today, writing } = props;
   const reading = readingParts(goal.reading, props.accountNames, today);
+  const form = writing?.form?.goalId === goal.id ? writing.form : undefined;
   return (
     <li className="mt-3 rounded border border-gray-200 p-3" data-goal={goal.id}>
       <GoalCard goal={goal} />
@@ -94,8 +194,21 @@ function ActiveGoal(props: {
         <AiMark /> Target: {reading.target} · Change: {reading.change} · Deadline:{" "}
         {reading.deadline}
       </span>
+      {writing !== undefined && form !== undefined ? (
+        <GoalWordsForm label="Edit the words" actions={writing} form={form} />
+      ) : null}
       {goal.status === "active" ? (
         <span className="mt-2 flex gap-2">
+          {writing === undefined || form !== undefined ? null : (
+            <button
+              type="button"
+              className={SMALL_BUTTON}
+              disabled={props.busy}
+              onClick={() => writing.onOpen(goal.id, goal.words)}
+            >
+              Edit the words
+            </button>
+          )}
           <button
             type="button"
             className={SMALL_BUTTON}
@@ -125,7 +238,9 @@ function EndedGoal(props: { goal: GoalView; today: string }) {
   return (
     <li className="mt-2" data-goal={goal.id}>
       <span className="block text-sm text-gray-600">{authorOf(goal)}</span>
-      <span className="block">“{goal.words}”</span>
+      <span className="block wrap-anywhere" data-slot="goal-words">
+        “{goal.words}”
+      </span>
       <span className="block text-sm text-gray-600">
         {goal.endedOn === null ? word : `${word} on ${dateLabel(goal.endedOn, today)}`}
       </span>
@@ -139,17 +254,38 @@ export function GoalsReport(props: {
   today: string;
   busy?: string;
   onMark: (id: string, status: "done" | "dropped") => void;
+  // "Add a Goal" and "Edit the words". Without it, the page offers neither.
+  writing?: GoalFormActions;
 }) {
   const { answer, today } = props;
+  const writing = mayWriteGoals(answer) ? props.writing : undefined;
+  const adding = writing?.form?.goalId === null ? writing.form : undefined;
   const listed = (list: GoalView["list"]) => answer.goals.filter((goal) => goal.list === list);
   const active = listed("active");
   const done = listed("done");
   const dropped = listed("dropped");
   return (
     <>
-      {answer.aiProvider ? null : (
+      {!answer.aiProvider ? (
         <p className="mt-2">
           <NeedsAiLink />
+        </p>
+      ) : answer.waitsForHistory ? (
+        <p className="mt-2 text-sm text-gray-600" data-slot="goals-wait">
+          {WAITS_FOR_HISTORY}
+        </p>
+      ) : writing === undefined ? null : adding !== undefined ? (
+        <GoalWordsForm label="Add a Goal" actions={writing} form={adding} />
+      ) : (
+        <p className="mt-2">
+          <button
+            type="button"
+            className={SMALL_BUTTON}
+            data-slot="add-goal"
+            onClick={() => writing.onOpen(null, "")}
+          >
+            Add a Goal
+          </button>
         </p>
       )}
       {active.length === 0 ? (
@@ -164,6 +300,7 @@ export function GoalsReport(props: {
               today={today}
               busy={props.busy === goal.id}
               onMark={(status) => props.onMark(goal.id, status)}
+              writing={writing}
             />
           ))}
         </ul>
@@ -195,7 +332,12 @@ export function GoalsReport(props: {
 type Loaded = { answer: GoalsAnswer; accountNames: Map<string, string>; today: string };
 
 export function Goals() {
+  const [params] = useSearchParams();
   const [loaded, setLoaded] = useState<Loaded | undefined>();
+  // The dashboard's "Add a Goal" opens the page with the form open.
+  const [form, setForm] = useState<GoalForm | undefined>(
+    params.has("add") ? { goalId: null, draft: "", busy: false } : undefined,
+  );
   const [busy, setBusy] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   // Counts the page's reads, so the accepted Proposals read again with it.
@@ -240,6 +382,25 @@ export function Goals() {
     await load();
   }
 
+  // One save: one reading. A problem keeps the form open with its words.
+  async function save(sendAnyway: boolean) {
+    if (form === undefined || form.busy) return;
+    const sending = { ...form, busy: true, sentAnyway: sendAnyway || form.sentAnyway === true };
+    setForm(sending);
+    const problem = await saveGoal(sending.goalId, sending.draft, sendAnyway);
+    if (problem !== undefined) return setForm({ ...sending, busy: false, problem });
+    setForm(undefined);
+    await load();
+  }
+
+  const writing: GoalFormActions = {
+    form,
+    onOpen: (goalId, words) => setForm({ goalId, draft: words, busy: false }),
+    onDraft: (draft) => setForm((open) => (open === undefined ? open : { ...open, draft })),
+    onSave: (sendAnyway) => void save(sendAnyway),
+    onCancel: () => setForm(undefined),
+  };
+
   return (
     <main>
       <h1 className="text-2xl font-semibold">Goals</h1>
@@ -256,6 +417,7 @@ export function Goals() {
           today={loaded.today}
           {...(busy === undefined ? {} : { busy })}
           onMark={(id, status) => void mark(id, status)}
+          writing={writing}
         />
       )}
     </main>

@@ -206,6 +206,10 @@ const chatAnswerBody = z.object({
 // A Member's mark on a Goal (spec 05, Rules).
 const goalStatusBody = z.object({ status: z.enum(["done", "dropped"]) }).strict();
 
+// A Goal's words, as a Member wrote them, and the Member's yes to "Send anyway?" at the AI cost
+// cap. The goals module checks the words' length once it has made them one plain line.
+const goalWordsBody = z.object({ words: z.string().max(20_000), sendAnyway: z.boolean() }).strict();
+
 // An Unconnected account (spec 02, Unconnected accounts). An empty institution name or last 4
 // digits is none. A balance is whole cents.
 const MAX_BALANCE_CENTS = 100_000_000_000;
@@ -1324,8 +1328,32 @@ export const api = new Hono<ServerEnv>()
   // Every Goal with its progress (spec 05, Goals): the active Goals first, then the done list, then
   // the dropped list. With no AI provider, the pages say that Goals need one.
   .get("/goals", async (c) =>
-    c.json({ goals: await c.var.goals.list(), aiProvider: await c.var.goals.aiProvider() }),
+    c.json({
+      goals: await c.var.goals.list(),
+      aiProvider: await c.var.goals.aiProvider(),
+      waitsForHistory: await c.var.goals.waitsForHistory(),
+    }),
   )
+  // "Add a Goal" (spec 05, Rules): one Quick-tier call reads the words, then the Goal is stored
+  // with its reading, and its Budget tailoring run makes its Proposals.
+  .post("/goals", jsonOnly, async (c) => {
+    const body = goalWordsBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Write the Goal in your own words." }, 400);
+    const saved = await c.var.goals.save(c.var.member.id, { goalId: null, ...body.data });
+    if ("goal" in saved) return c.json(saved, 200);
+    const { status, ...refusal } = saved;
+    return c.json(refusal, status);
+  })
+  // "Edit the words" of an active Goal: the AI reads the new words, as for a new Goal.
+  .post("/goals/:id/words", jsonOnly, async (c) => {
+    const body = goalWordsBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Write the Goal in your own words." }, 400);
+    const goalId = c.req.param("id");
+    const saved = await c.var.goals.save(c.var.member.id, { goalId, ...body.data });
+    if ("goal" in saved) return c.json(saved, 200);
+    const { status, ...refusal } = saved;
+    return c.json(refusal, status);
+  })
   // A Member marks an active Goal done or dropped.
   .post("/goals/:id/status", jsonOnly, async (c) => {
     const body = goalStatusBody.safeParse(await jsonBody(c));

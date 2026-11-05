@@ -6,6 +6,7 @@ import {
   type Database,
   dropTailoringRun,
   endTailoringRun,
+  goalRunProposalsId,
   listBankNames,
   listWaitingTailoringRuns,
   readBudgetInputs,
@@ -283,7 +284,14 @@ async function runOne(run: StoredTailoringRun): Promise<"next" | "wait"> {
     });
     return "next";
   }
-  const runId = `${run.kind} run ${run.id}`;
+  // New words saved during the AI call: the run proposes nothing and stays waiting, for the job
+  // their save started, so its Proposals come from the words the Goal holds now.
+  if (goal !== undefined && (await readGoal(database, goal.id))?.words !== goal.words) {
+    log.info("A Goal's words changed during its Budget tailoring run");
+    return "next";
+  }
+  const runId =
+    goal === undefined ? `${run.kind} run ${run.id}` : goalRunProposalsId(run.id, goal.id);
   // A Category Goal's limit comes from its own reading, so it holds whatever its start reads.
   const target = goal === undefined ? null : goalReadingOf(goal).target;
   const only = target?.kind === "Category" ? target.category : undefined;

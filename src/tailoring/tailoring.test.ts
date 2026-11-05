@@ -13,7 +13,13 @@ import {
   readDraftTerms,
 } from "../budgets/index.ts";
 import type { Category } from "../categories/index.ts";
-import { addGoal, listOpenNotices, listWaitingTailoringRuns, storeDecisions } from "../db/index.ts";
+import {
+  addGoal,
+  listOpenNotices,
+  listWaitingTailoringRuns,
+  storeDecisions,
+  storeGoalWords,
+} from "../db/index.ts";
 import type * as Goals from "../goals/index.ts";
 import { markGoal } from "../goals/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
@@ -690,6 +696,48 @@ describe("Budget tailoring", () => {
       await runWaitingTailoring();
 
       expect(await proposals()).toEqual([]);
+    });
+
+    it("proposes nothing from words a Member changed during its AI call, and runs again with the new words", async () => {
+      const restaurants = await figureOf("Restaurants");
+      const goalId = await spendLess();
+      stub.reply = reply(
+        [{ category: "Restaurants", amount: (restaurants * 0.8) / 100, reason: "Eat out less." }],
+        { goalAmount: 200, goalReason: "Aim for $200 a month at restaurants." },
+      );
+      await requestGoalTailoring(goalId);
+      // "Edit the words" lands while the run's Writer call is out, and asks for the Goal's run.
+      let edited = false;
+      stub.beforeAnswer = async () => {
+        if (edited) return;
+        edited = true;
+        const words = {
+          words: "Spend less at restaurants and bars",
+          target: { kind: "Category", category: "Restaurants" },
+          change: null,
+          deadline: null,
+        } as const;
+        expect(await storeGoalWords(bank.database, goalId, words, NOW)).toBe(true);
+        expect(await requestGoalTailoring(goalId)).toBe(false);
+      };
+
+      await runWaitingTailoring();
+
+      expect(stub.calls).toHaveLength(1);
+      expect(await proposals()).toEqual([]);
+      expect(await listWaitingTailoringRuns(bank.database)).toEqual([
+        expect.objectContaining({ kind: "Goal", goalId }),
+      ]);
+
+      // The job the edit started runs it with the new words.
+      expect(await runWaitingTailoring()).toBe(1);
+      expect(stub.calls).toHaveLength(2);
+      expect(promptTheModelRead(stub)).toContain('"Spend less at restaurants and bars"');
+      expect(await proposals()).toEqual([
+        expect.objectContaining({ kind: "Budget change" }),
+        expect.objectContaining({ kind: "Goal amount", goal_id: goalId, goal_amount: $(200) }),
+      ]);
+      expect(await listWaitingTailoringRuns(bank.database)).toEqual([]);
     });
 
     it("drops the run of a Goal marked done before it runs, with no call", async () => {

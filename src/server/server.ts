@@ -4,6 +4,7 @@ import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
+import type { GoalWriting } from "../goals/index.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { Secrets } from "../secrets/index.ts";
@@ -27,6 +28,7 @@ export function startServer(options: {
   smtp?: SmtpSettings;
   push?: PushSettings;
   chat?: Chat;
+  goalWriting?: GoalWriting;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
@@ -43,6 +45,7 @@ export function startServer(options: {
             ...(options.smtp === undefined ? {} : { smtp: options.smtp }),
             ...(options.push === undefined ? {} : { push: options.push }),
             ...(options.chat === undefined ? {} : { chat: options.chat }),
+            ...(options.goalWriting === undefined ? {} : { goalWriting: options.goalWriting }),
           },
         ).fetch,
         port: options.port,

@@ -3,8 +3,8 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GoalView } from "../../server/goals-views.ts";
-import { type GoalsAnswer, markGoal, readingParts } from "../goals.ts";
-import { GoalsReport } from "./Goals.tsx";
+import { type GoalsAnswer, markGoal, readingParts, saveGoal } from "../goals.ts";
+import { type GoalForm, type GoalFormActions, GoalsReport } from "./Goals.tsx";
 
 // The Goals page (spec 07, Goals page), drawn from the Goal routes' answer. The routes themselves
 // are checked through the app's HTTP interface in src/server/goals-api.test.ts.
@@ -47,6 +47,7 @@ const ACCOUNT_NAMES = new Map([
 // one in the dropped list.
 const ANSWER: GoalsAnswer = {
   aiProvider: true,
+  waitsForHistory: false,
   goals: [
     goal(),
     goal({
@@ -192,9 +193,142 @@ describe("the Goals page", () => {
   });
 
   it("says so with no active Goal, and shows no empty sections", () => {
-    const html = render({ aiProvider: true, goals: [] });
+    const html = render({ ...ANSWER, goals: [] });
 
     expect(text(html)).toBe("No active Goal.");
+  });
+});
+
+describe("Add a Goal and Edit the words", () => {
+  // The form's actions, each recorded as it is called.
+  function recorded(form?: GoalForm) {
+    const calls: string[] = [];
+    const actions: GoalFormActions = {
+      form,
+      onOpen: (goalId, words) => calls.push(`open ${goalId} ${words}`),
+      onDraft: (draft) => calls.push(`draft ${draft}`),
+      onSave: (sendAnyway) => calls.push(`save ${sendAnyway}`),
+      onCancel: () => calls.push("cancel"),
+    };
+    return { calls, actions };
+  }
+
+  const withWriting = (answer: GoalsAnswer, actions: GoalFormActions) => (
+    <GoalsReport
+      answer={answer}
+      accountNames={ACCOUNT_NAMES}
+      today={TODAY}
+      onMark={() => {}}
+      writing={actions}
+    />
+  );
+  const renderWith = (answer: GoalsAnswer, actions: GoalFormActions) =>
+    renderToString(<MemoryRouter>{withWriting(answer, actions)}</MemoryRouter>);
+
+  it("offers Add a Goal, and Edit the words on each active Goal, which open the form", () => {
+    const { calls, actions } = recorded();
+    const buttons = buttonsOf(withWriting(ANSWER, actions));
+
+    expect([...buttons.keys()]).toEqual([
+      " Add a Goal",
+      "g1 Edit the words",
+      "g1 Mark done",
+      "g1 Mark dropped",
+    ]);
+    buttons.get(" Add a Goal")?.();
+    buttons.get("g1 Edit the words")?.();
+    expect(calls).toEqual(["open null ", "open g1 Spend less on eating out"]);
+  });
+
+  it("offers neither with no AI provider, or until history has loaded, and says why", () => {
+    const { actions } = recorded();
+    const keys = (answer: GoalsAnswer) => [...buttonsOf(withWriting(answer, actions)).keys()];
+    const marks = ["g1 Mark done", "g1 Mark dropped"];
+
+    expect(keys({ ...ANSWER, aiProvider: false })).toEqual(marks);
+    expect(text(renderWith({ ...ANSWER, aiProvider: false }, actions))).toContain(
+      "Goals need an AI provider",
+    );
+    expect(keys({ ...ANSWER, waitsForHistory: true })).toEqual(marks);
+    const waiting = renderWith({ ...ANSWER, waitsForHistory: true }, actions);
+    expect(waiting).toContain('data-slot="goals-wait"');
+    expect(text(waiting)).toContain("Goals open when your history has loaded.");
+  });
+
+  it("shows the open form in place of Add a Goal, or of the Goal's Edit the words, with its words", () => {
+    const adding = recorded({ goalId: null, draft: "Save $10,000 for a house", busy: false });
+    const html = renderWith(ANSWER, adding.actions);
+    expect(html).toContain("Save $10,000 for a house</textarea>");
+    expect([...buttonsOf(withWriting(ANSWER, adding.actions)).keys()]).toEqual([
+      " Save",
+      " Cancel",
+      "g1 Edit the words",
+      "g1 Mark done",
+      "g1 Mark dropped",
+    ]);
+
+    const editing = recorded({ goalId: "g1", draft: "Spend less on eating out", busy: false });
+    const buttons = buttonsOf(withWriting(ANSWER, editing.actions));
+    expect([...buttons.keys()]).toEqual([
+      " Add a Goal",
+      "g1 Save",
+      "g1 Cancel",
+      "g1 Mark done",
+      "g1 Mark dropped",
+    ]);
+    buttons.get("g1 Cancel")?.();
+    expect(editing.calls).toEqual(["cancel"]);
+  });
+
+  it('asks "Send anyway?" past the AI cost cap, and sends the yes', () => {
+    const problem = {
+      error: "Reading this Goal is past the AI cost cap. Send anyway?",
+      sendAnyway: true,
+      tryAgain: false,
+    };
+    const { calls, actions } = recorded({ goalId: null, draft: "Save more", busy: false, problem });
+    const buttons = buttonsOf(withWriting(ANSWER, actions));
+
+    expect(text(renderWith(ANSWER, actions))).toContain(problem.error);
+    expect(buttons.has(" Save")).toBe(false);
+    buttons.get(" Send anyway")?.();
+    expect(calls).toEqual(["save true"]);
+  });
+
+  it('shows a failed reading with "Try again", which sends again only when pressed', () => {
+    const problem = {
+      error: "The AI did not answer within 120 seconds.",
+      sendAnyway: false,
+      tryAgain: true,
+    };
+    const form = { goalId: "g1", draft: "Spend less", busy: false, problem };
+    const first = recorded(form);
+    expect(text(renderWith(ANSWER, first.actions))).toContain(problem.error);
+    expect(first.calls).toEqual([]);
+    buttonsOf(withWriting(ANSWER, first.actions)).get("g1 Try again")?.();
+    expect(first.calls).toEqual(["save false"]);
+
+    // After "Send anyway", "Try again" sends the same yes.
+    const anyway = recorded({ ...form, sentAnyway: true });
+    buttonsOf(withWriting(ANSWER, anyway.actions)).get("g1 Try again")?.();
+    expect(anyway.calls).toEqual(["save true"]);
+  });
+});
+
+describe("long words", () => {
+  it("wrap a Goal's one long word in the active, done and dropped lists, so no page scrolls sideways", () => {
+    const long = "x".repeat(90);
+    const html = render({
+      ...ANSWER,
+      goals: ANSWER.goals.map((each) => ({ ...each, words: long })),
+    });
+    const wrapped = html.match(
+      new RegExp(
+        `<span class="[^"]*\\bwrap-anywhere\\b[^"]*" data-slot="goal-words">“(?:<!-- -->)?${long}`,
+        "g",
+      ),
+    );
+    expect(wrapped).toHaveLength(4);
   });
 });
 
@@ -261,5 +395,77 @@ describe("Mark done and Mark dropped", () => {
     );
 
     expect(await markGoal("g1", "done")).toBe("Only an active Goal can be marked done or dropped.");
+  });
+});
+
+describe("saving a Goal", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Each request the page sends, and the answer to each.
+  function recordRequests(answer: { status: number; body: unknown }) {
+    const sent: { line: string; type: string | null; body: string }[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(
+        new URL(String(input instanceof Request ? input.url : input), "http://app"),
+        { ...(input instanceof Request ? input : {}), ...init },
+      );
+      sent.push({
+        line: `${request.method} ${new URL(request.url).pathname}`,
+        type: request.headers.get("content-type"),
+        body: await request.text(),
+      });
+      return Response.json(answer.body, { status: answer.status });
+    });
+    return sent;
+  }
+
+  it("posts a new Goal's words, or a Goal's new words, as JSON with the Member's yes", async () => {
+    const sent = recordRequests({ status: 200, body: { goal: {} } });
+
+    expect(await saveGoal(null, "Save $10,000 for a house", false)).toBeUndefined();
+    expect(await saveGoal("g1", "Spend 20% less on restaurants", true)).toBeUndefined();
+    expect(sent).toEqual([
+      {
+        line: "POST /api/goals",
+        type: "application/json",
+        body: '{"words":"Save $10,000 for a house","sendAnyway":false}',
+      },
+      {
+        line: "POST /api/goals/g1/words",
+        type: "application/json",
+        body: '{"words":"Spend 20% less on restaurants","sendAnyway":true}',
+      },
+    ]);
+  });
+
+  it('reads "Send anyway?", a failed reading, and any other refusal', async () => {
+    recordRequests({
+      status: 409,
+      body: { error: "Past the cap. Send anyway?", pause: "send anyway?" },
+    });
+    expect(await saveGoal(null, "Save more", false)).toEqual({
+      error: "Past the cap. Send anyway?",
+      sendAnyway: true,
+      tryAgain: false,
+    });
+
+    recordRequests({ status: 504, body: { error: "No answer.", tryAgain: true } });
+    expect(await saveGoal(null, "Save more", false)).toEqual({
+      error: "No answer.",
+      sendAnyway: false,
+      tryAgain: true,
+    });
+
+    recordRequests({
+      status: 409,
+      body: { error: "Goals need an AI provider", pause: "no AI provider" },
+    });
+    expect(await saveGoal(null, "Save more", false)).toEqual({
+      error: "Goals need an AI provider",
+      sendAnyway: false,
+      tryAgain: false,
+    });
   });
 });
