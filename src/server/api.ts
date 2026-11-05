@@ -12,6 +12,7 @@ import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { CATEGORIES } from "../categories/list.ts";
 import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
+import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -493,6 +494,49 @@ function balanceQuery(query: Record<string, string>): BalanceQuery | undefined {
   }
   return { ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) };
 }
+
+// The Household's SMTP server (spec 06, Recipients and channels). Changing the password, or the
+// server or sign-in name a stored password goes to, takes a fresh TOTP or backup code (spec 09,
+// Signing in), checked when `code` is given. A password left out keeps the one stored.
+const DNS_NAME =
+  /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const IPV6 = /^(?=.*:)[0-9A-Fa-f:.]{2,45}$/;
+const NO_CONTROL = /^[^\p{Cc}]+$/u;
+const MAX_PORT = 65_535;
+const smtpBody = z
+  .object({
+    host: z
+      .string()
+      .trim()
+      .refine((host) => DNS_NAME.test(host) || IPV6.test(host)),
+    port: z.number().int().min(1).max(MAX_PORT),
+    username: z.string().trim().min(1).max(320).regex(NO_CONTROL),
+    password: z.string().min(1).max(1000).regex(NO_CONTROL).optional(),
+    sender: z.email().max(320),
+    code: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict();
+
+// "Send a test email" takes an empty JSON body: a write with no body has no JSON content type, and
+// secretRoutes answers it 415.
+const testEmailBody = z.object({}).strict();
+
+const SMTP_REFUSALS: Record<SmtpRefusal, string> = {
+  "code needed": "Enter a code from your authenticator app, or a backup code.",
+  "password needed": "Enter the SMTP password.",
+};
+
+const SEND_PROBLEMS: Record<SendProblem, string> = {
+  "not set up": "Save the SMTP server first.",
+  "password unreadable":
+    "The app cannot read the saved SMTP password. Enter the password again, with a code, and save.",
+  "sign-in refused": "The SMTP server refused the sign-in name or password.",
+  "no answer": "The app could not reach the SMTP server over TLS. Check the host and port.",
+  "message refused": "The SMTP server did not take the email. Check the sender address.",
+};
+
+// A Member's own channels: push, email, both, or none.
+const channelsBody = z.object({ push: z.boolean(), email: z.boolean() }).strict();
 
 export const api = new Hono<ServerEnv>()
   .get("/ping", (c) => c.json({ ok: true }))
@@ -1125,6 +1169,45 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Enter the AI cost cap in dollars, from $0 to $10,000." }, 400);
     }
     return c.json({ usage: await c.var.ai.setCostCap(body.data.capCents) }, 200);
+  })
+  // Settings, Alerts: the Household's SMTP server. The password is never in an answer.
+  .get("/smtp/settings", async (c) => c.json({ smtp: await c.var.smtp.view() }))
+  .post("/smtp/settings", async (c) => {
+    const body = smtpBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Check the SMTP server's fields." }, 400);
+    const { code, ...fields } = body.data;
+    let freshCode = false;
+    if (code !== undefined) {
+      const fresh = await c.var.checkFreshCode(code);
+      if (fresh === "too many tries") {
+        return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+      }
+      if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+      freshCode = true;
+    }
+    const saved = await c.var.smtp.save(fields, { freshCode });
+    if (!saved.saved) return c.json({ error: SMTP_REFUSALS[saved.refusal] }, 400);
+    return c.json({ smtp: saved.smtp }, 200);
+  })
+  // "Send a test email": to the signed-in Member, with the result.
+  .post("/smtp/test", async (c) => {
+    if (!testEmailBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ sent: false, error: "Send an empty body." }, 400);
+    }
+    const tested = await c.var.smtp.sendTest(c.var.member.email);
+    if (tested.sent) return c.json({ sent: true }, 200);
+    const status =
+      tested.problem === "not set up" || tested.problem === "password unreadable" ? 409 : 502;
+    return c.json({ sent: false, error: SEND_PROBLEMS[tested.problem] }, status);
+  })
+  // Settings, Alerts: the signed-in Member's own channels for Alerts and System notices.
+  .get("/alert-channels", async (c) =>
+    c.json({ channels: await c.var.channels.view(c.var.member.id) }),
+  )
+  .put("/alert-channels", async (c) => {
+    const body = channelsBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Pick push, email, both, or none." }, 400);
+    return c.json({ channels: await c.var.channels.set(c.var.member.id, body.data) }, 200);
   });
 
 export type Api = typeof api;

@@ -21,7 +21,7 @@ import { householdTimeZone } from "../household/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
-import { startNotify } from "../notify/index.ts";
+import { requestDelivery, smtpSettings, startNotify } from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
@@ -66,7 +66,11 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // The Household time zone, from the Household facts. Until the wizard's step 4 is done, both
     // the bank module and the scheduler use UTC.
     const timeZone = () => householdTimeZone(database);
-    const notify = startNotify({ database });
+    const address = (path: string) => options.security.appUrl.address(path);
+    const notify = startNotify({
+      database,
+      delivery: { secrets, address, startJob: requestDelivery },
+    });
     const adapters = options.bankAdapters ?? [plaidAdapter({ database, secrets })];
     const bank = startBank({ database, secrets, adapters, timeZone });
     const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });
@@ -122,6 +126,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         secrets,
         plaid: plaidSettings({ database, secrets }),
         ai: aiSettings({ database, secrets, cost }),
+        smtp: smtpSettings({ database, secrets, address }),
       });
       return {
         port: server.port,

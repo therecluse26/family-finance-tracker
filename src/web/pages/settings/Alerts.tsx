@@ -2,9 +2,11 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { AlertSettingsView } from "../../../server/alerts-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { AlertEmail } from "./AlertEmail.tsx";
 
-// Settings, Alerts (spec 06, The weekly cap; spec 07, Settings overview): the weekly cap. Any
-// Member may change it, to any whole number from 0. Channels come with their own tickets.
+// Settings, Alerts (spec 06, The weekly cap; Recipients and channels; spec 07, Settings overview):
+// the weekly cap, which any Member may change to any whole number from 0; then each Member's
+// channels and the Household's email server (AlertEmail.tsx).
 
 export function WeeklyCapForm(props: {
   settings: AlertSettingsView;
@@ -89,6 +91,7 @@ export function Alerts() {
         />
       )}
       {done === undefined ? null : <p className="mt-3">{done}</p>}
+      <AlertEmail />
     </>
   );
 }

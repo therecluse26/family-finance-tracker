@@ -93,6 +93,7 @@ describe("the Alerts step", () => {
       sent: 1,
       heldBack: 0,
       joined: 0,
+      sentIds: ["alert-001"],
     });
     // Tuesday's batch: the Price increase and the On pace are sent (3 of 3). The Large purchase is
     // held, though the checks stored it first.
@@ -103,7 +104,7 @@ describe("the Alerts step", () => {
         alert("Price increase", tuesday, "Tuesday Price increase"),
         alert("On pace", tuesday, "Tuesday On pace"),
       ),
-    ).toEqual({ sent: 2, heldBack: 1, joined: 0 });
+    ).toEqual({ sent: 2, heldBack: 1, joined: 0, sentIds: ["alert-003", "alert-004"] });
     // Thursday: a Duplicate charge is sent, outside the cap.
     await batch(alert("Duplicate charge", est("2026-11-05", 8), "Thursday Duplicate charge"));
     // Friday: a New Recurring charge is held.
@@ -196,6 +197,50 @@ describe("the Alerts step", () => {
     expect((await states()).Hulu).toBe("sent");
   });
 
+  it("stores a delivery only for each Alert it newly sends, with its message as it reads then", async () => {
+    await setWeeklyCap(bank.database, 1);
+    const morning = est("2026-11-03", 8);
+    await storeAlerts(bank.database, [
+      alert("Over Budget", morning, "Restaurants is over Budget"),
+      alert("Over Budget", morning, "Groceries is over Budget"),
+      alert("Large purchase", morning, "Large purchase at Best Buy"),
+    ]);
+    // The AI's advice, as the advice call stores it before the Alerts step.
+    await bank.database.$client.execute({
+      sql: "UPDATE alerts SET advice = ? WHERE text = ?",
+      args: ["Cook at home twice this week.", "Groceries is over Budget"],
+    });
+    const deliveries = async () =>
+      (
+        await bank.database.$client.execute(
+          "SELECT alert_id, title, text, advice, email_done_at FROM alert_deliveries",
+        )
+      ).rows;
+
+    // The merged Over Budget Alert is sent once, under its heading. The Large purchase is held.
+    expect((await decideAlerts(bank.database)).sentIds).toEqual(["alert-001"]);
+    expect(await deliveries()).toEqual([
+      {
+        alert_id: "alert-001",
+        title: "Over Budget",
+        text: "2 Categories are over Budget\n- Restaurants is over Budget\n- Groceries is over Budget",
+        advice: "Cook at home twice this week.",
+        email_done_at: null,
+      },
+    ]);
+
+    // An Alert that joins it later that day sends nothing, nor does one held back.
+    expect(
+      (
+        await batch(
+          alert("Over Budget", est("2026-11-03", 20), "Gas is over Budget"),
+          alert("On pace", est("2026-11-03", 20), "Dining is on pace"),
+        )
+      ).sentIds,
+    ).toEqual([]);
+    expect(await deliveries()).toHaveLength(1);
+  });
+
   it("joins a later Alert to that day's sent or held Alert of its kind, with no new slot", async () => {
     await setWeeklyCap(bank.database, 1);
     const morning = est("2026-11-03", 8);
@@ -211,7 +256,7 @@ describe("the Alerts step", () => {
         alert("Over Budget", night, "Groceries is over Budget"),
         alert("Large purchase", night, "Large purchase at Skyway Air"),
       ),
-    ).toEqual({ sent: 0, heldBack: 0, joined: 2 });
+    ).toEqual({ sent: 0, heldBack: 0, joined: 2, sentIds: [] });
     expect(await states()).toEqual({
       "Restaurants is over Budget": "sent",
       "Large purchase at Best Buy": "held back (weekly cap)",
@@ -349,7 +394,12 @@ describe("the Alerts step", () => {
     await batch(alert("Over Budget", est("2026-11-02", 9), "Over Budget"));
     const before = await alertList(bank.database);
 
-    expect(await decideAlerts(bank.database)).toEqual({ sent: 0, heldBack: 0, joined: 0 });
+    expect(await decideAlerts(bank.database)).toEqual({
+      sent: 0,
+      heldBack: 0,
+      joined: 0,
+      sentIds: [],
+    });
     expect(await alertList(bank.database)).toEqual(before);
   });
 
@@ -364,15 +414,33 @@ describe("the Alerts step", () => {
     const before = await alertList(bank.database);
     const idOf = (text: string) => before.find((each) => each.text === text)?.id ?? "";
 
-    // A decision that would turn each into a later part of another Alert, with the other state.
+    const deliveries = async () =>
+      (await bank.database.$client.execute("SELECT alert_id, text FROM alert_deliveries")).rows;
+    const sentBefore = await deliveries();
+    expect(sentBefore).toEqual([{ alert_id: idOf("Sent Over Budget"), text: "Sent Over Budget" }]);
+
+    // A decision that would turn each into a later part of another Alert, with the other state,
+    // and send each again.
     const other = idOf("Other Price increase");
+    const again = (id: string) => ({
+      alertId: id,
+      title: "Over Budget",
+      text: "Sent again",
+      advice: null,
+      createdAt: monday,
+    });
     expect(
-      await storeAlertDecisions(bank.database, [
-        { id: idOf("Sent Over Budget"), state: "held back (weekly cap)", mergedInto: other },
-        { id: idOf("Held Large purchase"), state: "sent", mergedInto: other },
-      ]),
+      await storeAlertDecisions(
+        bank.database,
+        [
+          { id: idOf("Sent Over Budget"), state: "held back (weekly cap)", mergedInto: other },
+          { id: idOf("Held Large purchase"), state: "sent", mergedInto: other },
+        ],
+        [again(idOf("Sent Over Budget")), again(idOf("Held Large purchase"))],
+      ),
     ).toEqual(new Set());
     expect(await alertList(bank.database)).toEqual(before);
+    expect(await deliveries()).toEqual(sentBefore);
     expect((await mergedAlertList(bank.database)).map((each) => each.parts.length)).toEqual([
       1, 1, 1,
     ]);
@@ -384,6 +452,9 @@ describe("the Alerts step", () => {
       alert("Over Budget", morning, "Restaurants is over Budget"),
       alert("Over Budget", morning, "Groceries is over Budget"),
     );
+    const deliveries = async () =>
+      (await bank.database.$client.execute("SELECT alert_id FROM alert_deliveries")).rows;
+    expect(await deliveries()).toEqual([{ alert_id: "alert-001" }]);
     await bank.database.$client.execute({
       sql: "DELETE FROM alerts WHERE text = ?",
       args: ["Restaurants is over Budget"],
@@ -394,6 +465,11 @@ describe("the Alerts step", () => {
       [null, "sent", 1],
     ]);
     expect(merged[0]?.parts[0]?.mergedInto).toBeNull();
+    // Its delivery goes with the first part. The later part never went out, and nothing sends it
+    // now: only the Alerts step's decisions send.
+    expect(await deliveries()).toEqual([]);
+    expect((await decideAlerts(bank.database)).sentIds).toEqual([]);
+    expect(await deliveries()).toEqual([]);
   });
 });
 
@@ -548,6 +624,11 @@ describe("the Alerts step in the follow-up job", () => {
       ).rows;
     expect(await open()).toHaveLength(1);
     expect((await alertList(bank.database))[0]?.state).toBeNull();
+    const deliveries = async () =>
+      (await bank.database.$client.execute("SELECT alert_id FROM alert_deliveries")).rows;
+    expect(await deliveries()).toEqual([]);
+    // The notice asked for its own delivery.
+    expect(bank.deliveriesAsked()).toBe(1);
 
     await bank.database.$client.execute("ALTER TABLE alert_settings_away RENAME TO alert_settings");
     await load([
@@ -560,5 +641,18 @@ describe("the Alerts step in the follow-up job", () => {
     await runFollowUp(clock);
     expect(await open()).toEqual([]);
     expect((await alertList(bank.database))[0]?.state).toBe("sent");
+    // Decided late, it is sent when it is decided: its delivery is stored, and the step asks once.
+    expect(await deliveries()).toEqual([{ alert_id: "alert-1" }]);
+    expect(bank.deliveriesAsked()).toBe(2);
+    await load([
+      {
+        id: "snack",
+        date: "2026-11-10",
+        parts: [{ type: "Spending", amount: -$(5), category: "Restaurants" }],
+      },
+    ]);
+    await runFollowUp(clock);
+    // A run that sends nothing asks for nothing.
+    expect(bank.deliveriesAsked()).toBe(2);
   });
 });

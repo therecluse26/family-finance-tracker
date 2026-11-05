@@ -22,6 +22,11 @@ function captureLogger(throwOnSecretField: boolean) {
 const SECRET = "SECRET-VALUE-123";
 
 const SECRET_NAMES = [
+  // nodemailer keeps the SMTP password in auth.pass.
+  "pass",
+  "PASS",
+  "smtpPass",
+  "smtp_pass",
   "password",
   "passwords",
   "smtpPassword",
@@ -114,6 +119,8 @@ const SECRET_NAMES = [
 
 const ALLOWED_NAMES = [
   "port",
+  "passed",
+  "bypass",
   "signal",
   "status",
   "error",
@@ -310,6 +317,9 @@ describe("the logger in tests and development", () => {
     );
     expect(() => logger.warn("Saved", { items: [{ token: "x" }] })).toThrow(
       'refuses the field "items[0].token"',
+    );
+    expect(() => logger.warn("SMTP", { auth: { user: "x", pass: "x" } })).toThrow(
+      'refuses the field "auth.pass"',
     );
   });
 });

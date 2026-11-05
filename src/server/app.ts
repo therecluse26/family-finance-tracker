@@ -11,6 +11,8 @@ import {
 } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
+import type { SmtpSettings } from "../notify/email-view.ts";
+import { channelSettings } from "../notify/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { aboutRoutes } from "./about.ts";
 import { alertRoutes } from "./alerts.ts";
@@ -78,11 +80,12 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
   };
 }
 
-// Before the routes under /api/plaid/ and /api/ai/, which store Master-key secrets. No Plaid key,
-// Plaid token, or AI key is stored until the first-run wizard's required steps are done (spec 12):
+// Before the routes under /api/plaid/, /api/ai/, and /api/smtp/, which store Master-key secrets. No
+// Plaid key, Plaid token, AI key, or SMTP password is stored until the first-run wizard's required
+// steps are done (spec 12):
 // until then, every route but a GET answers 409. They take only JSON bodies, so a form on another
 // site cannot post to them. An app made without the service answers 404.
-function secretRoutes<Name extends "plaid" | "ai">(
+function secretRoutes<Name extends "plaid" | "ai" | "smtp">(
   database: Database,
   name: Name,
   service: ServerEnv["Variables"][Name] | undefined,
@@ -142,7 +145,7 @@ export function createApp(
   auth: Auth,
   database: Database,
   secrets: Secrets,
-  services: { plaid?: PlaidSettings; ai?: AiSettings } = {},
+  services: { plaid?: PlaidSettings; ai?: AiSettings; smtp?: SmtpSettings } = {},
 ) {
   const bank = bankViews(database);
   const masterKey = masterKeyRoutes(database, secrets);
@@ -159,6 +162,7 @@ export function createApp(
   const goals = goalRoutes(database);
   const pictures = pictureRoutes(database);
   const comingUp = comingUpRoutes(database);
+  const channels = channelSettings(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -190,6 +194,7 @@ export function createApp(
         c.set("goals", goals);
         c.set("pictures", pictures);
         c.set("comingUp", comingUp);
+        c.set("channels", channels);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);
@@ -203,6 +208,9 @@ export function createApp(
       .use("/api/steady-income", jsonOnly)
       .use("/api/plaid/*", secretRoutes(database, "plaid", services.plaid))
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
+      .use("/api/smtp/*", secretRoutes(database, "smtp", services.smtp))
+      // A Member's own channels take only a JSON body.
+      .use("/api/alert-channels", jsonOnly)
       .route("/api", api)
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
       .use(serveStatic({ root: webRoot }))

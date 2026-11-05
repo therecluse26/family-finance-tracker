@@ -5,8 +5,10 @@ import {
   countAlertDecisionFailure,
   type Database,
   type DecidedAlert,
+  listAlertTexts,
   listDecidedAlertsSince,
   listUndecidedAlerts,
+  type NewAlertDelivery,
   readWeeklyCap,
   restartAlertDecisionCount,
   storeAlertDecisions,
@@ -17,8 +19,9 @@ import { registerFollowUpStep } from "../follow-up/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { log } from "../log.ts";
-import { endCondition, raiseNotice } from "../notify/index.ts";
+import { askForDelivery, endCondition, raiseNotice } from "../notify/index.ts";
 import { addDays } from "../recurring/index.ts";
+import { mergedHeading } from "./templates.ts";
 
 // The Alerts step (spec 06, Sending Alerts; The weekly cap; Merging). It runs last among the
 // follow-up job's Alert steps and decides each new Alert's state when it is created:
@@ -32,6 +35,11 @@ import { addDays } from "../recurring/index.ts";
 // - Duplicate charge and Card interest or fee Alerts always go out and never use a slot.
 // The step decides an Alert once and never changes it again, so an Alert that went out stays as it
 // was, even when a later Refund or Reimbursement changes its month.
+// Each Alert the step newly sends gets a delivery record with its decision, holding its message as
+// it reads then, and the step asks the notify module to deliver it to every Member, by each
+// Member's channels. Only these decisions send: an Alert that joins a sent Alert, or that is held
+// back or found in history, sends nothing. An Alert decided late, such as after the step gave up
+// at its cap and a later follow-up job decided it, is sent when it is decided.
 
 // The weekly cap until a Member changes it.
 export const DEFAULT_WEEKLY_CAP = 3;
@@ -81,15 +89,45 @@ type DayOfKind = { kind: AlertKind; day: string; alerts: UndecidedAlert[] };
 
 const dayOfKind = (kind: AlertKind, day: string) => `${kind} ${day}`;
 
+// A sent Alert's message: its kind as the title, and its template text. A merged Alert has its
+// heading, then each part's line. The AI's advice follows, when any part has some.
+function alertMessage(
+  kind: AlertKind,
+  ids: readonly string[],
+  texts: Map<string, { text: string; advice: string | null }>,
+  createdAt: Date,
+): NewAlertDelivery | undefined {
+  const [first] = ids;
+  if (first === undefined) return undefined;
+  const parts = ids.flatMap((id) => {
+    const part = texts.get(id);
+    return part === undefined ? [] : [part];
+  });
+  const lines = parts.map((part) => part.text);
+  const text =
+    lines.length > 1
+      ? [mergedHeading(kind, lines.length), ...lines.map((line) => `- ${line}`)].join("\n")
+      : (lines[0] ?? "");
+  const advice = parts.flatMap((part) => (part.advice === null ? [] : [part.advice]));
+  return {
+    alertId: first,
+    title: kind,
+    text,
+    advice: advice.length === 0 ? null : advice.join("\n"),
+    createdAt,
+  };
+}
+
 // Decides the state of each Alert not decided yet. Returns how many Alerts it sent and held back,
-// counting a merged Alert once, and how many joined an Alert already decided.
+// counting a merged Alert once, how many joined an Alert already decided, and the IDs of the
+// Alerts it newly sent: an Alert of one part, or a merged Alert's first part.
 export async function decideAlerts(
   database: Database,
-): Promise<{ sent: number; heldBack: number; joined: number }> {
+): Promise<{ sent: number; heldBack: number; joined: number; sentIds: string[] }> {
   const done = { sent: 0, heldBack: 0, joined: 0 };
   const undecided = await listUndecidedAlerts(database);
   const [oldest] = undecided;
-  if (oldest === undefined) return done;
+  if (oldest === undefined) return { ...done, sentIds: [] };
   const timeZone = (await householdTimeZone(database)) ?? "UTC";
   const dayOf = (at: Date) => calendarDateIn(at, timeZone);
   const cap = await weeklyCap(database);
@@ -126,6 +164,7 @@ export async function decideAlerts(
   );
 
   const decisions: AlertDecision[] = [];
+  const sending: { kind: AlertKind; ids: string[] }[] = [];
   for (const { kind, day, alerts } of ordered) {
     const joins = decided.get(dayOfKind(kind, day));
     if (joins !== undefined) {
@@ -146,23 +185,37 @@ export async function decideAlerts(
     if (first === undefined) continue;
     decisions.push({ id: first.id, state, mergedInto: null });
     for (const alert of later) decisions.push({ id: alert.id, state, mergedInto: first.id });
-    if (state === "sent") done.sent += 1;
-    else done.heldBack += 1;
+    if (state === "sent") {
+      done.sent += 1;
+      sending.push({ kind, ids: alerts.map((alert) => alert.id) });
+    } else done.heldBack += 1;
   }
-  await storeAlertDecisions(database, decisions);
+  const texts = await listAlertTexts(
+    database,
+    sending.flatMap((each) => each.ids),
+  );
+  const sentAt = new Date();
+  const deliveries = sending.flatMap(({ kind, ids }) => {
+    const message = alertMessage(kind, ids, texts, sentAt);
+    return message === undefined ? [] : [message];
+  });
+  const stored = await storeAlertDecisions(database, decisions, deliveries);
+  const sentIds = deliveries.flatMap((each) => (stored.has(each.alertId) ? [each.alertId] : []));
   log.info("Decided Alerts", done);
-  return done;
+  return { ...done, sentIds };
 }
 
 // Registers the Alerts step, after the Overspending checks. A run that fails counts a try and
 // throws, so the follow-up job runs again. The run that reaches the cap raises one System notice
 // and leaves its Alerts undecided: they send nothing, and the job goes on. The next run decides
-// them, and the next run that succeeds ends the notice. The start calls it before jobs run.
+// them, and the next run that succeeds ends the notice. A run that sends Alerts asks for their
+// delivery once their decisions are stored. The start calls it before jobs run.
 export function startAlertSending(options: { database: Database }): { stop(): void } {
   const { database } = options;
   const stop = registerFollowUpStep("alerts", async () => {
+    let sentIds: string[];
     try {
-      await decideAlerts(database);
+      ({ sentIds } = await decideAlerts(database));
     } catch (error) {
       const tries = await countAlertDecisionFailure(database);
       // Only the error's name: a failed query's message holds its values.
@@ -180,6 +233,7 @@ export function startAlertSending(options: { database: Database }): { stop(): vo
       return undefined;
     }
     if (await clearAlertDecisionFailures(database)) await endCondition(ALERT_SENDING_STOPPED);
+    if (sentIds.length > 0) await askForDelivery();
     return undefined;
   });
   return { stop };

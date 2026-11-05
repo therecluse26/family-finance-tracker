@@ -189,6 +189,23 @@ export {
   storePartCategories,
 } from "./decisions.ts";
 export {
+  countEmailFailure,
+  type DeliveryRef,
+  finishEmails,
+  listAlertTexts,
+  listEmailRecipients,
+  listWaitingEmails,
+  type NewAlertDelivery,
+  readChannels,
+  readSmtpSettings,
+  SMTP_SETTINGS_ROW,
+  type StoredChannels,
+  type StoredSmtpSettings,
+  storeChannels,
+  storeSmtpSettings,
+  type WaitingEmail,
+} from "./deliveries.ts";
+export {
   listUnhandledTransactions,
   markTransactionsHandled,
   markTransactionsUnhandled,

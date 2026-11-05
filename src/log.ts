@@ -24,6 +24,7 @@ const SECRET_WORDS = new Set([
   "credentials",
   "key",
   "keys",
+  "pass",
   "passphrase",
   "passphrases",
   "password",

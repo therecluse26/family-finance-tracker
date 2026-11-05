@@ -12,8 +12,13 @@ export type NewNotice =
   | { kind: "condition"; text: string; condition: string };
 
 // Stores a new notice and its delivery record, in one transaction. A condition that already has an
-// open notice keeps that one, and gets no second delivery. Returns the open notice's ID.
-export async function addNotice(database: Database, notice: NewNotice, at: Date): Promise<string> {
+// open notice keeps that one, and gets no second delivery. Returns the open notice's ID, and
+// whether it is new.
+export async function addNotice(
+  database: Database,
+  notice: NewNotice,
+  at: Date,
+): Promise<{ id: string; added: boolean }> {
   return database.transaction(async (tx) => {
     const condition = notice.kind === "condition" ? notice.condition : null;
     if (condition !== null) {
@@ -21,14 +26,14 @@ export async function addNotice(database: Database, notice: NewNotice, at: Date)
         .select({ id: systemNotices.id })
         .from(systemNotices)
         .where(and(eq(systemNotices.condition, condition), isNull(systemNotices.closedAt)));
-      if (open !== undefined) return open.id;
+      if (open !== undefined) return { id: open.id, added: false };
     }
     const id = crypto.randomUUID();
     await tx
       .insert(systemNotices)
       .values({ id, kind: notice.kind, text: notice.text, condition, raisedAt: at });
     await tx.insert(noticeDeliveries).values({ noticeId: id, createdAt: at });
-    return id;
+    return { id, added: true };
   });
 }
 

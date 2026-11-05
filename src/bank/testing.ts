@@ -31,6 +31,9 @@ export type TestBank = {
   // How many times the app asked for a follow-up job outside a sync. No job runs: a test calls
   // runFollowUp itself.
   followUpsAsked(): number;
+  // How many times the app asked for a Delivery job. No job runs: a test calls deliverWaiting
+  // itself.
+  deliveriesAsked(): number;
   // The Connection of each sync job the bank module started, in order. No job runs.
   syncsStarted: string[];
   close(): void;
@@ -58,7 +61,17 @@ export async function newTestBank(
       syncsStarted.push(connectionId);
     },
   });
-  const notify = startNotify({ database: db.database });
+  let deliveries = 0;
+  const notify = startNotify({
+    database: db.database,
+    delivery: {
+      secrets,
+      address: (path) => `http://nas.local:8080${path}`,
+      startJob: async () => {
+        deliveries += 1;
+      },
+    },
+  });
   let asked = 0;
   const followUp = startFollowUpPipeline({
     database: db.database,
@@ -79,6 +92,7 @@ export async function newTestBank(
         syncMinute: 7,
       }),
     followUpsAsked: () => asked,
+    deliveriesAsked: () => deliveries,
     syncsStarted,
     close() {
       followUp.stop();

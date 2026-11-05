@@ -279,13 +279,68 @@ export const systemNotices = sqliteTable(
   ],
 );
 
-// One delivery record for each new System notice. The email and push Delivery jobs send them.
+// One delivery record for each new System notice. The Delivery job sends it by each channel, and
+// keeps each channel's state here.
 export const noticeDeliveries = sqliteTable("notice_deliveries", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   noticeId: text("notice_id")
     .notNull()
     .references(() => systemNotices.id),
   createdAt: moment("created_at").notNull(),
+  // Email: the Delivery job's failed tries in a row, and when email was done with the notice. Done
+  // is sent, skipped (no SMTP server, no Member chose email, or the condition already ended), or
+  // given up after the last try.
+  emailTries: integer("email_tries").notNull().default(0),
+  emailDoneAt: moment("email_done_at"),
+});
+
+// One delivery record for each sent Alert: an Alert of one part, or a merged Alert's first part
+// (spec 06, Recipients and channels). The Alerts step stores it with its decision, in one
+// transaction. It keeps the message as it read when the Alert was sent, since a sent Alert never
+// changes. Deleting the Alert deletes it.
+export const alertDeliveries = sqliteTable("alert_deliveries", {
+  alertId: text("alert_id")
+    .primaryKey()
+    .references(() => alerts.id, { onDelete: "cascade" }),
+  // The Alert's kind.
+  title: text("title").notNull(),
+  // The template's text; for a merged Alert, its heading and each part's line.
+  text: text("text").notNull(),
+  // The AI's advice, if any.
+  advice: text("advice"),
+  createdAt: moment("created_at").notNull(),
+  // As in notice_deliveries.
+  emailTries: integer("email_tries").notNull().default(0),
+  emailDoneAt: moment("email_done_at"),
+});
+
+// The Household's SMTP server, for email Alerts and System notices (spec 06, Recipients and
+// channels; spec 01, 11. Privacy). It has at most one row, whose ID is 1. With no row, email is
+// not set up.
+export const smtpSettings = sqliteTable(
+  "smtp_settings",
+  {
+    id: integer("id").primaryKey(),
+    host: text("host").notNull(),
+    port: integer("port").notNull(),
+    // The sign-in name on the SMTP server.
+    username: text("username").notNull(),
+    // The password, encrypted with the Master key and bound to this row and column.
+    password: text("password").notNull(),
+    // The sender address on each email.
+    sender: text("sender").notNull(),
+  },
+  (table) => [check("smtp_settings_one_row", sql`${table.id} = 1`)],
+);
+
+// Each Member's own channels for Alerts and System notices: push, email, both, or none (spec 06,
+// Recipients and channels). A Member with no row has both, so a new Member starts with both.
+export const alertChannels = sqliteTable("alert_channels", {
+  memberId: text("member_id")
+    .primaryKey()
+    .references(() => members.id, { onDelete: "cascade" }),
+  push: integer("push", { mode: "boolean" }).notNull(),
+  email: integer("email", { mode: "boolean" }).notNull(),
 });
 
 // The Household's one AI provider (spec 08, AI settings page). It has at most one row, whose ID is

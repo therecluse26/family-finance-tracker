@@ -23,6 +23,7 @@ import {
 import { householdTimeZone } from "../household/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startNotify } from "../notify/index.ts";
+import { StubSmtp } from "../notify/testing.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
@@ -54,7 +55,20 @@ export type AppModule = {
 };
 
 export const APP_MODULES: readonly AppModule[] = [
-  { name: "startNotify", start: ({ database }) => startNotify({ database }) },
+  {
+    name: "startNotify",
+    start: ({ database, secrets }) =>
+      startNotify({
+        database,
+        delivery: {
+          secrets,
+          address: (path) => `http://nas.local:8080${path}`,
+          // A case runs the Delivery job itself, through a stubbed SMTP server.
+          startJob: async () => {},
+          makeTransport: new StubSmtp().makeTransport,
+        },
+      }),
+  },
   {
     name: "startBank",
     start: ({ database, secrets, adapters }) =>

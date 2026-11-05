@@ -13,8 +13,10 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Database } from "./client.ts";
+import type { NewAlertDelivery } from "./deliveries.ts";
 import {
   alertDecisions,
+  alertDeliveries,
   alertParts,
   alertPresses,
   alertSettings,
@@ -250,11 +252,14 @@ export type AlertDecision = {
 };
 
 // Stores the decisions in one transaction. Only an Alert that is still undecided changes, in its
-// state and in the merged Alert it joins, so a sent or held back Alert never does. Returns the IDs
-// of the Alerts it decided.
+// state and in the merged Alert it joins, so a sent or held back Alert never does. Each sent
+// Alert's delivery record goes in the same transaction, only when this call decided that Alert, so
+// a decision and its delivery are stored together or not at all. Returns the IDs of the Alerts it
+// decided.
 export async function storeAlertDecisions(
   database: Database,
   decisions: readonly AlertDecision[],
+  deliveries: readonly NewAlertDelivery[] = [],
 ): Promise<Set<string>> {
   const decided = new Set<string>();
   if (decisions.length === 0) return decided;
@@ -282,6 +287,13 @@ export async function storeAlertDecisions(
       await tx
         .insert(alertParts)
         .values(parts.slice(start, start + ROWS_PER_INSERT))
+        .onConflictDoNothing();
+    }
+    const sent = deliveries.filter((delivery) => decided.has(delivery.alertId));
+    for (let start = 0; start < sent.length; start += ROWS_PER_INSERT) {
+      await tx
+        .insert(alertDeliveries)
+        .values(sent.slice(start, start + ROWS_PER_INSERT))
         .onConflictDoNothing();
     }
   });
