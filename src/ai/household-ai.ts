@@ -4,7 +4,7 @@ import { isBackground } from "./ai-view.ts";
 import { AiCallError, type AiFailure, callModel, readPrivacyFacts } from "./call.ts";
 import { type AiPause, AiPausedError } from "./outbound.ts";
 import { privacyFilter } from "./privacy.ts";
-import type { AiCall } from "./prompt.ts";
+import { type AiCall, filterBatch } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
 import { type AiOptions, aiCalls, KEY_REJECTED_CONDITION, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
@@ -81,7 +81,8 @@ export function householdAi(options: AiOptions): HouseholdAi {
       const found = await calls.modelFor(use, { sendAnyway });
       if (!found.ready) return found;
       try {
-        const reply = await callModel(found.model, call);
+        const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
+        const reply = await callModel(found.model, sent);
         if (background) await retries.ended(use);
         return { ready: true, ...reply };
       } catch (error) {

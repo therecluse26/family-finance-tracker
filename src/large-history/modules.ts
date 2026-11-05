@@ -1,4 +1,10 @@
-import { FOLLOW_UP_AI_USES, startAiRetries } from "../ai/index.ts";
+import {
+  type AiModelMaker,
+  aiCost,
+  FOLLOW_UP_AI_USES,
+  householdAi,
+  startAiRetries,
+} from "../ai/index.ts";
 import { startAnomalyChecks } from "../anomalies/index.ts";
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
@@ -29,6 +35,9 @@ export type ModuleServices = {
   adapters: readonly BankDataAdapter[];
   // How the follow-up pipeline starts a follow-up job. No job queue runs in the bench.
   startJob: () => Promise<unknown>;
+  // The AI's models: AI SDK test models. Without them, any AI call fails, so the bench never
+  // reaches an AI provider.
+  makeModels?: AiModelMaker;
 };
 
 export type AppModule = {
@@ -77,7 +86,16 @@ export const APP_MODULES: readonly AppModule[] = [
   },
   {
     name: "startCategorization",
-    start: ({ database }) => startCategorization({ database }),
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startCategorization({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+      }),
     step: {
       name: "categorization",
       path: "Categorization follow-up on the full history",
@@ -128,6 +146,11 @@ export const APP_MODULES: readonly AppModule[] = [
 // their own jobs, which no case runs; this refuses any call all the same.
 const noNetwork = async (): Promise<Response> => {
   throw new Error("The large-history check makes no network request.");
+};
+
+// The same for the AI: a case that sets up an AI provider gives test models.
+const noAiProvider: AiModelMaker = () => {
+  throw new Error("The large-history check calls no AI provider.");
 };
 
 // Starts each module in order. Returns a function that stops them in the reverse order.

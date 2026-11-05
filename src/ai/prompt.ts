@@ -220,6 +220,30 @@ const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 // A batch field's text as the AI reads it: well-formed, with a space for each control character.
 const plainField = (text: string) => text.toWellFormed().replace(CONTROL, " ");
 
+// A Quick batch with each text value filtered on its own, before any row is written as JSON (spec
+// 08, Privacy filter). A removal then never takes a row number, a field name, or the next field
+// with it, so each row stays one JSON object with its own row number. Each value is made plain
+// first, so the filter reads the characters the AI reads. The call path filters the whole request
+// again on its way out.
+export function filterBatch<OUTPUT>(
+  call: AiCall<OUTPUT>,
+  filter: (text: string) => string,
+): AiCall<OUTPUT> {
+  checkCall(call);
+  if (call.batch === undefined) return call;
+  return {
+    ...call,
+    batch: call.batch.map((item) =>
+      Object.fromEntries(
+        Object.entries(item).map(([field, value]) => [
+          field,
+          typeof value === "string" ? filter(plainField(value)) : value,
+        ]),
+      ),
+    ),
+  };
+}
+
 // One Transaction of a Quick batch as JSON. The privacy filter reads this JSON text, and the AI
 // model reads the decoded values, so both must hold the same characters: JSON writes a newline as
 // "\n" and a lone surrogate as "\ud800", and that letter would break the filter's digit runs and

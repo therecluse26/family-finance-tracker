@@ -98,10 +98,19 @@ export type StubUsage = {
   output: number;
 };
 
+// One message of a request, as the model gets it after the privacy filter.
+export type StubMessage = {
+  role: string;
+  content: string | readonly { type: string; text?: string }[];
+};
+
 export class StubModels {
   answers: Record<AiTier, StubAnswer> = { quick: "work", writer: "work" };
   // What each reply that works says, and its usage and provider metadata.
   reply = OK_REPLY;
+  // When set, makes each reply that works from the request's messages in place of `reply`, such as
+  // a Quick batch's answers to the rows it was sent.
+  replyTo: ((messages: StubMessage[]) => string) | undefined;
   usage: StubUsage = { noCache: 5, cacheRead: 0, cacheWrite: 0, output: 1 };
   providerMetadata: ProviderMetadata | undefined;
   readonly connections: AiConnection[] = [];
@@ -125,7 +134,7 @@ export class StubModels {
           });
           await this.beforeAnswer();
           if (this.answers[tier] === "hang") await aborted(options.abortSignal);
-          return this.answer(tier, connection);
+          return this.answer(tier, connection, options.prompt as StubMessage[]);
         },
         doStream: async (options) => {
           this.calls.push({
@@ -134,7 +143,11 @@ export class StubModels {
             maxOutputTokens: options.maxOutputTokens,
           });
           await this.beforeAnswer();
-          const { usage, finishReason, providerMetadata } = this.answer(tier, connection);
+          const { usage, finishReason, providerMetadata } = this.answer(
+            tier,
+            connection,
+            options.prompt as StubMessage[],
+          );
           if (this.streamFails) {
             const text = this.reply;
             let sent = false;
@@ -168,7 +181,7 @@ export class StubModels {
     return { quick: model("quick"), writer: model("writer") };
   };
 
-  private answer(tier: AiTier, connection: AiConnection) {
+  private answer(tier: AiTier, connection: AiConnection, messages: StubMessage[]) {
     const secrets = `${connection.apiKey ?? ""} ${connection.gatewayToken ?? ""}`;
     const headers = {
       authorization: `Bearer ${connection.apiKey ?? ""}`,
@@ -193,7 +206,7 @@ export class StubModels {
     }
     const { noCache, cacheRead, cacheWrite, output } = this.usage;
     return {
-      content: [{ type: "text" as const, text: this.reply }],
+      content: [{ type: "text" as const, text: this.replyTo?.(messages) ?? this.reply }],
       finishReason: { unified: "length" as const, raw: "length" },
       usage: {
         inputTokens: { total: noCache + cacheRead + cacheWrite, noCache, cacheRead, cacheWrite },

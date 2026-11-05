@@ -1,4 +1,4 @@
-import { aiCost, aiSettings, FOLLOW_UP_AI_USES, startAiRetries } from "../ai/index.ts";
+import { aiCost, aiSettings, FOLLOW_UP_AI_USES, householdAi, startAiRetries } from "../ai/index.ts";
 import { startAnomalyChecks } from "../anomalies/index.ts";
 import { createAuth } from "../auth/index.ts";
 import {
@@ -72,7 +72,12 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
     });
     const moneyMovement = startMoneyMovement({ database });
-    const categorization = startCategorization({ database });
+    // The Categorization step asks the Quick tier through the one AI call path.
+    const cost = aiCost({ database, timeZone });
+    const categorization = startCategorization({
+      database,
+      ai: householdAi({ database, secrets, cost }),
+    });
     const recurring = startRecurringCharges({ database });
     const anomalies = startAnomalyChecks({ database });
     const budgets = startBudgets({ database });
@@ -110,7 +115,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         database,
         secrets,
         plaid: plaidSettings({ database, secrets }),
-        ai: aiSettings({ database, secrets, cost: aiCost({ database, timeZone }) }),
+        ai: aiSettings({ database, secrets, cost }),
       });
       return {
         port: server.port,

@@ -282,37 +282,48 @@ function letterAfter(text: string, at: number): boolean {
   return false;
 }
 
-// A name to replace, as letters, longest first.
-type NamePhrase = { letters: string; label: string };
+// A name to replace, as letters, longest first. With `inside`, the name matches inside a longer
+// word too.
+type NamePhrase = { letters: string; label: string; inside?: boolean };
+
+// A name of two or more words, glued, matches inside a longer word when it has at least this many
+// letters, such as "morganlee" in "VENMOMORGANLEE". A shorter one, such as "alli" for "Al Li",
+// would match ordinary words such as "ALLIANCE", so it keeps the word-edge rule.
+const INSIDE_A_WORD = 6;
 
 // Each place the text holds one of the names, as letters with anything but letters between them,
-// and with no letter right before or right after it. So "Dana2", "@danawhitfield", and
-// "dana_whitfield" hold a name, and "Danaher" does not.
+// and with no letter right before or right after it, unless the name matches inside a word. So
+// "Dana2", "@danawhitfield", "dana_whitfield", and "VENMODANAWHITFIELD" hold a name, and "Danaher"
+// does not.
 function findNames(text: string, phrases: readonly NamePhrase[]): Span[] {
   if (phrases.length === 0) return [];
   const skeleton = skeletonOf(text, letterForm);
   if ("same" in skeleton) return [];
   const taken = new Uint8Array(skeleton.text.length);
   const spans: Span[] = [];
-  for (const phrase of phrases) {
-    let at = skeleton.text.indexOf(phrase.letters);
-    while (at !== -1) {
-      const end = at + phrase.letters.length;
-      const place = placeOf(skeleton, [at, end]);
-      if (
-        !taken.subarray(at, end).includes(1) &&
-        !letterBefore(text, place.start) &&
-        !letterAfter(text, place.end)
-      ) {
-        taken.fill(1, at, end);
-        spans.push({ ...place, label: phrase.label });
-        at = skeleton.text.indexOf(phrase.letters, end);
-      } else {
-        at = skeleton.text.indexOf(phrase.letters, at + 1);
+  // Names at word edges first, then the names that match inside a word in what is left, so a
+  // glued name never takes letters from two names next to each other, such as "rokafor RaviO".
+  for (const inside of [false, true]) {
+    for (const phrase of phrases) {
+      if (inside && phrase.inside !== true) continue;
+      let at = skeleton.text.indexOf(phrase.letters);
+      while (at !== -1) {
+        const end = at + phrase.letters.length;
+        const place = placeOf(skeleton, [at, end]);
+        if (
+          !taken.subarray(at, end).includes(1) &&
+          (inside || (!letterBefore(text, place.start) && !letterAfter(text, place.end)))
+        ) {
+          taken.fill(1, at, end);
+          spans.push({ ...place, label: phrase.label });
+          at = skeleton.text.indexOf(phrase.letters, end);
+        } else {
+          at = skeleton.text.indexOf(phrase.letters, at + 1);
+        }
       }
     }
   }
-  return spans;
+  return spans.sort((a, b) => a.start - b.start);
 }
 
 // The pairs of skeleton places where `pattern` matches `text`, or where its named `group` does,
@@ -594,8 +605,10 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
   // Ortega Ruiz" or "Park" in "Zoë O'Neil-Park"; any two of those glued either way round, such as
   // "zoepark" or "okaforravi"; and, when 5 letters or more, the first initial with each of them,
   // such as "lortega", and the first word with the last initial, such as "RaviO". A name that two
-  // Members share names both, such as "Member A or Member B".
+  // Members share names both, such as "Member A or Member B". The whole name of two or more words,
+  // and any two words glued, match inside a longer word too, such as "VENMOMORGANLEE PMT".
   const memberPhrases = new Map<string, string[]>();
+  const glued = new Set<string>();
   for (const member of members) {
     const words = normalizeText(member.name).trim().split(/\s+/u);
     const first = lettersOf(words[0] ?? "");
@@ -607,8 +620,13 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
       .filter((part) => part.length >= 3);
     const units = [...new Set([first, ...parts])].filter((unit) => unit !== "");
     const forms = [lettersOf(member.name), ...units];
+    if (words.length >= 2) glued.add(lettersOf(member.name));
     for (const one of units) {
-      for (const other of units) if (one !== other) forms.push(one + other);
+      for (const other of units) {
+        if (one === other) continue;
+        forms.push(one + other);
+        glued.add(one + other);
+      }
     }
     if (words.length >= 2 && first !== "") {
       forms.push(
@@ -626,7 +644,11 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
   }
   const byLength = (a: NamePhrase, b: NamePhrase) => b.letters.length - a.letters.length;
   const memberNamePhrases: NamePhrase[] = [...memberPhrases]
-    .map(([letters, labels]) => ({ letters, label: labels.join(" or ") }))
+    .map(([letters, labels]) => ({
+      letters,
+      label: labels.join(" or "),
+      inside: glued.has(letters) && letters.length >= INSIDE_A_WORD,
+    }))
     .sort(byLength);
 
   // Labels by bank and type, in a fixed order, so each Account keeps its number.

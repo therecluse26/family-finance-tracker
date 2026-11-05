@@ -385,6 +385,34 @@ describe("the privacy filter on names of three words or with a hyphen", () => {
     ).toEqual([{ role: "user", content: [{ type: "text", text: sent }] }]);
   });
 
+  // A full name glued inside a longer word, such as to a payment-app prefix. A single word of a
+  // name keeps the word-edge rule, so "Parkway" and "Bellwether" stay.
+  it.each([
+    ["VENMOMARCUSBELL PMT", "VENMOMember B PMT"],
+    ["PayPalBellMarcus", "PayPalMember B"],
+    ["MARCUSBELLPHOTO 12", "Member BPHOTO 12"],
+    ["XFERLUISORTEGARUIZ", "XFERMember C"],
+    ["SQ*ZOEONEILPARKSTUDIO", "SQ*Member ASTUDIO"],
+    ["PARKWAY BELLWETHER", "PARKWAY BELLWETHER"],
+  ])("%j becomes %j, and the final check passes it", (line, sent) => {
+    expect(household.text(line)).toBe(sent);
+    expect(
+      household.params({ prompt: [{ role: "user", content: [{ type: "text", text: line }] }] })
+        .prompt,
+    ).toEqual([{ role: "user", content: [{ type: "text", text: sent }] }]);
+  });
+
+  it("refuses a request that still holds a full name glued inside a longer word", () => {
+    for (const name of ["VENMOMARCUSBELL", "payPalBellMarcus", "rentRuizLuisPmt"]) {
+      expect(() =>
+        household.params({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          tools: [{ type: "function", name, inputSchema: { type: "object" } }],
+        }),
+      ).toThrow(PrivacyRefusal);
+    }
+  });
+
   it("refuses a request that still holds a middle name or a hyphen part", () => {
     for (const name of ["ORTEGA", "Park", "oneil"]) {
       expect(() =>

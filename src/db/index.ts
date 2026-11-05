@@ -272,6 +272,15 @@ export {
   storePlaidKeys,
 } from "./plaid-settings.ts";
 export {
+  applyMerchantNameAnswers,
+  type CategoryFixFacts,
+  listMarkedNames,
+  type MarkedName,
+  readCategoryFixFacts,
+  readMerchantNameAnswers,
+  storeMerchantNameAnswers,
+} from "./quick-tier.ts";
+export {
   endRecurringCharge,
   listPostedSpending,
   listRecurringCharges,

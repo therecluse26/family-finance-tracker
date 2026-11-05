@@ -5,8 +5,9 @@ import { type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts"
 
 // The categorization cascade (spec 04, The categorization cascade). Each Spending Transaction
 // takes the first answer it gets: 1 hand-set, 2 a Category rule, 3 a confident provider category,
-// 4 the Merchant's own history, 5 the AI, 6 the best guess. Steps 2 and 5 belong to later tickets,
-// which register them here; an empty step gives no answer.
+// 4 the Merchant's own history, 5 the AI, 6 the best guess. Step 2 belongs to Category rules, which
+// registers it here; an empty step gives no answer. Step 5 asks the AI in batches, so the
+// Categorization step runs it (src/categorization/categorize.ts).
 
 // A Category and the step that chose it, with that step's confidence (spec 04, Provenance).
 export type Choice = { category: Category; source: CategorySource; confidence: CategoryConfidence };
@@ -22,15 +23,14 @@ export type CascadeInput = {
   handSet: Record<string, unknown>;
 };
 
-// A registered step's answer. The AI answers high, medium, or low; a Category rule is certain.
+// A registered step's answer. A Category rule is certain.
 export type CascadeAnswer = { category: Category; confidence: CategoryConfidence };
 export type CascadeStep = (txn: CascadeInput) => Promise<CascadeAnswer | undefined>;
-export type RegisteredStep = "Category rule" | "AI";
+export type RegisteredStep = "Category rule";
 
 const registered = new Map<RegisteredStep, CascadeStep>();
 
-// Registers step 2 (T32, Category rules) or step 5 (T80, the AI). The AI step gives no answer while
-// no AI provider is set up or available. Returns a function that removes it again.
+// Registers step 2 (T32, Category rules). Returns a function that removes it again.
 export function registerCascadeStep(source: RegisteredStep, step: CascadeStep): () => void {
   if (registered.has(source)) throw new Error(`The cascade's ${source} step already has a rule.`);
   registered.set(source, step);
@@ -60,12 +60,13 @@ export async function handSetOrRule(txn: CascadeInput): Promise<Choice | undefin
   return handSet(txn) ?? (await registeredAnswer("Category rule", txn));
 }
 
-// One Spending Transaction in a Merchant's history.
+// One Spending Transaction in a Merchant's history. Its Category is null while it waits for the
+// AI's answer.
 type Entry = {
   id: string;
   postedDate: string;
   merchant: Merchant;
-  category: Category;
+  category: Category | null;
   source: CategorySource | null;
 };
 
@@ -153,43 +154,62 @@ function providerCategory(txn: CascadeInput): Choice | undefined {
 }
 
 // Step 4: the Merchant's last 3 Spending Transactions before this one all have one Category. A
-// Category from step 6 does not count. With fewer than 3, the step gives no answer.
-function merchantHistory(txn: CascadeInput, history: MerchantHistory): Choice | undefined {
+// Category from step 6 does not count. With fewer than 3, the step gives no answer. "waits" when
+// one of the 3 still waits for the AI's answer, which decides the step.
+function merchantHistory(
+  txn: CascadeInput,
+  history: MerchantHistory,
+): Choice | undefined | "waits" {
   const last = history
     .before(txn)
     .filter((entry) => entry.source !== "best guess")
     .slice(0, HISTORY_LENGTH);
   const [first] = last;
   if (first === undefined || last.length < HISTORY_LENGTH) return undefined;
-  if (last.some((entry) => entry.category !== first.category)) return undefined;
+  if (last.some((entry) => entry.category === null)) return "waits";
+  if (first.category === null || last.some((entry) => entry.category !== first.category)) {
+    return undefined;
+  }
   return { category: first.category, source: "Merchant history", confidence: "high" };
 }
 
 // Step 6, when no AI answers: the Category the provider's code maps to, even when lossy or low;
 // with no provider category, the Merchant's most recent Category; with neither, Miscellaneous. A
 // provider category with no confidence level is only a hint to the AI, so it counts as none here.
-function bestGuess(txn: CascadeInput, history: MerchantHistory): Choice {
+export function bestGuess(txn: CascadeInput, history: MerchantHistory): Choice {
   const match =
     txn.providerCategory === null || txn.providerCategoryConfidence === null
       ? undefined
       : mapPlaidCategory(txn.providerCategory, txn.merchant);
-  const [latest] = history.before(txn);
+  const latest = history.before(txn).find((entry) => entry.category !== null);
   const category =
     match?.kind === "category" ? match.category : (latest?.category ?? "Miscellaneous");
   return { category, source: "best guess", confidence: "low" };
 }
 
-// Steps 3 to 6, which a Category that a Money movement rule names takes the place of.
-export async function fromProviderOrHistory(
+// Steps 3 and 4, which a Category that a Money movement rule names takes the place of, with steps 5
+// and 6. No answer sends the Transaction on to the AI, or to the best guess. "waits" when step 4
+// needs the AI's answer for an earlier Transaction first.
+export function fromProviderOrHistory(
   txn: CascadeInput,
   history: MerchantHistory,
-): Promise<Choice> {
-  return (
-    providerCategory(txn) ??
-    merchantHistory(txn, history) ??
-    (await registeredAnswer("AI", txn)) ??
-    bestGuess(txn, history)
-  );
+): Choice | undefined | "waits" {
+  return providerCategory(txn) ?? merchantHistory(txn, history);
+}
+
+// How the Category was chosen, as the Transactions page shows it (spec 07, Transactions page).
+// Below high, the AI counts as unsure.
+export function provenance(choice: Pick<Choice, "source" | "confidence">): string {
+  switch (choice.source) {
+    case "provider":
+      return "Plaid";
+    case "AI":
+      return choice.confidence === "high" ? "AI" : "AI, unsure";
+    case "money movement":
+      return "Money movement";
+    default:
+      return choice.source;
+  }
 }
 
 // The Transaction's Merchant: the provider's Merchant ID with its clean name. A Transaction with

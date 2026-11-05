@@ -965,6 +965,15 @@ export const categoryRules = sqliteTable(
   ],
 );
 
+// AI cleanup's Merchant names (spec 04, Names): each answer by the bank description text it
+// cleaned. The app reuses an answer for every Transaction with the same description, so the AI
+// sees each description once.
+export const merchantNameAnswers = sqliteTable("merchant_name_answers", {
+  description: text("description").primaryKey(),
+  name: text("name").notNull(),
+  answeredAt: moment("answered_at").notNull(),
+});
+
 // Recurring charges (spec 06, What the app stores): Spending with one Merchant that repeats on a
 // schedule at a similar amount. The checks after each sync find them again from posted Spending,
 // except one a Member marked ended, which never changes again.

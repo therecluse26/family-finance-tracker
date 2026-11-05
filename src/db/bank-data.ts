@@ -12,6 +12,7 @@ import {
   min,
   ne,
   notExists,
+  notInArray,
   or,
   type SQL,
 } from "drizzle-orm";
@@ -37,6 +38,7 @@ import {
   historyWait,
   householdAccounts,
   loanLinks,
+  merchantNameAnswers,
   recurringCharges,
   reviewItems,
   spendingLinks,
@@ -867,6 +869,16 @@ export async function deleteRemovedConnection(
         ),
       );
     await tx.delete(transactions).where(onAccounts);
+    // AI cleanup's answers keep bank description text, so each one no Transaction holds any more
+    // goes with the history. One statement: SQLite reads the descriptions left once.
+    await tx
+      .delete(merchantNameAnswers)
+      .where(
+        notInArray(
+          merchantNameAnswers.description,
+          tx.select({ description: transactions.description }).from(transactions),
+        ),
+      );
     await tx.delete(householdAccounts).where(eq(householdAccounts.connectionId, id));
     const [carried] = await tx
       .select({ id: transactions.id })

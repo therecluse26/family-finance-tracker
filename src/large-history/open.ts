@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StubModels } from "../ai/testing.ts";
 import { createAuth } from "../auth/auth.ts";
 import { addMember } from "../auth/testing.ts";
 import { FakeBankAdapter } from "../bank/fake.ts";
@@ -34,6 +35,8 @@ export type LargeHistory = {
   // A signed-in Member's browser on the app's HTTP interface.
   browser: TestBrowser;
   memberId: string;
+  // The AI SDK test models behind the app's AI. No AI provider is set up until a case saves one.
+  ai: StubModels;
   // How many times the app asked for a follow-up job. No job runs: a caller runs runFollowUp.
   followUpsAsked(): number;
   close(): void;
@@ -69,6 +72,7 @@ export async function openLargeHistory(): Promise<LargeHistory> {
     const secrets = await unlockSecrets(database, newMasterKey().masterKey, { logger: quiet });
     const fake = new FakeBankAdapter();
     for (const bank of history.banks) fake.addPages(bank.bankId, ...bank.pages);
+    const ai = new StubModels();
     let asked = 0;
     stops.push(
       startModules(APP_MODULES, {
@@ -78,6 +82,7 @@ export async function openLargeHistory(): Promise<LargeHistory> {
         startJob: async () => {
           asked += 1;
         },
+        makeModels: ai.makeModels,
       }),
     );
     const connections = await listConnections(database);
@@ -97,6 +102,7 @@ export async function openLargeHistory(): Promise<LargeHistory> {
       database,
       secrets,
       fake,
+      ai,
       generated: history,
       connectionIds: new Map(connections.map((connection) => [connection.bankId, connection.id])),
       build: built.report,

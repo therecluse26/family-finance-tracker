@@ -15,7 +15,7 @@ import {
   startMoneyMovement,
 } from "../money-movement/index.ts";
 import { answerReviewItem, openReviewItems, otherReviewChoices } from "../review/index.ts";
-import { BEST_GUESS_KIND, registerCascadeStep, startCategorization } from "./index.ts";
+import { BEST_GUESS_KIND, startCategorization } from "./index.ts";
 
 // The categorization cascade, as the Categorization follow-up step after Matching (spec 04, The
 // categorization cascade, Provenance, Re-runs, Review list items). Transactions arrive through the
@@ -73,7 +73,6 @@ describe("the categorization cascade", () => {
     await syncConnection(connectionId, NOW);
     await runFollowUp(NOW);
   };
-  const register = (stop: () => void) => stops.push(stop);
   // A stored Category rule for a Merchant with no Merchant ID.
   const addRule = (name: string, category: string) =>
     storeCategoryRule(
@@ -393,9 +392,9 @@ describe("the categorization cascade", () => {
   });
 
   describe("registered steps", () => {
-    it("lets a Category rule win over the provider, and the AI answer before a best guess", async () => {
+    // Step 5, the AI, is in quick-tier.test.ts.
+    it("lets a Category rule win over the provider", async () => {
       await addRule("Ruled Co", "Hobbies");
-      register(registerCascadeStep("AI", async () => ({ category: "Pets", confidence: "high" })));
 
       await sync({
         added: [
@@ -404,18 +403,10 @@ describe("the categorization cascade", () => {
             code: "FOOD_AND_DRINK_RESTAURANT",
             confidence: "VERY_HIGH",
           }),
-          buy("asked", "2026-10-02", {
-            merchant: "Unsure Co",
-            code: "FOOD_AND_DRINK_RESTAURANT",
-            confidence: "LOW",
-          }),
         ],
       });
 
       expect(await chosen("ruled")).toEqual(["Hobbies", "Category rule", "certain"]);
-      expect(await partsOf("asked")).toMatchObject([
-        { category: "Pets", source: "AI", confidence: "high", needsAi: 0 },
-      ]);
       expect(await guesses()).toEqual([]);
     });
   });

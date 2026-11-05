@@ -5,11 +5,15 @@ export {
   type CascadeInput,
   type CascadeStep,
   type Choice,
+  provenance,
   type RegisteredStep,
   registerCascadeStep,
 } from "./cascade.ts";
 export {
+  AI_UNSURE_KIND,
+  type AiStep,
   BEST_GUESS_KIND,
+  type CategoryRun,
   categorize,
   chooseCategories,
   startCategorization,
