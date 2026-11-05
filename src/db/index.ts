@@ -66,6 +66,7 @@ export {
   storeWeeklyCap,
   type UndecidedAlert,
 } from "./alerts.ts";
+export { checkDatabaseCopy, copyDatabaseInto } from "./backup.ts";
 export {
   listDailyBalances,
   listPostedDayTotals,

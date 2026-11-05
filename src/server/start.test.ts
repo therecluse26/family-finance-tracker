@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -101,6 +109,7 @@ describe("starting the app", () => {
       port,
       webRoot,
       security,
+      backupFolders: { mounted: join(dir, "backups-mount"), fallback: join(dir, "backups") },
     });
     running.push(app);
     return app;
@@ -158,6 +167,22 @@ describe("starting the app", () => {
     });
     const res = await fetch(`http://127.0.0.1:${app.port}/healthz`);
     expect(res.status).toBe(200);
+  });
+
+  it("backs up app.db at the first start, into /data/backups with no /backups mount, and not again the same day", async () => {
+    await stop(await start(v1()));
+    const backups = join(dir, "backups");
+    const [first, ...others] = readdirSync(backups);
+    expect(others).toEqual([]);
+    expect(first).toMatch(/^app-\d{8}T\d{6}Z-daily\.db\.gz$/);
+    // A backup that stopped part way leaves its temporary files.
+    const leftover = (first ?? "").replace(/\.gz$/, ".tmp");
+    writeFileSync(join(backups, leftover), "partial copy");
+
+    // The startup check runs once the app listens, and the stop waits for it.
+    await stop(await start(v1()));
+
+    expect(readdirSync(backups)).toEqual([first]);
   });
 
   it("applies no migration on a second start", async () => {

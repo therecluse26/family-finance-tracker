@@ -1,7 +1,9 @@
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { aiCost, aiSettings } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
+import { startBackups } from "../backups/index.ts";
 import { plaidSettings } from "../bank/index.ts";
 import { applyMigrations, openDatabase } from "../db/index.ts";
 import { householdTimeZone } from "../household/index.ts";
@@ -32,6 +34,10 @@ export async function createDevApp(
   const secrets = await unlockSecrets(database, masterKey);
   // System notices, such as the AI cost cap's, go to the dev app.db. Vite starts the app once.
   startNotify({ database });
+  // "Back up now" writes to .dev/backups.
+  const backupFolder = join(DEV_FOLDER, "backups");
+  mkdirSync(backupFolder, { recursive: true });
+  startBackups({ database, folder: backupFolder, timeZone: () => householdTimeZone(database) });
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
   return createApp(webRoot, security, auth, database, secrets, {
     plaid: plaidSettings({ database, secrets }),

@@ -18,6 +18,7 @@ import { aboutRoutes } from "./about.ts";
 import { aiBoxRoutes } from "./ai-box.ts";
 import { alertRoutes } from "./alerts.ts";
 import { api } from "./api.ts";
+import { backupRoutes } from "./backups.ts";
 import { bankViews } from "./bank-data.ts";
 import { benchmarkRoutes } from "./benchmarks.ts";
 import { budgetRoutes } from "./budgets.ts";
@@ -159,6 +160,7 @@ export function createApp(
   const recurring = recurringRoutes(database);
   const alerts = alertRoutes(database);
   const about = aboutRoutes(database);
+  const backups = backupRoutes();
   const benchmarks = benchmarkRoutes(database);
   const budgets = budgetRoutes(database);
   const goals = goalRoutes(database);
@@ -193,6 +195,7 @@ export function createApp(
         c.set("recurring", recurring);
         c.set("alerts", alerts);
         c.set("about", about);
+        c.set("backups", backups);
         c.set("benchmarks", benchmarks);
         c.set("budgets", budgets);
         c.set("goals", goals);

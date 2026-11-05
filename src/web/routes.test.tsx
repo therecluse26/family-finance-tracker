@@ -82,11 +82,11 @@ describe("the app shell", () => {
     ]);
   });
 
-  it("gives Backups and data its Check my master key form", () => {
+  it("gives Backups and data its Back up now button and its Check my master key form", () => {
     const html = render("/settings/backups-and-data");
 
-    expect(texts(html, "h3")).toEqual(["Check my master key"]);
-    expect(texts(html, "button")).toEqual(["Check my master key"]);
+    expect(texts(html, "h3")).toEqual(["Backups", "Check my master key"]);
+    expect(texts(html, "button")).toEqual(["Back up now", "Check my master key"]);
     expect(html).toMatch(/<textarea[^>]*autoComplete="off"[^>]*spellCheck="false"/i);
   });
 

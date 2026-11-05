@@ -10,6 +10,7 @@ import {
   startAnomalyChecks,
   startOverspendingChecks,
 } from "../anomalies/index.ts";
+import { startBackups } from "../backups/index.ts";
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
@@ -187,6 +188,16 @@ export const APP_MODULES: readonly AppModule[] = [
   {
     name: "startUpdateCheck",
     start: ({ database }) => startUpdateCheck({ database, fetch: noNetwork }),
+  },
+  {
+    name: "startBackups",
+    // No case makes a backup, so the bench names a folder that is never made.
+    start: ({ database }) =>
+      startBackups({
+        database,
+        folder: "/nonexistent/fft-bench-backups",
+        timeZone: () => householdTimeZone(database),
+      }),
   },
 ];
 

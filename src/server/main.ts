@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { BACKUP_FOLDERS } from "../backups/index.ts";
 import { APP_DB_URL } from "../db/index.ts";
 import { JOBS_DB_FILE } from "../jobs/index.ts";
 import { scheduledTasks } from "../jobs/list.ts";
@@ -33,6 +34,7 @@ async function main(): Promise<void> {
     port,
     webRoot,
     security,
+    backupFolders: BACKUP_FOLDERS,
   });
   log.info("Listening", { port: server.port });
   exitOnSignal(server);

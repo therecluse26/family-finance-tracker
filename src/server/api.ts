@@ -225,6 +225,18 @@ function manualLoanOrRefusal(
 // The Update check's switch (spec 12, Updates).
 const updateCheckBody = z.object({ on: z.boolean() }).strict();
 
+// "Back up now" takes an empty JSON body.
+const backUpNowBody = z.object({}).strict();
+
+const BACKUP_FAILURES = {
+  "copy failed":
+    "The backup failed: the app could not copy its data into the backup folder. Check that the folder has free space and that the app can write to it.",
+  "check failed":
+    "The backup failed: the copy did not pass its integrity check, so the app deleted it. Try again.",
+  "write failed":
+    "The backup failed: the app could not write the backup file. Check that the folder has free space and that the app can write to it.",
+} as const;
+
 // The weekly Alert cap (spec 06, The weekly cap): any whole number from 0.
 const weeklyCapBody = z
   .object({ weeklyCap: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) })
@@ -1031,6 +1043,18 @@ export const api = new Hono<ServerEnv>()
     const body = updateCheckBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Say whether to check for updates." }, 400);
     return c.json({ updateCheck: await c.var.about.switchUpdateCheck(body.data.on) }, 200);
+  })
+  // Settings, Backups and data (spec 11): the backup folder, the last backup, the number of files
+  // and their size, and "Back up now" for any Member, with its result.
+  .get("/backups", async (c) => c.json({ backups: await c.var.backups.status() }))
+  .post("/backups/now", jsonOnly, async (c) => {
+    if (!backUpNowBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    const result = await c.var.backups.backUpNow();
+    const backups = await c.var.backups.status();
+    if (!result.ok) return c.json({ error: BACKUP_FAILURES[result.failure], backups }, 500);
+    return c.json({ backup: { file: result.file, at: result.at }, backups }, 200);
   })
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.

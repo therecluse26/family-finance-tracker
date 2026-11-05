@@ -1,0 +1,512 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { closeDatabase, listOpenNotices, openDatabase } from "../db/index.ts";
+import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
+import { startNotify } from "../notify/index.ts";
+import {
+  BACKUP_FAILED,
+  backUp,
+  backupStatus,
+  chooseBackupFolder,
+  deleteLeftoverBackupFiles,
+  latestBackupTime,
+  runDailyBackup,
+  startBackups,
+} from "./index.ts";
+
+// Backups of app.db (spec 11, How the app makes a backup; When backups run; How many are kept;
+// Where backups go; When a backup fails), in temporary folders, with a fake clock. The Household
+// time zone is UTC unless a test sets one.
+
+const NOW = new Date("2026-11-02T08:00:00.000Z");
+const HOUR_MS = 60 * 60 * 1000;
+
+describe("backups", () => {
+  let test: TestDatabase;
+  let dir: string;
+  let folder: string;
+  let clock: Date;
+  let timeZone: string | undefined;
+  let checkPasses: boolean;
+  let retries: Date[];
+  let retryStarts: boolean;
+  let waits: number[];
+  let clockMoves: boolean;
+  let stops: (() => void)[];
+
+  beforeEach(async () => {
+    test = await newTestDatabase();
+    dir = mkdtempSync(join(tmpdir(), "fft-backups-"));
+    folder = join(dir, "backups");
+    mkdirSync(folder);
+    clock = NOW;
+    timeZone = undefined;
+    checkPasses = true;
+    retries = [];
+    retryStarts = true;
+    waits = [];
+    clockMoves = true;
+    await test.database.$client.execute("CREATE TABLE probe (id integer PRIMARY KEY, label text)");
+    await test.database.$client.execute("INSERT INTO probe (label) VALUES ('kept')");
+    stops = [
+      startNotify({ database: test.database }).stop,
+      startBackups({
+        database: test.database,
+        folder,
+        timeZone: async () => timeZone,
+        now: () => clock,
+        startRetry: async (at) => {
+          if (!retryStarts) throw new Error("The jobs module is not running.");
+          retries.push(at);
+        },
+        checkCopy: async () => checkPasses,
+        wait: async (ms) => {
+          waits.push(ms);
+          if (clockMoves) clock = new Date(clock.getTime() + ms);
+        },
+      }).stop,
+    ];
+  });
+
+  afterEach(() => {
+    for (const stop of stops) stop();
+    test.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const files = () => readdirSync(folder).sort();
+  const openNotices = async () =>
+    (await listOpenNotices(test.database)).filter((notice) => notice.condition === BACKUP_FAILED);
+
+  // Writes a file with a backup's name, and the given size in bytes.
+  const plant = (name: string, bytes = 10) => writeFileSync(join(folder, name), "x".repeat(bytes));
+
+  // The rows of the probe table in a backup, after gunzip.
+  async function labelsIn(name: string): Promise<string[]> {
+    const plain = join(dir, `${name}.plain`);
+    writeFileSync(plain, gunzipSync(readFileSync(join(folder, name))));
+    const copy = await openDatabase(`file:${plain}`);
+    try {
+      const result = await copy.$client.execute("SELECT label FROM probe ORDER BY id");
+      return result.rows.map((row) => String(row[0]));
+    } finally {
+      closeDatabase(copy);
+    }
+  }
+
+  describe("making a backup", () => {
+    it("writes app.db, gzipped and not encrypted, under a name with its kind and time, and leaves no temporary file", async () => {
+      const result = await backUp("manual");
+
+      expect(result).toEqual({ ok: true, name: "app-20261102T080000Z-manual.db.gz", at: NOW });
+      expect(files()).toEqual(["app-20261102T080000Z-manual.db.gz"]);
+      const plain = gunzipSync(readFileSync(join(folder, "app-20261102T080000Z-manual.db.gz")));
+      expect(plain.subarray(0, 16).toString("latin1")).toBe("SQLite format 3\0");
+      expect(await labelsIn("app-20261102T080000Z-manual.db.gz")).toEqual(["kept"]);
+    });
+
+    it("holds only app.db: no Sidequest table, and no file but the backup", async () => {
+      await backUp("manual");
+      const plain = join(dir, "plain.db");
+      writeFileSync(
+        plain,
+        gunzipSync(readFileSync(join(folder, "app-20261102T080000Z-manual.db.gz"))),
+      );
+      const copy = await openDatabase(`file:${plain}`);
+      try {
+        const tables = await copy.$client.execute("SELECT name FROM sqlite_schema");
+        const names = tables.rows.map((row) => String(row[0]));
+
+        expect(names).toContain("probe");
+        expect(names.filter((name) => name.startsWith("sidequest"))).toEqual([]);
+      } finally {
+        closeDatabase(copy);
+      }
+      expect(files()).toEqual(["app-20261102T080000Z-manual.db.gz"]);
+    });
+
+    it("keeps every committed row while another connection holds an open write", async () => {
+      const other = await openDatabase(`file:${test.path}`);
+      try {
+        await other.$client.execute("INSERT INTO probe (label) VALUES ('committed elsewhere')");
+        const open = await other.$client.transaction("write");
+        try {
+          await open.execute("INSERT INTO probe (label) VALUES ('not committed')");
+
+          expect((await backUp("manual")).ok).toBe(true);
+        } finally {
+          await open.rollback();
+          open.close();
+        }
+      } finally {
+        closeDatabase(other);
+      }
+
+      expect(await labelsIn("app-20261102T080000Z-manual.db.gz")).toEqual([
+        "kept",
+        "committed elsewhere",
+      ]);
+    });
+
+    it("counts a failed integrity check as a failed backup, and leaves no file", async () => {
+      checkPasses = false;
+
+      expect(await backUp("manual")).toEqual({ ok: false, failure: "check failed" });
+      expect(files()).toEqual([]);
+    });
+
+    it("fails, and leaves no file, when VACUUM INTO cannot write", async () => {
+      rmSync(folder, { recursive: true });
+
+      expect(await backUp("manual")).toEqual({ ok: false, failure: "copy failed" });
+      expect(existsSync(folder)).toBe(false);
+    });
+
+    it("writes the backup so only the app's user can read it", async () => {
+      await backUp("manual");
+
+      expect(statSync(join(folder, "app-20261102T080000Z-manual.db.gz")).mode & 0o777).toBe(0o600);
+    });
+
+    it("never replaces a backup: a second one in the same second waits for the next second", async () => {
+      expect((await backUp("manual")).ok).toBe(true);
+      const first = readFileSync(join(folder, "app-20261102T080000Z-manual.db.gz"));
+      await test.database.$client.execute("INSERT INTO probe (label) VALUES ('later')");
+
+      expect(await backUp("manual")).toEqual({
+        ok: true,
+        name: "app-20261102T080001Z-manual.db.gz",
+        at: new Date("2026-11-02T08:00:01.000Z"),
+      });
+      expect(waits).toEqual([1000]);
+      expect(readFileSync(join(folder, "app-20261102T080000Z-manual.db.gz"))).toEqual(first);
+      expect(await labelsIn("app-20261102T080001Z-manual.db.gz")).toEqual(["kept", "later"]);
+    });
+
+    it("fails, and keeps the other backup, when its name stays taken", async () => {
+      clockMoves = false;
+      expect((await backUp("manual")).ok).toBe(true);
+      const first = readFileSync(join(folder, "app-20261102T080000Z-manual.db.gz"));
+
+      expect(await backUp("manual")).toEqual({ ok: false, failure: "write failed" });
+      expect(waits).toHaveLength(3);
+      expect(files()).toEqual(["app-20261102T080000Z-manual.db.gz"]);
+      expect(readFileSync(join(folder, "app-20261102T080000Z-manual.db.gz"))).toEqual(first);
+    });
+
+    it.each([
+      "app-20261102T080000Z-manual.db.tmp",
+      "app-20261102T080000Z-manual.db.tmp-wal",
+      "app-20261102T080000Z-manual.db.gz.tmp",
+    ])(
+      "never writes through, or deletes, a link planted at the temporary name %s",
+      async (name) => {
+        // A link to a file outside, and a link to nothing, which a write would make.
+        const outside = join(dir, "outside.txt");
+        writeFileSync(outside, "mine");
+        const nothing = join(dir, "made-through-a-link");
+        for (const target of [outside, nothing]) {
+          symlinkSync(target, join(folder, name));
+
+          expect(await backUp("manual")).toEqual({ ok: false, failure: "copy failed" });
+          expect(files()).toEqual([name]);
+          expect(readFileSync(outside, "utf8")).toBe("mine");
+          expect(existsSync(nothing)).toBe(false);
+          rmSync(join(folder, name));
+        }
+      },
+    );
+  });
+
+  describe("a file with a backup's name but no real time, or a later time than now", () => {
+    const IMPOSSIBLE = "app-99999999T999999Z-daily.db.gz";
+    const FUTURE = "app-20301231T000000Z-daily.db.gz";
+
+    it.each([IMPOSSIBLE, FUTURE])("never stops the daily backup: %s", async (name) => {
+      plant("app-20261101T030000Z-daily.db.gz", 100);
+      plant(name, 50);
+
+      expect(await runDailyBackup()).toBe("done");
+      expect(files()).toEqual(
+        ["app-20261101T030000Z-daily.db.gz", "app-20261102T080000Z-daily.db.gz", name].sort(),
+      );
+      expect((await backupStatus()).lastBackupAt).toEqual(NOW);
+    });
+
+    it("is left out of the status when its time is not a real one", async () => {
+      plant(IMPOSSIBLE, 50);
+      plant("app-20261131T030000Z-daily.db.gz", 50);
+
+      expect(await backupStatus()).toEqual({
+        folder,
+        readable: true,
+        lastBackupAt: null,
+        files: 0,
+        bytes: 0,
+      });
+    });
+
+    it("is never deleted when its time is not a real one", async () => {
+      for (let day = 20; day < 30; day += 1) plant(`app-202610${day}T030000Z-daily.db.gz`);
+      plant("app-00000000T000000Z-daily.db.gz");
+
+      expect((await backUp("manual")).ok).toBe(true);
+      expect(files()).toContain("app-00000000T000000Z-daily.db.gz");
+    });
+  });
+
+  it("deletes the temporary files a stopped backup left, and nothing else", async () => {
+    const leftovers = [
+      "app-20261101T030000Z-daily.db.tmp",
+      "app-20261101T030000Z-daily.db.tmp-wal",
+      "app-20261101T030000Z-daily.db.tmp-shm",
+      "app-20261101T030000Z-manual.db.gz.tmp",
+      "app-20261101T030000Z-migration.db.tmp-journal",
+    ];
+    for (const name of leftovers) plant(name);
+    const kept = [
+      "app-20261101T030000Z-daily.db.gz",
+      "notes.txt",
+      "app-20261101T030000Z-daily.db.tmp.bak",
+      "other-20261101T030000Z-daily.db.tmp",
+    ];
+    for (const name of kept) plant(name);
+    const outside = join(dir, "outside.txt");
+    writeFileSync(outside, "mine");
+    symlinkSync(outside, join(folder, "app-20261101T040000Z-daily.db.tmp"));
+    mkdirSync(join(folder, "app-20261101T050000Z-daily.db.tmp"));
+
+    await deleteLeftoverBackupFiles();
+
+    expect(files()).toEqual(
+      [...kept, "app-20261101T040000Z-daily.db.tmp", "app-20261101T050000Z-daily.db.tmp"].sort(),
+    );
+    expect(readFileSync(outside, "utf8")).toBe("mine");
+  });
+
+  it("keeps the newest 7 regular backups and the newest 3 safety copies, and touches no other file", async () => {
+    const daily = Array.from(
+      { length: 9 },
+      (_, i) => `app-202610${String(20 + i).padStart(2, "0")}T030000Z-daily.db.gz`,
+    );
+    const safety = [
+      "app-20261001T120000Z-migration.db.gz",
+      "app-20261005T120000Z-restore.db.gz",
+      "app-20261010T120000Z-migration.db.gz",
+      "app-20261015T120000Z-restore.db.gz",
+    ];
+    for (const name of [...daily, ...safety]) plant(name);
+    const foreign = [
+      "notes.txt",
+      "app-20261001T030000Z-weekly.db.gz",
+      "app-old.db.gz",
+      "my-app-20261001T030000Z-daily.db.gz",
+      "app-20261001T030000Z-daily.db.gz.bak",
+    ];
+    for (const name of foreign) plant(name);
+    const outside = join(dir, "outside.db.gz");
+    writeFileSync(outside, "mine");
+    symlinkSync(outside, join(folder, "app-20260901T030000Z-daily.db.gz"));
+
+    expect((await backUp("manual")).ok).toBe(true);
+
+    expect(files()).toEqual(
+      [
+        "app-20261102T080000Z-manual.db.gz",
+        ...daily.slice(3),
+        ...safety.slice(1),
+        ...foreign,
+        "app-20260901T030000Z-daily.db.gz",
+      ].sort(),
+    );
+    expect(readFileSync(outside, "utf8")).toBe("mine");
+  });
+
+  it("deletes nothing after a failed backup", async () => {
+    const daily = Array.from(
+      { length: 9 },
+      (_, i) => `app-202610${String(20 + i).padStart(2, "0")}T030000Z-daily.db.gz`,
+    );
+    for (const name of daily) plant(name);
+    checkPasses = false;
+
+    expect((await backUp("manual")).ok).toBe(false);
+    expect(files()).toEqual(daily);
+  });
+
+  it("shows the folder, the last backup, the number of files, and their total size", async () => {
+    expect(await backupStatus()).toEqual({
+      folder,
+      readable: true,
+      lastBackupAt: null,
+      files: 0,
+      bytes: 0,
+    });
+
+    plant("app-20261101T030000Z-daily.db.gz", 100);
+    plant("app-20261101T120000Z-migration.db.gz", 50);
+    plant("notes.txt", 1000);
+
+    expect(await backupStatus()).toEqual({
+      folder,
+      readable: true,
+      lastBackupAt: new Date("2026-11-01T12:00:00.000Z"),
+      files: 2,
+      bytes: 150,
+    });
+  });
+
+  describe("the daily backup", () => {
+    it("runs when the newest regular backup is older than the most recent 3:00 AM", async () => {
+      plant("app-20261101T030000Z-daily.db.gz");
+      // A newer safety copy is not a regular backup.
+      plant("app-20261102T040000Z-migration.db.gz");
+
+      expect(await runDailyBackup()).toBe("done");
+      expect(files()).toContain("app-20261102T080000Z-daily.db.gz");
+    });
+
+    it("runs at start with no backup yet", async () => {
+      expect(await runDailyBackup()).toBe("done");
+      expect(files()).toEqual(["app-20261102T080000Z-daily.db.gz"]);
+    });
+
+    it("does not run when a regular backup is newer than the most recent 3:00 AM", async () => {
+      plant("app-20261102T030000Z-daily.db.gz");
+      expect(await runDailyBackup()).toBe("not due");
+
+      plant("app-20261102T050000Z-manual.db.gz");
+      expect(await runDailyBackup()).toBe("not due");
+      expect(files()).toEqual([
+        "app-20261102T030000Z-daily.db.gz",
+        "app-20261102T050000Z-manual.db.gz",
+      ]);
+    });
+
+    it("uses 3:00 AM Household time once the Household facts set a time zone", async () => {
+      timeZone = "America/New_York";
+      // 3:00 AM in New York on Nov 2, 2026 is 08:00 UTC, after the clocks went back on Nov 1.
+      plant("app-20261102T050000Z-daily.db.gz");
+      clock = new Date("2026-11-02T07:59:59.000Z");
+      expect(await runDailyBackup()).toBe("not due");
+
+      clock = new Date("2026-11-02T08:00:00.000Z");
+      expect(await runDailyBackup()).toBe("done");
+    });
+
+    it("tries once more an hour later, then raises one System notice, which stays until a backup works", async () => {
+      checkPasses = false;
+
+      expect(await runDailyBackup()).toBe("retrying");
+      expect(retries).toEqual([new Date(NOW.getTime() + HOUR_MS)]);
+      expect(await openNotices()).toEqual([]);
+
+      clock = new Date(NOW.getTime() + HOUR_MS);
+      expect(await runDailyBackup(true)).toBe("failed");
+      expect(retries).toHaveLength(1);
+      const [notice] = await openNotices();
+      expect(notice).toMatchObject({ kind: "condition", condition: BACKUP_FAILED });
+      expect(notice?.text).toContain("The daily backup failed twice.");
+
+      // A backup that always fails stops: a failed retry starts no other, and keeps one notice.
+      expect(await runDailyBackup(true)).toBe("failed");
+      expect(retries).toHaveLength(1);
+      expect(await openNotices()).toHaveLength(1);
+      expect(files()).toEqual([]);
+
+      checkPasses = true;
+      expect((await backUp("manual")).ok).toBe(true);
+      expect(await openNotices()).toEqual([]);
+    });
+
+    it("raises the notice at once when its retry cannot start", async () => {
+      checkPasses = false;
+      retryStarts = false;
+
+      expect(await runDailyBackup()).toBe("failed");
+      expect(await openNotices()).toHaveLength(1);
+    });
+
+    it("skips its retry when a backup worked in the meantime", async () => {
+      checkPasses = false;
+      expect(await runDailyBackup()).toBe("retrying");
+
+      checkPasses = true;
+      clock = new Date(NOW.getTime() + HOUR_MS / 2);
+      expect((await backUp("manual")).ok).toBe(true);
+      clock = new Date(NOW.getTime() + HOUR_MS);
+
+      expect(await runDailyBackup(true)).toBe("not due");
+      expect(await openNotices()).toEqual([]);
+    });
+  });
+});
+
+describe("the most recent 3:00 AM", () => {
+  it.each([
+    ["UTC", "2026-11-02T08:00:00.000Z", "2026-11-02T03:00:00.000Z"],
+    ["UTC", "2026-11-02T02:59:59.000Z", "2026-11-01T03:00:00.000Z"],
+    ["UTC", "2026-11-02T03:00:00.000Z", "2026-11-02T03:00:00.000Z"],
+    ["America/New_York", "2026-11-02T07:00:00.000Z", "2026-11-01T08:00:00.000Z"],
+    ["America/New_York", "2026-11-02T09:00:00.000Z", "2026-11-02T08:00:00.000Z"],
+    // The clocks go back on Nov 1, 2026: 3:00 AM that day is EST.
+    ["America/New_York", "2026-11-01T07:30:00.000Z", "2026-10-31T07:00:00.000Z"],
+    ["America/New_York", "2026-11-01T08:00:00.000Z", "2026-11-01T08:00:00.000Z"],
+    // The clocks go forward on Mar 8, 2026: 3:00 AM that day is EDT.
+    ["America/New_York", "2026-03-08T07:30:00.000Z", "2026-03-08T07:00:00.000Z"],
+    ["America/New_York", "2026-03-08T06:59:00.000Z", "2026-03-07T08:00:00.000Z"],
+  ])("in %s at %s is %s", (zone, now, latest) => {
+    expect(latestBackupTime(new Date(now), zone).toISOString()).toBe(latest);
+  });
+});
+
+describe("the backup folder", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "fft-backup-folder-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("falls back to /data/backups, and makes it, when /backups is a plain folder", async () => {
+    const mounted = join(dir, "backups");
+    mkdirSync(mounted);
+    const fallback = join(dir, "data", "backups");
+
+    expect(await chooseBackupFolder({ mounted, fallback })).toBe(fallback);
+    expect(statSync(fallback).isDirectory()).toBe(true);
+  });
+
+  it("falls back to /data/backups when /backups is missing", async () => {
+    const fallback = join(dir, "data", "backups");
+
+    expect(await chooseBackupFolder({ mounted: join(dir, "backups"), fallback })).toBe(fallback);
+  });
+
+  // /proc is a mount of its own on every Linux system. The check only reads its file system ID.
+  it.runIf(process.platform === "linux")(
+    "uses /backups when it is a mount of its own, and makes no fallback folder",
+    async () => {
+      const fallback = join(dir, "data", "backups");
+
+      expect(await chooseBackupFolder({ mounted: "/proc", fallback })).toBe("/proc");
+      expect(existsSync(fallback)).toBe(false);
+    },
+  );
+});

@@ -6,6 +6,13 @@ import {
 } from "../anomalies/index.ts";
 import { createAuth } from "../auth/index.ts";
 import {
+  type BackupFolders,
+  chooseBackupFolder,
+  deleteLeftoverBackupFiles,
+  runDailyBackup,
+  startBackups,
+} from "../backups/index.ts";
+import {
   type BankDataAdapter,
   catchUpSyncs,
   plaidAdapter,
@@ -39,6 +46,8 @@ export type StartOptions = {
   security: Security;
   // The Bank-data adapters: the Plaid adapter unless given. Tests give the fake adapter.
   bankAdapters?: readonly BankDataAdapter[];
+  // /backups and /data/backups. Tests give temporary folders.
+  backupFolders: BackupFolders;
 };
 
 // The open database stays open until close().
@@ -91,7 +100,9 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const alertSending = startAlertSending({ database });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
+    let backups: { stop(): void } | undefined;
     const stopModules = () => {
+      backups?.stop();
       updateCheck.stop();
       cpiFetch.stop();
       alertSending.stop();
@@ -108,6 +119,11 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     };
     let jobs: Awaited<ReturnType<typeof startJobs>>;
     try {
+      const backupFolder = await chooseBackupFolder(options.backupFolders);
+      backups = startBackups({ database, folder: backupFolder, timeZone });
+      log.info("Chose the backup folder", { folder: backupFolder });
+      // Before any backup can run.
+      await deleteLeftoverBackupFiles();
       jobs = await startJobs({ ...options.jobs, database, timeZone });
     } catch (error) {
       stopModules();
@@ -128,15 +144,23 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         ai: aiSettings({ database, secrets, cost }),
         smtp: smtpSettings({ database, secrets, address }),
       });
+      // The startup check, once the app listens, so a slow or hung backup folder never holds up
+      // the start: a daily backup runs when none is from the most recent 3:00 AM, Household time.
+      // A failed one starts its retry.
+      const startupBackup = runDailyBackup().catch((error: unknown) => {
+        log.error("The startup backup check failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      });
       return {
         port: server.port,
         database,
         secrets,
-        // Stops taking requests and starting jobs at once, then waits for open requests and the
-        // running job. The database closes last, since the running job may use it.
+        // Stops taking requests and starting jobs at once, then waits for open requests, the
+        // running job, and the startup check. The database closes last, since they may use it.
         close: async () => {
           try {
-            await settleAll([server.close(), jobs.stop()]);
+            await settleAll([server.close(), jobs.stop(), startupBackup]);
           } finally {
             stopModules();
             closeDatabase(database);

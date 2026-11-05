@@ -2,6 +2,7 @@
 // exported here under its own name. The server build is one file, so src/server/main.ts
 // re-exports this list and names the server file as the job list.
 import { AiRetryJob } from "../ai/index.ts";
+import { BACKUP_SCHEDULE, BackupJob } from "../backups/index.ts";
 import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
 import { MonthStartJob } from "../budgets/index.ts";
@@ -16,6 +17,7 @@ export { DeliveryJob } from "../notify/index.ts";
 export { TickJob } from "./sidequest.ts";
 export {
   AiRetryJob,
+  BackupJob,
   CpiFetchJob,
   MonthStartJob,
   ProvisionalResultsJob,
@@ -45,4 +47,7 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no
   // request.
   { name: "update check", schedule: daily("05:00"), job: UpdateCheckJob },
+  // Backs up app.db at 3:00 AM, Household time (spec 11, When backups run). A failed backup starts
+  // its own retry an hour later. Its job finds the day's backup done when one is newer than 3:00 AM.
+  { name: "backup", schedule: BACKUP_SCHEDULE, job: BackupJob },
 ];

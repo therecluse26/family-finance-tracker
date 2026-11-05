@@ -11,6 +11,7 @@ import type { AboutRoutes } from "./about-views.ts";
 import type { AiBoxRoutes } from "./ai-box-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
 import type { AppUrl } from "./app-url.ts";
+import type { BackupRoutes } from "./backups-views.ts";
 import type { BankViews } from "./bank-views.ts";
 import type { BenchmarkRoutes } from "./benchmarks-views.ts";
 import type { BudgetRoutes } from "./budgets-views.ts";
@@ -66,6 +67,8 @@ export type ServerEnv = {
     alerts: AlertRoutes;
     // Settings, About: the version, the Source code link, and the Update check.
     about: AboutRoutes;
+    // Settings, Backups and data: the backup folder, the last backup, and "Back up now".
+    backups: BackupRoutes;
     // Each Category's Benchmark.
     benchmarks: BenchmarkRoutes;
     // Each Category's Budget for a month.
