@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { getRequestListener } from "@hono/node-server";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
 import { browserNotices } from "./scripts/browser-notices.ts";
 
 const webRoot = fileURLToPath(new URL("./src/web", import.meta.url));
@@ -43,10 +44,36 @@ function honoDevServer(): Plugin {
   };
 }
 
+// The installable app and the service worker for web push (spec 01, What the product is; spec 06,
+// Recipients and channels). sw.ts is built on its own, with no precache list: the worker imports
+// no package and caches nothing. The page registers it itself, over HTTPS only (src/web/install.ts).
+const installableApp = VitePWA({
+  strategies: "injectManifest",
+  srcDir: ".",
+  filename: "sw.ts",
+  injectRegister: false,
+  injectManifest: { injectionPoint: undefined, rollupFormat: "iife" },
+  manifest: {
+    name: "Family Finance Tracker",
+    short_name: "Finances",
+    description: "The Household's money, Budgets, and Alerts.",
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#ffffff",
+    theme_color: "#1f6f5c",
+    icons: [
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ],
+  },
+});
+
 export default defineConfig({
   root: webRoot,
   oxc: { jsx: { runtime: "automatic" } },
-  plugins: [tailwindcss(), honoDevServer(), browserNotices()],
+  plugins: [tailwindcss(), honoDevServer(), browserNotices(), installableApp],
   // The dev APP_URL names this port, so Vite must not move to another.
   server: { port: DEV_PORT, strictPort: true },
   build: {

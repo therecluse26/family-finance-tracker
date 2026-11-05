@@ -2,6 +2,7 @@ import { addNotice, type Database, endNoticeCondition, type NewNotice } from "..
 import { log } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import type { TransportMaker } from "./email.ts";
+import type { PushServices } from "./push.ts";
 
 // System notices (spec 06, System notices; spec 07, Header and status lines). Any part of the app
 // raises one to every Member. A notice is about the app itself, such as a failed backup or a broken
@@ -15,14 +16,16 @@ import type { TransportMaker } from "./email.ts";
 
 export type { NewNotice };
 
-// What the Delivery job needs: the Master-key secrets for the SMTP password, the absolute address
-// of a path in the app (APP_URL's), and the way to start a Delivery job: requestDelivery in the
-// app. Tests give a stub SMTP transport.
+// What the Delivery job needs: the Master-key secrets for the SMTP password and the VAPID keys, the
+// absolute address of a path in the app (APP_URL's), and the way to start a Delivery job:
+// requestDelivery in the app. `push` is given only in HTTPS mode; without it the app skips push.
+// Tests give a stub SMTP transport and a stub push sender.
 export type DeliveryServices = {
   secrets: Secrets;
   address: (path: string) => string;
   startJob: () => Promise<unknown>;
   makeTransport?: TransportMaker;
+  push?: PushServices;
 };
 
 export type NotifyServices = { database: Database; delivery?: DeliveryServices };

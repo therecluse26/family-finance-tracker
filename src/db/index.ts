@@ -343,6 +343,24 @@ export {
   storePlaidKeys,
 } from "./plaid-settings.ts";
 export {
+  countPushFailure,
+  finishPushes,
+  type HandedOut,
+  handOutPushes,
+  listWaitingPushes,
+  type PushDeviceFields,
+  readVapidKeys,
+  removeMemberPushDevices,
+  removePushDevice,
+  removePushDevices,
+  removeWaitingPushes,
+  replaceVapidKeys,
+  type StoredVapidKeys,
+  storePushDevice,
+  VAPID_KEYS_ROW,
+  type WaitingPush,
+} from "./push.ts";
+export {
   applyMerchantNameAnswers,
   type CategoryFixFacts,
   listMarkedNames,

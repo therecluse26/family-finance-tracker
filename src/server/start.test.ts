@@ -12,11 +12,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createAuth } from "../auth/index.ts";
+import { addMember } from "../auth/testing.ts";
 import {
   applyMigrations,
   checkMigrations,
   closeDatabase,
   loginTables,
+  markSetupStep,
   NewerDatabaseError,
   openDatabase,
   readDataKeys,
@@ -100,6 +103,7 @@ describe("starting the app", () => {
     port = 0,
     key = masterKey,
     tasks: ScheduledTask[] = [],
+    mode: Security = security,
   ): Promise<RunningApp> {
     const app = await startApp({
       masterKey: key,
@@ -108,7 +112,7 @@ describe("starting the app", () => {
       jobs: { jobsDb: join(dir, "jobs.db"), jobList: TEST_JOB_LIST, tasks },
       port,
       webRoot,
-      security,
+      security: mode,
       backupFolders: { mounted: join(dir, "backups-mount"), fallback: join(dir, "backups") },
     });
     running.push(app);
@@ -388,5 +392,75 @@ describe("starting the app", () => {
     finishSlowJob();
     await closing;
     expect(jobRuns).toEqual(["SlowJob"]);
+  });
+
+  describe("web push in each security mode", () => {
+    // The built page names the manifest, as vite-plugin-pwa writes it.
+    const PAGE = '<!doctype html><link rel="manifest" href="/manifest.webmanifest">';
+
+    // Signs a new Member in through the running app, then reads Settings → Alerts' push view and
+    // the page. Over HTTPS the test stands where the trusted proxy would, on loopback.
+    async function visit(app: RunningApp, origin: string, https: boolean) {
+      await markSetupStep(app.database, "master key", "done");
+      const auth = createAuth({ database: app.database, secrets: app.secrets, appOrigin: origin });
+      const member = await addMember(auth, { name: "Alice", email: "alice@example.test" });
+      const proxy: Record<string, string> = https ? { "x-forwarded-proto": "https" } : {};
+      let cookie = "";
+      const send = async (path: string, body?: unknown) => {
+        const res = await fetch(`http://127.0.0.1:${app.port}${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            ...proxy,
+            origin,
+            cookie,
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const set = res.headers.getSetCookie().map((line) => line.split(";")[0]);
+        if (set.length > 0) cookie = set.join("; ");
+        return res;
+      };
+      await send("/api/auth/sign-in/email", { email: member.email, password: member.password });
+      const signedIn = await send("/api/auth/two-factor/verify-totp", {
+        code: await member.totpCode(),
+      });
+      expect(signedIn.status).toBe(200);
+      const view = await send("/api/push");
+      expect(view.status).toBe(200);
+      return {
+        push: ((await view.json()) as { push: unknown }).push,
+        page: await (await send("/")).text(),
+      };
+    }
+
+    it("offers push over HTTPS, and the page names the manifest", async () => {
+      writeFileSync(join(webRoot, "index.html"), PAGE);
+      const app = await start(shipped);
+
+      const { push, page } = await visit(app, "https://money.example.com", true);
+
+      expect(push).toEqual({ available: true, publicKey: expect.stringMatching(/^[\w-]{87}$/) });
+      expect(page).toBe(PAGE);
+    });
+
+    it("hides push in plain-HTTP mode, and the page names no manifest", async () => {
+      writeFileSync(join(webRoot, "index.html"), PAGE);
+      const port = await freePort();
+      const origin = `http://127.0.0.1:${port}`;
+      const plain = await loadSecurity(
+        { APP_URL: origin },
+        { logger: createLogger(() => {}, { throwOnSecretField: true }) },
+      );
+      const app = await start(shipped, port, masterKey, [], plain);
+
+      const { push, page } = await visit(app, origin, false);
+
+      expect(push).toEqual({ available: false, why: "plain HTTP" });
+      expect(page).toBe("<!doctype html>");
+      expect(await app.database.$client.execute("SELECT * FROM vapid_keys")).toMatchObject({
+        rows: [],
+      });
+    });
   });
 });

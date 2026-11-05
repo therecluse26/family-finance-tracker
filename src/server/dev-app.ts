@@ -7,7 +7,7 @@ import { startBackups } from "../backups/index.ts";
 import { plaidSettings } from "../bank/index.ts";
 import { applyMigrations, openDatabase } from "../db/index.ts";
 import { householdTimeZone } from "../household/index.ts";
-import { startNotify } from "../notify/index.ts";
+import { pushSettings, startNotify } from "../notify/index.ts";
 import { checkDataKey, loadMasterKey, unlockSecrets } from "../secrets/index.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -41,6 +41,7 @@ export async function createDevApp(
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
   return createApp(webRoot, security, auth, database, secrets, {
     plaid: plaidSettings({ database, secrets }),
+    push: pushSettings({ database, secrets, available: security.appUrl.mode === "https" }),
     ai: aiSettings({
       database,
       secrets,

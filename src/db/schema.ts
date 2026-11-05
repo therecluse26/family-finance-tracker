@@ -292,6 +292,9 @@ export const noticeDeliveries = sqliteTable("notice_deliveries", {
   // given up after the last try.
   emailTries: integer("email_tries").notNull().default(0),
   emailDoneAt: moment("email_done_at"),
+  // Push: when push was done with the notice. Done is handed to each device's push_sends row, or
+  // skipped (plain-HTTP mode, no device turned on, or the condition already ended).
+  pushDoneAt: moment("push_done_at"),
 });
 
 // One delivery record for each sent Alert: an Alert of one part, or a merged Alert's first part
@@ -312,6 +315,7 @@ export const alertDeliveries = sqliteTable("alert_deliveries", {
   // As in notice_deliveries.
   emailTries: integer("email_tries").notNull().default(0),
   emailDoneAt: moment("email_done_at"),
+  pushDoneAt: moment("push_done_at"),
 });
 
 // The Household's SMTP server, for email Alerts and System notices (spec 06, Recipients and
@@ -342,6 +346,63 @@ export const alertChannels = sqliteTable("alert_channels", {
   push: integer("push", { mode: "boolean" }).notNull(),
   email: integer("email", { mode: "boolean" }).notNull(),
 });
+
+// The app's VAPID keys for web push (spec 09, Encryption at rest). It has at most one row, whose ID
+// is 1. Both keys are Master-key secrets, encrypted and bound to this row and column. The app makes
+// them itself once the first-run wizard's step 3 is done, and makes new ones when they cannot be
+// decrypted.
+export const vapidKeys = sqliteTable(
+  "vapid_keys",
+  {
+    id: integer("id").primaryKey(),
+    publicKey: text("public_key").notNull(),
+    privateKey: text("private_key").notNull(),
+  },
+  (table) => [check("vapid_keys_one_row", sql`${table.id} = 1`)],
+);
+
+// Each device a Member turned Alerts on for: its browser's push subscription (spec 06, Recipients
+// and channels). The endpoint is the push service's address for that browser. Deleting the Member
+// deletes their devices.
+export const pushDevices = sqliteTable("push_devices", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  memberId: text("member_id")
+    .notNull()
+    .references(() => members.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull().unique(),
+  // The browser's public key and auth secret, which encrypt each push to it.
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  createdAt: moment("created_at").notNull(),
+});
+
+// One push that waits for one device: an Alert's or a System notice's, as the Delivery job handed
+// it out. Quiet hours hold it until 8 AM. It keeps its own title and body, so it reads as the
+// message did when it was sent. Deleting the device, the Alert, or the notice deletes it.
+export const pushSends = sqliteTable(
+  "push_sends",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    deviceId: integer("device_id")
+      .notNull()
+      .references(() => pushDevices.id, { onDelete: "cascade" }),
+    alertId: text("alert_id").references(() => alerts.id, { onDelete: "cascade" }),
+    noticeId: text("notice_id").references(() => systemNotices.id, { onDelete: "cascade" }),
+    // The Alert's kind, or "System notice".
+    title: text("title").notNull(),
+    // The template text, or the notice's text.
+    body: text("body").notNull(),
+    createdAt: moment("created_at").notNull(),
+    // The failed tries in a row.
+    tries: integer("tries").notNull().default(0),
+  },
+  // A delete of a device, an Alert, or a notice finds its rows by index.
+  (table) => [
+    index("push_sends_device").on(table.deviceId),
+    index("push_sends_alert").on(table.alertId),
+    index("push_sends_notice").on(table.noticeId),
+  ],
+);
 
 // The Household's one AI provider (spec 08, AI settings page). It has at most one row, whose ID is
 // 1. Removing the AI provider empties the row but keeps it, with its generation.

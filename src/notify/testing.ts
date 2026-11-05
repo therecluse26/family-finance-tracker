@@ -1,5 +1,8 @@
 import { createTransport } from "nodemailer";
+import webpush from "web-push";
 import type { SmtpServer, TransportMaker } from "./email.ts";
+import { type PushSender, pushRequest } from "./push.ts";
+import type { PushSubscriptionFields } from "./push-view.ts";
 
 // Test support: a stubbed SMTP server. nodemailer builds each message as it would for a real
 // server, and a stub transport keeps it instead of opening a connection. No test reaches a mail
@@ -64,3 +67,70 @@ export class StubSmtp {
 export function smtpError(code: string, responseCode: number, message: string): Error {
   return Object.assign(new Error(message), { code, responseCode });
 }
+
+// A stubbed push service. Each send builds the request web-push would make, payload encryption and
+// VAPID header included, and keeps it instead of sending it. No test reaches a push service.
+
+export type StubbedPush = {
+  endpoint: string;
+  // The payload as the service worker reads it.
+  shown: { title: string; body: string; url: string; tag: string };
+  payload: string;
+  // The request's headers, the VAPID Authorization header included.
+  headers: Record<string, string>;
+  subject: string;
+  publicKey: string;
+};
+
+export class StubPushService {
+  readonly pushes: StubbedPush[] = [];
+  // Every send to these endpoints fails with this status code, as the push service would answer.
+  readonly failWith = new Map<string, number>();
+
+  readonly send: PushSender = async (device, payload, vapid) => {
+    const status = this.failWith.get(device.endpoint);
+    if (status !== undefined) {
+      throw new webpush.WebPushError(
+        "Received unexpected response code",
+        status,
+        {},
+        `The push service's reply for ${device.endpoint}`,
+        device.endpoint,
+      );
+    }
+    const [subscription, options] = pushRequest(device, vapid);
+    const request = webpush.generateRequestDetails(subscription, payload, options);
+    this.pushes.push({
+      endpoint: device.endpoint,
+      shown: JSON.parse(payload),
+      payload,
+      headers: Object.fromEntries(
+        Object.entries(request.headers).map(([name, value]) => [name, String(value)]),
+      ),
+      subject: vapid.subject,
+      publicKey: vapid.publicKey,
+    });
+  };
+}
+
+const randomText = (bytes: number) =>
+  Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString("base64url");
+
+// A browser's push subscription, as a browser makes one: its endpoint at a push service, a P-256
+// public key, and a 16-byte auth secret, all made when the test runs.
+export function newSubscription(
+  service = "https://fcm.googleapis.com/fcm/send/",
+): PushSubscriptionFields {
+  // A VAPID key pair is a P-256 key pair too: its public key is a browser key's 65 bytes.
+  const browserKey = webpush.generateVAPIDKeys();
+  return {
+    endpoint: `${service}${randomText(24)}`,
+    keys: { p256dh: browserKey.publicKey, auth: randomText(16) },
+  };
+}
+
+export { TickJob } from "../jobs/sidequest.ts";
+export { DeliveryJob, MorningDeliveryJob } from "./delivery.ts";
+
+// The job list for tests that run Delivery jobs in Sidequest.
+export const TEST_NOTIFY_JOB_LIST = import.meta.url;

@@ -28,7 +28,13 @@ import { householdTimeZone } from "../household/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
-import { requestDelivery, smtpSettings, startNotify } from "../notify/index.ts";
+import {
+  pushSettings,
+  requestDelivery,
+  requestDeliveryAt,
+  smtpSettings,
+  startNotify,
+} from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
@@ -76,9 +82,18 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // the bank module and the scheduler use UTC.
     const timeZone = () => householdTimeZone(database);
     const address = (path: string) => options.security.appUrl.address(path);
+    const https = options.security.appUrl.mode === "https";
     const notify = startNotify({
       database,
-      delivery: { secrets, address, startJob: requestDelivery },
+      delivery: {
+        secrets,
+        address,
+        startJob: requestDelivery,
+        // Web push only over HTTPS (spec 09, Security mode).
+        ...(https
+          ? { push: { subject: options.security.appUrl.origin, startJobAt: requestDeliveryAt } }
+          : {}),
+      },
     });
     const adapters = options.bankAdapters ?? [plaidAdapter({ database, secrets })];
     const bank = startBank({ database, secrets, adapters, timeZone });
@@ -143,6 +158,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         plaid: plaidSettings({ database, secrets }),
         ai: aiSettings({ database, secrets, cost }),
         smtp: smtpSettings({ database, secrets, address }),
+        push: pushSettings({ database, secrets, available: https }),
       });
       // The startup check, once the app listens, so a slow or hung backup folder never holds up
       // the start: a daily backup runs when none is from the most recent 3:00 AM, Household time.

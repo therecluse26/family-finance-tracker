@@ -13,7 +13,7 @@ import type { ScheduledTask } from "./scheduler.ts";
 
 export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
-export { DeliveryJob } from "../notify/index.ts";
+export { DeliveryJob, MorningDeliveryJob } from "../notify/index.ts";
 export { TickJob } from "./sidequest.ts";
 export {
   AiRetryJob,

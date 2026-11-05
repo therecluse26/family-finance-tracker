@@ -158,5 +158,14 @@
     "date": "2026-11-03",
     "licenseText": "licenses/texts/@ai-sdk+provider-utils@5.0.72.txt",
     "note": "The package ships no license file; its package.json says Apache-2.0. The text is the LICENSE file of the vercel/ai repo at tag @ai-sdk/provider-utils@5.0.72 (commit 9b603d36186b75e58d5479445a96c76f6e2d2700): https://github.com/vercel/ai/blob/9b603d36186b75e58d5479445a96c76f6e2d2700/LICENSE, followed by the full Apache License 2.0 text from https://www.apache.org/licenses/LICENSE-2.0.txt, which that LICENSE refers to."
+  },
+  {
+    "package": "http_ece",
+    "version": "1.2.0",
+    "license": "MIT",
+    "reviewer": "Claude, T63 build agent",
+    "date": "2026-11-05",
+    "licenseText": "licenses/texts/http_ece@1.2.0.txt",
+    "note": "The package ships no license file; its package.json says MIT. web-push needs it. The text is the LICENSE file of its repo, web-push-libs/encrypted-content-encoding: https://raw.githubusercontent.com/web-push-libs/encrypted-content-encoding/master/LICENSE."
   }
 ]

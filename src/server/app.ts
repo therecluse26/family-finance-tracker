@@ -13,6 +13,7 @@ import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
+import type { PushSettings } from "../notify/push-view.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { aboutRoutes } from "./about.ts";
 import { aiBoxRoutes } from "./ai-box.ts";
@@ -83,12 +84,12 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
   };
 }
 
-// Before the routes under /api/plaid/, /api/ai/, and /api/smtp/, which store Master-key secrets. No
-// Plaid key, Plaid token, AI key, or SMTP password is stored until the first-run wizard's required
-// steps are done (spec 12):
+// Before the routes under /api/plaid/, /api/ai/, /api/smtp/, and /api/push/, which store or use
+// Master-key secrets. No Plaid key, Plaid token, AI key, SMTP password, or VAPID key is stored until
+// the first-run wizard's required steps are done (spec 12):
 // until then, every route but a GET answers 409. They take only JSON bodies, so a form on another
 // site cannot post to them. An app made without the service answers 404.
-function secretRoutes<Name extends "plaid" | "ai" | "smtp">(
+function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push">(
   database: Database,
   name: Name,
   service: ServerEnv["Variables"][Name] | undefined,
@@ -111,6 +112,24 @@ const sendsJson = (c: Context<ServerEnv>) =>
 
 // The Connection routes, which remove a Connection or open its update mode, take only JSON bodies,
 // as the Plaid routes do: a form on another site cannot post to them.
+// In plain-HTTP mode the app is not installable and offers no push (spec 09, Security mode): the
+// page names no manifest, and the manifest and the service worker are not served. The page's own
+// script removes the link too, for a page a browser kept from before.
+const MANIFEST_LINK = /<link rel="manifest"[^>]*>/g;
+const INSTALL_FILES = new Set(["/manifest.webmanifest", "/sw.js"]);
+
+function installableOverHttpsOnly(mode: "https" | "http"): MiddlewareHandler<ServerEnv> {
+  return async (c, next) => {
+    if (mode === "https") return next();
+    if (INSTALL_FILES.has(c.req.path)) return c.text("Not found", 404);
+    await next();
+    if (c.res.status !== 200 || !c.res.headers.get("content-type")?.startsWith("text/html")) return;
+    const page = (await c.res.text()).replace(MANIFEST_LINK, "");
+    c.res = new Response(page, c.res);
+    c.res.headers.delete("content-length");
+  };
+}
+
 const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sendsJson(c)) {
     return c.json({ error: "Send JSON." }, 415);
@@ -148,7 +167,12 @@ export function createApp(
   auth: Auth,
   database: Database,
   secrets: Secrets,
-  services: { plaid?: PlaidSettings; ai?: AiSettings; smtp?: SmtpSettings } = {},
+  services: {
+    plaid?: PlaidSettings;
+    ai?: AiSettings;
+    smtp?: SmtpSettings;
+    push?: PushSettings;
+  } = {},
 ) {
   const bank = bankViews(database);
   const masterKey = masterKeyRoutes(database, secrets);
@@ -218,10 +242,12 @@ export function createApp(
       .use("/api/plaid/*", secretRoutes(database, "plaid", services.plaid))
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .use("/api/smtp/*", secretRoutes(database, "smtp", services.smtp))
+      .use("/api/push/*", secretRoutes(database, "push", services.push))
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .route("/api", api)
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
+      .use(installableOverHttpsOnly(security.appUrl.mode))
       .use(serveStatic({ root: webRoot }))
       .get("*", serveStatic({ root: webRoot, path: "index.html" }))
       .onError(routeFailed(security.logger))

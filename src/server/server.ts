@@ -4,6 +4,7 @@ import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
 import type { Database } from "../db/index.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
+import type { PushSettings } from "../notify/push-view.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { createApp } from "./app.ts";
 import type { Security } from "./security-mode.ts";
@@ -23,6 +24,7 @@ export function startServer(options: {
   plaid?: PlaidSettings;
   ai?: AiSettings;
   smtp?: SmtpSettings;
+  push?: PushSettings;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
@@ -37,6 +39,7 @@ export function startServer(options: {
             ...(options.plaid === undefined ? {} : { plaid: options.plaid }),
             ...(options.ai === undefined ? {} : { ai: options.ai }),
             ...(options.smtp === undefined ? {} : { smtp: options.smtp }),
+            ...(options.push === undefined ? {} : { push: options.push }),
           },
         ).fetch,
         port: options.port,

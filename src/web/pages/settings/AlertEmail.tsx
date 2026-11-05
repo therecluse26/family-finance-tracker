@@ -1,12 +1,15 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { Channels, ChannelsView, SmtpFields, SmtpView } from "../../../notify/email-view.ts";
+import type { PushView } from "../../../notify/push-view.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { AlertPush } from "./AlertPush.tsx";
 
 // Settings, Alerts: how Alerts and System notices reach each Member (spec 06, Recipients and
-// channels). Each Member picks their own channels. Any Member sets the Household's SMTP server and
-// sends a test email to themselves. The SMTP password is write-only: the page shows only that one
-// is saved.
+// channels). Each Member picks their own channels, and turns push on for each device
+// (AlertPush.tsx). In plain-HTTP mode email is the only channel (spec 09, Security mode). Any Member
+// sets the Household's SMTP server and sends a test email to themselves. The SMTP password is
+// write-only: the page shows only that one is saved.
 
 // The page's writes, exactly as it sends them. Each sends a JSON body: the server answers 415 to a
 // write without one.
@@ -56,22 +59,37 @@ const CHOICES: { label: string; channels: Channels }[] = [
   { label: "None", channels: { push: false, email: false } },
 ];
 
-const choiceOf = (channels: Channels) =>
-  CHOICES.findIndex(
-    (choice) => choice.channels.push === channels.push && choice.channels.email === channels.email,
-  );
+// In plain-HTTP mode email is the only channel.
+const EMAIL_CHOICES: { label: string; channels: Channels }[] = [
+  { label: "Email", channels: { push: false, email: true } },
+  { label: "None", channels: { push: false, email: false } },
+];
+
+const choiceOf = (channels: Channels, pushOffered: boolean) =>
+  pushOffered
+    ? CHOICES.findIndex(
+        (choice) =>
+          choice.channels.push === channels.push && choice.channels.email === channels.email,
+      )
+    : channels.email
+      ? 0
+      : 1;
 
 export function ChannelsForm(props: {
   channels: ChannelsView;
+  // False in plain-HTTP mode, where push is hidden.
+  pushOffered?: boolean;
   onSaved: (channels: ChannelsView) => void;
 }) {
-  const [choice, setChoice] = useState(choiceOf(props.channels));
+  const pushOffered = props.pushOffered ?? true;
+  const choices = pushOffered ? CHOICES : EMAIL_CHOICES;
+  const [choice, setChoice] = useState(choiceOf(props.channels, pushOffered));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const picked = CHOICES[choice];
+    const picked = choices[choice];
     if (picked === undefined) return;
     setBusy(true);
     setError(undefined);
@@ -92,8 +110,9 @@ export function ChannelsForm(props: {
         <legend className="font-semibold">My channels</legend>
         <p className="mt-1 text-gray-600">
           How Alerts and System notices reach you. Email goes out at once, even in quiet hours.
+          {pushOffered ? " Push waits from 9 PM to 8 AM, Household time." : null}
         </p>
-        {CHOICES.map((each, index) => (
+        {choices.map((each, index) => (
           <label key={each.label} className="mt-2 flex items-center gap-2">
             <input
               type="radio"
@@ -105,7 +124,7 @@ export function ChannelsForm(props: {
           </label>
         ))}
       </fieldset>
-      {props.channels.emailSetUp || !CHOICES[choice]?.channels.email ? null : (
+      {props.channels.emailSetUp || !choices[choice]?.channels.email ? null : (
         <p className="mt-2 text-gray-600">
           No SMTP server is saved, so the app skips email until one is.
         </p>
@@ -242,13 +261,17 @@ export function TestEmailButton() {
 export function AlertEmail() {
   const [channels, setChannels] = useState<ChannelsView | undefined>();
   const [smtp, setSmtp] = useState<SmtpView | null | undefined>();
+  const [push, setPush] = useState<PushView | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
 
   useEffect(() => {
-    Promise.all([api["alert-channels"].$get(), api.smtp.settings.$get()])
-      .then(async ([channelsRes, smtpRes]) => {
-        if (!channelsRes.ok || !smtpRes.ok) return setError("The channel settings did not load.");
+    Promise.all([api["alert-channels"].$get(), api.smtp.settings.$get(), api.push.$get()])
+      .then(async ([channelsRes, smtpRes, pushRes]) => {
+        if (!channelsRes.ok || !smtpRes.ok || !pushRes.ok) {
+          return setError("The channel settings did not load.");
+        }
+        setPush(((await pushRes.json()) as { push: PushView }).push);
         setChannels(((await channelsRes.json()) as { channels: ChannelsView }).channels);
         setSmtp(((await smtpRes.json()) as { smtp: SmtpView | null }).smtp);
       })
@@ -258,15 +281,17 @@ export function AlertEmail() {
   return (
     <>
       <ErrorLine error={error} />
-      {channels === undefined ? null : (
+      {channels === undefined || push === undefined ? null : (
         <ChannelsForm
           channels={channels}
+          pushOffered={push.available || push.why !== "plain HTTP"}
           onSaved={(saved) => {
             setChannels(saved);
             setDone("Your channels are saved.");
           }}
         />
       )}
+      {push === undefined ? null : <AlertPush push={push} />}
       {smtp === undefined ? null : (
         <SmtpForm
           smtp={smtp}

@@ -13,6 +13,7 @@ import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { CATEGORIES } from "../categories/list.ts";
 import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
 import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
+import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -553,6 +554,32 @@ const SEND_PROBLEMS: Record<SendProblem, string> = {
 
 // A Member's own channels: push, email, both, or none.
 const channelsBody = z.object({ push: z.boolean(), email: z.boolean() }).strict();
+
+// A browser's push subscription (spec 06, Recipients and channels). Its keys are base64url: the
+// browser's P-256 public key, 65 bytes, and its auth secret, 16 bytes.
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const keyOf = (bytes: number) =>
+  z
+    .string()
+    .max(200)
+    .regex(BASE64URL)
+    .refine((key) => Buffer.from(key, "base64url").length === bytes);
+const endpointField = z.string().min(1).max(2048);
+const subscriptionBody = z
+  .object({
+    endpoint: endpointField,
+    keys: z.object({ p256dh: keyOf(65), auth: keyOf(16) }).strict(),
+  })
+  .strict();
+const endpointBody = z.object({ endpoint: endpointField }).strict();
+
+const DEVICE_REFUSALS: Record<DeviceRefusal, string> = {
+  "plain HTTP": "Push needs HTTPS. In plain-HTTP mode, Alerts come by email only.",
+  "setup not done": "Finish the first-run wizard first.",
+  "unknown push service": "This browser's push service is not one the app sends to.",
+  "another Member's device":
+    "Alerts are on for another Member in this browser. They turn them off first, in Settings, Alerts.",
+};
 
 export const api = new Hono<ServerEnv>()
   .get("/ping", (c) => c.json({ ok: true }))
@@ -1258,6 +1285,24 @@ export const api = new Hono<ServerEnv>()
     const body = channelsBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Pick push, email, both, or none." }, 400);
     return c.json({ channels: await c.var.channels.set(c.var.member.id, body.data) }, 200);
+  })
+  // Settings, Alerts: web push, over HTTPS only. The answer holds the VAPID public key, never the
+  // private key.
+  .get("/push", async (c) => c.json({ push: await c.var.push.view() }))
+  // "Turn on Alerts on this device": the signed-in Member's browser subscription.
+  .post("/push/devices", async (c) => {
+    const body = subscriptionBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send this browser's push subscription." }, 400);
+    const added = await c.var.push.addDevice(c.var.member.id, body.data);
+    if (added.added) return c.json({ added: true }, 200);
+    const status = added.refusal === "unknown push service" ? 400 : 409;
+    return c.json({ error: DEVICE_REFUSALS[added.refusal] }, status);
+  })
+  // "Turn off Alerts on this device": only the signed-in Member's own device.
+  .delete("/push/devices", async (c) => {
+    const body = endpointBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send this browser's push endpoint." }, 400);
+    return c.json({ removed: await c.var.push.removeDevice(c.var.member.id, body.data.endpoint) });
   });
 
 export type Api = typeof api;
