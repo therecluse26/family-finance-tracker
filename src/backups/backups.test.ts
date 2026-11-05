@@ -1,4 +1,5 @@
 import {
+  createReadStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,11 +12,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, listOpenNotices, openDatabase } from "../db/index.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import { startNotify } from "../notify/index.ts";
+import { sameAsGzipped } from "./backup.ts";
 import {
   BACKUP_FAILED,
   backUp,
@@ -627,4 +630,103 @@ describe("the backup folder", () => {
       expect(existsSync(fallback)).toBe(false);
     },
   );
+});
+
+// The compare of a new safety copy with the last one (spec 10, Startup, step 4). A copy it cannot
+// read counts as changed, so the start takes a new copy. Each case reads the last copy from a real
+// file, and most give the new copy's bytes only after a wait, so the gunzip reaches its error or
+// its end before the compare reads from it. Every stream ends destroyed, so no file stays open, and
+// an error after the compare has stopped has a handler: vitest fails the run on an unhandled one.
+describe("the compare with the last safety copy", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "fft-backup-compare-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A safety copy on disk with these bytes.
+  const lastCopy = (bytes: Buffer) => {
+    const path = join(dir, "app-20261102T080000Z-migration.db.gz");
+    writeFileSync(path, bytes);
+    return createReadStream(path);
+  };
+
+  // The new copy, which gives its bytes only after the wait.
+  const newCopy = (bytes: Buffer, waitMs = 100) =>
+    Readable.from(
+      (async function* () {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        yield bytes;
+      })(),
+    );
+
+  // A new copy whose read fails at once.
+  const unreadableCopy = () =>
+    new Readable({
+      read() {
+        this.destroy(Object.assign(new Error("read failed"), { code: "EIO" }));
+      },
+    });
+
+  // About 1 MB of bytes that gzip cannot shrink, so the last copy is more than a file stream reads
+  // in one chunk.
+  const database = Buffer.alloc(1024 * 1024);
+  let seed = 0x9e3779b9;
+  for (let i = 0; i < database.length; i += 1) {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    database[i] = seed & 0xff;
+  }
+
+  it("is the same for the same bytes", async () => {
+    const plain = newCopy(database);
+    const gzipped = lastCopy(gzipSync(database));
+
+    expect(await sameAsGzipped(plain, gzipped)).toBe(true);
+    expect([plain.destroyed, gzipped.destroyed]).toEqual([true, true]);
+  });
+
+  it("stops at the first difference, and closes the last copy's file", async () => {
+    const changed = Buffer.from(database);
+    changed[0] = (changed[0] ?? 0) ^ 1;
+    const plain = newCopy(changed, 0);
+    const gzipped = lastCopy(gzipSync(database));
+
+    expect(await sameAsGzipped(plain, gzipped)).toBe(false);
+    expect([plain.destroyed, gzipped.destroyed]).toEqual([true, true]);
+  });
+
+  it.each([
+    ["is not gzip", Buffer.from("not gzip"), "Z_DATA_ERROR"],
+    ["is a gzip cut short", gzipSync(database).subarray(0, 4096), "Z_BUF_ERROR"],
+  ])("fails, with no unhandled error, when the last copy %s", async (_case, bytes, code) => {
+    const plain = newCopy(database);
+    const gzipped = lastCopy(bytes);
+
+    await expect(sameAsGzipped(plain, gzipped)).rejects.toMatchObject({ code });
+    expect([plain.destroyed, gzipped.destroyed]).toEqual([true, true]);
+  });
+
+  it("fails when the last copy's file cannot be read", async () => {
+    const plain = newCopy(database);
+    const gzipped = createReadStream(join(dir, "app-20261102T080000Z-migration.db.gz"));
+
+    await expect(sameAsGzipped(plain, gzipped)).rejects.toMatchObject({ code: "ENOENT" });
+    expect([plain.destroyed, gzipped.destroyed]).toEqual([true, true]);
+  });
+
+  it("fails, with no unhandled error, when the new copy cannot be read and the last is not gzip", async () => {
+    const plain = unreadableCopy();
+    const gzipped = lastCopy(Buffer.from("not gzip"));
+
+    await expect(sameAsGzipped(plain, gzipped)).rejects.toMatchObject({ code: "EIO" });
+    expect([plain.destroyed, gzipped.destroyed]).toEqual([true, true]);
+    // The gunzip's own error, after the compare has stopped, comes by now if it comes at all.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  });
 });

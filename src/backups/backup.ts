@@ -1,6 +1,7 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import {
@@ -195,6 +196,26 @@ async function sameBytes(a: AsyncIterable<Buffer>, b: AsyncIterable<Buffer>): Pr
   }
 }
 
+// Whether `plain` gives the bytes that `gzipped` holds after gunzip. It throws when either cannot be
+// read. The compare can stop early, at a difference or an error, so every stream is destroyed on
+// every path, and no file stays open. The pipeline passes a read error of the file to the gunzip,
+// where the compare ends with it; its own result only says how the pipe ended, so nothing waits on
+// it. The compare's handler on the gunzip comes only with its first read there, after the new
+// copy's first chunk, and the pipeline drops its own once the last byte is in, before the gunzip
+// checks the end. So the gunzip keeps a handler of its own until it is destroyed; the error stays on
+// it, and the compare ends with it.
+export async function sameAsGzipped(plain: Readable, gzipped: Readable): Promise<boolean> {
+  const unpacked = createGunzip().on("error", () => {});
+  pipeline(gzipped, unpacked).catch(() => {});
+  try {
+    return await sameBytes(plain, unpacked);
+  } finally {
+    plain.destroy();
+    unpacked.destroy();
+    gzipped.destroy();
+  }
+}
+
 // The newest safety copy, when it is a migration copy of the same database as the new copy at
 // `path`, compared without gzip, whose bytes may differ. A start whose migration fails stops with
 // app.db unchanged, and the restart takes its copy again; this keeps one copy of that app.db, so a
@@ -209,12 +230,11 @@ async function unchangedMigrationCopy(
       (file) => !isRegular(file.kind) && file.at <= now,
     );
     if (newest?.kind !== "migration") return undefined;
-    // .pipe() passes on no read error, so the gunzip takes it, and the compare ends with it.
-    const kept = createGunzip();
-    createReadStream(join(services.folder, newest.name))
-      .on("error", (error) => kept.destroy(error))
-      .pipe(kept);
-    return (await sameBytes(createReadStream(path), kept)) ? newest : undefined;
+    const same = await sameAsGzipped(
+      createReadStream(path),
+      createReadStream(join(services.folder, newest.name)),
+    );
+    return same ? newest : undefined;
   } catch (error) {
     log.warn("Could not compare the safety copy with the last one", errorFields(error));
     return undefined;
