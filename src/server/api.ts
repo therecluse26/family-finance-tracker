@@ -12,6 +12,7 @@ import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { CATEGORIES } from "../categories/list.ts";
 import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
+import { pictureChoice } from "../pictures/choice.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
@@ -972,6 +973,21 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Write the month as YYYY-MM." }, 400);
     }
     return c.json(await c.var.budgets.usualMonth(month));
+  })
+  // A picture from the picture menu (spec 08, Picture menu), drawn for a month from app.db. A
+  // choice the data does not bear out, such as an unknown Category, answers no picture.
+  .get("/picture", async (c) => {
+    const month = c.req.query("month");
+    if (month === undefined || !MONTH.test(month)) {
+      return c.json({ error: "Write the month as YYYY-MM." }, 400);
+    }
+    const choice = pictureChoice.safeParse({
+      type: c.req.query("type"),
+      category: c.req.query("category"),
+      merchants: c.req.queries("merchant"),
+    });
+    if (!choice.success) return c.json({ error: "Choose a picture from the menu." }, 400);
+    return c.json({ picture: await c.var.pictures.draw(choice.data, month) });
   })
   // A Member's edit of any Budget (spec 05, Changing Budgets): it takes effect this month, or for a
   // yearly Budget the whole current year. An edited Bills Budget is pinned.

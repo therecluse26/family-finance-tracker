@@ -303,6 +303,12 @@ export {
   type StoredNotice,
 } from "./notices.ts";
 export {
+  type CreditCardRow,
+  listCreditCards,
+  listSpendingParts,
+  type SpendingPartRow,
+} from "./picture-data.ts";
+export {
   PLAID_SETTINGS_ROW,
   readPlaidSettings,
   type StoredPlaidSettings,

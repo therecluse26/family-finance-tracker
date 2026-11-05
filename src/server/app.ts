@@ -25,6 +25,7 @@ import { householdRoutes } from "./household.ts";
 import { masterKeyRoutes } from "./master-key.ts";
 import { moneyMovementRoutes } from "./money-movement.ts";
 import { noticeRoutes } from "./notices.ts";
+import { pictureRoutes } from "./pictures.ts";
 import { recurringRoutes } from "./recurring.ts";
 import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
@@ -155,6 +156,7 @@ export function createApp(
   const benchmarks = benchmarkRoutes(database);
   const budgets = budgetRoutes(database);
   const goals = goalRoutes(database);
+  const pictures = pictureRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -184,6 +186,7 @@ export function createApp(
         c.set("benchmarks", benchmarks);
         c.set("budgets", budgets);
         c.set("goals", goals);
+        c.set("pictures", pictures);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

@@ -5,6 +5,7 @@ import type {
   ConnectionRepairing,
 } from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
+import type { PictureRoutes } from "../pictures/picture-view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
 import type { AppUrl } from "./app-url.ts";
@@ -67,6 +68,8 @@ export type ServerEnv = {
     budgets: BudgetRoutes;
     // Goals and their progress.
     goals: GoalRoutes;
+    // The pictures on the picture menu, drawn from app.db.
+    pictures: PictureRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
   };
