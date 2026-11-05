@@ -12,7 +12,7 @@ import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
-import type { AlertSettingsView, AlertView } from "./alerts-views.ts";
+import type { AlertPartView, AlertSettingsView, AlertView } from "./alerts-views.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
@@ -46,6 +46,7 @@ describe("the Alert list route", () => {
   let test: TestAuth;
   let app: App;
   let browser: TestBrowser;
+  let memberId: string;
   let stops: (() => void)[];
   let now: Date;
   const clock = () => now;
@@ -76,6 +77,7 @@ describe("the Alert list route", () => {
     await markSetupStep(test.database, "master key", "done");
     browser = new TestBrowser(app, APP_URL, "192.168.1.20");
     await browser.signIn(member);
+    memberId = member.id;
 
     const card = fakeAccount({ id: "acc-card", type: "credit", subtype: "credit card" });
     const shell = (id: string, postedDate: string) =>
@@ -169,6 +171,63 @@ describe("the Alert list route", () => {
     const signedOut = new TestBrowser(app, APP_URL, "192.168.1.21");
     expect((await signedOut.get("/api/alerts")).status).toBe(401);
     expect((await signedOut.get("/api/alert-settings")).status).toBe(401);
+  });
+
+  describe('"Not a problem"', () => {
+    const press = (id: string, headers: Record<string, string | undefined> = {}) =>
+      browser.send("POST", `/api/alerts/${encodeURIComponent(id)}/not-a-problem`, {}, headers);
+    const list = async () =>
+      ((await (await browser.get("/api/alerts")).json()) as { alerts: AlertView[] }).alerts;
+    const pressCount = async () =>
+      (await test.database.$client.execute("SELECT count(*) AS n FROM alert_presses")).rows[0]?.n;
+
+    it("records who pressed it and when on one part of an Alert, once per Member, with no AI call", async () => {
+      const [merged] = await list();
+      const [first, second] = merged?.parts ?? [];
+      const before = Date.now();
+
+      const res = await press(first?.id ?? "");
+      expect(res.status).toBe(200);
+      const { notAProblem } = (await res.json()) as { notAProblem: AlertPartView["notAProblem"] };
+      expect(notAProblem).toEqual([{ memberId, pressedAt: expect.any(String) }]);
+      const pressedAt = Date.parse(notAProblem[0]?.pressedAt ?? "");
+      expect(pressedAt).toBeGreaterThanOrEqual(before);
+      expect(pressedAt).toBeLessThanOrEqual(Date.now());
+
+      // A second press by the same Member records nothing.
+      expect(await (await press(first?.id ?? "")).json()).toEqual({ notAProblem });
+
+      const [after] = await list();
+      expect(after?.parts.map((part) => part.notAProblem)).toEqual([notAProblem, []]);
+      expect(after?.parts[1]?.id).toBe(second?.id);
+      expect(after?.state).toBe(merged?.state);
+      const calls = await test.database.$client.execute("SELECT count(*) AS n FROM ai_calls");
+      expect(calls.rows[0]?.n).toBe(0);
+    });
+
+    it("answers 404 to an ID no Alert has, and changes nothing", async () => {
+      const res = await press("no-such-alert");
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "No Alert has this ID." });
+      expect(await pressCount()).toBe(0);
+    });
+
+    it("answers 401 with no session, 403 from another origin or none, and 415 to a body that is not JSON, and changes nothing", async () => {
+      const [merged] = await list();
+      const id = merged?.id ?? "";
+      const signedOut = new TestBrowser(app, APP_URL, "192.168.1.21");
+      expect((await signedOut.send("POST", `/api/alerts/${id}/not-a-problem`, {})).status).toBe(
+        401,
+      );
+      for (const origin of WRONG_ORIGINS) {
+        expect((await press(id, { origin })).status, `${origin}`).toBe(403);
+      }
+      expect((await press(id, { "content-type": "text/plain" })).status).toBe(415);
+      expect(await pressCount()).toBe(0);
+      expect(
+        (await list()).flatMap((alert) => alert.parts.flatMap((part) => part.notAProblem)),
+      ).toEqual([]);
+    });
   });
 
   describe("Settings, Alerts", () => {

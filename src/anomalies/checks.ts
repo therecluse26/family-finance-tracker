@@ -15,6 +15,7 @@ import {
   listDecisionAccounts,
   listPostedSpending,
   listPressedAlertFacts,
+  listPressedAlertTransactions,
   type NewAlert,
   restartAnomalyCheckCount,
   storeAlerts,
@@ -33,7 +34,7 @@ import {
   recurringCharges,
   withinChargeBand,
 } from "../recurring/index.ts";
-import { priceIncreases } from "./price-increase.ts";
+import { priceIncreases, risesOver } from "./price-increase.ts";
 import { type AlertFacts, alertText, type BudgetFact, type MerchantFact } from "./templates.ts";
 
 // The Anomaly checks (spec 06, When checks run; Anomalies). They run in the follow-up job's checks
@@ -120,10 +121,15 @@ type Facts = {
   accountNames: Map<string, string>;
   // Each Transaction of a Recurring charge, ended ones too.
   inCharges: Set<string>;
-  // The base price of each Transaction that is a Price increase.
-  increases: Map<string, number>;
+  // The base price of each Transaction that is a Price increase, and its Recurring charge's ID.
+  increases: Map<string, { base: number; recurringCharge: string }>;
   // The Merchants and amounts a Member marked known.
   known: { group: string; amount: number }[];
+  // The Transactions of each Duplicate charge a Member marked "Not a problem".
+  cleared: Set<string>;
+  // The Price increases a Member marked "Not a problem", by Recurring charge ID: the base price
+  // and the accepted new price.
+  accepted: Map<string, { base: number; amount: number }[]>;
 };
 
 const amountKey = (group: string, amount: number) => `${group} ${amount}`;
@@ -138,6 +144,8 @@ async function readFacts(database: Database, now: Date): Promise<Facts> {
     inCharges: new Set(),
     increases: new Map(),
     known: [],
+    cleared: await listPressedAlertTransactions(database, "Duplicate charge"),
+    accepted: new Map(),
   };
   // Oldest first, by posted date.
   for (const row of await listPostedSpending(database)) {
@@ -170,7 +178,10 @@ async function readFacts(database: Database, now: Date): Promise<Facts> {
   for (const charge of await recurringCharges(database, now)) {
     for (const entry of charge.priceHistory) facts.inCharges.add(entry.transactionId);
     for (const increase of priceIncreases(charge)) {
-      facts.increases.set(increase.transactionId, increase.base);
+      facts.increases.set(increase.transactionId, {
+        base: increase.base,
+        recurringCharge: charge.id,
+      });
     }
   }
   for (const account of await listDecisionAccounts(database)) {
@@ -180,6 +191,21 @@ async function readFacts(database: Database, now: Date): Promise<Facts> {
     const { merchant, amount } = known as { merchant?: MerchantFact; amount?: number };
     if (merchant === undefined || typeof amount !== "number") continue;
     facts.known.push({ group: merchantGroupOf(merchant), amount });
+  }
+  for (const pressed of await listPressedAlertFacts(database, "Price increase")) {
+    const { recurringCharge, base, amount } = pressed as {
+      recurringCharge?: string;
+      base?: number;
+      amount?: number;
+    };
+    if (
+      typeof recurringCharge !== "string" ||
+      typeof base !== "number" ||
+      typeof amount !== "number"
+    ) {
+      continue;
+    }
+    addTo(facts.accepted, recurringCharge, { base, amount });
   }
   return facts;
 }
@@ -202,7 +228,8 @@ const isEarlier = (a: Spent, b: Spent, dateOf: (txn: Spent) => string) =>
 // A Duplicate charge: another posted Spending Transaction on the same Account, at the same
 // Merchant, for the same amount to the cent, with a purchase date 0 to 2 days away. The nearest
 // one pairs with it. Never for a frequent purchase: 3 or more other Transactions at that Merchant
-// at that amount in the 60 days before the earlier one. The pair, earlier first.
+// at that amount in the 60 days before the earlier one. Never for a Transaction of a Duplicate
+// charge a Member marked "Not a problem": it is cleared. The pair, earlier first.
 function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
   if (txn.group === null) return undefined;
   const sameAmount = facts.byAmount.get(amountKey(txn.group, txn.amount)) ?? [];
@@ -211,7 +238,10 @@ function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
     byPurchaseDate,
     addDays(txn.purchaseDate, -DUPLICATE_DAYS),
     addDays(txn.purchaseDate, DUPLICATE_DAYS),
-  ).filter((other) => other.id !== txn.id && other.accountId === txn.accountId);
+  ).filter(
+    (other) =>
+      other.id !== txn.id && other.accountId === txn.accountId && !facts.cleared.has(other.id),
+  );
   const gap = (other: Spent) => Math.abs(daysBetween(txn.purchaseDate, other.purchaseDate));
   const partner = near.sort(
     (a, b) => gap(a) - gap(b) || (isEarlier(a, b, byPurchaseDate) ? -1 : 1),
@@ -222,6 +252,24 @@ function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
     : [txn, partner];
   if (frequentBefore(sameAmount, byPurchaseDate, pair[0].purchaseDate)) return undefined;
   return pair;
+}
+
+// The price a Price increase is measured from: its base price, or a higher new price a Member
+// accepted with "Not a problem" in the same Recurring charge, so the same rise does not come back.
+// An accepted price counts only while the base price is within 7.5% of the pressed Alert's base
+// price or new price: after the price drops further, a new rise fires again. A Recurring charge
+// keeps its ID while it keeps one of its Transactions, so the accepted price stays when the bank
+// removes the raised charge and posts it again. A Member's other Recurring charges, at that
+// Merchant or another, keep their own base prices.
+function priceFrom(increase: { base: number; recurringCharge: string }, facts: Facts): number {
+  let from = increase.base;
+  for (const accepted of facts.accepted.get(increase.recurringCharge) ?? []) {
+    const near = [accepted.base, accepted.amount].some((price) =>
+      withinChargeBand([price, increase.base]),
+    );
+    if (near) from = Math.max(from, accepted.amount);
+  }
+  return from;
 }
 
 // A New Recurring charge: the Transaction and exactly one earlier Transaction from its Merchant
@@ -340,15 +388,19 @@ export async function checkAnomalies(
         });
       }
     }
-    const base = facts.increases.get(txn.id);
-    if (base !== undefined && !hasFired(txn, "Price increase")) {
-      add(txn, [txn], {
-        kind: "Price increase",
-        merchant,
-        base,
-        amount: txn.amount,
-        date: txn.postedDate,
-      });
+    const increase = facts.increases.get(txn.id);
+    if (increase !== undefined && !hasFired(txn, "Price increase")) {
+      const from = priceFrom(increase, facts);
+      if (risesOver(from, txn.amount)) {
+        add(txn, [txn], {
+          kind: "Price increase",
+          merchant,
+          base: from,
+          amount: txn.amount,
+          date: txn.postedDate,
+          recurringCharge: increase.recurringCharge,
+        });
+      }
     }
     if (!hasFired(txn, "New Recurring charge")) {
       const charge = newChargeOf(txn, facts);

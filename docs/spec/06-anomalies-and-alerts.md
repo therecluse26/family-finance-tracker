@@ -213,7 +213,7 @@ Each Alert has an optional "Not a problem" button. Any Member may press it, for 
 
 | Kind | Effect |
 |---|---|
-| Duplicate charge | Clears that one Transaction. It never fires a Duplicate charge again. |
+| Duplicate charge | Clears both Transactions of the pair. Neither fires a Duplicate charge again or pairs with a later charge. |
 | Large purchase | Clears that one Transaction. It never fires a Large purchase again. |
 | Price increase | Accepts the new price. |
 | New Recurring charge | Marks that Merchant and amount as known. That Merchant never fires a New Recurring charge again at an amount within 7.5% of it. |

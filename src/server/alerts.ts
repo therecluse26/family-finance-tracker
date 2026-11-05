@@ -1,4 +1,4 @@
-import { mergedAlertList, setWeeklyCap, weeklyCap } from "../anomalies/index.ts";
+import { markNotAProblem, mergedAlertList, setWeeklyCap, weeklyCap } from "../anomalies/index.ts";
 import type { Database } from "../db/index.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
 
@@ -25,6 +25,14 @@ export function alertRoutes(database: Database): AlertRoutes {
           })),
         })),
         state: alert.state,
+      }));
+    },
+
+    async notAProblem(alertId, memberId) {
+      const presses = await markNotAProblem(database, alertId, memberId);
+      return presses?.map((press) => ({
+        memberId: press.memberId,
+        pressedAt: press.pressedAt.toISOString(),
       }));
     },
 

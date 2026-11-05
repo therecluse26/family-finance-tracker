@@ -115,6 +115,55 @@ export async function listPressedAlertFacts(
   return rows.map((row) => row.facts);
 }
 
+// The Transactions that Alerts of `kind` with a "Not a problem" press are about.
+export async function listPressedAlertTransactions(
+  database: Database,
+  kind: AlertKind,
+): Promise<Set<string>> {
+  const rows = await database
+    .select({ transactionId: alertTransactions.transactionId })
+    .from(alertTransactions)
+    .innerJoin(alerts, eq(alerts.id, alertTransactions.alertId))
+    .where(
+      and(
+        eq(alerts.kind, kind),
+        exists(
+          database
+            .select({ id: alertPresses.id })
+            .from(alertPresses)
+            .where(eq(alertPresses.alertId, alerts.id)),
+        ),
+      ),
+    );
+  return new Set(rows.map((row) => row.transactionId));
+}
+
+// Stores a Member's "Not a problem" press on one Alert, in one transaction. A Member's second
+// press on the same Alert stores nothing. Returns the Alert's presses, oldest first, or undefined
+// when no Alert has the ID.
+export async function storeAlertPress(
+  database: Database,
+  press: { alertId: string; memberId: string; pressedAt: Date },
+): Promise<StoredAlert["presses"] | undefined> {
+  const { alertId, memberId, pressedAt } = press;
+  return database.transaction(async (tx) => {
+    const [alert] = await tx.select({ id: alerts.id }).from(alerts).where(eq(alerts.id, alertId));
+    if (alert === undefined) return undefined;
+    const [already] = await tx
+      .select({ id: alertPresses.id })
+      .from(alertPresses)
+      .where(and(eq(alertPresses.alertId, alertId), eq(alertPresses.memberId, memberId)));
+    if (already === undefined) {
+      await tx.insert(alertPresses).values({ alertId, memberId, pressedAt });
+    }
+    return tx
+      .select({ memberId: alertPresses.memberId, pressedAt: alertPresses.pressedAt })
+      .from(alertPresses)
+      .where(eq(alertPresses.alertId, alertId))
+      .orderBy(asc(alertPresses.id));
+  });
+}
+
 // Every Alert, newest first, with the Transactions it is about and its "Not a problem" presses.
 export async function listAlerts(database: Database): Promise<StoredAlert[]> {
   const rows = await database

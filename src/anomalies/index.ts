@@ -13,6 +13,7 @@ export {
   checkAnomalies,
   startAnomalyChecks,
 } from "./checks.ts";
+export { markNotAProblem } from "./not-a-problem.ts";
 export {
   checkOverspending,
   OVERSPENDING_CHECKS_CAP,

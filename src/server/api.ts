@@ -606,6 +606,13 @@ export const api = new Hono<ServerEnv>()
   })
   // The Alert list (spec 06, The Alert list), newest first.
   .get("/alerts", async (c) => c.json({ alerts: await c.var.alerts.list() }))
+  // "Not a problem" (spec 06): any Member marks an Alert, or one part of a merged Alert, for the
+  // whole Household. A Member's second press records nothing. It makes no AI call.
+  .post("/alerts/:id/not-a-problem", jsonOnly, async (c) => {
+    const notAProblem = await c.var.alerts.notAProblem(c.req.param("id"), c.var.member.id);
+    if (notAProblem === undefined) return c.json({ error: "No Alert has this ID." }, 404);
+    return c.json({ notAProblem }, 200);
+  })
   // Settings, Alerts (spec 06, The weekly cap). Any Member may change the weekly cap.
   .get("/alert-settings", async (c) => c.json(await c.var.alerts.settings()))
   .put("/alert-settings/weekly-cap", async (c) => {

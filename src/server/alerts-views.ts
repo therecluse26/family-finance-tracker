@@ -52,6 +52,9 @@ export type AlertSettingsView = {
 export type AlertRoutes = {
   // Every Alert, newest first.
   list(): Promise<AlertView[]>;
+  // "Not a problem" (spec 06): a Member's press on one Alert, or one part of a merged Alert, for the
+  // whole Household. It makes no AI call. Its presses, or undefined when no Alert has the ID.
+  notAProblem(alertId: string, memberId: string): Promise<AlertPartView["notAProblem"] | undefined>;
   settings(): Promise<AlertSettingsView>;
   // Any Member may change the weekly cap, to any whole number from 0.
   setWeeklyCap(cap: number): Promise<AlertSettingsView>;

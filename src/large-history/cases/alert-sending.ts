@@ -64,6 +64,9 @@ timedCase("Alerts step", async (history, time) => {
     history.browser.get("/api/alerts"),
   )) as { alerts: AlertView[] };
   expect(alerts.some((alert) => alert.heading !== null)).toBe(true);
+  await time.request("POST /api/alerts/:id/not-a-problem", () =>
+    history.browser.send("POST", `/api/alerts/${alerts[0]?.id ?? ""}/not-a-problem`, {}),
+  );
   await time.request("GET /api/alert-settings", () => history.browser.get("/api/alert-settings"));
   await time.request("PUT /api/alert-settings/weekly-cap", () =>
     history.browser.send("PUT", "/api/alert-settings/weekly-cap", { weeklyCap: 2 }),

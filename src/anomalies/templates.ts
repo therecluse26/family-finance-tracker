@@ -35,6 +35,8 @@ export type AlertFacts =
       base: number;
       amount: number;
       date: string;
+      // The Recurring charge's ID, so a "Not a problem" press accepts the new price in it alone.
+      recurringCharge: string;
     }
   | {
       kind: "New Recurring charge";

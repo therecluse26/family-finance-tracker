@@ -5,7 +5,7 @@ import { connectionRemoving, syncConnection, type TxnRecord } from "../bank/inde
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { draftFirstBudgets, editBudget, startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
-import { addConnection, listConnections } from "../db/index.ts";
+import { addConnection, listConnections, storeAlerts } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
@@ -15,6 +15,7 @@ import {
   ANOMALY_CHECKS_STOPPED,
   alertList,
   checkAnomalies,
+  markNotAProblem,
   startAnomalyChecks,
 } from "./index.ts";
 
@@ -348,6 +349,7 @@ describe("the Anomaly checks", () => {
         base: 1_799,
         amount: 1_999,
         date: "2026-11-08",
+        recurringCharge: expect.any(String),
       });
       expect(await providerIdsOf(later[0])).toEqual(["sf-nov"]);
     });
@@ -632,6 +634,302 @@ describe("the Anomaly checks", () => {
       });
 
       expect((await ofKind("Large purchase")).filter((alert) => alert.state === null)).toEqual([]);
+    });
+  });
+
+  describe('"Not a problem"', () => {
+    const press = (alert: Alert | undefined, memberId = MEMBER) =>
+      markNotAProblem(bank.database, alert?.id ?? "", memberId, now);
+    const later = async (kind: Alert["kind"]) =>
+      (await ofKind(kind)).filter((alert) => alert.state === null);
+
+    it("records who pressed it and when, once per Member, on that Alert only", async () => {
+      await bank.database.$client.execute(
+        `INSERT INTO members (id, name, email, created_at, updated_at)
+         VALUES ('member-2', 'Sam', 'sam@example.com', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`,
+      );
+      const [first, second] = await alerts();
+      const firstAt = now;
+      expect(await press(first)).toEqual([{ memberId: MEMBER, pressedAt: firstAt }]);
+      now = new Date("2026-11-21T14:00:00.000Z");
+      // The same Member's second press records nothing; another Member's does.
+      expect(await press(first)).toEqual([{ memberId: MEMBER, pressedAt: firstAt }]);
+      expect(await press(first, "member-2")).toEqual([
+        { memberId: MEMBER, pressedAt: firstAt },
+        { memberId: "member-2", pressedAt: now },
+      ]);
+      expect(await markNotAProblem(bank.database, "no-such-alert", MEMBER, now)).toBeUndefined();
+
+      const after = await alerts();
+      expect(after.find((alert) => alert.id === first?.id)?.notAProblem).toHaveLength(2);
+      expect(after.find((alert) => alert.id === second?.id)?.notAProblem).toEqual([]);
+      const presses = await bank.database.$client.execute(
+        "SELECT count(*) AS n FROM alert_presses",
+      );
+      expect(presses.rows[0]?.n).toBe(2);
+    });
+
+    it("Duplicate charge: clears its Transactions, which never fire or join a Duplicate charge again", async () => {
+      await sync("fake-chase", {
+        added: [
+          purchase("dup-1", CHASE, "2026-11-03", 4_250, "Corner Hardware"),
+          purchase("dup-2", CHASE, "2026-11-04", 4_250, "Corner Hardware"),
+          purchase("paint-1", CHASE, "2026-11-03", 3_100, "Paint Barn"),
+          purchase("paint-2", CHASE, "2026-11-04", 3_100, "Paint Barn"),
+        ],
+      });
+      const pressed = (await later("Duplicate charge")).find(
+        (alert) =>
+          (alert.facts as { merchant: { name: string } }).merchant.name === "Corner Hardware",
+      );
+      expect(await providerIdsOf(pressed)).toEqual(["dup-1", "dup-2"]);
+      await press(pressed);
+
+      // A third charge a day later pairs with the second at Paint Barn, which nobody pressed.
+      await sync("fake-chase", {
+        added: [
+          purchase("dup-3", CHASE, "2026-11-05", 4_250, "Corner Hardware"),
+          purchase("paint-3", CHASE, "2026-11-05", 3_100, "Paint Barn"),
+        ],
+      });
+
+      const found = await later("Duplicate charge");
+      expect(found).toHaveLength(3);
+      expect(found.map((alert) => alert.text)).toEqual(
+        expect.arrayContaining([
+          "Possible duplicate charge: $31.00 at Paint Barn on Chase Card, on Nov 4 and Nov 5.",
+        ]),
+      );
+      expect(found.map((alert) => alert.text).join()).not.toContain(
+        "$42.50 at Corner Hardware on Chase Card, on Nov 4 and Nov 5",
+      );
+    });
+
+    it("Large purchase: clears its Transaction, which never fires a Large purchase again", async () => {
+      const big = purchase("big", SYNCHRONY, "2026-11-05", 189_900, "Lakeside Appliances", {
+        category: {
+          name: "HOME_IMPROVEMENT_FURNITURE",
+          confidence: "HIGH",
+          version: "v2",
+          mcc: null,
+        },
+      });
+      await sync("fake-synchrony", { added: [big] });
+      const [pressed] = await later("Large purchase");
+      await press(pressed);
+
+      await sync("fake-synchrony", {
+        changed: [{ ...big, amount: -249_900, description: "LAKESIDE APPLIANCES DELIVERED" }],
+      });
+      expect(await checkAnomalies(bank.database, pressed?.transactionIds ?? [], now)).toBe(0);
+
+      expect(await later("Large purchase")).toEqual([
+        expect.objectContaining({ id: pressed?.id, notAProblem: [expect.anything()] }),
+      ]);
+    });
+
+    it("New Recurring charge and Large purchase: their Transactions still form a Duplicate charge", async () => {
+      const showbox = (id: string, date: string) => purchase(id, CAPITAL_ONE, date, 999, "Showbox");
+      const big = (id: string, date: string) =>
+        purchase(id, SYNCHRONY, date, 189_900, "Lakeside Appliances", {
+          category: {
+            name: "HOME_IMPROVEMENT_FURNITURE",
+            confidence: "HIGH",
+            version: "v2",
+            mcc: null,
+          },
+        });
+      await sync("fake-capital-one", {
+        added: [showbox("sb-sep", "2026-09-03"), showbox("sb-oct", "2026-10-03")],
+      });
+      await sync("fake-synchrony", { added: [big("big", "2026-11-05")] });
+      for (const kind of ["New Recurring charge", "Large purchase"] as const) {
+        const [pressed] = await later(kind);
+        expect(pressed).toBeDefined();
+        await press(pressed);
+      }
+
+      // A same-amount charge a day after each pressed Alert's last Transaction, on its Account.
+      await sync("fake-capital-one", { added: [showbox("sb-oct-again", "2026-10-04")] });
+      await sync("fake-synchrony", { added: [big("big-again", "2026-11-06")] });
+
+      expect((await later("Duplicate charge")).map((alert) => alert.text).sort()).toEqual([
+        "Possible duplicate charge: $1,899.00 at Lakeside Appliances on Home Store Card, on Nov 5 and Nov 6.",
+        "Possible duplicate charge: $9.99 at Showbox on Rewards Card, on Oct 3 and Oct 4.",
+      ]);
+    });
+
+    it("Price increase: accepts the new price, so the same rise never comes back", async () => {
+      const streamflix = (id: string, date: string, spent: number) =>
+        purchase(id, CAPITAL_ONE, date, spent, "Streamflix");
+      await sync("fake-capital-one", { added: [streamflix("sf-nov", "2026-11-08", 1_999)] });
+      const [pressed] = await later("Price increase");
+      expect(pressed?.text).toBe(
+        "Streamflix went up from $17.99 to $19.99 (+$2.00, +11%) on Nov 8.",
+      );
+      await press(pressed);
+
+      // The bank removes November's charge and posts it again a day later. The new Transaction
+      // follows $17.99 in the Recurring charge, but the Household accepted $19.99.
+      await sync("fake-capital-one", {
+        removed: [{ id: "sf-nov" }],
+        added: [streamflix("sf-nov-again", "2026-11-09", 1_999)],
+      });
+      now = new Date("2026-12-10T14:00:00.000Z");
+      await sync("fake-capital-one", { added: [streamflix("sf-dec", "2026-12-09", 1_999)] });
+      expect((await later("Price increase")).map((alert) => alert.text)).toEqual([pressed?.text]);
+
+      // A later rise still fires. After it, the accepted $19.99 is below the base price, so the
+      // next rise is measured from the base, $22.99.
+      now = new Date("2027-01-10T14:00:00.000Z");
+      await sync("fake-capital-one", { added: [streamflix("sf-jan", "2027-01-09", 2_299)] });
+      now = new Date("2027-02-10T14:00:00.000Z");
+      await sync("fake-capital-one", { added: [streamflix("sf-feb", "2027-02-09", 2_549)] });
+      expect((await later("Price increase")).map((alert) => alert.text)).toEqual([
+        "Streamflix went up from $22.99 to $25.49 (+$2.50, +11%) on Feb 9.",
+        "Streamflix went up from $19.99 to $22.99 (+$3.00, +15%) on Jan 9.",
+        pressed?.text,
+      ]);
+    });
+
+    it("Price increase: a rise after the price drops well below the accepted price still fires", async () => {
+      const cloudVault = (id: string, date: string, spent: number) =>
+        purchase(id, CAPITAL_ONE, date, spent, "Cloud Vault");
+      await sync("fake-capital-one", {
+        added: [
+          ...["06", "07", "08", "09"].map((month) =>
+            cloudVault(`cv-${month}`, `2026-${month}-03`, 1_549),
+          ),
+          cloudVault("cv-10", "2026-10-03", 1_799),
+        ],
+      });
+      const [pressed] = await later("Price increase");
+      expect(pressed?.text).toBe(
+        "Cloud Vault went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3.",
+      );
+      await press(pressed);
+
+      // The price drops to $9.99 for 3 months, then rises to $12.99. $9.99 is not within 7.5% of
+      // $15.49 or $17.99, so the accepted price does not count.
+      now = new Date("2027-02-10T14:00:00.000Z");
+      await sync("fake-capital-one", {
+        added: [
+          cloudVault("cv-11", "2026-11-03", 999),
+          cloudVault("cv-12", "2026-12-03", 999),
+          cloudVault("cv-01", "2027-01-03", 999),
+          cloudVault("cv-02", "2027-02-03", 1_299),
+        ],
+      });
+
+      expect((await later("Price increase")).map((alert) => alert.text)).toEqual([
+        "Cloud Vault went up from $9.99 to $12.99 (+$3.00, +30%) on Feb 3.",
+        pressed?.text,
+      ]);
+    });
+
+    it("Price increase: accepts the new price in that Recurring charge only", async () => {
+      // Two Recurring charges at one Merchant: plan A on the 3rd at $15.49, plan B on the 20th at
+      // $15.99. Plan A rises to $17.99 on Oct 3, and a Member presses its Alert.
+      const cloudVault = (id: string, date: string, spent: number) =>
+        purchase(id, CAPITAL_ONE, date, spent, "Cloud Vault");
+      await sync("fake-capital-one", {
+        added: [
+          ...["06", "07", "08", "09"].map((month) =>
+            cloudVault(`a-${month}`, `2026-${month}-03`, 1_549),
+          ),
+          cloudVault("a-10", "2026-10-03", 1_799),
+          ...["06", "07", "08", "09", "10"].map((month) =>
+            cloudVault(`b-${month}`, `2026-${month}-20`, 1_599),
+          ),
+        ],
+      });
+      const [planA] = await later("Price increase");
+      expect(planA?.text).toBe(
+        "Cloud Vault went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3.",
+      );
+      await press(planA);
+
+      // Plan B rises to the same $17.99. Its own base price is $15.99, so it fires.
+      await sync("fake-capital-one", { added: [cloudVault("b-11", "2026-11-20", 1_799)] });
+
+      expect((await later("Price increase")).map((alert) => alert.text).sort()).toEqual([
+        "Cloud Vault went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3.",
+        "Cloud Vault went up from $15.99 to $17.99 (+$2.00, +13%) on Nov 20.",
+      ]);
+    });
+
+    it("New Recurring charge: its Merchant never fires again at an amount within 7.5% of it", async () => {
+      const merchants = ["Cloud Vault", "Pet Box", "Tutor Time", "Lawn Pros"];
+      const charge = (merchant: string, month: string, spent: number) =>
+        purchase(`${merchant}-${month}`, CAPITAL_ONE, `2026-${month}`, spent, merchant);
+      await sync("fake-capital-one", {
+        added: merchants.flatMap((merchant) => [
+          charge(merchant, "03-03", 1_000),
+          charge(merchant, "04-03", 1_000),
+        ]),
+      });
+      const known = await later("New Recurring charge");
+      expect(known).toHaveLength(4);
+      for (const alert of known) await press(alert);
+      now = new Date("2026-11-21T14:00:00.000Z");
+
+      // $10.75 and $9.31 are within 7.5% of $10.00; $10.76 and $9.30 are not. The 18th is off the
+      // known charges' schedule, so none of them revives one.
+      const amounts = [1_075, 1_076, 931, 930];
+      await sync("fake-capital-one", {
+        added: merchants.flatMap((merchant, at) => [
+          charge(merchant, "09-18", amounts[at] ?? 0),
+          charge(merchant, "10-18", amounts[at] ?? 0),
+        ]),
+      });
+
+      expect((await later("New Recurring charge")).map((alert) => alert.text).sort()).toEqual([
+        "New Recurring charge? Cloud Vault, $10.00 on Mar 3 and Apr 3. Next expected May 3.",
+        "New Recurring charge? Lawn Pros, $10.00 on Mar 3 and Apr 3. Next expected May 3.",
+        "New Recurring charge? Lawn Pros, $9.30 on Sep 18 and Oct 18. Next expected Nov 18.",
+        "New Recurring charge? Pet Box, $10.00 on Mar 3 and Apr 3. Next expected May 3.",
+        "New Recurring charge? Pet Box, $10.76 on Sep 18 and Oct 18. Next expected Nov 18.",
+        "New Recurring charge? Tutor Time, $10.00 on Mar 3 and Apr 3. Next expected May 3.",
+      ]);
+    });
+
+    it("Over Budget, On pace, Card interest or fee: only informs the AI, and nothing else changes", async () => {
+      const budget = {
+        category: "Restaurants",
+        spent: 52_000,
+        budget: 40_000,
+        period: "monthly",
+        span: "2026-11",
+      };
+      const kinds = ["Over Budget", "On pace", "Card interest or fee"] as const;
+      await storeAlerts(
+        bank.database,
+        kinds.map((kind, at) => ({
+          id: `informs-${at}`,
+          kind,
+          createdAt: now,
+          facts: { kind, budget },
+          text: `${kind} text`,
+          category: "Restaurants",
+          state: "sent",
+          transactionIds: [],
+        })),
+      );
+      const before = await alerts();
+
+      for (const kind of kinds) await press(before.find((alert) => alert.kind === kind));
+
+      const after = await alerts();
+      expect(after).toEqual(
+        before.map((alert) =>
+          (kinds as readonly string[]).includes(alert.kind)
+            ? { ...alert, notAProblem: [{ memberId: MEMBER, pressedAt: now }] }
+            : alert,
+        ),
+      );
+      // The press makes no AI call. The next scheduled call reads the marks.
+      const calls = await bank.database.$client.execute("SELECT count(*) AS n FROM ai_calls");
+      expect(calls.rows[0]?.n).toBe(0);
     });
   });
 

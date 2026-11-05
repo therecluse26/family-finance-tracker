@@ -21,6 +21,12 @@ function median(amounts: readonly number[]): number {
   return Math.round(((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2);
 }
 
+// Whether `amount` is a Price increase over `base`: more than 5% and more than $1 above it.
+export function risesOver(base: number, amount: number): boolean {
+  const rise = amount - base;
+  return rise > MORE_THAN_CENTS && rise * 100 > base * MORE_THAN_PERCENT;
+}
+
 export type PriceIncrease = {
   transactionId: string;
   date: string;
@@ -40,8 +46,7 @@ export function priceIncreases(charge: Pick<RecurringCharge, "schedule" | "price
     if (entry === undefined) continue;
     const previous = history.slice(Math.max(since, index - PREVIOUS), index);
     const base = median(previous.map((each) => each.amount));
-    const rise = entry.amount - base;
-    if (rise > MORE_THAN_CENTS && rise * 100 > base * MORE_THAN_PERCENT) {
+    if (risesOver(base, entry.amount)) {
       found.push({
         transactionId: entry.transactionId,
         date: entry.date,
