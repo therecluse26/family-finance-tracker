@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { calendarDateIn, dateLabel, wholeDollars } from "../../format.ts";
 import type { AccountView, ConnectionView } from "../../server/bank-views.ts";
 import { api } from "../api.ts";
+import { browserZone } from "../browser-zone.ts";
 import { ErrorLine } from "../components/Fields.tsx";
 import { ManualLoanForm } from "./settings/ManualLoans.tsx";
 import { UnconnectedAccountForm } from "./settings/UnconnectedAccounts.tsx";
@@ -36,8 +37,7 @@ export function accountLabel(account: Pick<AccountView, "name" | "mask">): strin
   return `${account.name}${account.mask === null ? "" : ` ··${account.mask}`}`;
 }
 
-// The browser's own time zone, for "today" and for when a Connection last synced.
-export const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+export { browserZone };
 
 // The marks that apply, in order: "last synced <date>" while its Connection needs a Member or is
 // Broken (spec 02, Broken Connections), "estimated", "excluded", and "Closed".

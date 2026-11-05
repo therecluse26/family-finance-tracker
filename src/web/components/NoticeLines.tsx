@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
-import { api } from "../api.ts";
-
 // The open System notices, one status line each, above the dashboard's boxes (spec 07, Header and
 // status lines). An event notice has a close button, which closes it for every Member. A condition
-// notice stays until its condition ends.
+// notice stays until its condition ends. The notice of a stopped First run or bank-added-later job
+// has a Retry button, which starts it again.
 
-export type NoticeLine = { id: string; text: string; closable: boolean };
+export type NoticeLine = { id: string; text: string; closable: boolean; retry?: boolean };
 
-export function NoticeList(props: { notices: NoticeLine[]; onClose: (id: string) => void }) {
+export function NoticeList(props: {
+  notices: NoticeLine[];
+  onClose: (id: string) => void;
+  onRetry?: () => void;
+}) {
   if (props.notices.length === 0) return null;
   return (
     <ul aria-label="System notices" className="mt-4 flex flex-col gap-2">
@@ -32,31 +34,13 @@ export function NoticeList(props: { notices: NoticeLine[]; onClose: (id: string)
               Close
             </button>
           ) : null}
+          {notice.retry === true && props.onRetry !== undefined ? (
+            <button type="button" className="text-blue-800 underline" onClick={props.onRetry}>
+              Retry
+            </button>
+          ) : null}
         </li>
       ))}
     </ul>
   );
-}
-
-export function NoticeLines() {
-  const [notices, setNotices] = useState<NoticeLine[]>([]);
-
-  async function read() {
-    const res = await api.notices.$get();
-    if (res.ok) setNotices((await res.json()).notices);
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, when the page opens.
-  useEffect(() => {
-    read().catch(() => {});
-  }, []);
-
-  function close(id: string) {
-    api.notices[":id"].close
-      .$post({ param: { id } })
-      .then(read)
-      .catch(() => {});
-  }
-
-  return <NoticeList notices={notices} onClose={close} />;
 }
