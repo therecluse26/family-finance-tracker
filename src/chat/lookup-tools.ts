@@ -1,5 +1,13 @@
 import * as z from "zod";
-import { type AiTools, aiTool, type HouseholdAi } from "../ai/index.ts";
+import {
+  type AiTools,
+  aiTool,
+  type HouseholdAi,
+  typedAmount,
+  typedCount,
+  typedDate,
+  typedMonth,
+} from "../ai/index.ts";
 import { budgetSpending, budgetsForMonth } from "../budgets/index.ts";
 import { CATEGORIES, type Category, categoryGroupOf } from "../categories/index.ts";
 import { type Database, listAccounts, readShownParts, searchTransactions } from "../db/index.ts";
@@ -13,9 +21,10 @@ import { TOTAL_GROUPINGS, TOTAL_KINDS, totalsBy } from "./totals.ts";
 // against its Zod schema, reads app.db, writes nothing, and answers through the privacy filter as
 // app-built text (spec 08, Privacy filter). Every description and schema is built only from
 // constants in the code, such as the fixed Category list, never from Household data: the filter's
-// final check skips input schemas. Amounts go out as text with 2 decimals, such as "-12.50". The
-// filter still removes an amount whose 4 digits equal an Account's last 4, such as "48.21" for
-// 4821. Transactions go out with no ID.
+// final check skips input schemas. Amounts, dates, months, and counts the app computes go out as
+// typed values (src/ai/typed.ts), which the filter does not cut: an amount reads "-48.21" with 2
+// decimals even when an Account's last 4 is 4821. Merchant names, Category names, Account labels,
+// and status words are text, and the filter reads each in full. Transactions go out with no ID.
 
 // The most rows search_transactions and get_totals answer with.
 export const LOOKUP_ROWS = 50;
@@ -45,8 +54,10 @@ const MONTH = z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/, "A month is written 
 const ACCOUNT_LABEL = z.string().min(1).max(100);
 const DOLLARS = z.number().nonnegative().max(100_000_000);
 
-// Whole cents as dollars, with 2 decimals and no thousands separator, such as "-1234.50".
-export function dollars(cents: number): string {
+// Cents as dollars, with 2 decimals and no thousands separator, such as "-1234.50", as text the
+// filter reads in full. Only a Goal's reading uses it: the AI read it from the Goal's own words,
+// which a Member wrote, so it is not a typed value.
+function dollars(cents: number): string {
   const size = Math.abs(Math.round(cents));
   const sign = cents < 0 && size > 0 ? "-" : "";
   return `${sign}${Math.floor(size / 100)}.${String(size % 100).padStart(2, "0")}`;
@@ -72,7 +83,8 @@ const joined = (values: readonly (string | null)[]) => {
 };
 
 // A Goal as the AI reads it: what it targets, by Category, Merchant, or Account label, with its
-// reading, progress, and status. The Goal's own words are a Member's text, so they stay out.
+// reading, progress, and status. The Goal's own words are a Member's text, so they stay out, and
+// the change, deadline, and Goal amount read from them are text the filter reads in full.
 function goalOf(goal: Goal, labels: ReadonlyMap<string, string>) {
   const label = (id: string) => labels.get(id) ?? "Account";
   const target = goal.reading.target;
@@ -172,14 +184,14 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         found.transactions.map((txn) => txn.id),
       );
       return ai.toolResult({
-        count: found.count,
-        total: dollars(found.total),
+        count: typedCount(found.count),
+        total: typedAmount(found.total),
         transactions: found.transactions.map((txn) => {
           const shown = parts.get(txn.id) ?? [];
           return {
-            date: txn.postedDate,
+            date: typedDate(txn.postedDate),
             merchant: txn.merchantCleanName,
-            amount: dollars(txn.amount),
+            amount: typedAmount(txn.amount),
             category: joined(shown.map((part) => part.category)),
             type: joined(shown.map((part) => part.type)),
             account: labels.get(txn.accountId) ?? "Account",
@@ -209,10 +221,11 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
     async run(input) {
       const rows = await totalsBy(database, input.of, input.groupedBy, input);
       return ai.toolResult({
-        count: rows.length,
-        rows: rows
-          .slice(0, LOOKUP_ROWS)
-          .map(({ name, total }) => ({ name, total: dollars(total) })),
+        count: typedCount(rows.length),
+        rows: rows.slice(0, LOOKUP_ROWS).map(({ name, total }) => ({
+          name: input.groupedBy === "month" ? typedMonth(name) : name,
+          total: typedAmount(total),
+        })),
       });
     },
   });
@@ -251,8 +264,8 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         of: name,
         balances: daily ? "daily" : "month-end",
         points: points.map(({ date, balance, estimated }) => ({
-          date,
-          balance: dollars(balance),
+          date: typedDate(date),
+          balance: typedAmount(balance),
           estimated,
         })),
       });
@@ -278,18 +291,18 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
             a.merchant.name.localeCompare(b.merchant.name),
         );
       return ai.toolResult({
-        count: charges.length,
+        count: typedCount(charges.length),
         recurringCharges: charges.slice(0, RECURRING_ROWS).map((charge) => ({
           merchant: charge.merchant.name,
           category: charge.category,
-          amount: dollars(charge.latestAmount),
+          amount: typedAmount(charge.latestAmount),
           interval: charge.schedule,
-          nextDate: charge.nextExpectedDate,
+          nextDate: typedDate(charge.nextExpectedDate),
           account: labels.get(charge.accountId) ?? "Account",
           status: charge.status,
           priceHistory: charge.priceHistory
             .slice(-PRICE_HISTORY_ROWS)
-            .map(({ date, amount }) => ({ date, amount: dollars(amount) })),
+            .map(({ date, amount }) => ({ date: typedDate(date), amount: typedAmount(amount) })),
         })),
       });
     },
@@ -316,15 +329,15 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
             .map(({ budget, found }) => ({
               category: budget.category,
               categoryGroup: budget.categoryGroup,
-              budget: dollars(budget.amount),
-              spending: dollars(found?.spending ?? 0),
+              budget: typedAmount(budget.amount),
+              spending: typedAmount(found?.spending ?? 0),
               status: found?.status ?? "on track",
             })),
           ...spending.unbudgeted.map((each) => ({
             category: each.category,
             categoryGroup: categoryGroupOf(each.category),
             budget: null,
-            spending: dollars(each.spending),
+            spending: typedAmount(each.spending),
             status: null,
           })),
         ],
@@ -332,8 +345,8 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
           .filter(({ budget }) => budget.period === "yearly")
           .map(({ budget, found }) => ({
             category: budget.category,
-            budget: dollars(budget.amount),
-            spendingThisYear: dollars(found?.spending ?? 0),
+            budget: typedAmount(budget.amount),
+            spendingThisYear: typedAmount(found?.spending ?? 0),
             shareOfYear: `${Math.round((found?.shareOfYear ?? 0) * 100)}%`,
             status: found?.status ?? "on track",
           })),

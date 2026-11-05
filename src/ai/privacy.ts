@@ -1,5 +1,6 @@
 import type { LanguageModelMiddleware } from "ai";
 import { isNeverSentToAi } from "../household/index.ts";
+import { typedValueOf } from "./typed.ts";
 
 // The privacy filter (spec 08, Privacy filter; spec 01, 11. Privacy). It rewrites every request
 // before it leaves for the AI provider: Member names become "Member A", "Member B", and so on, by
@@ -67,7 +68,7 @@ export class PrivacyRefusal extends Error {
 
 export type PrivacyFilter = {
   text(text: string): string;
-  // A tool result or tool input: plain JSON data.
+  // A tool result: plain JSON data. Its typed values pass as they are (src/ai/typed.ts).
   json(value: unknown): unknown;
   // The whole request, as the AI SDK hands it to the model.
   params(params: CallOptions): CallOptions;
@@ -814,8 +815,12 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     return kept.length >= 2 && holdsAFact(kept.join(" "));
   }
 
-  function json(value: unknown): unknown {
+  // JSON data, filtered. In a tool result, a typed value passes as it is, still marked, so the
+  // final check knows it (src/ai/typed.ts). Anywhere else, such as in a tool input, a value marked
+  // typed is filtered as any other object is.
+  function json(value: unknown, inToolResult = false): unknown {
     if (value === null || typeof value === "boolean" || value === undefined) return value;
+    if (inToolResult && typedIn(value) !== undefined) return value;
     if (typeof value === "string") return text(value);
     if (typeof value === "number") {
       if (!Number.isFinite(value)) return value;
@@ -825,7 +830,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     if (typeof value !== "object" || isNeverSentToAi(value)) {
       throw new PrivacyRefusal("The privacy filter refused a value it cannot send.");
     }
-    if (Array.isArray(value)) return together(value.map(json));
+    if (Array.isArray(value)) return together(value.map((item) => json(item, inToolResult)));
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
       throw new PrivacyRefusal("The privacy filter takes only plain JSON data.");
@@ -838,7 +843,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
       return text(name);
     });
     const inner = entries.map(([, item]) => item);
-    const filtered = together(inner.map(json));
+    const filtered = together(inner.map((item) => json(item, inToolResult)));
     return Object.fromEntries(names.map((name, index) => [name, filtered[index]]));
   }
 
@@ -849,7 +854,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         return { ...result, value: text(result.value) };
       case "json":
       case "error-json":
-        return { ...result, value: json(result.value) as typeof result.value };
+        return { ...result, value: json(result.value, true) as typeof result.value };
       case "execution-denied":
         return result.reason === undefined ? result : { ...result, reason: text(result.reason) };
       case "content":
@@ -1020,6 +1025,44 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     return names.some(leaks) || values.some(leaks) || holdsAFactTogether(values);
   }
 
+  // A typed value's bare value, or undefined for anything else. A value marked typed in another
+  // form is refused.
+  function typedIn(value: unknown): string | number | undefined {
+    try {
+      return typedValueOf(value);
+    } catch {
+      throw new PrivacyRefusal("The privacy filter refused a typed value in another form.");
+    }
+  }
+
+  // The prompt with each typed value in a tool result changed, such as to its bare value.
+  function changeTypedValues(messages: Prompt, change: (bare: string | number) => unknown): Prompt {
+    const inValue = (value: unknown): unknown => {
+      const bare = typedIn(value);
+      if (bare !== undefined) return change(bare);
+      if (Array.isArray(value)) return value.map(inValue);
+      if (value === null || typeof value !== "object") return value;
+      return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, inValue(item)]));
+    };
+    const inPart = <Part extends { type: string }>(part: Part): Part => {
+      if (part.type !== "tool-result") return part;
+      const { output } = part as Part & { output: ToolResultOutput };
+      return output.type === "json" || output.type === "error-json"
+        ? { ...part, output: { ...output, value: inValue(output.value) } }
+        : part;
+    };
+    return messages.map((message): Prompt[number] => {
+      switch (message.role) {
+        case "assistant":
+          return { ...message, content: message.content.map(inPart) };
+        case "tool":
+          return { ...message, content: message.content.map(inPart) };
+        default:
+          return message;
+      }
+    });
+  }
+
   function params(input: CallOptions): CallOptions {
     const filtered: CallOptions = {
       ...input,
@@ -1059,8 +1102,12 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         ? {}
         : { stopSequences: input.stopSequences.map(text) }),
     };
-    checkLeaks(filtered, input.prompt.map(isMemberTyped));
-    return filtered;
+    // The final check skips typed values, and the AI reads each one bare, without its mark.
+    checkLeaks(
+      { ...filtered, prompt: changeTypedValues(filtered.prompt, () => null) },
+      input.prompt.map(isMemberTyped),
+    );
+    return { ...filtered, prompt: changeTypedValues(filtered.prompt, (bare) => bare) };
   }
 
   function showMemberNames(aiText: string): string {
@@ -1070,5 +1117,11 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     );
   }
 
-  return { text, json, params, accountLabels, showMemberNames };
+  return {
+    text,
+    json: (value) => json(value, true),
+    params,
+    accountLabels,
+    showMemberNames,
+  };
 }

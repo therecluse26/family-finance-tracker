@@ -16,7 +16,11 @@ import { type AiCall, aiTool } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { aiSettings } from "./settings.ts";
 import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
+import { typedAmount, typedCount, typedDate, typedMonth } from "./typed.ts";
 import { FIXED_RULES } from "./voice.ts";
+
+// The typed value mark's field name, which typed.ts makes at start-up and never exports.
+const TYPED = Object.keys(typedCount(0))[0] ?? "";
 
 // The one AI call path (spec 08, Privacy filter; Counting cost), on a fetch that captures each
 // request as it leaves, and on AI SDK test models. No test calls an AI provider. The Household's
@@ -975,6 +979,54 @@ describe("the one AI call path", () => {
       expect(JSON.stringify(result)).not.toMatch(/\\[^\\"]/);
       expect(stub.offered.slice(2).map((each) => each.tools)).toEqual([["payers"], ["payers"]]);
       expect(await counted()).toEqual(["check on save", "check on save", "chat", "chat"]);
+    });
+
+    it("sends a tool result's typed values bare, as the app built them, and removes a last 4 from its text", async () => {
+      const stub = callingPayers(1);
+      const ai = await connect("anthropic", stub.makeModels);
+      // A lookup that answers through ai.toolResult, as Chat's lookup tools do. 4821 is a last 4.
+      const typedPayers = aiTool({
+        description: "Who paid what in a month",
+        input: z.object({ month: z.string() }),
+        run: async ({ month }) =>
+          ai.toolResult({
+            month: typedMonth(month),
+            count: typedCount(4821),
+            total: typedAmount(-4821),
+            payers: [
+              {
+                merchant: "BLUEBIRD BOOKS 4821",
+                memo: "Paid\t48.21 from Ally savings ending 4821",
+                date: typedDate("2026-10-31"),
+                amount: typedAmount(482_100),
+              },
+            ],
+          }),
+      });
+
+      expect(await ai.generate({ ...call, tools: { payers: typedPayers } })).toMatchObject({
+        ready: true,
+      });
+
+      expect(toolResults(stub).at(-1)).toEqual([
+        {
+          type: "json",
+          value: {
+            month: "2026-10",
+            count: 4821,
+            total: "-48.21",
+            payers: [
+              {
+                merchant: "BLUEBIRD BOOKS [removed]",
+                memo: "Paid [removed] from Ally savings ending [removed]",
+                date: "2026-10-31",
+                amount: "4821.00",
+              },
+            ],
+          },
+        },
+      ]);
+      expect(JSON.stringify(stub.prompts)).not.toContain("typed value");
     });
 
     it("runs at most 5 of the 10 tools the AI calls in one round, then offers none", async () => {

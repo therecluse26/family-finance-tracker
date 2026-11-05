@@ -54,4 +54,11 @@ export {
   defaultGates,
   KEY_REJECTED_CONDITION,
 } from "./settings.ts";
+export {
+  type TypedValue,
+  typedAmount,
+  typedCount,
+  typedDate,
+  typedMonth,
+} from "./typed.ts";
 export { FIXED_RULES, plainVoice } from "./voice.ts";

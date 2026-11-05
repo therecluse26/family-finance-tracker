@@ -1,6 +1,5 @@
 import { categoryGroupOf, isCategory } from "../categories/index.ts";
 import { type Database, listPostedParts, readShownTransactions } from "../db/index.ts";
-import { addDays, addMonths } from "../recurring/index.ts";
 
 // Totals for Chat's get_totals (spec 08, Lookup tools), counted as the app counts them everywhere
 // (src/money-movement/totals.ts): posted Transactions only, each part in the month of its purchase
@@ -30,15 +29,6 @@ function amountIn(kind: TotalKind, part: Part): number | undefined {
     case "Saving":
       return part.type === "Saving" ? -part.amount : undefined;
   }
-}
-
-// A month's row name: its days inside the range, as dates, such as "2026-10-01 to 2026-10-31".
-function monthName(month: string, range: { from: string; to: string }): string {
-  let first = `${month}-01`;
-  let last = addDays(addMonths(first, 1), -1);
-  if (first < range.from) first = range.from;
-  if (last > range.to) last = range.to;
-  return `${first} to ${last}`;
 }
 
 // Every row's name and total in whole cents, largest first, from the parts whose purchase date is
@@ -75,7 +65,7 @@ export async function totalsBy(
       case "Merchant":
         return merchants.get(part.spendingTransactionId ?? part.transactionId) ?? NO_MERCHANT;
       case "month":
-        return monthName((part.authorizedDate ?? part.postedDate).slice(0, 7), range);
+        return (part.authorizedDate ?? part.postedDate).slice(0, 7);
     }
   };
   // Each sum that goes no lower than $0 for Spending, by its key, with the row it adds to.

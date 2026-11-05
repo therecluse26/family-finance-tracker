@@ -1,5 +1,6 @@
 import { expect } from "vitest";
 import { aiCost, householdAi } from "../../ai/index.ts";
+import { asTheAiReads } from "../../ai/testing.ts";
 import { lookupTools, RECURRING_ROWS } from "../../chat/index.ts";
 import { HISTORY_NOW } from "../history.ts";
 import { REQUEST_LIMIT_MS, timedCase } from "../index.ts";
@@ -22,7 +23,7 @@ timedCase("Chat lookup tools", async (history, time) => {
   const sizes: Record<string, number> = {};
   const lookup = async (name: keyof typeof tools, input: unknown, what = "") => {
     const started = performance.now();
-    const answer = await tools[name]?.run(input);
+    const answer = asTheAiReads(await tools[name]?.run(input));
     const ms = Math.round(performance.now() - started);
     const characters = JSON.stringify(answer).length;
     sizes[`${name}${what}`] = characters;

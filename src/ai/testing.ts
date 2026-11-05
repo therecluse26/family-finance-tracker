@@ -9,6 +9,7 @@ import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
 import type { AiTier, TierModels } from "./ai-view.ts";
 import type { AiConnection, AiModelMaker } from "./providers.ts";
+import { typedValueOf } from "./typed.ts";
 
 export type TestAi = { database: Database; secrets: Secrets; close(): void };
 
@@ -17,6 +18,12 @@ export async function newTestAi(): Promise<TestAi> {
   const quiet = createLogger(() => {}, { throwOnSecretField: true });
   const secrets = await unlockSecrets(db.database, newMasterKey().masterKey, { logger: quiet });
   return { database: db.database, secrets, close: db.close };
+}
+
+// A tool's answer as the AI reads it: plain JSON data, with each typed value bare, as the privacy
+// filter sends it (src/ai/typed.ts).
+export function asTheAiReads(answer: unknown): unknown {
+  return JSON.parse(JSON.stringify(answer), (_field, value) => typedValueOf(value) ?? value);
 }
 
 // A made-up API key or gateway token: letters and digits, as AI providers' dashboards show them.

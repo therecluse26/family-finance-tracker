@@ -1,3 +1,4 @@
+import type { JSONValue } from "ai";
 import { describe, expect, it } from "vitest";
 import { loginTables } from "../db/index.ts";
 import { newTestDatabase } from "../db/testing.ts";
@@ -10,6 +11,12 @@ import {
   PrivacyRefusal,
   privacyFilter,
 } from "./privacy.ts";
+import * as typedValues from "./typed.ts";
+import { typedAmount, typedCount, typedDate, typedMonth } from "./typed.ts";
+
+// The typed value mark's field name, which typed.ts makes at start-up and never exports. A test
+// reads it here only to forge a mark.
+const TYPED = Object.keys(typedCount(0))[0] ?? "";
 
 // The privacy filter on its own (spec 08, Privacy filter): what each kind of text becomes before
 // it leaves for the AI provider. The names, addresses, and numbers are made up.
@@ -511,6 +518,148 @@ describe("the privacy filter on dates, times, and amounts", () => {
     expect(sent.prompt).toEqual([
       { role: "user", content: [{ type: "text", text: "2026-10-14 spent [removed].00" }] },
     ]);
+  });
+});
+
+describe("the privacy filter on typed values", () => {
+  // Last 4s that equal a year, an amount's digits, and a count. A bank name that holds one makes
+  // an Account label that holds it.
+  const matching = privacyFilter({
+    ...FACTS,
+    accounts: [
+      account({ id: "t1", mask: "2026" }),
+      account({ id: "t2", mask: "4821", institutionName: "Bank 4821", subtype: "savings" }),
+      account({ id: "t3", mask: "1250", subtype: "credit card" }),
+    ],
+  });
+  const label = matching.accountLabels.get("t2") ?? "";
+
+  // A tool's result, with typed values and text that hold the same last 4s.
+  const lookup = () => ({
+    month: typedMonth("2026-10"),
+    date: typedDate("2026-10-31"),
+    count: typedCount(4821),
+    total: typedAmount(-4821),
+    rows: [
+      { amount: typedAmount(482_100), name: "2026" },
+      { amount: typedAmount(-125_000), name: "PURCHASE 1005 BLUEBIRD BOOKS 4821" },
+      { amount: typedAmount(2026), name: "Ravi Okafor" },
+    ],
+    description: "Card 2026 paid 48.21 on 2026-10-14",
+    account: label,
+    asText: { month: "2026-10", total: "-48.21", count: 4821 },
+  });
+  const toolResult = (value: unknown) => [
+    {
+      role: "tool" as const,
+      content: [
+        {
+          type: "tool-result" as const,
+          toolCallId: "c1",
+          toolName: "lookup",
+          output: { type: "json" as const, value: value as JSONValue },
+        },
+      ],
+    },
+  ];
+  const resultIn = (prompt: unknown) =>
+    (prompt as { content: { output: { value: unknown } }[] }[])[0]?.content[0]?.output.value;
+
+  it("sends each typed value bare, as the app built it, and filters every text around it", () => {
+    expect(label).toBe("Bank 4821 savings");
+    const sent = matching.params({ prompt: toolResult(matching.json(lookup())) });
+
+    expect(resultIn(sent.prompt)).toEqual({
+      month: "2026-10",
+      date: "2026-10-31",
+      count: 4821,
+      total: "-48.21",
+      rows: [
+        { amount: "4821.00", name: "[removed]" },
+        { amount: "-1250.00", name: "PURCHASE 1005 BLUEBIRD BOOKS [removed]" },
+        { amount: "20.26", name: "Member B" },
+      ],
+      description: "Card [removed] paid [removed] on 2026-10-14",
+      account: "Bank [removed] savings",
+      asText: { month: "[removed]-10", total: "-[removed]", count: "[removed]" },
+    });
+    expect(JSON.stringify(sent)).not.toContain("typed value");
+    expect(JSON.stringify(sent)).not.toMatch(/\\[^\\"]/);
+  });
+
+  it("keeps typed values marked in a tool result it filters on its own", () => {
+    const filtered = matching.json(lookup()) as Record<string, unknown>;
+
+    expect(filtered.total).toEqual(typedAmount(-4821));
+    expect(filtered.month).toEqual(typedMonth("2026-10"));
+    expect(filtered.account).toBe("Bank [removed] savings");
+  });
+
+  it("filters a value marked typed outside a tool result, as any other object", () => {
+    const sent = matching.params({
+      prompt: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "lookup",
+              input: { total: { [TYPED]: "-48.21" } },
+            },
+          ],
+        },
+      ],
+      providerOptions: { openai: { note: { [TYPED]: "2026-10" } } },
+    });
+
+    // The mark's field name is text here, filtered as any field name is. Its random hex can hold a
+    // digit run the filter cuts, so the test expects whatever the filter makes of it.
+    const name = matching.text(TYPED);
+    expect(sent.prompt[0]?.content).toEqual([
+      expect.objectContaining({ input: { total: { [name]: "-[removed]" } } }),
+    ]);
+    expect(sent.providerOptions).toEqual({ openai: { note: { [name]: "[removed]-10" } } });
+  });
+
+  it.each([
+    ["a name", { [TYPED]: "Ravi Okafor" }],
+    ["a card number", { [TYPED]: card }],
+    ["a last 4 with another field", { [TYPED]: "48.21", note: "Card 4821" }],
+    ["a number with decimals", { [TYPED]: 48.21 }],
+    ["a count of 16 digits", { [TYPED]: 4_111_111_111_111_111 }],
+    ["a count of 10^9", { [TYPED]: 1_000_000_000 }],
+    ["an amount of 14 dollar digits", { [TYPED]: "41111111111111.11" }],
+    ["an amount of 10^12 cents", { [TYPED]: "-10000000000.00" }],
+  ])("refuses a value marked typed that holds %s", (_, value) => {
+    expect(() => matching.json({ value })).toThrow(PrivacyRefusal);
+    expect(() => matching.params({ prompt: toolResult({ value }) })).toThrow(PrivacyRefusal);
+  });
+
+  it("makes a typed value only from a whole number, a date, or a month, checked at run time", () => {
+    expect(() => typedDate("VENMO *MORGAN LEE")).toThrow(TypeError);
+    expect(() => typedDate("2026-02-30")).toThrow(TypeError);
+    expect(() => typedDate(20261031 as never)).toThrow(TypeError);
+    expect(() => typedMonth("4821")).toThrow(TypeError);
+    expect(() => typedMonth("2026-10 Ravi")).toThrow(TypeError);
+    expect(() => typedMonth(202610 as never)).toThrow(TypeError);
+    expect(() => typedCount(-1)).toThrow(TypeError);
+    expect(() => typedCount(2.5)).toThrow(TypeError);
+    expect(() => typedCount("4821" as never)).toThrow(TypeError);
+    expect(() => typedCount(1_000_000_000)).toThrow(TypeError);
+    expect(() => typedAmount(Number.NaN)).toThrow(TypeError);
+    expect(() => typedAmount(-0.4)).toThrow(TypeError);
+    expect(() => typedAmount("4821" as never)).toThrow(TypeError);
+    expect(() => typedAmount(10 ** 12)).toThrow(TypeError);
+    expect(() => typedAmount(-(10 ** 12))).toThrow(TypeError);
+    expect(typedAmount(10 ** 12 - 1)).toEqual({ [TYPED]: "9999999999.99" });
+    expect(typedCount(999_999_999)).toEqual({ [TYPED]: 999_999_999 });
+    expect(typedAmount(-123_450)).toEqual({ [TYPED]: "-1234.50" });
+  });
+
+  it("marks a typed value with a field name no text can spell, which typed.ts never exports", () => {
+    expect(TYPED).toMatch(/^typed value [0-9a-f]{32}$/);
+    expect(Object.values(typedValues).filter((each) => typeof each !== "function")).toEqual([]);
   });
 });
 

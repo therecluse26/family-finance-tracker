@@ -42,7 +42,8 @@ export type HouseholdAi = {
   // Each Account's label, such as "Ally checking", by its ID, for the text of a call.
   accountLabels(): Promise<ReadonlyMap<string, string>>;
   // A tool's result as the AI reads it (spec 08, Privacy filter): plain JSON data, with each text
-  // made plain, then filtered as app-built text. Throws when the filter cannot pass it.
+  // made plain, then filtered as app-built text. Its typed values, such as amounts and dates, pass
+  // as the app built them (src/ai/typed.ts). Throws when the filter cannot pass it.
   toolResult(data: unknown): Promise<unknown>;
 };
 

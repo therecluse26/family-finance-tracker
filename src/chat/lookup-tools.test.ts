@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { aiCost, householdAi } from "../ai/index.ts";
+import { asTheAiReads } from "../ai/testing.ts";
 import { DEMO_MEMBERS, seedDemoHousehold } from "../bank/demo.ts";
 import { fakeTxn } from "../bank/fake.ts";
 import { syncConnection } from "../bank/index.ts";
@@ -15,6 +16,7 @@ import { LOOKUP_ROWS, lookupTools, PRICE_HISTORY_ROWS, RECURRING_ROWS } from "./
 
 // Chat's lookup tools (spec 08, Lookup tools) on the demo Household, with no AI: each is called as
 // a plain function, as the AI's tool call would run it, and answers through the privacy filter.
+// Each answer is read as the AI reads it, with each typed value bare.
 // The demo history runs from May 2025 to October 2026, and loads on November 1, 2026.
 
 type Row = Record<string, unknown>;
@@ -67,9 +69,9 @@ describe("the lookup tools", () => {
   // The ID of the Goal that meets its "Done when" rule.
   let metGoal: string;
 
-  // Runs a tool, and keeps its answer for the privacy checks.
+  // Runs a tool, and keeps its answer, as the AI reads it, for the privacy checks.
   const run = async <T>(name: keyof typeof tools, input: unknown): Promise<T> => {
-    const answer = await tools[name]?.run(input);
+    const answer = asTheAiReads(await tools[name]?.run(input));
     answers.push(answer);
     return answer as T;
   };
@@ -303,7 +305,7 @@ describe("the lookup tools", () => {
       expect(totals).toEqual([...totals].sort((a, b) => b - a));
     });
 
-    it("totals Income by month, each named by its days in the range", async () => {
+    it("totals Income by month, each named by its month", async () => {
       const { rows } = await run<Totals>("get_totals", {
         of: "Income",
         groupedBy: "month",
@@ -311,13 +313,9 @@ describe("the lookup tools", () => {
         to: "2026-10-31",
       });
 
-      expect(rows.map((row) => row.name).sort()).toEqual([
-        "2026-08-15 to 2026-08-31",
-        "2026-09-01 to 2026-09-30",
-        "2026-10-01 to 2026-10-31",
-      ]);
+      expect(rows.map((row) => row.name).sort()).toEqual(["2026-08", "2026-09", "2026-10"]);
       const october = (await totalsByMonth(bank.database)).find((each) => each.month === "2026-10");
-      const row = rows.find((each) => each.name.startsWith("2026-10"));
+      const row = rows.find((each) => each.name === "2026-10");
       expect(cents(row?.total ?? "0")).toBe(october?.income);
     });
 
@@ -487,6 +485,54 @@ describe("the lookup tools", () => {
       });
       expect(await stored()).toBe("active");
       expect(await changes()).toBe(before);
+    });
+  });
+
+  describe("typed values", () => {
+    // An amount's first 4 digits, which an Account's last 4 matches when it has 4 or more dollars
+    // digits, such as 2026 in "-2026.40".
+    const firstFour = (amount: string) => amount.replace(/\D/g, "").slice(0, 4);
+    const sized = (amount: unknown) => typeof amount === "string" && /^-?\d{4,}\./.test(amount);
+
+    it("reads a month, a total, and an amount that equal an Account's last 4 as the app built them", async () => {
+      const october = { from: "2026-10-01", to: "2026-10-31" };
+      const byMonth = { of: "Income", groupedBy: "month", ...october };
+      const totals = await run<Totals>("get_totals", byMonth);
+      const found = await search(october);
+      const total = totals.rows[0]?.total ?? "";
+      const amount = String(found.transactions.find((txn) => sized(txn.amount))?.amount);
+      expect(sized(total) && sized(amount)).toBe(true);
+      const ai = householdAi({
+        database: bank.database,
+        secrets: bank.secrets,
+        cost: aiCost({ database: bank.database }),
+      });
+      // The same values as text: the filter cuts each, so the test reads a real match.
+      const asText = { month: "2026-10", total, amount };
+
+      const accounts = await listAccounts(bank.database);
+      expect(accounts.length).toBeGreaterThanOrEqual(3);
+      const lastFours = ["2026", firstFour(total), firstFour(amount)];
+      const setMasks = async (masks: (string | null)[]) => {
+        for (const [index, mask] of masks.entries()) {
+          await bank.database.$client.execute({
+            sql: "UPDATE household_accounts SET mask = ? WHERE id = ?",
+            args: [mask, accounts[index]?.id ?? ""],
+          });
+        }
+      };
+      await setMasks(lastFours);
+      try {
+        expect(await ai.toolResult(asText)).toEqual({
+          month: "[removed]-10",
+          total: expect.stringContaining("[removed]"),
+          amount: expect.stringContaining("[removed]"),
+        });
+        expect(await run<Totals>("get_totals", byMonth)).toEqual(totals);
+        expect(await search(october)).toEqual(found);
+      } finally {
+        await setMasks(accounts.map((account) => account.mask));
+      }
     });
   });
 
