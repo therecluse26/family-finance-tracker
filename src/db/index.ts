@@ -246,6 +246,14 @@ export {
   storeHouseholdFacts,
 } from "./household-facts.ts";
 export {
+  type HabitSpending,
+  listAccountBalances,
+  listHabitSpending,
+  readHouseholdSummary,
+  type StoredSummary,
+  storeHouseholdSummary,
+} from "./household-summary.ts";
+export {
   type AiLinkAnswer,
   type AiLinkKind,
   type AnyLink,

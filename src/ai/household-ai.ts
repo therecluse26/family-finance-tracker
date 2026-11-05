@@ -1,9 +1,9 @@
-import { markAiKeyRejected } from "../db/index.ts";
+import { listMemberNamesById, markAiKeyRejected } from "../db/index.ts";
 import { log } from "../log.ts";
 import { isBackground } from "./ai-view.ts";
 import { AiCallError, type AiFailure, callModel, readPrivacyFacts } from "./call.ts";
 import { type AiPause, AiPausedError } from "./outbound.ts";
-import { privacyFilter } from "./privacy.ts";
+import { memberLabel, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, plainData } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
 import { type AiOptions, aiCalls, KEY_REJECTED_CONDITION, noticesOf } from "./settings.ts";
@@ -41,6 +41,9 @@ export type HouseholdAi = {
   forScreen(aiText: string): Promise<string>;
   // Each Account's label, such as "Ally checking", by its ID, for the text of a call.
   accountLabels(): Promise<ReadonlyMap<string, string>>;
+  // Each Member's label, such as "Member A", by their ID: the label the privacy filter gives the
+  // Member's name, by the order Members joined. App-built text names a Member by it, never by name.
+  memberLabels(): Promise<ReadonlyMap<string, string>>;
   // A tool's result as the AI reads it (spec 08, Privacy filter): plain JSON data, with each text
   // made plain, then filtered as app-built text. Its typed values, such as amounts and dates, pass
   // as the app built them (src/ai/typed.ts). Throws when the filter cannot pass it.
@@ -111,6 +114,10 @@ export function householdAi(options: AiOptions): HouseholdAi {
     // The voice first, so a Member's own name stays as written.
     forScreen: async (aiText) => (await filter()).showMemberNames(plainVoice(aiText)),
     accountLabels: async () => (await filter()).accountLabels,
+    memberLabels: async () =>
+      new Map(
+        (await listMemberNamesById(database)).map(({ id }, index) => [id, memberLabel(index)]),
+      ),
     toolResult: async (data) => (await filter()).json(plainData(data)),
   };
 }

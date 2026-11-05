@@ -11,6 +11,7 @@ import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { RETRY_DELAYS_MS, runAiRetries, startAiRetries } from "./retries.ts";
 import { aiSettings, KEY_REJECTED_CONDITION } from "./settings.ts";
 import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
+import { typedAmount, typedDate } from "./typed.ts";
 import { FIXED_RULES, plainVoice } from "./voice.ts";
 
 // The shape of every AI call (spec 08, Prompt order and caching; Limits on each call; Failures;
@@ -121,6 +122,36 @@ describe("an AI call", () => {
       ]);
     });
 
+    it("sends a summary given as text and typed parts as one text, with Chat's mark after it", async () => {
+      const { ai } = await connect("anthropic", makeFetchModels(capture.fetch));
+
+      await ai.generate({
+        use: "chat",
+        summary: [
+          "Household summary. Spending on ",
+          typedDate("2026-10-31"),
+          ": ",
+          typedAmount(231_000),
+          ".",
+        ],
+        task: "Answer the Member's question.",
+      });
+
+      expect(capture.requests.at(-1)?.body?.messages).toEqual([
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Household summary. Spending on 2026-10-31: 2310.00.",
+              cache_control: { type: "ephemeral", ttl: "5m" },
+            },
+            { type: "text", text: "Answer the Member's question." },
+          ],
+        },
+      ]);
+    });
+
     it("sends a Quick batch's task with the mark, then each Transaction as its own text, by row number", async () => {
       const { ai } = await connect("anthropic", makeFetchModels(capture.fetch));
 
@@ -193,6 +224,8 @@ describe("an AI call", () => {
         { use: "alert advice", task: "Advise." },
         { use: "alert advice", task: "Advise.", alerts: 0 },
         { use: "chat", summary: SUMMARY, task: "Answer.", alerts: 1 },
+        { use: "chat", summary: ["Spending: ", { amount: "2310.00" } as never], task: "Answer." },
+        { use: "chat", summary: [SUMMARY, 2310 as never], task: "Answer." },
         {
           use: "reading a goal",
           task: "Read.",

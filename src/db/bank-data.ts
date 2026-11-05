@@ -43,6 +43,7 @@ import {
   followUpMarks,
   historyWait,
   householdAccounts,
+  householdSummary,
   loanLinks,
   merchantNameAnswers,
   recurringCharges,
@@ -892,6 +893,9 @@ export async function deleteRemovedConnection(
         ),
       );
     await tx.delete(householdAccounts).where(eq(householdAccounts.connectionId, id));
+    // Today's Household summary holds numbers and Merchants from this history, so the next Writer
+    // use builds it again without them.
+    await tx.delete(householdSummary);
     const [carried] = await tx
       .select({ id: transactions.id })
       .from(transactions)

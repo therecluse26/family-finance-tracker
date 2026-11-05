@@ -75,55 +75,101 @@ export type AlertFacts =
       date: string;
     };
 
-// " at {Merchant}", or nothing for a Transaction with no Merchant, such as a bank's own fee.
-const atMerchant = (merchant: MerchantFact | null) =>
-  merchant === null ? "" : ` at ${merchant.name}`;
+// How a template writes each fact: as the app's text, or as the Household summary's pieces, where
+// each number goes as a typed value (src/summary/summary.ts). `month` is YYYY-MM and `year` YYYY.
+export type AlertWriter<Out> = {
+  text: (text: string) => Out;
+  // An amount in dollars and cents, such as $70.37.
+  cents: (cents: number) => Out;
+  // An amount in whole dollars, such as $1,234.
+  dollars: (cents: number) => Out;
+  percent: (ratio: number) => Out;
+  date: (date: string) => Out;
+  month: (month: string) => Out;
+  year: (year: string) => Out;
+};
 
-// The template's text, on the Household's date `today`.
-export function alertText(facts: AlertFacts, today: string): string {
-  const day = (date: string) => dateLabel(date, today);
-  const money = dollarsAndCents;
+// The template's pieces, in order, as `writer` writes them.
+export function alertPieces<Out>(facts: AlertFacts, writer: AlertWriter<Out>): Out[] {
+  const { cents, dollars, date } = writer;
+  // A template, such as t`Fee: ${cents(amount)}`: its own words and each value of text are text.
+  const t = (strings: TemplateStringsArray, ...values: (Out | string)[]): Out[] =>
+    strings.flatMap((words, index) => {
+      const value = values[index];
+      const pieces = words === "" ? [] : [writer.text(words)];
+      if (value === undefined) return pieces;
+      return [...pieces, typeof value === "string" ? writer.text(value) : value];
+    });
+  // " at {Merchant}", or nothing for a Transaction with no Merchant, such as a bank's own fee.
+  const atMerchant = (merchant: MerchantFact | null) =>
+    merchant === null ? [] : t` at ${merchant.name}`;
   switch (facts.kind) {
     case "Duplicate charge": {
       const [first, second] = facts.dates;
-      return `Possible duplicate charge: ${money(facts.amount)} at ${facts.merchant.name} on ${facts.account}, on ${day(first)} and ${day(second)}.`;
+      return t`Possible duplicate charge: ${cents(facts.amount)} at ${facts.merchant.name} on ${facts.account}, on ${date(first)} and ${date(second)}.`;
     }
     case "Price increase": {
       const rise = facts.amount - facts.base;
-      return `${facts.merchant.name} went up from ${money(facts.base)} to ${money(facts.amount)} (+${money(rise)}, +${percent(rise / facts.base)}) on ${day(facts.date)}.`;
+      return t`${facts.merchant.name} went up from ${cents(facts.base)} to ${cents(facts.amount)} (+${cents(rise)}, +${writer.percent(rise / facts.base)}) on ${date(facts.date)}.`;
     }
     case "New Recurring charge": {
       const [first, second] = facts.dates;
-      return `New Recurring charge? ${facts.merchant.name}, ${money(facts.amount)} on ${day(first)} and ${day(second)}. Next expected ${day(facts.nextDate)}.`;
+      return t`New Recurring charge? ${facts.merchant.name}, ${cents(facts.amount)} on ${date(first)} and ${date(second)}. Next expected ${date(facts.nextDate)}.`;
     }
     case "Large purchase": {
-      const text = `Large purchase: ${money(facts.amount)} at ${facts.merchant.name} on ${day(facts.date)}. It is larger than ${percent(LARGE_PURCHASE_SHARE)} of your purchases in the last 12 months.`;
+      const text = t`Large purchase: ${cents(facts.amount)} at ${facts.merchant.name} on ${date(facts.date)}. It is larger than ${writer.percent(LARGE_PURCHASE_SHARE)} of your purchases in the last 12 months.`;
       const { budget } = facts;
       if (budget === null) return text;
-      const span = budget.period === "yearly" ? budget.span : monthLabel(`${budget.span}-01`);
-      return `${text} ${budget.category}: ${wholeDollars(budget.spent)} of its ${wholeDollars(budget.budget)} Budget for ${span}.`;
+      const span =
+        budget.period === "yearly" ? writer.year(budget.span) : writer.month(budget.span);
+      return [
+        ...text,
+        ...t` ${budget.category}: ${dollars(budget.spent)} of its ${dollars(budget.budget)} Budget for ${span}.`,
+      ];
     }
     case "Over Budget": {
       const { budget, latest } = facts;
-      const spent = `${wholeDollars(budget.spent)} of ${wholeDollars(budget.budget)}`;
+      const spent = t`${dollars(budget.spent)} of ${dollars(budget.budget)}`;
       const head =
         budget.period === "yearly"
-          ? `${budget.category} is over its ${budget.span} Budget: ${spent}.`
-          : `${budget.category} is over Budget for ${monthLabel(`${budget.span}-01`)}: ${spent}.`;
-      return `${head} Latest: ${money(latest.amount)}${atMerchant(latest.merchant)} on ${day(latest.date)}.`;
+          ? [...t`${budget.category} is over its ${writer.year(budget.span)} Budget: `, ...spent]
+          : [...t`${budget.category} is over Budget for ${writer.month(budget.span)}: `, ...spent];
+      return [
+        ...head,
+        ...t`. Latest: ${cents(latest.amount)}`,
+        ...atMerchant(latest.merchant),
+        ...t` on ${date(latest.date)}.`,
+      ];
     }
     case "On pace": {
       const { budget, projected } = facts;
-      const over = percent((projected - budget.budget) / budget.budget);
-      return `${budget.category} is on pace for ${wholeDollars(projected)} in ${monthLabel(`${budget.span}-01`)}, ${over} over its ${wholeDollars(budget.budget)} Budget. Spent so far: ${wholeDollars(budget.spent)}.`;
+      const over = writer.percent((projected - budget.budget) / budget.budget);
+      return t`${budget.category} is on pace for ${dollars(projected)} in ${writer.month(budget.span)}, ${over} over its ${dollars(budget.budget)} Budget. Spent so far: ${dollars(budget.spent)}.`;
     }
     case "Card interest or fee": {
       if (facts.cardInterest) {
-        return `Card interest: ${money(facts.amount)} on ${facts.account} on ${day(facts.date)}.`;
+        return t`Card interest: ${cents(facts.amount)} on ${facts.account} on ${date(facts.date)}.`;
       }
-      return `Fee: ${money(facts.amount)}${atMerchant(facts.merchant)} on ${facts.account} on ${day(facts.date)}.`;
+      return [
+        ...t`Fee: ${cents(facts.amount)}`,
+        ...atMerchant(facts.merchant),
+        ...t` on ${facts.account} on ${date(facts.date)}.`,
+      ];
     }
   }
+}
+
+// The template's text, on the Household's date `today`.
+export function alertText(facts: AlertFacts, today: string): string {
+  return alertPieces<string>(facts, {
+    text: (text) => text,
+    cents: (cents) => dollarsAndCents(cents),
+    dollars: (cents) => wholeDollars(cents),
+    percent,
+    date: (date) => dateLabel(date, today),
+    month: (month) => monthLabel(`${month}-01`),
+    year: (year) => year,
+  }).join("");
 }
 
 // The heading of a merged Alert of `count` parts (spec 06, Merging), such as "2 Categories are over

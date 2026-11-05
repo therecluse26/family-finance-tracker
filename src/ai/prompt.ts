@@ -1,7 +1,8 @@
 import type { JSONValue, ModelMessage, TextPart } from "ai";
 import * as z from "zod";
 import { type ModelUse, USE_TIERS } from "./ai-view.ts";
-import { MEMBER_TYPED } from "./privacy.ts";
+import { MEMBER_TYPED, TYPED_PART } from "./privacy.ts";
+import { type TypedValue, typedValueOf } from "./typed.ts";
 import { FIXED_RULES } from "./voice.ts";
 
 // How the one AI call path shapes each prompt (spec 08, Prompt order and caching; Limits on each
@@ -16,6 +17,12 @@ import { FIXED_RULES } from "./voice.ts";
 // typed message never holds app-built text.
 export type AiMessage = { role: "user" | "assistant"; text: string; typed?: boolean };
 
+// One piece of the Household summary: app-built text, or a number the app made, such as an amount
+// or a date, as a typed value (src/ai/typed.ts). The privacy filter reads each text and keeps each
+// typed value as it is, so the AI reads "49.99" as the app built it, even when an Account's last 4
+// is 4999. The AI reads the pieces as one text, in order.
+export type SummaryPart = string | TypedValue;
+
 // One Transaction of a Quick batch, as plain fields, such as its Merchant, amount, and date. It
 // never holds the Transaction's ID: the AI answers each by its row number in the batch.
 export type BatchItem = Readonly<Record<string, string | number | boolean | null>>;
@@ -25,7 +32,8 @@ export type BatchItem = Readonly<Record<string, string | number | boolean | null
 export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 
 // One AI call. The fixed rules come first, and no call changes them. Then:
-// - summary: the Household summary. Every Writer use has it, and no Quick use does.
+// - summary: the Household summary, as one text or as its pieces. Every Writer use has it, and no
+//   Quick use does.
 // - task: what this use asks, which stays the same from call to call, such as the instructions
 //   and the fixed Category list. App-built.
 // - batch: a Quick batch's Transactions, at most 100. Each goes out as its own text, a JSON object
@@ -41,7 +49,7 @@ export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 // path refuses one at run time.
 export type AiCall<OUTPUT = undefined> = {
   use: ModelUse;
-  summary?: string;
+  summary?: string | readonly SummaryPart[];
   task: string;
   batch?: readonly BatchItem[];
   changes?: readonly AiMessage[];
@@ -156,6 +164,20 @@ const isMessage = (message: unknown): message is AiMessage =>
   typeof message.text === "string" &&
   (!("typed" in message) || message.typed === undefined || typeof message.typed === "boolean");
 
+// A typed value made in src/ai/typed.ts, in its form.
+function isTypedValue(value: unknown): boolean {
+  try {
+    return typedValueOf(value) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+const isSummary = (summary: unknown): boolean =>
+  typeof summary === "string" ||
+  (Array.isArray(summary) &&
+    summary.every((part) => typeof part === "string" || isTypedValue(part)));
+
 const isBatchItem = (item: unknown): item is BatchItem =>
   typeof item === "object" &&
   item !== null &&
@@ -226,7 +248,7 @@ export function checkCall(call: AiCall<unknown>): void {
     tier !== undefined &&
     onlyKeys(call, CALL_KEYS) &&
     typeof call.task === "string" &&
-    (call.summary === undefined || typeof call.summary === "string") &&
+    (call.summary === undefined || isSummary(call.summary)) &&
     (call.changes === undefined ||
       (Array.isArray(call.changes) && call.changes.every(isMessage))) &&
     (call.batch === undefined || (Array.isArray(call.batch) && call.batch.every(isBatchItem)));
@@ -273,6 +295,26 @@ const userText = (text: string, cached: boolean): ModelMessage => ({
   content: text,
   ...(cached ? { providerOptions: CACHE_MARK } : {}),
 });
+
+// The Household summary as one user message. Given as pieces, each text is a text part, and each
+// typed value a text part of its bare value with the filter's mark, which the filter takes off.
+function summaryMessage(summary: string | readonly SummaryPart[], cached: boolean): ModelMessage {
+  if (typeof summary === "string") return userText(summary, cached);
+  return {
+    role: "user",
+    content: summary.flatMap((part): TextPart[] => {
+      if (typeof part === "string") return part === "" ? [] : [{ type: "text", text: part }];
+      return [
+        {
+          type: "text",
+          text: String(typedValueOf(part)),
+          providerOptions: { privacyFilter: { [TYPED_PART]: part as unknown as JSONValue } },
+        },
+      ];
+    }),
+    ...(cached ? { providerOptions: CACHE_MARK } : {}),
+  };
+}
 
 // Every control character, and the line and paragraph separators.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it replaces.
@@ -351,7 +393,9 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
   checkCall(call);
   const markAfter = cacheMarkAfter(call.use);
   const messages: ModelMessage[] = [];
-  if (call.summary !== undefined) messages.push(userText(call.summary, markAfter === "summary"));
+  if (call.summary !== undefined) {
+    messages.push(summaryMessage(call.summary, markAfter === "summary"));
+  }
   messages.push(userText(call.task, markAfter === "task"));
   if (call.batch !== undefined) {
     messages.push({

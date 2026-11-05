@@ -7,6 +7,7 @@ export {
   recurringCharges,
   startRecurringCharges,
 } from "./charges.ts";
+export { type ComingUp, type ComingUpRow, comingUp } from "./coming-up.ts";
 export {
   findIncomeSeries,
   type IncomeSchedule,

@@ -36,6 +36,7 @@ export {
   type BatchItem,
   batchReply,
   QUICK_BATCH_SIZE,
+  type SummaryPart,
 } from "./prompt.ts";
 export type { AiConnection, AiModelMaker } from "./providers.ts";
 export {

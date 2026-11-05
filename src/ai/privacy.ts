@@ -49,6 +49,11 @@ function isMemberTyped(message: { providerOptions?: unknown }): boolean {
   return options?.privacyFilter?.memberTyped === true;
 }
 
+// The mark on one text part of the Household summary that holds a typed value (src/ai/typed.ts),
+// such as an amount: the part's text is the value's bare form. The filter keeps it as it is, and
+// its final check skips it, as for a typed value in a tool result. Only src/ai/prompt.ts sets it.
+export const TYPED_PART = "typed";
+
 // The message's provider options without the mark, which only the filter reads.
 function withoutMark<Message extends { providerOptions?: Record<string, unknown> }>(
   message: Message,
@@ -854,7 +859,10 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         return { ...result, value: text(result.value) };
       case "json":
       case "error-json":
-        return { ...result, value: json(result.value, true) as typeof result.value };
+        return {
+          ...result,
+          value: withoutJsonCrossings(json(result.value, true)) as typeof result.value,
+        };
       case "execution-denied":
         return result.reason === undefined ? result : { ...result, reason: text(result.reason) };
       case "content":
@@ -907,18 +915,25 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     switch (message.role) {
       case "system":
         return { ...message, content: text(message.content) };
-      case "user":
-        return {
-          ...message,
-          content: message.content.map((part) => {
-            if (part.type !== "text") throw refusePart();
-            return { ...part, text: typed ? text(part.text) : rowOrText(part.text) };
-          }),
-        };
+      case "user": {
+        const content = message.content.map((part) => {
+          if (part.type !== "text") throw refusePart();
+          // A typed value passes as it is, still marked, so the final check knows it. A message
+          // a Member typed holds none.
+          if (typedPartIn(part) !== undefined) {
+            if (typed) throw refusePart();
+            return part;
+          }
+          return { ...part, text: typed ? text(part.text) : rowOrText(part.text) };
+        });
+        return { ...message, content: withoutPartCrossings(content) };
+      }
       case "assistant":
         return {
           ...message,
           content: message.content.map((part) => {
+            // Only the Household summary, a user message, holds typed parts.
+            if (isMarked(part)) throw refusePart();
             switch (part.type) {
               case "text":
               case "reasoning":
@@ -936,6 +951,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         return {
           ...message,
           content: message.content.map((part) => {
+            if (isMarked(part)) throw refusePart();
             switch (part.type) {
               case "tool-result":
                 return { ...part, output: output(part.output) };
@@ -949,6 +965,203 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
       default:
         throw refusePart();
     }
+  }
+
+  // A text the AI reads as one, put together from pieces: the text parts and typed parts of a
+  // Household summary message, or the values of a tool result's JSON. Each piece has its place in
+  // the joined text; a JSON piece the filter may change has `set`.
+  type Piece = { start: number; end: number; typed: boolean; set?: (value: string) => void };
+
+  // Each place where a rule matches across the edge of a typed value, in the text the AI reads.
+  // Each text is filtered alone and each typed value passes as it is, so only the joined text
+  // shows such a match, such as the Merchant "Pasta 482" next to a count of 2 when an Account's
+  // last 4 is 4822. A match wholly inside one typed value is the app's own number, which the
+  // filter keeps. So is a number match across two or more typed values whose text adds no digit,
+  // such as "day 20 of 30 days" when the ages are 20 and 30: the app wrote both numbers, and
+  // taking out " of " would leave "20 [removed] 30", which the rule still matches.
+  function crossings(joined: string, pieces: readonly Piece[]): Span[] {
+    const typedPieces = pieces.filter((piece) => piece.typed);
+    if (typedPieces.length === 0) return [];
+    const overlaps = (piece: Piece, span: Span) => piece.start < span.end && span.start < piece.end;
+    const textDigit = (span: Span) =>
+      pieces.some(
+        (piece) =>
+          !piece.typed &&
+          overlaps(piece, span) &&
+          /\p{Nd}/u.test(
+            joined.slice(Math.max(piece.start, span.start), Math.min(piece.end, span.end)),
+          ),
+      );
+    const crosses = (span: Span, isNumber: boolean) => {
+      const touched = typedPieces.filter((piece) => overlaps(piece, span));
+      const [one] = touched;
+      if (one === undefined) return false;
+      if (touched.length === 1) return !(one.start <= span.start && span.end <= one.end);
+      return !isNumber || textDigit(span);
+    };
+    const skeleton = digitSkeleton(joined);
+    const numbers = numberPairs(skeleton.text).map((pair) => ({
+      ...placeOf(skeleton, pair),
+      label: REMOVED,
+    }));
+    const words = [
+      ...findNames(joined, namePhrases),
+      ...pairsOf(EMAIL, joined).map(([start, end]) => ({ start, end, label: REMOVED })),
+    ];
+    return [
+      ...numbers.filter((span) => crosses(span, true)),
+      ...words.filter((span) => crosses(span, false)),
+    ];
+  }
+
+  // A summary message's parts as one text, with each part's place.
+  function joinParts(parts: readonly { text: string; typed: boolean }[]) {
+    let joined = "";
+    const pieces: Piece[] = [];
+    for (const part of parts) {
+      pieces.push({
+        start: joined.length,
+        end: joined.length + part.text.length,
+        typed: part.typed,
+      });
+      joined += part.text;
+    }
+    return { joined, pieces };
+  }
+
+  // A summary message's parts with each crossing taken out of its text side: the text characters
+  // the match takes become "[removed]", and every typed value stays as it is. A space at the edge
+  // of a typed value stays, so "Pasta 482 " next to a count of 2 reads "Pasta [removed] 2". Two
+  // typed values with no text between them would read as one number, so they are refused.
+  function withoutPartCrossings<Part extends { type: "text"; text: string }>(
+    content: readonly Part[],
+  ): Part[] {
+    let parts = content.map((part) => ({ part, typed: typedPartIn(part) !== undefined }));
+    if (!parts.some((each) => each.typed)) return [...content];
+    const kept = parts.filter((each) => each.typed || each.part.text !== "");
+    if (kept.some((each, index) => each.typed && kept[index - 1]?.typed === true)) {
+      throw new PrivacyRefusal("The privacy filter refused two typed values with no text between.");
+    }
+    for (let round = 0; round < 3; round++) {
+      const { joined, pieces } = joinParts(
+        parts.map((each) => ({ text: each.part.text, typed: each.typed })),
+      );
+      const spans = crossings(joined, pieces);
+      if (spans.length === 0) break;
+      parts = parts.map((each, index) => {
+        const piece = pieces[index];
+        if (each.typed || piece === undefined) return each;
+        const removed = spans.flatMap((span): Span[] => {
+          let start = Math.max(piece.start, span.start);
+          let end = Math.min(piece.end, span.end);
+          if (start >= end) return [];
+          const [from, to] = [start, end];
+          if (to === piece.end) while (end > start && /\s/u.test(joined.charAt(end - 1))) end--;
+          if (from === piece.start) while (start < end && /\s/u.test(joined.charAt(start))) start++;
+          if (start === end) [start, end] = [from, to];
+          return [{ start: start - piece.start, end: end - piece.start, label: REMOVED }];
+        });
+        return removed.length === 0
+          ? each
+          : { ...each, part: { ...each.part, text: replaceSpans(each.part.text, removed) } };
+      });
+    }
+    return parts.map((each) => each.part);
+  }
+
+  // A tool result's JSON as the AI reads it, as JSON.stringify writes it, with the place of each
+  // value and field name in it. Each typed value is its bare value.
+  function jsonPieces(value: unknown): { joined: string; pieces: Piece[] } {
+    let joined = "";
+    const pieces: Piece[] = [];
+    const add = (written: string, piece?: Omit<Piece, "start" | "end">) => {
+      if (piece !== undefined) {
+        pieces.push({ start: joined.length, end: joined.length + written.length, ...piece });
+      }
+      joined += written;
+    };
+    const walk = (item: unknown, set?: (value: string) => void): void => {
+      const bare = typedIn(item);
+      if (bare !== undefined) {
+        add(JSON.stringify(bare), { typed: true });
+      } else if (typeof item === "string" || typeof item === "number") {
+        add(JSON.stringify(item), { typed: false, set });
+      } else if (item === null || item === undefined || typeof item !== "object") {
+        add(JSON.stringify(item ?? null));
+      } else if (Array.isArray(item)) {
+        add("[");
+        item.forEach((each, index) => {
+          if (index > 0) add(",");
+          walk(each, (changed) => {
+            item[index] = changed;
+          });
+        });
+        add("]");
+      } else {
+        walkObject(item as Record<string, unknown>);
+      }
+    };
+    const walkObject = (item: Record<string, unknown>) => {
+      add("{");
+      let first = true;
+      for (const [name, each] of Object.entries(item)) {
+        if (each === undefined) continue;
+        if (!first) add(",");
+        first = false;
+        add(JSON.stringify(name), { typed: false });
+        add(":");
+        walk(each, (changed) => {
+          item[name] = changed;
+        });
+      }
+      add("}");
+    };
+    walk(value);
+    return { joined, pieces };
+  }
+
+  // A tool result's JSON, as filtered, with each value that a crossing takes in removed whole, as
+  // values that hold a fact together are. The filter made the JSON anew, so it changes it in
+  // place. A crossing that takes in no value, only a field name, is refused.
+  function withoutJsonCrossings(value: unknown): unknown {
+    for (let round = 0; round < 3; round++) {
+      const { joined, pieces } = jsonPieces(value);
+      const spans = crossings(joined, pieces);
+      if (spans.length === 0) break;
+      for (const span of spans) {
+        const hit = pieces.filter(
+          (piece) => !piece.typed && piece.start < span.end && span.start < piece.end,
+        );
+        if (!hit.some((piece) => piece.set !== undefined)) {
+          throw new PrivacyRefusal("The privacy filter found a fact across a field name.");
+        }
+        for (const piece of hit) piece.set?.(REMOVED);
+      }
+    }
+    return value;
+  }
+
+  // Whether a summary message or a tool result, joined as the AI reads it, still holds a fact
+  // across the edge of a typed value. The final check refuses the call when one does.
+  function holdsACrossing(messages: Prompt): boolean {
+    return messages.some((message) => {
+      if (message.role === "user") {
+        const parts = message.content.map((part) => {
+          if (part.type !== "text") throw refusePart();
+          return { text: part.text, typed: typedPartIn(part) !== undefined };
+        });
+        const { joined, pieces } = joinParts(parts);
+        return crossings(joined, pieces).length > 0;
+      }
+      if (message.role !== "assistant" && message.role !== "tool") return false;
+      return (message.content as { type: string }[]).some((part) => {
+        if (part.type !== "tool-result") return false;
+        const { output } = part as unknown as { output: ToolResultOutput };
+        if (output.type !== "json" && output.type !== "error-json") return false;
+        const { joined, pieces } = jsonPieces(output.value);
+        return crossings(joined, pieces).length > 0;
+      });
+    });
   }
 
   // Whether the prompt's texts, read in order and joined by spaces, hold a fact that no one of them
@@ -1035,6 +1248,51 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     }
   }
 
+  // Whether a part carries the filter's own mark in its provider options.
+  const isMarked = (part: { providerOptions?: unknown }) =>
+    (part.providerOptions as { privacyFilter?: unknown } | undefined)?.privacyFilter !== undefined;
+
+  // The bare value of a Household summary part marked typed, or undefined for a part without the
+  // mark. A mark on a value in another form, or on a part whose text is not that value, is refused.
+  function typedPartIn(part: { text: string; providerOptions?: unknown }): string | undefined {
+    if (!isMarked(part)) return undefined;
+    const options = part.providerOptions as { privacyFilter: unknown };
+    const mark = options.privacyFilter as Record<string, unknown> | null;
+    const bare =
+      mark !== null && typeof mark === "object" && Object.keys(mark).length === 1
+        ? typedIn(mark[TYPED_PART])
+        : undefined;
+    if (bare === undefined || String(bare) !== part.text) {
+      throw new PrivacyRefusal("The privacy filter refused a typed value in another form.");
+    }
+    return part.text;
+  }
+
+  // The prompt without its typed summary parts, for the final check, or with each user message
+  // that holds one joined into one text part, as the AI reads it: the filtered text parts and the
+  // bare typed values, in order, with no mark.
+  function changeTypedParts(messages: Prompt, change: "drop" | "join"): Prompt {
+    return messages.map((message): Prompt[number] => {
+      if (message.role !== "user") return message;
+      if (
+        !message.content.some((part) => part.type === "text" && typedPartIn(part) !== undefined)
+      ) {
+        return message;
+      }
+      const texts = message.content.flatMap((part) => {
+        if (part.type !== "text") throw refusePart();
+        return change === "drop" && typedPartIn(part) !== undefined ? [] : [part.text];
+      });
+      return {
+        ...message,
+        content:
+          change === "drop"
+            ? texts.map((each) => ({ type: "text", text: each }))
+            : [{ type: "text", text: texts.join("") }],
+      };
+    });
+  }
+
   // The prompt with each typed value in a tool result changed, such as to its bare value.
   function changeTypedValues(messages: Prompt, change: (bare: string | number) => unknown): Prompt {
     const inValue = (value: unknown): unknown => {
@@ -1102,12 +1360,29 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         ? {}
         : { stopSequences: input.stopSequences.map(text) }),
     };
-    // The final check skips typed values, and the AI reads each one bare, without its mark.
+    // The final check skips typed values, and the AI reads each one bare, without its mark. It
+    // also reads each summary message and tool result joined, as the AI reads it, for a fact
+    // across the edge of a typed value.
+    if (holdsACrossing(filtered.prompt)) {
+      throw new PrivacyRefusal("The privacy filter found private data it did not remove.");
+    }
     checkLeaks(
-      { ...filtered, prompt: changeTypedValues(filtered.prompt, () => null) },
+      {
+        ...filtered,
+        prompt: changeTypedParts(
+          changeTypedValues(filtered.prompt, () => null),
+          "drop",
+        ),
+      },
       input.prompt.map(isMemberTyped),
     );
-    return { ...filtered, prompt: changeTypedValues(filtered.prompt, (bare) => bare) };
+    return {
+      ...filtered,
+      prompt: changeTypedParts(
+        changeTypedValues(filtered.prompt, (bare) => bare),
+        "join",
+      ),
+    };
   }
 
   function showMemberNames(aiText: string): string {

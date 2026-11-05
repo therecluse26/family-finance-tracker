@@ -10,6 +10,7 @@ import {
   type PrivacyFacts,
   PrivacyRefusal,
   privacyFilter,
+  TYPED_PART,
 } from "./privacy.ts";
 import * as typedValues from "./typed.ts";
 import { typedAmount, typedCount, typedDate, typedMonth } from "./typed.ts";
@@ -660,6 +661,259 @@ describe("the privacy filter on typed values", () => {
   it("marks a typed value with a field name no text can spell, which typed.ts never exports", () => {
     expect(TYPED).toMatch(/^typed value [0-9a-f]{32}$/);
     expect(Object.values(typedValues).filter((each) => typeof each !== "function")).toEqual([]);
+  });
+});
+
+describe("the privacy filter on the Household summary's typed parts", () => {
+  // Last 4s that equal the summary's own amounts, a year, and a count; the ZIP code equals an
+  // amount's dollars.
+  const matching = privacyFilter({
+    ...FACTS,
+    accounts: [
+      account({ id: "s1", mask: "4999" }),
+      account({ id: "s2", mask: "1850", subtype: "savings" }),
+      account({ id: "s3", mask: "2026", subtype: "credit card" }),
+    ],
+    zipCode: "18950",
+  });
+
+  // A text part of a typed value, as src/ai/prompt.ts makes one.
+  const typedPart = (value: unknown, text?: string) => ({
+    type: "text" as const,
+    text: text ?? String(Object.values(value as object)[0]),
+    providerOptions: { privacyFilter: { [TYPED_PART]: value as JSONValue } },
+  });
+  const summary = (...content: { type: "text"; text: string }[]) => [
+    { role: "user" as const, content },
+  ];
+  const text = (value: string) => ({ type: "text" as const, text: value });
+
+  it("sends each typed part bare, filters each text part, and joins them as the AI reads them", () => {
+    const sent = matching.params({
+      prompt: summary(
+        text("- Fitness: "),
+        typedPart(typedAmount(4_999)),
+        text(", Housing "),
+        typedPart(typedAmount(185_000)),
+        text(" on "),
+        typedPart(typedDate("2026-11-20")),
+        text(" in "),
+        typedPart(typedMonth("2026-11")),
+        text(", checking "),
+        typedPart(typedAmount(1_895_032)),
+        text(", "),
+        typedPart(typedCount(4999)),
+        text(' times.\n- "Pay card 4999 by ZIP 18950", by Ravi Okafor'),
+      ),
+    });
+
+    expect(sent.prompt).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: '- Fitness: 49.99, Housing 1850.00 on 2026-11-20 in 2026-11, checking 18950.32, 4999 times.\n- "Pay card [removed] by ZIP [removed]", by Member B',
+          },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(sent)).not.toContain("privacyFilter");
+    expect(JSON.stringify(sent)).not.toContain("typed value");
+  });
+
+  it("keeps a message's own provider options, such as a cache mark", () => {
+    const cache = { anthropic: { cacheControl: { type: "ephemeral" } } };
+    const sent = matching.params({
+      prompt: [
+        {
+          role: "user",
+          content: [text("Fitness "), typedPart(typedAmount(4_999))],
+          providerOptions: cache,
+        },
+      ],
+    });
+
+    expect(sent.prompt).toEqual([
+      { role: "user", content: [{ type: "text", text: "Fitness 49.99" }], providerOptions: cache },
+    ]);
+  });
+
+  it.each([
+    ["a text that is not its value", typedPart(typedAmount(4_999), "4999")],
+    ["a value in another form", typedPart({ [TYPED]: "Pay card 4999" })],
+    ["a card number", typedPart({ [TYPED]: card })],
+    ["a mark with no typed value", typedPart("4999", "4999")],
+    ["a mark with another field", typedPart({ [TYPED]: "49.99", note: "card 4999" }, "49.99")],
+  ])("refuses a typed part that holds %s", (_, part) => {
+    expect(() => matching.params({ prompt: summary(text("Fitness "), part) })).toThrow(
+      PrivacyRefusal,
+    );
+  });
+
+  it("refuses a typed part in a message a Member typed, from the AI, or in a tool result", () => {
+    // 12.34 matches no fact, so only the rule refuses it.
+    const part = typedPart(typedAmount(1_234));
+
+    expect(() =>
+      matching.params({
+        prompt: [{ role: "user", content: [part], providerOptions: MEMBER_TYPED }],
+      }),
+    ).toThrow(PrivacyRefusal);
+    expect(() => matching.params({ prompt: [{ role: "assistant", content: [part] }] })).toThrow(
+      PrivacyRefusal,
+    );
+    expect(() =>
+      matching.params({
+        prompt: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "c1",
+                toolName: "lookup",
+                output: { type: "text", value: "Done." },
+                providerOptions: part.providerOptions,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(PrivacyRefusal);
+  });
+
+  describe("read joined, as the AI reads it", () => {
+    // The reviewer's probe: last 4s 4822 and 7037, and Merchant names that end in digits.
+    const probe = privacyFilter({
+      ...FACTS,
+      accounts: [
+        account({ id: "p1", mask: "4822" }),
+        account({ id: "p2", mask: "7037", subtype: "credit card" }),
+      ],
+      zipCode: "18950",
+    });
+    const sentText = (...content: { type: "text"; text: string }[]) =>
+      (probe.params({ prompt: summary(...content) }).prompt[0] as { content: { text: string }[] })
+        .content[0]?.text;
+
+    it("takes a Merchant's digits out when they make a last 4 or a long run with a typed count", () => {
+      expect(
+        sentText(
+          text("- Pasta 482 "),
+          typedPart(typedCount(2)),
+          text(" for "),
+          typedPart(typedAmount(11_271)),
+          text("; Shop 4111111 "),
+          typedPart(typedCount(2)),
+          text(" for "),
+          typedPart(typedAmount(6_041)),
+        ),
+      ).toBe("- Pasta [removed] 2 for 112.71; Shop [removed] 2 for 60.41");
+    });
+
+    it("takes out a last 4 split across a typed value's edge, from the text side only", () => {
+      expect(sentText(text("Card 48"), typedPart(typedCount(22)), text(" times"))).toBe(
+        "Card [removed]22 times",
+      );
+      expect(sentText(text("Paid "), typedPart(typedCount(48)), text("22 Main St"))).toBe(
+        "Paid 48[removed] Main St",
+      );
+      expect(sentText(text("Paid "), typedPart(typedAmount(7_0)), text("37 times"))).toBe(
+        "Paid 0.70[removed] times",
+      );
+    });
+
+    it("takes out a card number made of text digits around a typed count", () => {
+      expect(sentText(text("Ref 4111 11"), typedPart(typedCount(1111)), text("11 1111 ok"))).toBe(
+        "Ref [removed]1111[removed] ok",
+      );
+    });
+
+    it("takes out a mask, a name, or an email address that text makes around a typed value", () => {
+      expect(sentText(text("Mail ab"), typedPart(typedCount(12)), text("@example.com now"))).toBe(
+        "Mail [removed]12[removed] now",
+      );
+      expect(sentText(text("Card ****"), typedPart(typedCount(4821)), text(" paid"))).toBe(
+        "Card [removed]4821 paid",
+      );
+      expect(sentText(text("Paid Da"), typedPart(typedCount(12)), text("na today"))).toBe(
+        "Paid [removed]12[removed] today",
+      );
+    });
+
+    it("keeps the app's own numbers when only words of text lie between them", () => {
+      const ages = privacyFilter({ ...FACTS, ages: [20, 30] });
+      const sent = ages.params({
+        prompt: summary(
+          text("Today is day "),
+          typedPart(typedCount(20)),
+          text(" of "),
+          typedPart(typedCount(30)),
+          text(" days."),
+        ),
+      }).prompt[0] as { content: { text: string }[] };
+
+      expect(sent.content[0]?.text).toBe("Today is day 20 of 30 days.");
+    });
+
+    it.each([
+      ["no text", [typedPart(typedCount(48)), typedPart(typedCount(22))]],
+      ["an empty text", [typedPart(typedCount(48)), text(""), typedPart(typedCount(22))]],
+    ])("refuses two typed values with %s between them", (_, parts) => {
+      expect(() => sentText(text("Paid "), ...parts, text(" times"))).toThrow(PrivacyRefusal);
+    });
+
+    // A tool result's JSON joins its values with only quotes and commas between them.
+    const toolResult = (value: unknown) => [
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "c1",
+            toolName: "lookup",
+            output: { type: "json" as const, value: value as JSONValue },
+          },
+        ],
+      },
+    ];
+    const sentValue = (value: unknown) =>
+      (
+        probe.params({ prompt: toolResult(value) }).prompt[0] as {
+          content: { output: { value: unknown } }[];
+        }
+      ).content[0]?.output.value;
+
+    it("removes a tool result's text value that makes a fact with a typed value next to it", () => {
+      expect(
+        sentValue({
+          rows: [
+            ["Pasta 482", typedCount(2), typedAmount(11_271)],
+            ["Shop 4111111", typedCount(2), typedAmount(6_041)],
+          ],
+        }),
+      ).toEqual({
+        rows: [
+          ["[removed]", 2, "112.71"],
+          ["[removed]", 2, "60.41"],
+        ],
+      });
+      expect(sentValue([typedCount(48), "22 Main St"])).toEqual([48, "[removed]"]);
+      expect(sentValue(["Ref 4111 11", typedCount(1111), "11 1111 ok"])).toEqual([
+        "[removed]",
+        1111,
+        "[removed]",
+      ]);
+    });
+
+    it("keeps a tool result's typed values with only commas between them", () => {
+      expect(sentValue([typedCount(48), typedCount(22)])).toEqual([48, 22]);
+    });
+
+    it("refuses a tool result with a fact across a field name and a typed value", () => {
+      expect(() => sentValue({ "Ref 48": typedCount(22) })).toThrow(PrivacyRefusal);
+    });
   });
 });
 

@@ -6,6 +6,7 @@ import {
   categoryGroupOf,
 } from "../categories/index.ts";
 import type { Database } from "../db/index.ts";
+import type { MonthTotals } from "../money-movement/index.ts";
 import { YEARLY_CATEGORIES } from "./formulas.ts";
 import { monthDay, projectCategories } from "./projection.ts";
 import type { Budget } from "./stored.ts";
@@ -54,6 +55,8 @@ export type MonthSpending = {
   // to spend counts, its monthly Budgets and its monthly Categories with no Budget, and how many
   // of its Categories are Over Budget and On pace. Over Budget wins over On pace. Null with neither.
   groups: Map<CategoryGroup, GroupSpending | null>;
+  // Every month's totals, as the projection read them, so a caller needs no second read.
+  totals: MonthTotals[];
 };
 
 export type GroupSpending = {
@@ -123,6 +126,7 @@ export async function budgetSpending(
     budgets: new Map(),
     unbudgeted: [],
     groups: new Map(CATEGORY_GROUPS.map(({ name }) => [name, null])),
+    totals,
   };
   for (const { name: category } of CATEGORIES) {
     const { spending, projected } = categories.get(category) ?? { spending: 0, projected: null };

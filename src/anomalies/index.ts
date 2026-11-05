@@ -39,6 +39,8 @@ export {
 } from "./sending.ts";
 export {
   type AlertFacts,
+  type AlertWriter,
+  alertPieces,
   alertText,
   type BudgetFact,
   type MerchantFact,

@@ -1517,3 +1517,18 @@ export const proposalBudgets = sqliteTable(
     index("proposal_budgets_category").on(table.category),
   ],
 );
+
+// The Household summary that today's Writer uses read (spec 08, Household summary): built before
+// the day's first Writer use, and kept for the rest of that day, Household time. It is app-built
+// text, before the privacy filter, which runs on each call. It has at most one row, whose ID is 1.
+export const householdSummary = sqliteTable(
+  "household_summary",
+  {
+    id: integer("id").primaryKey(),
+    // The Household's date it was built for.
+    day: calendarDate("day").notNull(),
+    text: text("text").notNull(),
+    builtAt: moment("built_at").notNull(),
+  },
+  (table) => [check("household_summary_one_row", sql`${table.id} = 1`)],
+);
