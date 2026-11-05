@@ -18,6 +18,7 @@ import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
+import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -730,6 +731,15 @@ export const api = new Hono<ServerEnv>()
   .get("/number-tiles", async (c) => c.json(await c.var.bank.numberTiles()))
   // "Coming up" (spec 07, 6. Coming up): what is due in the next 14 days, Household time.
   .get("/coming-up", async (c) => c.json(await c.var.comingUp.view()))
+  // Top Merchants (spec 07, Top Merchants): Merchants ranked by Spending, "This month" or "Last 12
+  // months", Household time.
+  .get("/top-merchants", async (c) => {
+    const period = z.enum(TOP_MERCHANT_PERIODS).safeParse(c.req.query("period"));
+    if (!period.success) {
+      return c.json({ error: 'Choose "This month" or "Last 12 months".' }, 400);
+    }
+    return c.json(await c.var.topMerchants.view(period.data), 200);
+  })
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
   // Progress per Connection while its history loads (spec 02, First history load).
   .get("/history-status", async (c) => c.json(await c.var.bank.historyStatus()))

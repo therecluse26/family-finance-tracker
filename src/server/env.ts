@@ -22,6 +22,7 @@ import type { MoneyMovementRoutes } from "./money-movement-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
 import type { RecurringRoutes } from "./recurring-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
+import type { TopMerchantRoutes } from "./top-merchants-views.ts";
 
 // What the security check sets on every request it accepts, and the session check on every /api
 // route outside /api/auth/ and /api/setup.
@@ -74,6 +75,8 @@ export type ServerEnv = {
     pictures: PictureRoutes;
     // "Coming up" on the dashboard.
     comingUp: ComingUpRoutes;
+    // Top Merchants, ranked by Spending.
+    topMerchants: TopMerchantRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.

@@ -33,6 +33,7 @@ import { recurringRoutes } from "./recurring.ts";
 import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
 import { readSetupState } from "./setup.ts";
+import { topMerchantRoutes } from "./top-merchants.ts";
 
 // A route threw a value that is not an Error, such as a string.
 class ThrownValueError extends Error {
@@ -163,6 +164,7 @@ export function createApp(
   const pictures = pictureRoutes(database);
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);
+  const topMerchants = topMerchantRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -195,6 +197,7 @@ export function createApp(
         c.set("pictures", pictures);
         c.set("comingUp", comingUp);
         c.set("channels", channels);
+        c.set("topMerchants", topMerchants);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

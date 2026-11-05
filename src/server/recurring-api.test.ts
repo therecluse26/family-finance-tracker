@@ -65,12 +65,25 @@ describe("the Recurring charge routes", () => {
     const card = fakeAccount({ id: "acc-card", type: "credit", subtype: "credit card" });
     const streamly = (id: string, postedDate: string) =>
       fakeTxn({ id, accountId: card.id, amount: -1_549, postedDate, merchantName: "Streamly" });
+    // A phone bill paid from checking is not on a card.
+    const checking = fakeAccount({ id: "acc-checking" });
+    const brightwave = (id: string, postedDate: string) =>
+      fakeTxn({
+        id,
+        accountId: checking.id,
+        amount: -6_500,
+        postedDate,
+        merchantName: "Brightwave",
+      });
     fake.addPages(BANK, {
-      accounts: [card],
+      accounts: [card, checking],
       added: [
         streamly("s1", "2026-07-03"),
         streamly("s2", "2026-08-03"),
         streamly("s3", "2026-09-03"),
+        brightwave("b1", "2026-06-20"),
+        brightwave("b2", "2026-07-20"),
+        brightwave("b3", "2026-08-20"),
       ],
       historyLoaded: true,
     });
@@ -98,7 +111,14 @@ describe("the Recurring charge routes", () => {
     ).charges;
 
   it("lists the Recurring charges a history load found", async () => {
+    // By next expected date.
     expect(await list()).toEqual([
+      expect.objectContaining({
+        merchantName: "Brightwave",
+        nextExpectedDate: "2026-09-20",
+        latestAmount: 6_500,
+        onCard: false,
+      }),
       {
         id: expect.any(String),
         merchantName: "Streamly",
@@ -112,6 +132,7 @@ describe("the Recurring charge routes", () => {
           { date: "2026-09-03", amount: 1_549 },
         ],
         accountId: expect.any(String),
+        onCard: true,
         // Its status depends on today.
         status: expect.stringMatching(/^(active|inactive)$/),
       },
@@ -123,8 +144,13 @@ describe("the Recurring charge routes", () => {
 
     const res = await browser.send("POST", `/api/recurring-charges/${charge?.id}/end`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ charge: { id: charge?.id, status: "ended" } });
-    expect((await list()).map((each) => each.status)).toEqual(["ended"]);
+    expect(await res.json()).toMatchObject({
+      charge: { id: charge?.id, status: "ended", onCard: false },
+    });
+    expect((await list()).map((each) => each.status)).toEqual([
+      "ended",
+      expect.stringMatching(/^(active|inactive)$/),
+    ]);
 
     expect((await browser.send("POST", "/api/recurring-charges/no-such-id/end")).status).toBe(404);
   });

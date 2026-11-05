@@ -15,6 +15,8 @@ export type RecurringChargeView = {
   priceHistory: { date: string; amount: number }[];
   // The Account its last Transaction landed on.
   accountId: string;
+  // True when that Account is a credit card: the page shows "on card".
+  onCard: boolean;
   status: "active" | "inactive" | "ended";
 };
 

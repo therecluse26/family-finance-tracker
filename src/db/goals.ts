@@ -90,14 +90,22 @@ const purchaseDate = (table: typeof transactions) =>
   sql<string>`coalesce(${table.authorizedDate}, ${table.postedDate})`;
 
 // The Spending, Refund and Reimbursement parts of shown, posted Transactions whose purchase date is
-// `from` or later, each with its purchase date and Merchant. A linked Refund or Reimbursement
-// carries its Spending's date and Merchant, as the totals count it. Amounts have the Transaction
-// sign: Spending is negative.
+// `from` or later, each with its Transaction, type, Category, purchase date and Merchant. A linked
+// Refund or Reimbursement carries its Spending's date and Merchant, as the totals count it. Amounts
+// have the Transaction sign: Spending is negative.
 export async function listSpendingPartsSince(
   database: Database,
   from: string,
 ): Promise<
-  { amount: number; date: string; merchantId: string | null; merchantName: string | null }[]
+  {
+    transactionId: string;
+    type: (typeof transactionParts.$inferSelect)["type"];
+    category: string | null;
+    amount: number;
+    date: string;
+    merchantId: string | null;
+    merchantName: string | null;
+  }[]
 > {
   const spent = aliasedTable(transactions, "spent");
   const linked = sql`${spent.id} IS NOT NULL`;
@@ -106,6 +114,9 @@ export async function listSpendingPartsSince(
   const date = either<string>(purchaseDate(spent), purchaseDate(transactions));
   return database
     .select({
+      transactionId: transactions.id,
+      type: transactionParts.type,
+      category: transactionParts.category,
       amount: transactionParts.amount,
       date,
       merchantId: either<string | null>(spent.merchantId, transactions.merchantId),

@@ -1,4 +1,4 @@
-import type { Database } from "../db/index.ts";
+import { type Database, listAccounts } from "../db/index.ts";
 import {
   endCharge,
   paydays,
@@ -12,7 +12,14 @@ import type { RecurringChargeView, RecurringRoutes, SteadyIncomeView } from "./r
 
 // The Recurring charge, Steady Income, and payday routes, through the recurring module.
 export function recurringRoutes(database: Database): RecurringRoutes {
-  const view = (charge: RecurringCharge): RecurringChargeView => ({
+  // The credit cards, for "on card" (spec 07, Recurring charges page).
+  const cardIds = async () =>
+    new Set(
+      (await listAccounts(database))
+        .filter((account) => account.kind === "credit")
+        .map((account) => account.id),
+    );
+  const view = (charge: RecurringCharge, cards: ReadonlySet<string>): RecurringChargeView => ({
     id: charge.id,
     merchantName: charge.merchant.name,
     category: charge.category,
@@ -21,6 +28,7 @@ export function recurringRoutes(database: Database): RecurringRoutes {
     latestAmount: charge.latestAmount,
     priceHistory: charge.priceHistory.map(({ date, amount }) => ({ date, amount })),
     accountId: charge.accountId,
+    onCard: cards.has(charge.accountId),
     status: charge.status,
   });
   const incomeView = (income: SteadyIncome): SteadyIncomeView => ({
@@ -32,12 +40,13 @@ export function recurringRoutes(database: Database): RecurringRoutes {
 
   return {
     async list() {
-      return (await recurringCharges(database)).map(view);
+      const [charges, cards] = await Promise.all([recurringCharges(database), cardIds()]);
+      return charges.map((charge) => view(charge, cards));
     },
 
     async end(id, memberId) {
       const ended = await endCharge(database, id, memberId);
-      return ended === undefined ? undefined : view(ended);
+      return ended === undefined ? undefined : view(ended, await cardIds());
     },
 
     async steadyIncome() {

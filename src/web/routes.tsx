@@ -1,11 +1,13 @@
 import type { RouteObject } from "react-router";
 import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { Accounts } from "./pages/Accounts.tsx";
+import { AlertList } from "./pages/AlertList.tsx";
 import { Budgets } from "./pages/Budgets.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { Goals } from "./pages/Goals.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
+import { RecurringCharges } from "./pages/RecurringCharges.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
@@ -20,6 +22,7 @@ import { DataSources } from "./pages/settings/DataSources.tsx";
 import { Household } from "./pages/settings/Household.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
+import { TopMerchants } from "./pages/TopMerchants.tsx";
 import { TransactionDetail } from "./pages/TransactionDetail.tsx";
 import { Transactions } from "./pages/Transactions.tsx";
 import { Shell } from "./Shell.tsx";
@@ -48,9 +51,12 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
 
 const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/accounts": Accounts,
+  "/alert-list": AlertList,
   "/budgets": Budgets,
   "/goals": Goals,
+  "/recurring-charges": RecurringCharges,
   "/review-list": ReviewList,
+  "/top-merchants": TopMerchants,
   "/transactions": Transactions,
 };
 
