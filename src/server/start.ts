@@ -1,5 +1,5 @@
 import { aiCost, aiSettings, FOLLOW_UP_AI_USES, householdAi, startAiRetries } from "../ai/index.ts";
-import { startAnomalyChecks } from "../anomalies/index.ts";
+import { startAnomalyChecks, startOverspendingChecks } from "../anomalies/index.ts";
 import { createAuth } from "../auth/index.ts";
 import {
   type BankDataAdapter,
@@ -79,11 +79,13 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const recurring = startRecurringCharges({ database });
     const anomalies = startAnomalyChecks({ database });
     const budgets = startBudgets({ database });
+    const overspending = startOverspendingChecks({ database });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {
       updateCheck.stop();
       cpiFetch.stop();
+      overspending.stop();
       budgets.stop();
       anomalies.stop();
       recurring.stop();

@@ -22,6 +22,9 @@ export const FOLLOW_UP_STEPS = [
   // This month's Bills Budgets, which follow the Recurring charges and loan payments the checks
   // found, before the Alerts read them (spec 05, Bills group).
   "Bills Budgets",
+  // Over Budget, On pace, and card interest or fees, against the Bills Budgets just set (spec 06,
+  // Overspending Alerts).
+  "overspending checks",
   "alerts",
   "insight card check",
 ] as const;

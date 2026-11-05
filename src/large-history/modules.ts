@@ -5,7 +5,7 @@ import {
   householdAi,
   startAiRetries,
 } from "../ai/index.ts";
-import { startAnomalyChecks } from "../anomalies/index.ts";
+import { startAnomalyChecks, startOverspendingChecks } from "../anomalies/index.ts";
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
@@ -137,6 +137,16 @@ export const APP_MODULES: readonly AppModule[] = [
     step: {
       name: "Bills Budgets",
       path: "Bills Budgets follow-up on the full history",
+      buildLimitMs: 10_000,
+    },
+  },
+  {
+    name: "startOverspendingChecks",
+    start: ({ database }) => startOverspendingChecks({ database, now: HISTORY_NOW }),
+    // Before the first draft, the step checks nothing: the Overspending case times it after one.
+    step: {
+      name: "overspending checks",
+      path: "Overspending checks on the full history",
       buildLimitMs: 10_000,
     },
   },

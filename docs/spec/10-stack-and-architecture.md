@@ -150,8 +150,9 @@ A sync that adds, changes, or removes Transactions starts one follow-up job. A s
 3. **Recurring charge checks** ([Anomalies and Alerts](06-anomalies-and-alerts.md#recurring-charges)).
 4. **Anomaly checks,** which read the Recurring charges step 3 found ([Anomalies and Alerts](06-anomalies-and-alerts.md#anomalies)).
 5. **Bills Budgets:** this month's Bills Budgets again, as early bills and loan interest post ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#bills-group-housing-utilities-phone-and-internet-insurance-taxes-and-government)).
-6. **Alerts** ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
-7. **The once-a-day Insight card check** ([AI](08-ai.md)).
+6. **Overspending checks,** which read the Bills Budgets step 5 set ([Anomalies and Alerts](06-anomalies-and-alerts.md#overspending-alerts)).
+7. **Alerts** ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
+8. **The once-a-day Insight card check** ([AI](08-ai.md)).
 
 Rules:
 

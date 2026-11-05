@@ -126,7 +126,7 @@ The projection gives a Category's month-end Spending. The dashboard's pace line 
 | **Card interest or fee** | Any card interest or any fee posts: a Transaction in Interest and fees that is not loan interest | Once per Transaction | "Card interest: {amount} on {Account} on {date}." or "Fee: {amount} at {Merchant} on {Account} on {date}." | Always, outside the weekly cap |
 
 - **Current period only:** Overspending Alerts fire only for the current month. A yearly Budget's Alert fires only for the current year. A late post that pushes a past month over sends nothing.
-- **Bills price rise:** a Bills Category sends no Over Budget or On pace Alert when Price increases explain the overage. The test: take this month's Spending. Subtract each increased Transaction's rise over its base price. If the result is within the Budget, only the Price increase Alert goes out.
+- **Bills price rise:** a Bills Category sends no Over Budget or On pace Alert when Price increases explain the overage. The test: take this month's Spending. Subtract each increased Transaction's rise over its base price. If the result is within the Budget, only the Price increase Alert goes out. Price increases explain an Alert only when the same Alert would not fire without the rise: for On pace, P less the rise is under 20% over the Budget.
 - **Interest and fees** sends no Over Budget or On pace Alert. The Card interest or fee Alert covers it. Loan interest never fires an Alert.
 - **Card interest or fee** says "Card interest" for interest on a credit card. It says "Fee" for anything else.
 - **Yearly Budgets** never send On pace. A pace guess misfires on one big trip.

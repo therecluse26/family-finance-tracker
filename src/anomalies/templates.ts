@@ -1,9 +1,9 @@
 import { LARGE_PURCHASE_SHARE } from "../budgets/index.ts";
 import { dateLabel, dollarsAndCents, monthLabel, percent, wholeDollars } from "../format.ts";
 
-// What an Alert says (spec 06, Anomalies; What an Alert says). A template states every fact, in
-// the app's number formats (spec 07, Number formats): cents for a Transaction's amount, whole
-// dollars for Spending and Budgets. No number comes from the AI.
+// What an Alert says (spec 06, Anomalies; Overspending Alerts; What an Alert says). A template
+// states every fact, in the app's number formats (spec 07, Number formats): cents for a
+// Transaction's amount, whole dollars for Spending and Budgets. No number comes from the AI.
 
 // The Merchant, as identity knows it: the provider's Merchant ID when it has one, and the clean
 // name the Alert shows.
@@ -49,7 +49,33 @@ export type AlertFacts =
       amount: number;
       date: string;
       budget: BudgetFact | null;
+    }
+  | {
+      kind: "Over Budget";
+      budget: BudgetFact;
+      // The latest Spending in the Category in the Budget's month or year: its Spending in the
+      // Category, its Merchant, or null with none, and its date.
+      latest: { merchant: MerchantFact | null; amount: number; date: string };
+    }
+  | {
+      kind: "On pace";
+      budget: BudgetFact;
+      // P, the projected month-end Spending, in whole cents.
+      projected: number;
+    }
+  | {
+      kind: "Card interest or fee";
+      // True for interest on a credit card; false for any fee.
+      cardInterest: boolean;
+      merchant: MerchantFact | null;
+      account: string;
+      amount: number;
+      date: string;
     };
+
+// " at {Merchant}", or nothing for a Transaction with no Merchant, such as a bank's own fee.
+const atMerchant = (merchant: MerchantFact | null) =>
+  merchant === null ? "" : ` at ${merchant.name}`;
 
 // The template's text, on the Household's date `today`.
 export function alertText(facts: AlertFacts, today: string): string {
@@ -74,6 +100,26 @@ export function alertText(facts: AlertFacts, today: string): string {
       if (budget === null) return text;
       const span = budget.period === "yearly" ? budget.span : monthLabel(`${budget.span}-01`);
       return `${text} ${budget.category}: ${wholeDollars(budget.spent)} of its ${wholeDollars(budget.budget)} Budget for ${span}.`;
+    }
+    case "Over Budget": {
+      const { budget, latest } = facts;
+      const spent = `${wholeDollars(budget.spent)} of ${wholeDollars(budget.budget)}`;
+      const head =
+        budget.period === "yearly"
+          ? `${budget.category} is over its ${budget.span} Budget: ${spent}.`
+          : `${budget.category} is over Budget for ${monthLabel(`${budget.span}-01`)}: ${spent}.`;
+      return `${head} Latest: ${money(latest.amount)}${atMerchant(latest.merchant)} on ${day(latest.date)}.`;
+    }
+    case "On pace": {
+      const { budget, projected } = facts;
+      const over = percent((projected - budget.budget) / budget.budget);
+      return `${budget.category} is on pace for ${wholeDollars(projected)} in ${monthLabel(`${budget.span}-01`)}, ${over} over its ${wholeDollars(budget.budget)} Budget. Spent so far: ${wholeDollars(budget.spent)}.`;
+    }
+    case "Card interest or fee": {
+      if (facts.cardInterest) {
+        return `Card interest: ${money(facts.amount)} on ${facts.account} on ${day(facts.date)}.`;
+      }
+      return `Fee: ${money(facts.amount)}${atMerchant(facts.merchant)} on ${facts.account} on ${day(facts.date)}.`;
     }
   }
 }

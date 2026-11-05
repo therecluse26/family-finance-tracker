@@ -5,7 +5,14 @@
 // and dates are YYYY-MM-DD.
 export type AlertView = {
   id: string;
-  kind: "Duplicate charge" | "Price increase" | "New Recurring charge" | "Large purchase";
+  kind:
+    | "Duplicate charge"
+    | "Price increase"
+    | "New Recurring charge"
+    | "Large purchase"
+    | "Over Budget"
+    | "On pace"
+    | "Card interest or fee";
   // When it was created, as ISO 8601 text in UTC.
   createdAt: string;
   // The template's text, and the facts it states.

@@ -1,6 +1,26 @@
-import { and, asc, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  exists,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { alertPresses, alerts, alertTransactions, anomalyChecks } from "./schema.ts";
+import {
+  alertPresses,
+  alerts,
+  alertTransactions,
+  anomalyChecks,
+  overspendingChecks,
+  transactionParts,
+  transactions,
+} from "./schema.ts";
 
 // Alerts in app.db (spec 06, The Alert list). The anomalies module decides; these functions store
 // and read.
@@ -115,35 +135,137 @@ export async function listAlerts(database: Database): Promise<StoredAlert[]> {
   }));
 }
 
-const ANOMALY_CHECKS_ROW = 1;
+// The Alerts of these kinds that are about a Category, with their facts, oldest first.
+export async function listCategoryAlerts(
+  database: Database,
+  kinds: readonly AlertKind[],
+): Promise<{ kind: AlertKind; category: string; facts: Record<string, unknown> }[]> {
+  const rows = await database
+    .select({ kind: alerts.kind, category: alerts.category, facts: alerts.facts })
+    .from(alerts)
+    .where(and(inArray(alerts.kind, [...kinds]), isNotNull(alerts.category)))
+    .orderBy(asc(alerts.createdAt), asc(alerts.id));
+  return rows.flatMap(({ category, ...row }) => (category === null ? [] : [{ ...row, category }]));
+}
+
+// One posted Spending part in a Category, with its Transaction's dates, Account, Merchant, and
+// provider code.
+export type CategoryPart = {
+  transactionId: string;
+  postedDate: string;
+  authorizedDate: string | null;
+  accountId: string;
+  merchantId: string | null;
+  merchantCleanName: string | null;
+  providerCategory: string | null;
+  // Negative: Spending is money out.
+  amount: number;
+  // True for a part of a tracked loan payment.
+  keepsCategory: boolean;
+};
+
+// The posted Spending parts in `category`: those of these Transactions, or those whose purchase
+// date, else posted date, is on or after `since` (YYYY-MM-DD). Pending and hidden Transactions are
+// left out.
+export async function listSpendingPartsIn(
+  database: Database,
+  category: string,
+  filter: { transactionIds: readonly string[] } | { since: string },
+): Promise<CategoryPart[]> {
+  const read = (which: SQL | undefined) =>
+    database
+      .select({
+        transactionId: transactions.id,
+        postedDate: transactions.postedDate,
+        authorizedDate: transactions.authorizedDate,
+        accountId: transactions.accountId,
+        merchantId: transactions.merchantId,
+        merchantCleanName: transactions.merchantCleanName,
+        providerCategory: transactions.providerCategory,
+        amount: transactionParts.amount,
+        keepsCategory: transactionParts.keepsCategory,
+      })
+      .from(transactionParts)
+      .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))
+      .where(
+        and(
+          which,
+          eq(transactionParts.type, "Spending"),
+          eq(transactionParts.category, category),
+          eq(transactions.pending, false),
+          isNull(transactions.hiddenReason),
+        ),
+      )
+      .orderBy(asc(transactions.id), asc(transactionParts.part));
+  if ("since" in filter) {
+    return read(
+      gte(sql`coalesce(${transactions.authorizedDate}, ${transactions.postedDate})`, filter.since),
+    );
+  }
+  const found: CategoryPart[] = [];
+  const ids = filter.transactionIds;
+  for (let start = 0; start < ids.length; start += ROWS_PER_INSERT) {
+    found.push(
+      ...(await read(inArray(transactions.id, ids.slice(start, start + ROWS_PER_INSERT)))),
+    );
+  }
+  return found;
+}
+
+// A one-row table that counts a check's failed tries in a row.
+type FailureCount = typeof anomalyChecks | typeof overspendingChecks;
+
+const FAILURE_COUNT_ROW = 1;
+
+async function countFailure(database: Database, table: FailureCount): Promise<number> {
+  const [row] = await database
+    .insert(table)
+    .values({ id: FAILURE_COUNT_ROW, failedTries: 1 })
+    .onConflictDoUpdate({
+      target: table.id,
+      set: { failedTries: sql`${table.failedTries} + 1` },
+    })
+    .returning({ failedTries: table.failedTries });
+  return row?.failedTries ?? 1;
+}
+
+async function restartCount(database: Database, table: FailureCount): Promise<void> {
+  await database.update(table).set({ failedTries: 0 }).where(eq(table.id, FAILURE_COUNT_ROW));
+}
+
+async function clearFailures(database: Database, table: FailureCount): Promise<boolean> {
+  const cleared = await database
+    .delete(table)
+    .where(eq(table.id, FAILURE_COUNT_ROW))
+    .returning({ id: table.id });
+  return cleared.length > 0;
+}
 
 // Counts one failed run of the Anomaly checks. Returns the failed tries in a row.
-export async function countAnomalyCheckFailure(database: Database): Promise<number> {
-  const [row] = await database
-    .insert(anomalyChecks)
-    .values({ id: ANOMALY_CHECKS_ROW, failedTries: 1 })
-    .onConflictDoUpdate({
-      target: anomalyChecks.id,
-      set: { failedTries: sql`${anomalyChecks.failedTries} + 1` },
-    })
-    .returning({ failedTries: anomalyChecks.failedTries });
-  return row?.failedTries ?? 1;
+export function countAnomalyCheckFailure(database: Database): Promise<number> {
+  return countFailure(database, anomalyChecks);
 }
 
 // Starts the count of failed tries again after the run that gave up. The row stays, so the next
 // run that succeeds knows a failure came before it.
-export async function restartAnomalyCheckCount(database: Database): Promise<void> {
-  await database
-    .update(anomalyChecks)
-    .set({ failedTries: 0 })
-    .where(eq(anomalyChecks.id, ANOMALY_CHECKS_ROW));
+export function restartAnomalyCheckCount(database: Database): Promise<void> {
+  return restartCount(database, anomalyChecks);
 }
 
 // Forgets the failed tries after a run that succeeded. True when a failure came before it.
-export async function clearAnomalyCheckFailures(database: Database): Promise<boolean> {
-  const cleared = await database
-    .delete(anomalyChecks)
-    .where(eq(anomalyChecks.id, ANOMALY_CHECKS_ROW))
-    .returning({ id: anomalyChecks.id });
-  return cleared.length > 0;
+export function clearAnomalyCheckFailures(database: Database): Promise<boolean> {
+  return clearFailures(database, anomalyChecks);
+}
+
+// The same three for the Overspending checks.
+export function countOverspendingCheckFailure(database: Database): Promise<number> {
+  return countFailure(database, overspendingChecks);
+}
+
+export function restartOverspendingCheckCount(database: Database): Promise<void> {
+  return restartCount(database, overspendingChecks);
+}
+
+export function clearOverspendingCheckFailures(database: Database): Promise<boolean> {
+  return clearFailures(database, overspendingChecks);
 }

@@ -7,6 +7,12 @@ export {
   checkAnomalies,
   startAnomalyChecks,
 } from "./checks.ts";
+export {
+  checkOverspending,
+  OVERSPENDING_CHECKS_CAP,
+  OVERSPENDING_CHECKS_STOPPED,
+  startOverspendingChecks,
+} from "./overspending.ts";
 export { type PriceIncrease, priceIncreases } from "./price-increase.ts";
 export {
   type AlertFacts,

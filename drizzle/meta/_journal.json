@@ -302,6 +302,13 @@
       "when": 1793850529788,
       "tag": "0042_goals",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1793851095691,
+      "tag": "0043_overspending_checks",
+      "breakpoints": true
     }
   ]
 }

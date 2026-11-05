@@ -1150,16 +1150,25 @@ export const budgetMonthStarts = sqliteTable("budget_month_starts", {
   failedTries: integer("failed_tries").notNull().default(0),
 });
 
-// Alerts (spec 06, The Alert list). The Anomaly checks create them after each sync. Each holds its
-// kind, the template's facts and text, the Transactions or Category it is about, a slot for the
-// AI's advice, and one state. The state is null until the Alerts step decides it, except for an
-// Anomaly found in a history load, which is "found in history" at once and is never sent.
+// Alerts (spec 06, The Alert list). The Anomaly and Overspending checks create them after each
+// sync. Each holds its kind, the template's facts and text, the Transactions or Category it is
+// about, a slot for the AI's advice, and one state. The state is null until the Alerts step
+// decides it, except for an Alert found in a history load, which is "found in history" at once and
+// is never sent.
 export const alerts = sqliteTable(
   "alerts",
   {
     id: text("id").primaryKey(),
     kind: text("kind", {
-      enum: ["Duplicate charge", "Price increase", "New Recurring charge", "Large purchase"],
+      enum: [
+        "Duplicate charge",
+        "Price increase",
+        "New Recurring charge",
+        "Large purchase",
+        "Over Budget",
+        "On pace",
+        "Card interest or fee",
+      ],
     }).notNull(),
     createdAt: moment("created_at").notNull(),
     // The template's facts, as JSON: the Merchant, amounts in whole cents, and dates.
@@ -1249,4 +1258,15 @@ export const goals = sqliteTable(
     baseline: cents("baseline"),
   },
   (table) => [index("goals_status").on(table.status)],
+);
+
+// The Overspending checks' failed tries in a row, kept as for the Anomaly checks. It has at most
+// one row, whose ID is 1.
+export const overspendingChecks = sqliteTable(
+  "overspending_checks",
+  {
+    id: integer("id").primaryKey(),
+    failedTries: integer("failed_tries").notNull().default(0),
+  },
+  (table) => [check("overspending_checks_one_row", sql`${table.id} = 1`)],
 );

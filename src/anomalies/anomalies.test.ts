@@ -299,7 +299,9 @@ describe("the Anomaly checks", () => {
 
       const named = (await ofKind("Duplicate charge"))
         .filter((alert) => alert.state === null)
-        .map((alert) => [alert.facts.amount, alert.facts.merchant.name]);
+        .flatMap(({ facts }) =>
+          facts.kind === "Duplicate charge" ? [[facts.amount, facts.merchant.name]] : [],
+        );
       expect(named.sort()).toEqual(
         pairs.flatMap(([, , merchant], at) => (merchant === null ? [] : [[1_000 + at, merchant]])),
       );
@@ -587,7 +589,7 @@ describe("the Anomaly checks", () => {
       const later = async () =>
         (await ofKind("Duplicate charge"))
           .filter((alert) => alert.state === null)
-          .map((alert) => alert.facts.merchant.name);
+          .flatMap(({ facts }) => (facts.kind === "Duplicate charge" ? [facts.merchant.name] : []));
       expect(await later()).toEqual(["Corner Hardware"]);
 
       await syncConnection(connectionId, clock);
