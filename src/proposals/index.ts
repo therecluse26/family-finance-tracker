@@ -6,6 +6,7 @@ export {
   GUARDRAIL,
   MAX_PROPOSALS_PER_RUN,
   openProposals,
+  openReviewProposals,
   PROPOSAL_DAYS,
   type Proposal,
   type ProposalEdit,

@@ -90,14 +90,23 @@ export function trendBars(view: TrendPictureView): TrendBar[] {
   }));
 }
 
-// "Groceries, Apr 2026 to Oct 2026. The dashed line is the Budget."
+// "Groceries, Apr 2026 to Oct 2026. Oct 2026: $520 of a $450 Budget. The dashed line is the
+// Budget." The caption carries the picture's own month's numbers, since the bars are hidden from
+// screen readers.
 export function trendCaption(view: TrendPictureView): string {
   const first = view.months[0]?.month ?? "";
-  const last = view.months.at(-1)?.month ?? "";
-  const range = `${view.category}, ${monthLabel(`${first}-01`)} to ${monthLabel(`${last}-01`)}.`;
-  return view.months.some((each) => each.budget !== null)
-    ? `${range} The dashed line is the Budget.`
-    : `${range} No Budget yet.`;
+  const last = view.months.at(-1);
+  const lastLabel = monthLabel(`${last?.month ?? ""}-01`);
+  const range = `${view.category}, ${monthLabel(`${first}-01`)} to ${lastLabel}.`;
+  const spent = wholeDollars(last?.spending ?? 0);
+  if (!view.months.some((each) => each.budget !== null)) {
+    return `${range} ${lastLabel}: ${spent}. No Budget yet.`;
+  }
+  const month =
+    last?.budget == null
+      ? `${lastLabel}: ${spent}, no Budget.`
+      : `${lastLabel}: ${spent} of a ${wholeDollars(last.budget)} Budget.`;
+  return `${range} ${month} The dashed line is the Budget.`;
 }
 
 // --- cards and recurring ------------------------------------------------------------------------

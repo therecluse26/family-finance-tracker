@@ -9,6 +9,7 @@ import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { RecurringCharges } from "./pages/RecurringCharges.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
+import { MonthlyReviewPage, Reviews } from "./pages/Reviews.tsx";
 import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { About } from "./pages/settings/About.tsx";
@@ -56,6 +57,7 @@ const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/goals": Goals,
   "/recurring-charges": RecurringCharges,
   "/review-list": ReviewList,
+  "/reviews": Reviews,
   "/top-merchants": TopMerchants,
   "/transactions": Transactions,
 };
@@ -87,6 +89,8 @@ export const routes: RouteObject[] = [
       },
       // A Transaction's detail view, opened from the Transactions page.
       { path: "transactions/:id", Component: TransactionDetail },
+      // One month's Monthly review, opened from the Reviews page or the AI box's review link.
+      { path: "reviews/:month", Component: MonthlyReviewPage },
       {
         path: "settings",
         Component: Settings,

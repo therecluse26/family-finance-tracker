@@ -36,12 +36,26 @@ export type AiBoxProposalView = {
   proposal: ProposalView;
 };
 
+// The Monthly review's link (spec 07, 1. AI box): "Your <Month> review is ready", in "Heads up",
+// from when the review is written until a Member marks it Done or 7 days pass.
+export type AiBoxReviewLinkView = {
+  kind: "Review link";
+  // The review's month, YYYY-MM.
+  id: string;
+  // When the review was written, as ISO 8601 text in UTC.
+  createdAt: string;
+};
+
 export type AiBoxView = {
   // The notes in "Worth acting on" that are not Done, for the heading. Every open Proposal counts.
   worthActingOn: number;
   // In order: "Worth acting on", "Heads up", "Good news". An empty group is left out. Inside a
-  // group: Proposals first, then Alert notes newest first, then Insight cards in the AI's order.
-  groups: { name: AiBoxGroupName; notes: (AiBoxProposalView | AiBoxNoteView)[] }[];
+  // group: Proposals first, then Alert notes newest first, then the review link, then Insight cards
+  // in the AI's order.
+  groups: {
+    name: AiBoxGroupName;
+    notes: (AiBoxProposalView | AiBoxNoteView | AiBoxReviewLinkView)[];
+  }[];
   // True with no AI provider: the box shows "Set up AI for insights".
   setUpAi: boolean;
   // While background AI is paused: at the AI cost cap until a date written YYYY-MM-DD, or with a
@@ -54,4 +68,7 @@ export type AiBoxRoutes = {
   // Marks an Alert note Done for every Member, or clears the mark. It makes no AI call. False when
   // no Alert note in the box has the ID.
   markAlertNote(alertId: string, memberId: string, done: boolean): Promise<boolean>;
+  // Marks a review link Done for every Member, so it leaves the box, or clears the mark. It makes
+  // no AI call. False when no review link in the box has the month.
+  markReviewLink(month: string, memberId: string, done: boolean): Promise<boolean>;
 };

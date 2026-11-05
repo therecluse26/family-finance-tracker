@@ -22,6 +22,7 @@ import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
+import type { MonthlyReviewRoutes } from "./monthly-reviews-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
 import type { ProposalRoutes } from "./proposals-views.ts";
 import type { RecurringRoutes } from "./recurring-views.ts";
@@ -87,6 +88,8 @@ export type ServerEnv = {
     aiBox: AiBoxRoutes;
     // Accept, Edit, Skip, and Undo on Proposals.
     proposals: ProposalRoutes;
+    // The Reviews page: the past Monthly reviews and the plan's ticks.
+    monthlyReviews: MonthlyReviewRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.

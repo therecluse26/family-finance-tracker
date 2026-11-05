@@ -88,7 +88,9 @@ describe("the pictures", () => {
   });
 
   it("says when a trend has no Budget yet", () => {
-    expect(words(ONE_OF_EACH.trend)).toBe("Groceries, Sep 2026 to Oct 2026. No Budget yet.");
+    expect(words(ONE_OF_EACH.trend)).toBe(
+      "Groceries, Sep 2026 to Oct 2026. Oct 2026: $400. No Budget yet.",
+    );
   });
 
   it("marks where a promo ends, and leaves out an APR the bank did not send", () => {

@@ -330,6 +330,16 @@ export {
   SkippedMigrationError,
 } from "./migrate.ts";
 export {
+  listMonthlyReviews,
+  listPlanTicks,
+  listReviewLinks,
+  readMonthlyReview,
+  type StoredMonthlyReview,
+  storeMonthlyReview,
+  storePlanTick,
+  storeReviewLinkDone,
+} from "./monthly-reviews.ts";
+export {
   addNotice,
   closeEventNotice,
   endNoticeCondition,

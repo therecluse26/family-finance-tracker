@@ -168,6 +168,10 @@ const proposalEditBody = z
 
 const NO_OPEN_PROPOSAL = "No open Proposal has this ID.";
 
+// A plan item's place in a Monthly review's plan of exactly 3, as the path writes it.
+const planItem = z.enum(["0", "1", "2"]).transform(Number);
+const NO_REVIEW = "No Monthly review has this month.";
+
 // A Member's mark on a Goal (spec 05, Rules).
 const goalStatusBody = z.object({ status: z.enum(["done", "dropped"]) }).strict();
 
@@ -1190,10 +1194,13 @@ export const api = new Hono<ServerEnv>()
     if (month === undefined || !MONTH.test(month)) {
       return c.json({ error: "Write the month as YYYY-MM." }, 400);
     }
+    // Only the fields the query holds: a choice takes no field its type does not use.
+    const category = c.req.query("category");
+    const merchants = c.req.queries("merchant");
     const choice = pictureChoice.safeParse({
       type: c.req.query("type"),
-      category: c.req.query("category"),
-      merchants: c.req.queries("merchant"),
+      ...(category === undefined ? {} : { category }),
+      ...(merchants === undefined ? {} : { merchants }),
     });
     if (!choice.success) return c.json({ error: "Choose a picture from the menu." }, 400);
     return c.json({ picture: await c.var.pictures.draw(choice.data, month) });
@@ -1241,6 +1248,39 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Only an active Goal can be marked done or dropped." }, 409);
     }
     return c.json({ goal }, 200);
+  })
+  // The Reviews page (spec 07, Reviews page): the past Monthly reviews, newest first, and one
+  // month's review as it was written. Reading one makes no AI call and writes nothing.
+  .get("/monthly-reviews", async (c) => c.json(await c.var.monthlyReviews.list()))
+  .get("/monthly-reviews/:month", async (c) => {
+    const review = await c.var.monthlyReviews.view(c.req.param("month"));
+    if (review === undefined) return c.json({ error: NO_REVIEW }, 404);
+    return c.json(review, 200);
+  })
+  // A tick on a plan item, for every Member; {"done": false} clears it. Ticks are stored apart
+  // from the review, which never changes.
+  .put("/monthly-reviews/:month/plan/:item", jsonOnly, async (c) => {
+    const item = planItem.safeParse(c.req.param("item"));
+    const body = noteDoneBody.safeParse(await jsonBody(c));
+    if (!item.success || !body.success) {
+      return c.json({ error: "Tick plan item 0, 1, or 2 with done as true or false." }, 400);
+    }
+    const { done } = body.data;
+    const month = c.req.param("month");
+    if (!(await c.var.monthlyReviews.tick(month, item.data, c.var.member.id, done))) {
+      return c.json({ error: NO_REVIEW }, 404);
+    }
+    return c.json({ done }, 200);
+  })
+  // Done on the review link in the AI box marks it for every Member, and it leaves the box.
+  .put("/ai-box/review-links/:month/done", jsonOnly, async (c) => {
+    const body = noteDoneBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send done as true or false." }, 400);
+    const { done } = body.data;
+    if (!(await c.var.aiBox.markReviewLink(c.req.param("month"), c.var.member.id, done))) {
+      return c.json({ error: "No review link in the AI box has this month." }, 404);
+    }
+    return c.json({ done }, 200);
   })
   // System notices: the dashboard shows each open one as a line above its boxes (spec 07).
   .get("/notices", async (c) => c.json({ notices: await c.var.notices.open() }))

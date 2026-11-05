@@ -119,6 +119,7 @@ function TrendPicture(props: { picture: TrendPictureView }) {
       <div aria-hidden="true" className="h-20 w-full max-w-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
+            accessibilityLayer={false}
             data={trendBars(props.picture)}
             margin={{ top: 4, right: 0, bottom: 0, left: 0 }}
           >
@@ -142,7 +143,12 @@ function RowBar(props: { amount: number; most: number }) {
   return (
     <div aria-hidden="true" className="h-2 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={[{ amount: props.amount }]} layout="vertical" margin={{}}>
+        <BarChart
+          accessibilityLayer={false}
+          data={[{ amount: props.amount }]}
+          layout="vertical"
+          margin={{}}
+        >
           <XAxis type="number" hide domain={[0, Math.max(props.most, 1)]} />
           <YAxis type="category" hide />
           <Bar dataKey="amount" fill={FULL_COLOR} radius={4} isAnimationActive={false} />

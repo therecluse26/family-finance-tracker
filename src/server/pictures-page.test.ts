@@ -10,6 +10,7 @@ import { draftFirstBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { markSetupStep } from "../db/index.ts";
 import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
+import { wholeDollars } from "../format.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
 import { createLogger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -204,7 +205,9 @@ describe("the pictures on the demo household", () => {
       })),
     });
     expect(months.every((month) => spent(month) > 0)).toBe(true);
-    expect(drawn(picture)).toBe("Groceries, Apr 2026 to Oct 2026. The dashed line is the Budget.");
+    expect(drawn(picture)).toBe(
+      `Groceries, Apr 2026 to Oct 2026. Oct 2026: ${wholeDollars(spent(MONTH))} of a $530 Budget. The dashed line is the Budget.`,
+    );
   });
 
   it("draws cards: each open credit card's balance owed and APR, leaving out an Excluded card", async () => {

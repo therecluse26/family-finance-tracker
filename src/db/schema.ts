@@ -1399,6 +1399,45 @@ export const alertNotesDone = sqliteTable("alert_notes_done", {
   doneAt: moment("done_at").notNull(),
 });
 
+// Each Monthly review (spec 08, Monthly review), written on the 1st for the month just ended. It
+// never changes once written: the row holds the AI's words and the app's figures as they were
+// that day, as the monthly-review module's StoredReview.
+export const monthlyReviews = sqliteTable("monthly_reviews", {
+  // The month it is about, written YYYY-MM.
+  month: text("month").primaryKey(),
+  writtenAt: moment("written_at").notNull(),
+  review: text("review", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+});
+
+// The plan's ticks (spec 07, Reviews page): one row per ticked plan item, for every Member, with
+// who ticked it and when. They are stored apart from the review, so the review never changes.
+export const reviewPlanTicks = sqliteTable(
+  "review_plan_ticks",
+  {
+    month: text("month")
+      .notNull()
+      .references(() => monthlyReviews.month, { onDelete: "cascade" }),
+    // The plan item's place in the plan: 0, 1, or 2.
+    item: integer("item").notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    tickedAt: moment("ticked_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.month, table.item] }),
+    check("review_plan_ticks_item", sql`${table.item} BETWEEN 0 AND 2`),
+  ],
+);
+
+// The review links marked Done in the dashboard's AI box (spec 07, 1. AI box): one row per
+// review, for every Member, with who marked it and when.
+export const reviewLinksDone = sqliteTable("review_links_done", {
+  month: text("month")
+    .primaryKey()
+    .references(() => monthlyReviews.month, { onDelete: "cascade" }),
+  memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+  doneAt: moment("done_at").notNull(),
+});
+
 // The Anomaly checks' failed tries in a row. A run that fails counts one; the run that reaches the
 // cap gives up on its Transactions and raises one System notice. It has at most one row, whose ID
 // is 1.

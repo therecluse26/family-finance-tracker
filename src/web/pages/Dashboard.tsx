@@ -12,7 +12,12 @@ import {
   YAxis,
 } from "recharts";
 import { STATUS_ICON, wholeDollars } from "../../format.ts";
-import type { AiBoxGroupName, AiBoxNoteView, AiBoxView } from "../../server/ai-box-views.ts";
+import type {
+  AiBoxGroupName,
+  AiBoxNoteView,
+  AiBoxReviewLinkView,
+  AiBoxView,
+} from "../../server/ai-box-views.ts";
 import type { NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
 import type { ComingUpView } from "../../server/coming-up-views.ts";
@@ -61,6 +66,7 @@ import {
   yearlyLine,
 } from "../dashboard.ts";
 import { AI_SETTINGS, activeGoals, type GoalsAnswer, onTrackLine } from "../goals.ts";
+import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
 import { GoalCard, NeedsAiLink } from "./Goals.tsx";
@@ -744,6 +750,23 @@ function AiNote(props: {
   );
 }
 
+// The Monthly review's link (spec 07, 1. AI box): "Your <Month> review is ready", linking to the
+// review. Done marks it for every Member, and it leaves the box.
+function ReviewLinkNote(props: { note: AiBoxReviewLinkView; busy: boolean; onDone: () => void }) {
+  return (
+    <li className="rounded border border-gray-100 p-2 wrap-anywhere" data-slot="review-link">
+      <Link className="font-medium text-blue-700 underline" to={`/reviews/${props.note.id}`}>
+        {reviewLinkTitle(props.note.id)}
+      </Link>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" className={NOTE_BUTTON} disabled={props.busy} onClick={props.onDone}>
+          Done
+        </button>
+      </div>
+    </li>
+  );
+}
+
 // The AI box, "This week" (spec 07, 1. AI box): the heading counts the notes worth acting on that
 // are not Done; then each group that has notes, in order, with its count. Nothing hides behind
 // "Show all". With no AI provider, one more note links to the AI settings.
@@ -762,6 +785,14 @@ export function AiBox(props: {
   async function done(id: string, mark: boolean) {
     setBusy(id);
     const failed = await markAlertNoteDone(id, mark);
+    setBusy(undefined);
+    setError(failed);
+    if (failed === undefined) props.onChanged();
+  }
+
+  async function reviewLinkDone(month: string) {
+    setBusy(month);
+    const failed = await markReviewLinkDone(month, true);
     setBusy(undefined);
     setError(failed);
     if (failed === undefined) props.onChanged();
@@ -797,6 +828,13 @@ export function AiBox(props: {
                     key={note.id}
                     proposal={note.proposal}
                     onChanged={props.onChanged}
+                  />
+                ) : note.kind === "Review link" ? (
+                  <ReviewLinkNote
+                    key={note.id}
+                    note={note}
+                    busy={busy === note.id}
+                    onDone={() => void reviewLinkDone(note.id)}
                   />
                 ) : (
                   <AiNote

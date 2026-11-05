@@ -305,6 +305,27 @@ export async function openProposals(database: Database, now = new Date()): Promi
   return (await cardsOf(database, await listOpenProposals(database), month)).reverse();
 }
 
+// The open Proposals a Monthly review shows under "Budget changes to consider" (spec 07, Reviews
+// page; spec 08, Review fields), newest first: those the review's own run made, whose run ID is
+// the review's month, and those still open when it was written. It writes nothing, so opening a
+// review changes nothing: one past its 60 days is left out, and closes at the next read that
+// saves.
+export async function openReviewProposals(
+  database: Database,
+  review: { month: string; writtenAt: Date },
+  now = new Date(),
+): Promise<Proposal[]> {
+  const due = now.getTime() - PROPOSAL_DAYS * DAY_MS;
+  const rows = (await listOpenProposals(database)).filter(
+    (row) =>
+      row.createdAt.getTime() > due &&
+      (row.createdAt <= review.writtenAt ||
+        (row.source === "Monthly review" && row.runId === review.month)),
+  );
+  const month = (await householdDay(database, now)).slice(0, 7);
+  return (await cardsOf(database, rows, month)).reverse();
+}
+
 // The accepted Proposals whose Undo is still offered, newest first.
 export async function undoableProposals(database: Database, now = new Date()): Promise<Proposal[]> {
   const month = (await householdDay(database, now)).slice(0, 7);

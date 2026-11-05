@@ -3,7 +3,12 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { compile } from "tailwindcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AiBoxNoteView, AiBoxProposalView, AiBoxView } from "../../server/ai-box-views.ts";
+import type {
+  AiBoxNoteView,
+  AiBoxProposalView,
+  AiBoxReviewLinkView,
+  AiBoxView,
+} from "../../server/ai-box-views.ts";
 import type { ConnectionView, NumberTilesView } from "../../server/bank-views.ts";
 import type {
   BudgetStatusView,
@@ -1211,6 +1216,28 @@ describe('the AI box, "This week"', () => {
       "Proposal Restaurants Budget: $600 → $480 Takeout has been steady, so a lower Budget fits. AI Accept Edit Skip Ask about this",
     );
     expect(items[0]).not.toContain("Done");
+  });
+
+  it('links to the Monthly review in Heads up, "Your October review is ready", with Done and no "Ask about this"', () => {
+    const link: AiBoxReviewLinkView = {
+      kind: "Review link",
+      id: "2026-10",
+      createdAt: "2026-11-01T14:00:00.000Z",
+    };
+    const [worth, headsUp] = AI_BOX.groups;
+    const html = box({
+      groups: [
+        ...(worth === undefined ? [] : [worth]),
+        { name: "Heads up", notes: [...(headsUp?.notes ?? []), link] },
+      ],
+    });
+
+    const items = listItems(html, "Heads up");
+    expect(items).toHaveLength(2);
+    expect(items[1]).toBe("Your October review is ready Done");
+    expect(slotHtml(html, "review-link")).toContain('href="/reviews/2026-10"');
+    // The link counts in no "worth acting on" heading.
+    expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
   });
 
   it("shows Good news last", () => {

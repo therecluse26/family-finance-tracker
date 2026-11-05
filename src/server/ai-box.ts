@@ -1,18 +1,21 @@
 import type { AiSettings } from "../ai/index.ts";
 import { alertNotes, markAlertNote } from "../anomalies/index.ts";
 import type { Database } from "../db/index.ts";
+import { markReviewLink, reviewLinks } from "../monthly-review/index.ts";
 import { openProposals } from "../proposals/index.ts";
 import type {
   AiBoxGroupName,
   AiBoxNoteView,
   AiBoxProposalView,
+  AiBoxReviewLinkView,
   AiBoxRoutes,
   AiBoxView,
 } from "./ai-box-views.ts";
 import { proposalView } from "./proposals.ts";
 
 // The dashboard's AI box, "This week" (spec 07, 1. AI box): every current note, in three groups.
-// Open Proposals come from the proposals module, and Alert notes from the anomalies module; the AI
+// Open Proposals come from the proposals module, Alert notes from the anomalies module, and the
+// Monthly review's link from the monthly-review module; the AI
 // provider's status gives the "Set up AI for insights" note and the paused line.
 
 const GROUPS: AiBoxGroupName[] = ["Worth acting on", "Heads up", "Good news"];
@@ -57,10 +60,17 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
         nextStep: note.nextStep,
         done: note.done,
       }));
+      // The review link is a Heads up note.
+      const links: AiBoxReviewLinkView[] = (await reviewLinks(database, now)).map((link) => ({
+        kind: "Review link",
+        id: link.month,
+        createdAt: link.writtenAt.toISOString(),
+      }));
       const groups = GROUPS.flatMap((name) => {
         const inGroup = [
           ...(name === "Worth acting on" ? proposals : []),
           ...notes.filter((note) => note.group === name).map(({ group, ...note }) => note),
+          ...(name === "Heads up" ? links : []),
         ];
         return inGroup.length === 0 ? [] : [{ name, notes: inGroup }];
       });
@@ -75,6 +85,10 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
 
     markAlertNote(alertId, memberId, done) {
       return markAlertNote(database, { alertId, memberId, done }, new Date());
+    },
+
+    markReviewLink(month, memberId, done) {
+      return markReviewLink(database, { month, memberId, done }, new Date());
     },
   };
 }
