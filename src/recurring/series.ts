@@ -37,11 +37,13 @@ export type Series<S extends SeriesSchedule = Schedule> = {
   status: Exclude<Status, "ended">;
 };
 
-// How a series is found: the band its amounts stay within, in tenths of a percent, and the new
-// series that ends at a Transaction, from the earlier ones that belong to no series.
+// How a series is found: the band its amounts stay within, in tenths of a percent, the new series
+// that ends at a Transaction, from the earlier ones that belong to no series, and whether a
+// frequent shop finds none.
 export type SeriesRule<S extends SeriesSchedule> = {
   band: number;
   newSeries(txn: SeriesTxn, free: readonly SeriesTxn[]): Series<S> | undefined;
+  skipsFrequentShops: boolean;
 };
 
 // Amounts within `percent` of each other: the largest is at most the smallest × (1 + percent).
@@ -53,6 +55,11 @@ function withinPercent(amounts: readonly number[], tenthsOfPercent: number): boo
 }
 const BAND = 75;
 const WIDE_BAND = 150;
+
+// A frequent shop (spec 06, Finding a series): 3 or more other Transactions at the Merchant from 60
+// days before to 60 days after a new series' first Transaction, at any amount.
+const FREQUENT_COUNT = 3;
+const FREQUENT_DAYS = 60;
 
 // The fewest Transactions a new series needs.
 const FEWEST = { weekly: 3, "every 2 weeks": 3, monthly: 3, yearly: 2 } as const;
@@ -149,9 +156,10 @@ function daysOff(schedule: SeriesSchedule, chain: readonly SeriesTxn[]): number 
 
 // A Recurring charge (spec 06, Finding a series): weekly, every 2 weeks, and monthly need 3
 // Transactions within 7.5% of each other; yearly needs 2, within 15%. Shorter schedules are tried
-// first.
+// first. A frequent shop never forms one.
 export const RECURRING_CHARGE_RULE: SeriesRule<Schedule> = {
   band: BAND,
+  skipsFrequentShops: true,
   newSeries(txn, free) {
     for (const schedule of ["weekly", "every 2 weeks", "monthly", "yearly"] as const) {
       const chain = chainEndingAt(txn, free, schedule, schedule === "yearly" ? WIDE_BAND : BAND);
@@ -256,6 +264,7 @@ function twiceAMonthEndingAt(
 // every 2 weeks, the one tried first.
 export const INCOME_RULE: SeriesRule<SeriesSchedule> = {
   band: WIDE_BAND,
+  skipsFrequentShops: false,
   newSeries(txn, free) {
     const weekly = chainEndingAt(txn, free, "weekly", WIDE_BAND);
     if (weekly.length >= FEWEST.weekly)
@@ -279,6 +288,110 @@ export const INCOME_RULE: SeriesRule<SeriesSchedule> = {
   },
 };
 
+// The first index in `ordered`, which is in date order, dated on or after `date`.
+function firstOnOrAfter(ordered: readonly SeriesTxn[], date: string): number {
+  let low = 0;
+  let high = ordered.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((ordered[middle]?.date ?? "") < date) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+// The later Transactions in `ordered` that `found` would continue with, through `through`, as the
+// replay continues a series: each lands in the window of the one before, the one nearest the latest
+// amount, at any amount. Those in `taken` belong to another series.
+function continuing(
+  found: Series<SeriesSchedule>,
+  ordered: readonly SeriesTxn[],
+  taken: ReadonlySet<string>,
+  through: string,
+): Set<SeriesTxn> {
+  const joined = new Set<SeriesTxn>();
+  for (let latest = last(found); ; ) {
+    const range = window(found.schedule, latest.date);
+    if (range.from > through) return joined;
+    const candidates: SeriesTxn[] = [];
+    for (let at = firstOnOrAfter(ordered, range.from); at < ordered.length; at += 1) {
+      const later = ordered[at];
+      if (later === undefined || later.date > range.to) break;
+      if (isBefore(latest, later) && !taken.has(later.id) && !found.txns.includes(later)) {
+        candidates.push(later);
+      }
+    }
+    const pick = nearest(candidates, latest.amount);
+    if (pick === undefined || pick.date > through) return joined;
+    joined.add(pick);
+    latest = pick;
+  }
+}
+
+// Days on each side of the frequent-shop window that the check for another subscription also
+// reads: enough for a monthly chain of 3 that has a Transaction in the window.
+const CHAIN_DAYS = 70;
+
+// Each Transaction's series when the Merchant is replayed without the frequent-shop check.
+type ChainOf = ReadonlyMap<SeriesTxn, readonly SeriesTxn[]>;
+
+// Whether `found` is at a frequent shop: 3 or more of the Merchant's Transactions fall from 60 days
+// before to 60 days after its first Transaction, outside the series. The series is its Transactions
+// and the later ones it would continue with. Looking after the first Transaction too means a
+// shop's series cannot form at the start of a history, where nothing comes before.
+//
+// Another subscription at the Merchant is not a visit, so one Merchant can still have two Recurring
+// charges: the Transactions of another series the replay found are left out, and so are those of a
+// series the rule finds without this check (`chains`) that has 2 or more Transactions from 70 days
+// before the window to 70 days after it, at a steady amount. A shop's chance chains continue at any
+// amount, or show one Transaction there (a yearly chain), so they still count. Two series at one amount never run at once (replayMerchant), so a daily coffee at one price
+// still counts. `ordered` is in date order.
+function atFrequentShop<S extends SeriesSchedule>(
+  ordered: readonly SeriesTxn[],
+  found: Series<S>,
+  taken: ReadonlySet<string>,
+  rule: SeriesRule<S>,
+  chains: () => ChainOf,
+): boolean {
+  const first = found.txns[0];
+  if (first === undefined) return false;
+  const from = addDays(first.date, -FREQUENT_DAYS);
+  const to = addDays(first.date, FREQUENT_DAYS);
+  const inSeries = new Set([...found.txns, ...continuing(found, ordered, taken, to)]);
+  const visits: SeriesTxn[] = [];
+  for (let at = firstOnOrAfter(ordered, from); at < ordered.length; at += 1) {
+    const each = ordered[at];
+    if (each === undefined || each.date > to) break;
+    if (!inSeries.has(each) && !taken.has(each.id)) visits.push(each);
+  }
+  if (visits.length < FREQUENT_COUNT) return false;
+
+  const chainOf = chains();
+  const earliest = addDays(from, -CHAIN_DAYS);
+  const latest = addDays(to, CHAIN_DAYS);
+  const steady = new Map<readonly SeriesTxn[], boolean>();
+  const isSteady = (chain: readonly SeriesTxn[]) => {
+    const known = steady.get(chain);
+    if (known !== undefined) return known;
+    const amounts: number[] = [];
+    for (let at = firstOnOrAfter(chain, earliest); at < chain.length; at += 1) {
+      const each = chain[at];
+      if (each === undefined || each.date > latest) break;
+      amounts.push(each.amount);
+    }
+    const result = amounts.length >= 2 && withinPercent(amounts, rule.band);
+    steady.set(chain, result);
+    return result;
+  };
+  let others = 0;
+  for (const each of visits) {
+    const chain = chainOf.get(each);
+    if (chain === undefined || !isSteady(chain)) others += 1;
+    if (others >= FREQUENT_COUNT) return true;
+  }
+  return false;
+}
+
 // Replays one Merchant's posted Transactions, oldest first, and returns its series as of `today`.
 // Transactions in `claimed` belong to a Recurring charge a Member marked ended: they are left out,
 // so later Transactions start a new series.
@@ -290,7 +403,9 @@ export const INCOME_RULE: SeriesRule<SeriesSchedule> = {
 //   within the margin of the last date plus a whole number of intervals.
 // - A Transaction that does none of these may end a new series. One Merchant may have more than one
 //   series at different amounts, so no new series starts within the band of an active one's latest
-//   amount.
+//   amount. Under the Recurring charge rule, no new series starts at a frequent shop: 3 or more
+//   other Transactions at the Merchant from 60 days before to 60 days after its first Transaction,
+//   at any amount (atFrequentShop).
 export function replayMerchant<S extends SeriesSchedule>(
   txns: readonly SeriesTxn[],
   claimed: ReadonlySet<string>,
@@ -303,6 +418,18 @@ export function replayMerchant<S extends SeriesSchedule>(
   const series: Series<S>[] = [];
   const taken = new Set<string>();
   const free: SeriesTxn[] = [];
+  // Replayed once, and only when a frequent-shop check needs it.
+  let chainOf: Map<SeriesTxn, readonly SeriesTxn[]> | undefined;
+  const chains = () => {
+    if (chainOf === undefined) {
+      chainOf = new Map();
+      const plain = { ...rule, skipsFrequentShops: false };
+      for (const each of replayMerchant(ordered, new Set(), today, plain)) {
+        for (const txn of each.txns) chainOf.set(txn, each.txns);
+      }
+    }
+    return chainOf;
+  };
   const goInactive = (date: string) => {
     for (const each of series) {
       if (each.status === "active" && date > lastActiveDay(each.schedule, last(each).date)) {
@@ -329,8 +456,9 @@ export function replayMerchant<S extends SeriesSchedule>(
     for (const each of fitting) {
       const range = window(each.schedule, last(each).date);
       const candidates: SeriesTxn[] = [];
-      for (const later of ordered.slice(index)) {
-        if (later.date > range.to) break;
+      for (let at = index; at < ordered.length; at += 1) {
+        const later = ordered[at];
+        if (later === undefined || later.date > range.to) break;
         if (!taken.has(later.id) && inWindow(range, later.date)) candidates.push(later);
       }
       const pick = nearest(candidates, last(each).amount);
@@ -367,7 +495,10 @@ export function replayMerchant<S extends SeriesSchedule>(
         each.status === "active" && withinPercent([txn.amount, last(each).amount], rule.band),
     );
     const found = nearActive ? undefined : rule.newSeries(txn, free);
-    if (found !== undefined) {
+    if (
+      found !== undefined &&
+      !(rule.skipsFrequentShops && atFrequentShop(ordered, found, taken, rule, chains))
+    ) {
       series.push(found);
       for (const each of found.txns) taken.add(each.id);
       free.splice(0, free.length, ...free.filter((each) => !taken.has(each.id)));

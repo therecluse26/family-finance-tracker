@@ -213,9 +213,11 @@ describe("the month's Budgets", () => {
     Utilities: "120 formula",
     "Phone and internet": "70 formula",
     "Interest and fees": "100 formula",
-    Travel: "2880 formula",
-    "Gifts and donations": "2 formula",
-    Miscellaneous: "50 formula",
+    // Each flexible Budget is its average × 1.10: Travel $240 × 1.10 × 12, Gifts and donations
+    // $0.20 × 1.10 × 12, and Miscellaneous $50 × 1.10.
+    Travel: "3168 formula",
+    "Gifts and donations": "3 formula",
+    Miscellaneous: "55 formula",
   };
 
   it("sets each Bills Budget on the 1st, and gives a newly qualified Category its first Budget", async () => {
@@ -236,12 +238,13 @@ describe("the month's Budgets", () => {
       "Phone and internet": "140 formula",
       // Larkspur's Nov 15 payment did not post, so none is expected in December.
       "Interest and fees": "0 formula",
-      "Payments to people": "15 formula",
+      // $90 ÷ 6 × 1.10.
+      "Payments to people": "17 formula",
       // Flexible Budgets change only by a Member's edit or a Proposal: Miscellaneous's formula now
-      // gives $42, and stays $50.
-      Miscellaneous: "50 formula",
-      Travel: "2880 formula",
-      "Gifts and donations": "2 formula",
+      // gives $46, and stays $55.
+      Miscellaneous: "55 formula",
+      Travel: "3168 formula",
+      "Gifts and donations": "3 formula",
     });
     // A past month keeps its Budget.
     expect(await budgets("2026-11")).toEqual(november);
@@ -398,7 +401,7 @@ describe("the month's Budgets", () => {
       at("2026-12-10"),
     );
 
-    expect((await budgets("2026-11")).Miscellaneous).toBe("50 formula");
+    expect((await budgets("2026-11")).Miscellaneous).toBe("55 formula");
     expect((await budgets("2026-12")).Miscellaneous).toBe("80 Member edit");
     expect((await budgets("2027-02")).Miscellaneous).toBe("80 Member edit");
     // A flexible Budget has no pinned flag.

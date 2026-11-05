@@ -266,6 +266,30 @@ describe("the Anomaly checks", () => {
         (await laterTexts("Duplicate charge")).filter((text) => text.includes("Nov 12")),
       ).toEqual([]);
     });
+    it("counts only others at the same amount as a frequent purchase", async () => {
+      const coffee = (id: string, date: string, spent: number) =>
+        purchase(id, CHASE, date, spent, "Bean Stop", {
+          category: {
+            name: "FOOD_AND_DRINK_COFFEE",
+            confidence: "HIGH",
+            version: "v2",
+            mcc: null,
+          },
+        });
+      await sync("fake-chase", {
+        added: [
+          coffee("bean-1", "2026-09-20", 525),
+          coffee("bean-2", "2026-10-01", 610),
+          coffee("bean-3", "2026-10-10", 380),
+          coffee("bean-4", "2026-10-25", 475),
+          coffee("bean-5", "2026-10-26", 475),
+        ],
+      });
+      expect(await laterTexts("Duplicate charge")).toContain(
+        "Possible duplicate charge: $4.75 at Bean Stop on Chase Card, on Oct 25 and Oct 26.",
+      );
+    });
+
     it("matches the hard Merchant lines through the real cleanup rules", async () => {
       // Each pair is two posted lines on one day for one amount: whether they are one Merchant.
       const pairs: [string, string, string | null][] = [
@@ -440,29 +464,73 @@ describe("the Anomaly checks", () => {
       ]);
     });
 
-    it("never fires for a frequent purchase: 3 others within 7.5% in the 60 days before", async () => {
-      // None of these lands on a schedule with the next.
+    const taqueria = (id: string, date: string, spent: number) =>
+      purchase(id, CAPITAL_ONE, date, spent, "Taco Spot", {
+        category: {
+          name: "FOOD_AND_DRINK_RESTAURANT",
+          confidence: "HIGH",
+          version: "v2",
+          mcc: null,
+        },
+      });
+
+    it("never fires for a frequent purchase: 3 others at any amount in the 60 days before", async () => {
+      // A restaurant: none of these is within 7.5% of $24.00, and none lands on a schedule with
+      // the next.
       await sync("fake-capital-one", {
         added: [
-          showbox("sb-jul-10", "2026-07-10"),
-          showbox("sb-jul-20", "2026-07-20", 1_029),
-          showbox("sb-aug", "2026-08-15"),
+          taqueria("taco-jul-10", "2026-07-10", 1_150),
+          taqueria("taco-jul-20", "2026-07-20", 6_480),
+          taqueria("taco-aug", "2026-08-15", 3_725),
         ],
       });
       await sync("fake-capital-one", {
-        added: [showbox("sb-sep", "2026-09-03"), showbox("sb-oct", "2026-10-03")],
+        added: [
+          taqueria("taco-sep", "2026-09-03", 2_400),
+          taqueria("taco-oct", "2026-10-03", 2_450),
+        ],
       });
       expect(await laterTexts("New Recurring charge")).toEqual([]);
     });
 
     it("fires with only 2 others in the 60 days before", async () => {
       await sync("fake-capital-one", {
-        added: [showbox("sb-jul-20", "2026-07-20"), showbox("sb-aug", "2026-08-15")],
+        added: [
+          taqueria("taco-jul-20", "2026-07-20", 6_480),
+          taqueria("taco-aug", "2026-08-15", 3_725),
+        ],
       });
       await sync("fake-capital-one", {
-        added: [showbox("sb-sep", "2026-09-03"), showbox("sb-oct", "2026-10-03")],
+        added: [
+          taqueria("taco-sep", "2026-09-03", 2_400),
+          taqueria("taco-oct", "2026-10-03", 2_450),
+        ],
       });
-      expect(await laterTexts("New Recurring charge")).toHaveLength(1);
+      expect(await laterTexts("New Recurring charge")).toEqual([
+        "New Recurring charge? Taco Spot, $24.50 on Sep 3 and Oct 3. Next expected Nov 3.",
+      ]);
+    });
+
+    it("never counts a Recurring charge's Transactions as frequent purchases", async () => {
+      const apple = (id: string, date: string, spent: number) =>
+        purchase(id, CAPITAL_ONE, date, spent, "Apple");
+      // A $2.99 Recurring charge, then one app: 3 Transactions in the 60 days before Sep 10, but
+      // only the app is a visit.
+      await sync("fake-capital-one", {
+        added: [
+          apple("cloud-jul", "2026-07-05", 299),
+          apple("cloud-aug", "2026-08-05", 299),
+          apple("app", "2026-08-20", 499),
+          apple("cloud-sep", "2026-09-05", 299),
+        ],
+      });
+      await sync("fake-capital-one", {
+        added: [apple("music-sep", "2026-09-10", 999), apple("music-oct", "2026-10-10", 999)],
+      });
+
+      expect(await laterTexts("New Recurring charge")).toContain(
+        "New Recurring charge? Apple, $9.99 on Sep 10 and Oct 10. Next expected Nov 10.",
+      );
     });
 
     it("never fires for a Merchant and amount marked known", async () => {

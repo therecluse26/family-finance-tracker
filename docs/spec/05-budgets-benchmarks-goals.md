@@ -1,6 +1,6 @@
 # Budgets, Benchmarks, and Goals
 
-The app drafts every Budget with a fixed formula, so Budgets work with no AI provider. Bills Budgets follow what the Household's Recurring charges cost. Flexible Budgets take the lower of the Benchmark and the Household's own 12-month average. History can tighten a Budget, never loosen it. After the draft, a flexible Budget changes only when a Member edits it or accepts a Proposal. Goals are a Member's own words: the AI reads them, and the app computes their progress.
+The app drafts every Budget with a fixed formula, so Budgets work with no AI provider. Bills Budgets follow what the Household's Recurring charges cost. Flexible Budgets take the lower of the Benchmark and the Household's own 12-month average × 1.10. History can tighten a Budget, never loosen it. After the draft, a flexible Budget changes only when a Member edits it or accepts a Proposal. Goals are a Member's own words: the AI reads them, and the app computes their progress.
 
 ## Formula terms
 
@@ -28,6 +28,7 @@ Every formula in this file uses these terms.
 
 - Spending means posted Spending, net of linked Refunds and Reimbursements, in the month of its purchase date ([Categorization](04-categorization.md#which-month-a-transaction-counts-in)).
 - A flexible Category is any Category outside the Bills group.
+- **Room above typical Spending:** in the draft, the Household's own figure for a flexible Category is its 12-month average × 1.10, rounded as drafts round. The draft still takes the lower of the Benchmark and that figure, and history still never loosens a Budget after the draft. The 10% keeps a typical month under its Budget. The [total must fit](#the-total-must-fit) step runs as before.
 - The app rounds every Budget to the nearest whole dollar.
 - A Category group's Budget is the sum of its Categories' Budgets.
 
@@ -206,24 +207,25 @@ Steady Income (I) is the Household's regular Income per month. It sets the Bench
 
 The app drafts the two together, then splits the total by the Household's own ratio.
 
-1. T = the lower of B_GS and A_flex(Groceries) + A_flex(Superstores). With n < 3, T = B_GS.
+1. T = the lower of B_GS and (A_flex(Groceries) + A_flex(Superstores)) × 1.10. With n < 3, T = B_GS.
 2. r = Groceries Spending ÷ (Groceries + Superstores Spending), over the history window. With n = 0, use all Spending loaded so far.
 3. Groceries: Budget = max(K, Y + T × r). Superstores: Budget = max(K, Y + T × (1 − r)). K and Y are each Category's own.
 
-**Example.** B_GS = $1,120. Groceries averages $600 and Superstores $400, so history is $1,000. T = $1,000. r = 60%. Groceries = $600; Superstores = $400. If history had been $1,500, T = $1,120: Groceries $672, Superstores $448.
+**Example.** B_GS = $1,120. Groceries averages $600 and Superstores $400, so history is $1,000 × 1.10 = $1,100. T = $1,100. r = 60%. Groceries = $660; Superstores = $440. If history had been $1,500, T = $1,120: Groceries $672, Superstores $448.
 
 ### Shopping, Transportation, Health and care, Leisure: Categories with a Benchmark
 
 This covers Clothing, Home and garden, Alcohol and tobacco, Gas, Car, Transit and rideshare, Health, Personal care, Childcare, Pets, Fitness, Restaurants, Entertainment, Hobbies, and Books and education.
 
-**Rule:** Budget(c, m) = max(K(c, m), Y(c, m) + min(B(c), A_flex(c)))
+**Rule:** Budget(c, m) = max(K(c, m), Y(c, m) + min(B(c), A_flex(c) × 1.10))
 
-- With n < 3, use B(c) in place of min(B(c), A_flex(c)).
+- With n < 3, use B(c) in place of min(B(c), A_flex(c) × 1.10).
 - The floor K keeps a fixed cost from being Over Budget every month.
 
 **Examples:**
 
 - Restaurants: B = $300, A_flex = $450, K = $0. Budget = $300.
+- Clothing: B = $150, A_flex = $100, K = $0. $100 × 1.10 = $110, below the Benchmark. Budget = $110.
 - Fitness: B = $40, A_flex = $60. The gym is a $50 monthly Recurring charge, so K = $50. Budget = $50.
 - Car in March: B = $300, A_flex = $500. An untracked car loan is a $400 monthly Recurring charge. Registration is a $240 yearly Recurring charge, due in March. K = $640. Y + min = $240 + $300 = $540. Budget = $640.
 
@@ -231,15 +233,15 @@ This covers Clothing, Home and garden, Alcohol and tobacco, Gas, Car, Transit an
 
 This covers General goods, Services, Cash, Payments to people, and Miscellaneous.
 
-**Rule:** Budget(c, m) = max(K(c, m), Y(c, m) + A_flex(c)). It needs n ≥ 3.
+**Rule:** Budget(c, m) = max(K(c, m), Y(c, m) + A_flex(c) × 1.10). It needs n ≥ 3.
 
-**Example.** General goods: A_flex = $250 and K = $0. Budget = $250.
+**Example.** General goods: A_flex = $250 and K = $0. Budget = $275.
 
 ### Leisure and Other: Travel, and Gifts and donations (yearly)
 
-**Rule:** yearly Budget(c) = A(c) × 12. It needs n ≥ 3.
+**Rule:** yearly Budget(c) = A(c) × 1.10 × 12. It needs n ≥ 3.
 
-**Example.** Travel Spending in the last 12 months is $4,800. The yearly Budget is $4,800. With 6 months of history and $1,800 spent, it is $300 × 12 = $3,600.
+**Example.** Travel Spending in the last 12 months is $4,800. The yearly Budget is $5,280. With 6 months of history and $1,800 spent, it is $300 × 1.10 × 12 = $3,960.
 
 ### The total must fit
 

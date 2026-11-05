@@ -579,7 +579,8 @@ describe("Budget drafts", () => {
         ["Phone and internet", 70, "monthly"],
         ["Insurance", 0, "monthly"],
         ["Interest and fees", 1_000, "monthly"],
-        ["Superstores", 20, "monthly"],
+        // $20 × 1.10.
+        ["Superstores", 22, "monthly"],
       ]);
       expect(budgets[0]).toEqual({
         category: "Housing",
@@ -618,7 +619,7 @@ describe("Budget drafts", () => {
       const { budgets, fitNote } = await budgetsForMonth(bank.database, "2026-11");
       expect(fitNote).toBe(FIXED_COSTS_PASS_INCOME);
       expect(fitNote).toBe("The fixed costs pass Steady Income.");
-      expect(budgets.find((budget) => budget.category === "Superstores")?.amount).toBe($(20));
+      expect(budgets.find((budget) => budget.category === "Superstores")?.amount).toBe($(22));
       const inputs = await bank.database.$client.execute("SELECT * FROM budget_inputs");
       expect(inputs.rows[0]).toMatchObject({ fixed_costs_pass_income: 1 });
     });
@@ -647,13 +648,14 @@ describe("Budget drafts", () => {
     expect(budgets.find((budget) => budget.category === "Restaurants")?.amount).toBe(
       Math.round((restaurants?.amount ?? 0) / 100) * 100,
     );
+    // $4,800 × 1.10.
     expect(budgets.find((budget) => budget.category === "Travel")).toMatchObject({
-      amount: $(4_800),
+      amount: $(5_280),
       period: "yearly",
       takesEffect: "2026",
     });
     expect((await budgetsForMonth(bank.database, "2027-01")).budgets).toContainEqual(
-      expect.objectContaining({ category: "Travel", amount: $(4_800) }),
+      expect.objectContaining({ category: "Travel", amount: $(5_280) }),
     );
   });
 
@@ -750,19 +752,21 @@ describe("Budget drafts", () => {
     expect(await draftFirstBudgets(bank.database, now)).toBe(true);
 
     const { budgets, groups } = await budgetsForMonth(bank.database, "2026-11");
-    // Groceries and Superstores: A_flex $750 is below B_GS, so T = $750 and r = 2/3. Restaurants:
-    // B = $272 is below A_flex $450. Entertainment: K = $20. Miscellaneous: none in the window.
+    // Groceries and Superstores: A_flex $750 × 1.10 is below B_GS, so T = $825 and r = 2/3.
+    // Clothing: $10 × 1.10. Restaurants: B = $272 is below A_flex $450 × 1.10. Entertainment:
+    // A_flex $20 × 1.10 passes K = $20. Gifts and donations: $800 × 1.10. Miscellaneous: none in
+    // the window.
     expect(budgets.map(({ category, amount, period }) => [category, amount / 100, period])).toEqual(
       [
         ["Utilities", 160, "monthly"],
         ["Insurance", 0, "monthly"],
         ["Interest and fees", 100, "monthly"],
-        ["Groceries", 500, "monthly"],
-        ["Superstores", 250, "monthly"],
-        ["Clothing", 10, "monthly"],
+        ["Groceries", 550, "monthly"],
+        ["Superstores", 275, "monthly"],
+        ["Clothing", 11, "monthly"],
         ["Restaurants", 272, "monthly"],
-        ["Entertainment", 20, "monthly"],
-        ["Gifts and donations", 800, "yearly"],
+        ["Entertainment", 22, "monthly"],
+        ["Gifts and donations", 880, "yearly"],
       ],
     );
     expect(
@@ -773,11 +777,11 @@ describe("Budget drafts", () => {
       ]),
     ).toEqual([
       ["Bills", 260, 0],
-      ["Shopping", 760, 0],
+      ["Shopping", 836, 0],
       ["Transportation", 0, 0],
       ["Health and care", 0, 0],
-      ["Leisure", 292, 0],
-      ["Other", 0, 800],
+      ["Leisure", 294, 0],
+      ["Other", 0, 880],
     ]);
   });
 

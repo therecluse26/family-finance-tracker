@@ -234,6 +234,244 @@ describe("Recurring charges", () => {
     });
   });
 
+  describe("a frequent shop", () => {
+    const grocer = (id: string, postedDate: string, spent: number) =>
+      charge(id, postedDate, spent, { merchantName: "Green Grocer" });
+
+    it("forms no series at a weekly grocery shop, even in the first weeks of a history", async () => {
+      // The history starts on Aug 1. Three Saturdays within 7.5% make a weekly chain, but the
+      // Tuesday visits fall in the 60 days after its first Transaction, at any amount.
+      await sync(
+        grocer("sat-1", "2026-08-01", 5_000),
+        grocer("tue-1", "2026-08-04", 2_310),
+        grocer("sat-2", "2026-08-08", 5_100),
+        grocer("tue-2", "2026-08-11", 8_840),
+        grocer("sat-3", "2026-08-15", 5_200),
+        grocer("tue-3", "2026-08-18", 1_525),
+        grocer("sat-4", "2026-08-22", 9_610),
+        grocer("sat-5", "2026-08-29", 12_700),
+      );
+
+      expect(await charges()).toEqual([]);
+    });
+
+    it("forms no series after 3 other visits in the 60 days before, at any amount", async () => {
+      await sync(
+        grocer("one-1", "2026-06-20", 1_200),
+        grocer("one-2", "2026-07-11", 7_450),
+        grocer("one-3", "2026-07-30", 3_100),
+        grocer("m-1", "2026-08-05", 4_000),
+        grocer("m-2", "2026-09-05", 4_100),
+        grocer("m-3", "2026-10-05", 4_000),
+      );
+
+      expect(await charges()).toEqual([]);
+    });
+
+    it("still finds a subscription at varied amounts at a Merchant with no other visits", async () => {
+      await sync(
+        charge("meal-1", "2026-08-01", 6_000, { merchantName: "Meal Kit" }),
+        charge("meal-2", "2026-08-08", 6_200, { merchantName: "Meal Kit" }),
+        charge("meal-3", "2026-08-15", 6_400, { merchantName: "Meal Kit" }),
+        // Later ones continue it at any amount: they are part of the series, not other visits.
+        ...["08-22", "08-29", "09-05", "09-12", "09-19", "09-26"].map((day, index) =>
+          charge(`meal-${index + 4}`, `2026-${day}`, 4_500 + index * 900, {
+            merchantName: "Meal Kit",
+          }),
+        ),
+        charge("power-1", "2026-07-03", 10_000, { merchantName: "Power Co" }),
+        charge("power-2", "2026-08-03", 10_400, { merchantName: "Power Co" }),
+        charge("power-3", "2026-09-03", 10_600, { merchantName: "Power Co" }),
+        charge("power-4", "2026-10-03", 13_900, { merchantName: "Power Co" }),
+      );
+
+      expect(
+        (await charges()).map((each) => [
+          each.merchant.name,
+          each.schedule,
+          each.priceHistory.length,
+        ]),
+      ).toEqual([
+        ["Meal Kit", "weekly", 9],
+        ["Power Co", "monthly", 4],
+      ]);
+    });
+
+    // The 5th of each month, or another day, from January 2026 for `count` months.
+    const monthly = (count: number, day = "05") =>
+      Array.from(
+        { length: count },
+        (_, index) => `2026-${String(index + 1).padStart(2, "0")}-${day}`,
+      );
+    const summary = async () =>
+      (await charges())
+        .map(
+          (each) =>
+            `${each.merchant.name} ${each.schedule} ${each.latestAmount} ${each.priceHistory.length}`,
+        )
+        .sort();
+
+    it("keeps two subscriptions at one Merchant that start on the same day", async () => {
+      await sync(
+        ...monthly(9).map((date, index) =>
+          charge(`small-${index}`, date, 99, { merchantName: "Apple" }),
+        ),
+        ...monthly(9).map((date, index) =>
+          charge(`large-${index}`, date, 999, { merchantName: "Apple" }),
+        ),
+      );
+
+      expect(await summary()).toEqual(["Apple monthly 99 9", "Apple monthly 999 9"]);
+    });
+
+    it("keeps two subscriptions at one Merchant that start 1 day apart", async () => {
+      await sync(
+        ...monthly(9).map((date, index) =>
+          charge(`small-${index}`, date, 99, { merchantName: "Apple" }),
+        ),
+        ...monthly(9, "06").map((date, index) =>
+          charge(`large-${index}`, date, 999, { merchantName: "Apple" }),
+        ),
+      );
+
+      expect(await summary()).toEqual(["Apple monthly 99 9", "Apple monthly 999 9"]);
+    });
+
+    it("keeps two subscriptions at one Merchant whose prices both rise a year later", async () => {
+      // 2025 to 2026: $0.99 on the 5th and $9.99 on the 6th, which rise to $1.29 and $12.99 in their
+      // 13th month. Each is steady around the other's start.
+      const monthOf = (index: number, day: number) =>
+        new Date(Date.UTC(2025, index, day)).toISOString().slice(0, 10);
+      await sync(
+        ...Array.from({ length: 24 }, (_, index) =>
+          charge(`small-${index}`, monthOf(index, 5), index < 12 ? 99 : 129, {
+            merchantName: "Apple",
+          }),
+        ),
+        ...Array.from({ length: 24 }, (_, index) =>
+          charge(`large-${index}`, monthOf(index, 6), index < 12 ? 999 : 1_299, {
+            merchantName: "Apple",
+          }),
+        ),
+      );
+
+      expect(await summary()).toEqual(["Apple monthly 129 24", "Apple monthly 1299 24"]);
+    });
+
+    it("keeps a monthly and a weekly subscription at one Merchant that start a month apart", async () => {
+      const weekly = Array.from({ length: 30 }, (_, index) =>
+        new Date(Date.UTC(2026, 1, 3 + 7 * index)).toISOString().slice(0, 10),
+      );
+      await sync(
+        ...monthly(9).map((date, index) =>
+          charge(`prime-${index}`, date, 1_499, { merchantName: "Amazon" }),
+        ),
+        ...weekly.map((date, index) =>
+          charge(`box-${index}`, date, 4_000, { merchantName: "Amazon" }),
+        ),
+      );
+
+      expect(await summary()).toEqual(["Amazon monthly 1499 9", "Amazon weekly 4000 30"]);
+    });
+
+    it("forms nothing at a daily coffee, a fixed-day weekly grocer with extra visits, or a restaurant", async () => {
+      // A fixed seed, so the amounts are the same each run.
+      let seed = 7;
+      const random = () => {
+        seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+        return seed / 2_147_483_648;
+      };
+      const txns: TxnRecord[] = [];
+      for (let day = 0; day < 300; day += 1) {
+        const date = new Date(Date.UTC(2026, 0, 1 + day)).toISOString().slice(0, 10);
+        const at = (id: string, spent: number, merchantName: string) =>
+          txns.push(charge(`${id}-${day}`, date, spent, { merchantName }));
+        at("coffee", 325 + Math.floor(random() * 550), "Daily Grind");
+        // Each Saturday within 7.5% of each other, plus visits now and then.
+        if (day % 7 === 2) at("week", 12_000 + Math.floor(random() * 800), "Green Grocer");
+        if (random() < 0.08) at("extra", 1_000 + Math.floor(random() * 5_000), "Green Grocer");
+        if (random() < 0.15) at("dinner", 900 + Math.floor(random() * 5_900), "Pine Tavern");
+      }
+      await sync(...txns);
+
+      expect(await summary()).toEqual([]);
+    });
+
+    it("counts another chain at the same amount as visits: a daily coffee at one price", async () => {
+      await sync(
+        ...Array.from({ length: 120 }, (_, day) =>
+          charge(
+            `latte-${day}`,
+            new Date(Date.UTC(2026, 5, 1 + day)).toISOString().slice(0, 10),
+            475,
+            {
+              merchantName: "Corner Bean",
+            },
+          ),
+        ),
+      );
+
+      expect(await summary()).toEqual([]);
+    });
+
+    it("counts another chain as visits when it continues at changing amounts", async () => {
+      await sync(
+        grocer("sat-1", "2026-08-01", 5_000),
+        grocer("sat-2", "2026-08-08", 5_100),
+        grocer("sat-3", "2026-08-15", 5_200),
+        // Tuesdays: a chain within 7.5%, then visits at any amount that continue it.
+        grocer("tue-1", "2026-08-04", 2_000),
+        grocer("tue-2", "2026-08-11", 2_100),
+        grocer("tue-3", "2026-08-18", 2_150),
+        grocer("tue-4", "2026-08-25", 9_000),
+        grocer("tue-5", "2026-09-01", 9_500),
+        grocer("tue-6", "2026-09-08", 1_500),
+        // Visits in the Tuesday chain's window, but not the Saturday one's.
+        grocer("extra-1", "2026-10-01", 3_300),
+        grocer("extra-2", "2026-10-02", 7_700),
+        grocer("extra-3", "2026-10-03", 1_100),
+      );
+
+      expect(await summary()).toEqual([]);
+    });
+
+    it("forms no yearly series at a shop visited for years", async () => {
+      // A fixed seed. Over 5 years many visits fall a year apart within 15%, by chance.
+      let seed = 11;
+      const random = () => {
+        seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+        return seed / 2_147_483_648;
+      };
+      const txns: TxnRecord[] = [];
+      for (let day = 0; day < 5 * 365; day += 1) {
+        if (random() < 0.11) {
+          const date = new Date(Date.UTC(2022, 0, 1 + day)).toISOString().slice(0, 10);
+          txns.push(grocer(`visit-${day}`, date, 1_300 + Math.floor(random() * 22_600)));
+        }
+      }
+      await sync(...txns);
+
+      expect(await summary()).toEqual([]);
+    });
+
+    it("ends a series once later Transactions show a frequent shop", async () => {
+      await sync(
+        grocer("g-1", "2026-08-01", 5_000),
+        grocer("g-2", "2026-08-08", 5_100),
+        grocer("g-3", "2026-08-15", 5_200),
+      );
+      expect(await charges()).toHaveLength(1);
+
+      await sync(
+        grocer("g-4", "2026-08-04", 2_000),
+        grocer("g-5", "2026-08-11", 7_500),
+        grocer("g-6", "2026-08-18", 900),
+      );
+
+      expect(await charges()).toEqual([]);
+    });
+  });
+
   describe("continuing a series", () => {
     const monthly = [
       charge("c1", "2026-07-03", 1_549),

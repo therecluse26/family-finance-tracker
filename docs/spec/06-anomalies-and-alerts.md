@@ -23,6 +23,7 @@ A Recurring charge is Spending with one Merchant that repeats at a steady interv
 - Transfers never count. Only Spending counts. Income series use a variant of this rule ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#steady-income)).
 - A Merchant is identified as [Categorization](04-categorization.md) says: the provider's Merchant ID, else the clean name.
 - One Merchant may have more than one Recurring charge, at different amounts.
+- **A frequent shop never forms a Recurring charge.** When finding a new series, the app skips a Merchant with 3 or more other Transactions in the 60 days before or after the series' first Transaction that are not part of the series, at any amount. The window runs from 60 days before that Transaction to 60 days after it, so a shop's series cannot form at the start of a history, where nothing comes before. The series' part includes the later Transactions that would continue it. Another subscription at that Merchant does not count either, so one Merchant can still have two: neither the Transactions of its other Recurring charges, nor those of another series the rule finds on its own that has 2 or more Transactions in or near the window (within 70 days of it), at a steady amount (within 7.5% of each other). A shop's chance series continue at any amount, so their Transactions still count. A weekly grocery shop is an example. Existing Recurring charges in a database are found again by the next run, so a shop's series ends.
 - A weekly, 2-week, or monthly series with only 2 Transactions is not a Recurring charge. It fires only the New Recurring charge Anomaly. That catches a forgotten free trial a month earlier.
 - Only Recurring charges count in "Coming up", the [projection](#the-projection), the Recurring charges page, and the Budget formulas.
 
@@ -77,7 +78,7 @@ An Anomaly is a Transaction, or a series of Transactions, that is unusual agains
 
 **Rules behind the table:**
 
-- **A frequent purchase:** 3 or more other Transactions at that Merchant in the 60 days before the earlier Transaction. For a Duplicate charge, they have the same amount. For a New Recurring charge, they are within 7.5% of it. A daily coffee is an example.
+- **A frequent purchase:** 3 or more other Transactions at that Merchant in the 60 days before the earlier Transaction. For a Duplicate charge, they have the same amount. For a New Recurring charge, they may be at any amount, and Transactions of the Merchant's Recurring charges do not count. A daily coffee is an example.
 - **The base price:** the median of the previous 3 Transactions in the Recurring charge. It counts only Transactions from the last Price increase onward. Example: $15.49, $15.49, $15.49, then $17.99 fires. The next $17.99 compares against $17.99 and fires nothing.
 - **Large purchase's 98%:** the purchases are the Spending Transactions in the 365 days before, with the same exclusions. At least 98% of them must be smaller.
 - **Loan payments** are payments on tracked loans and untracked loans, as [Money movement](03-money-movement.md#loans) defines them.

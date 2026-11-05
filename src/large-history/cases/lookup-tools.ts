@@ -64,8 +64,12 @@ timedCase("Chat lookup tools", async (history, time) => {
   );
   const charges = (await lookup("get_recurring_charges", { category: null })) as {
     count: number;
+    recurringCharges: unknown[];
   };
-  expect(charges.count).toBeGreaterThan(RECURRING_ROWS);
+  // The cap itself is tested in src/chat/lookup-tools.test.ts; here the answer is the whole list
+  // or the first RECURRING_ROWS of it.
+  expect(charges.recurringCharges).toHaveLength(Math.min(charges.count, RECURRING_ROWS));
+  expect(charges.count).toBeGreaterThan(0);
   await lookup("get_budgets_and_goals", { month: "2026-10" });
 
   expect(Object.entries(sizes).filter(([, size]) => size >= ANSWER_CHARACTERS)).toEqual([]);

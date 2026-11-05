@@ -103,7 +103,7 @@ Spending in a Category above its Budget, or on pace to pass it. The Budget is th
 _Avoid_: Excess
 
 **Recurring charge**:
-Spending with one Merchant that repeats at a steady interval and a similar amount, such as a subscription or a utility bill.
+Spending with one Merchant that repeats at a steady interval and a similar amount, such as a subscription or a utility bill. A shop the Household visits often, such as a weekly grocery store, never forms one.
 _Avoid_: Subscription, bill
 
 **Anomaly**:

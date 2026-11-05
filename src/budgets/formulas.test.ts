@@ -119,10 +119,10 @@ describe("the draft formulas", () => {
     const both = (given: Given) =>
       drafted(given).filter((line) => /^(Groceries|Superstores)/.test(line));
 
-    it("drafts $600 and $400 when history is below B_GS", () => {
+    it("drafts $660 and $440 when history × 1.10 is below B_GS: T = $1,000 × 1.10", () => {
       expect(both(shopping(600, 400))).toEqual([
-        "Groceries: 600 monthly",
-        "Superstores: 400 monthly",
+        "Groceries: 660 monthly",
+        "Superstores: 440 monthly",
       ]);
     });
 
@@ -162,11 +162,11 @@ describe("the draft formulas", () => {
             Superstores: { ...history(400), k: $(120), y: $(120) },
           },
         }),
-      ).toEqual(["Groceries: 700 monthly", "Superstores: 520 monthly"]);
+      ).toEqual(["Groceries: 700 monthly", "Superstores: 560 monthly"]);
     });
   });
 
-  describe("Categories with a Benchmark: max(K, Y + min(B, A_flex))", () => {
+  describe("Categories with a Benchmark: max(K, Y + min(B, A_flex × 1.10))", () => {
     it("drafts Restaurants at $300: B = $300, A_flex = $450, K = $0", () => {
       expect(
         drafted(
@@ -197,13 +197,28 @@ describe("the draft formulas", () => {
       ).toEqual(["Car: 640 monthly"]);
     });
 
-    it("takes the lower history over the Benchmark", () => {
+    it("takes the Household's average × 1.10 when it is below the Benchmark", () => {
       expect(
         drafted(
           { benchmarks: { Restaurants: $(300) }, categories: { Restaurants: history(180) } },
           "Restaurants",
         ),
-      ).toEqual(["Restaurants: 180 monthly"]);
+      ).toEqual(["Restaurants: 198 monthly"]);
+      expect(
+        drafted(
+          { benchmarks: { Clothing: $(150) }, categories: { Clothing: history(100) } },
+          "Clothing",
+        ),
+      ).toEqual(["Clothing: 110 monthly"]);
+    });
+
+    it("never lets the 10% room pass the Benchmark", () => {
+      expect(
+        drafted(
+          { benchmarks: { Restaurants: $(300) }, categories: { Restaurants: history(280) } },
+          "Restaurants",
+        ),
+      ).toEqual(["Restaurants: 300 monthly"]);
     });
 
     it("uses B in place of the lower one with n < 3", () => {
@@ -231,9 +246,9 @@ describe("the draft formulas", () => {
         },
       };
       expect(drafted(given).filter((line) => !line.startsWith("Interest"))).toEqual([
-        "Groceries: 400 monthly",
-        "Superstores: 200 monthly",
-        "Restaurants: 450 monthly",
+        "Groceries: 440 monthly",
+        "Superstores: 220 monthly",
+        "Restaurants: 495 monthly",
       ]);
       expect(drafted({ ...given, n: 2 }).filter((line) => !line.startsWith("Interest"))).toEqual(
         [],
@@ -242,18 +257,18 @@ describe("the draft formulas", () => {
 
     it("drafts as if it had no Benchmark when every CE line is suppressed", () => {
       expect(
-        drafted({ benchmarks: { Pets: null }, categories: { Pets: history(75) } }, "Pets"),
-      ).toEqual(["Pets: 75 monthly"]);
+        drafted({ benchmarks: { Pets: null }, categories: { Pets: history(70) } }, "Pets"),
+      ).toEqual(["Pets: 77 monthly"]);
       expect(
-        drafted({ n: 2, benchmarks: { Pets: null }, categories: { Pets: history(75, 2) } }, "Pets"),
+        drafted({ n: 2, benchmarks: { Pets: null }, categories: { Pets: history(70, 2) } }, "Pets"),
       ).toEqual([]);
     });
   });
 
-  describe("Categories with no good Benchmark: max(K, Y + A_flex), once n ≥ 3", () => {
-    it("drafts General goods at $250", () => {
+  describe("Categories with no good Benchmark: max(K, Y + A_flex × 1.10), once n ≥ 3", () => {
+    it("drafts General goods at $275 from $250 a month", () => {
       expect(drafted({ categories: { "General goods": history(250) } }, "General goods")).toEqual([
-        "General goods: 250 monthly",
+        "General goods: 275 monthly",
       ]);
     });
 
@@ -265,7 +280,7 @@ describe("the draft formulas", () => {
             Miscellaneous: { ...history(40), k: $(100), y: $(100) },
           },
         }).filter((line) => !line.startsWith("Interest")),
-      ).toEqual(["Services: 60 monthly", "Miscellaneous: 140 monthly"]);
+      ).toEqual(["Services: 60 monthly", "Miscellaneous: 144 monthly"]);
     });
 
     it("drafts nothing until n ≥ 3, even with known amounts", () => {
@@ -275,21 +290,21 @@ describe("the draft formulas", () => {
     });
   });
 
-  describe("Travel, and Gifts and donations: yearly A × 12, once n ≥ 3", () => {
-    it("drafts Travel at $4,800 from $4,800 in 12 months, and $3,600 from $1,800 in 6", () => {
+  describe("Travel, and Gifts and donations: yearly A × 1.10 × 12, once n ≥ 3", () => {
+    it("drafts Travel at $5,280 from $4,800 in 12 months, and $3,960 from $1,800 in 6", () => {
       expect(drafted({ categories: { Travel: { spent: $(4_800), a: $(400) } } }, "Travel")).toEqual(
-        ["Travel: 4800 yearly"],
+        ["Travel: 5280 yearly"],
       );
       expect(
         drafted({ n: 6, categories: { Travel: { spent: $(1_800), a: $(300) } } }, "Travel"),
-      ).toEqual(["Travel: 3600 yearly"]);
+      ).toEqual(["Travel: 3960 yearly"]);
     });
 
     it("drafts Gifts and donations from A, with yearly Recurring charges, and nothing with n < 3", () => {
       const gifts = { spent: $(1_200), a: $(100), aFlex: $(50) };
       expect(
         drafted({ categories: { "Gifts and donations": gifts } }, "Gifts and donations"),
-      ).toEqual(["Gifts and donations: 1200 yearly"]);
+      ).toEqual(["Gifts and donations: 1320 yearly"]);
       expect(
         drafted({ n: 2, categories: { "Gifts and donations": gifts } }, "Gifts and donations"),
       ).toEqual([]);
@@ -326,8 +341,9 @@ describe("the draft formulas", () => {
         categories: {
           Utilities: { spent: 1, k: 12_050 },
           Restaurants: history(400),
-          Hobbies: { spent: 1, a: 0, aFlex: 4_249 },
-          Travel: { spent: 1, a: 4_004 },
+          // $38.63 × 1.10 = $42.49, and $36.40 × 1.10 × 12 = $480.48.
+          Hobbies: { spent: 1, a: 0, aFlex: 3_863 },
+          Travel: { spent: 1, a: 3_640 },
         },
       }).filter((line) => !line.startsWith("Interest")),
     ).toEqual([

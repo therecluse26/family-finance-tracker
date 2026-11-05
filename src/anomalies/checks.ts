@@ -184,12 +184,13 @@ async function readFacts(database: Database, now: Date): Promise<Facts> {
   return facts;
 }
 
-// Whether `count` or more Transactions in `list` are dated in the 60 days before `date`.
+// Whether 3 or more Transactions in `list` that `counts` keeps are dated in the 60 days before
+// `date`.
 function frequentBefore(
   list: readonly Spent[],
   dateOf: (txn: Spent) => string,
   date: string,
-  counts: (txn: Spent) => boolean,
+  counts: (txn: Spent) => boolean = () => true,
 ): boolean {
   const within = between(list, dateOf, addDays(date, -FREQUENT_DAYS), addDays(date, -1));
   return within.filter(counts).length >= FREQUENT_COUNT;
@@ -219,17 +220,15 @@ function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
   const pair: [Spent, Spent] = isEarlier(partner, txn, byPurchaseDate)
     ? [partner, txn]
     : [txn, partner];
-  if (frequentBefore(sameAmount, byPurchaseDate, pair[0].purchaseDate, () => true)) {
-    return undefined;
-  }
+  if (frequentBefore(sameAmount, byPurchaseDate, pair[0].purchaseDate)) return undefined;
   return pair;
 }
 
 // A New Recurring charge: the Transaction and exactly one earlier Transaction from its Merchant
 // make a weekly, 2-week, or monthly schedule, within 7.5% of each other. Never for one that
 // continues or revives a Recurring charge, a Merchant and amount marked known, or a frequent
-// purchase: 3 or more other Transactions at that Merchant within 7.5% of it in the 60 days before
-// the earlier one.
+// purchase: 3 or more other Transactions at that Merchant, at any amount, in the 60 days before the
+// earlier one, outside its Recurring charges.
 function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: string } | undefined {
   if (txn.group === null || facts.inCharges.has(txn.id)) return undefined;
   const { group } = txn;
@@ -254,10 +253,9 @@ function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: stri
   if (only === undefined || fits.length !== 1) return undefined;
   const earlier = facts.spent.get(only.txn.id);
   if (earlier === undefined) return undefined;
-  const frequent = frequentBefore(merchantTxns, byPostedDate, earlier.postedDate, (other) =>
-    withinChargeBand([other.amount, txn.amount]),
-  );
-  if (frequent) return undefined;
+  // A Recurring charge's Transactions are not visits, as when finding a series (spec 06).
+  const visit = (other: Spent) => !facts.inCharges.has(other.id);
+  if (frequentBefore(merchantTxns, byPostedDate, earlier.postedDate, visit)) return undefined;
   return { earlier, nextDate: nextExpected(only.schedule, txn.postedDate) };
 }
 

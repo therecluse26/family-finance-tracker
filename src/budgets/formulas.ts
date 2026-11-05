@@ -2,7 +2,7 @@ import { CATEGORIES, type Category } from "../categories/index.ts";
 
 // The draft formulas (spec 05, Drafting Budgets): fixed rules, with no AI, from the formula terms
 // (spec 05, Formula terms). Bills follow the Household's Recurring charges and tracked loans.
-// Flexible Budgets take the lower of the Benchmark and the Household's own history, so history can
+// Flexible Budgets take the lower of the Benchmark and the Household's own figure, so history can
 // tighten a Budget, never loosen it. Every amount is in whole cents.
 
 // Travel and Gifts and donations have yearly Budgets, over the calendar year (spec 05, Yearly
@@ -55,14 +55,22 @@ export type DraftedBudget = {
   period: "monthly" | "yearly";
 };
 
+// The Household's own figure for a flexible Category: its average × 1.10, room above typical
+// Spending so a typical month stays under its Budget (spec 05, Formula terms). The draft rounds it
+// with the rest of the Budget.
+const withRoom = (average: number) => (average * 11) / 10;
+
 const wholeDollars = (cents: number) => Math.max(0, Math.round(cents / 100) * 100);
 
 // T and r for Groceries and Superstores (spec 05, Shopping: Groceries and Superstores): T is the
-// lower of B_GS and their summed A_flex, or B_GS with n < 3; r is Groceries' share of their
+// lower of B_GS and their summed A_flex × 1.10, or B_GS with n < 3; r is Groceries' share of their
 // Spending. With no Spending in either, they split T evenly.
 function groceriesAndSuperstores(terms: DraftTerms, bGs: number): { t: number; r: number } {
   const { Groceries: groceries, Superstores: superstores } = terms.categories;
-  const t = terms.n < MIN_HISTORY_MONTHS ? bGs : Math.min(bGs, groceries.aFlex + superstores.aFlex);
+  const t =
+    terms.n < MIN_HISTORY_MONTHS
+      ? bGs
+      : Math.min(bGs, withRoom(groceries.aFlex + superstores.aFlex));
   const both = terms.split.groceries + terms.split.superstores;
   return { t, r: both > 0 ? terms.split.groceries / both : 0.5 };
 }
@@ -93,13 +101,13 @@ export function draftBudgets(terms: DraftTerms): DraftedBudget[] {
     }
     if (YEARLY_CATEGORIES.includes(category)) {
       if (n >= MIN_HISTORY_MONTHS) {
-        drafted.push({ category, amount: wholeDollars(a * 12), period: "yearly" });
+        drafted.push({ category, amount: wholeDollars(withRoom(a) * 12), period: "yearly" });
       }
       continue;
     }
     const b = benchmarkOf(category);
     if (b === null) {
-      if (n >= MIN_HISTORY_MONTHS) monthly(Math.max(k, y + aFlex));
+      if (n >= MIN_HISTORY_MONTHS) monthly(Math.max(k, y + withRoom(aFlex)));
       continue;
     }
     if (category === "Groceries" || category === "Superstores") {
@@ -107,7 +115,7 @@ export function draftBudgets(terms: DraftTerms): DraftedBudget[] {
       monthly(Math.max(k, y + t * (category === "Groceries" ? r : 1 - r)));
       continue;
     }
-    monthly(Math.max(k, y + (n < MIN_HISTORY_MONTHS ? b : Math.min(b, aFlex))));
+    monthly(Math.max(k, y + (n < MIN_HISTORY_MONTHS ? b : Math.min(b, withRoom(aFlex)))));
   }
   return drafted;
 }
