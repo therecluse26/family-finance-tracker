@@ -265,6 +265,52 @@ describe("removing a Connection", () => {
       expect(await rows("SELECT id FROM transactions")).toEqual([{ id: otherIn?.id }]);
     });
 
+    it("closes each open Review list item about a deleted Account or Transaction, and no other item", async () => {
+      const other = await bank.connect("fake-other", "Other Bank");
+      bank.fake.addPages("fake-other", {
+        accounts: [fakeAccount({ id: "other-checking" })],
+        added: [fakeTxn({ id: "other-in", accountId: "other-checking", amount: 5000 })],
+        historyLoaded: true,
+      });
+      await syncConnection(other);
+      const [plaidOut] = await rows("SELECT id FROM transactions WHERE connection_id = ? LIMIT 1", [
+        connectionId,
+      ]);
+      const [plaidAccount] = await rows(
+        "SELECT id FROM household_accounts WHERE connection_id = ? LIMIT 1",
+        [connectionId],
+      );
+      const [otherIn] = await rows("SELECT id FROM transactions WHERE connection_id = ?", [other]);
+      const answeredAt = "2026-10-01T12:00:00.000Z";
+      const items: [string, string, string, string | null, string | null][] = [
+        ["about-account", "loan", String(plaidAccount?.id), null, null],
+        ["about-other", "transactions", String(otherIn?.id), null, null],
+        ["about-transaction", "transactions", String(plaidOut?.id), null, null],
+        ["answered", "transactions", String(plaidOut?.id), answeredAt, "answered"],
+      ];
+      for (const [id, type, subjectId, closedAt, closedReason] of items) {
+        await bank.database.$client.execute({
+          sql: `INSERT INTO review_items (id, kind, subject_type, subject_ids, decided, best_answer, created_at, closed_at, closed_reason)
+                VALUES (?, 'category guess', ?, ?, 'x', '{"value":"a","label":"a"}', ?, ?, ?)`,
+          args: [id, type, JSON.stringify([subjectId]), answeredAt, closedAt, closedReason],
+        });
+      }
+      plaid.answer(ITEM_REMOVE, { body: RECORDED.itemRemove });
+      await removing.remove(connectionId);
+
+      await removing.deleteHistory(connectionId);
+
+      expect(await rows("SELECT id, closed_reason FROM review_items ORDER BY id")).toEqual([
+        { id: "about-account", closed_reason: "history deleted" },
+        { id: "about-other", closed_reason: null },
+        { id: "about-transaction", closed_reason: "history deleted" },
+        { id: "answered", closed_reason: "answered" },
+      ]);
+      expect(await rows("SELECT closed_at FROM review_items WHERE id = 'answered'")).toEqual([
+        { closed_at: answeredAt },
+      ]);
+    });
+
     it("ends Refund and Manual loan links, keeps the Manual loan, and matches the others again", async () => {
       const other = await bank.connect("fake-other", "Other Bank");
       bank.fake.addPages("fake-other", {

@@ -1008,61 +1008,71 @@ export const merchantNameAnswers = sqliteTable("merchant_name_answers", {
 // Recurring charges (spec 06, What the app stores): Spending with one Merchant that repeats on a
 // schedule at a similar amount. The checks after each sync find them again from posted Spending,
 // except one a Member marked ended, which never changes again.
-export const recurringCharges = sqliteTable("recurring_charges", {
-  id: text("id").primaryKey(),
-  // The Merchant: the provider's Merchant ID, when it has one, and the clean name.
-  merchantId: text("merchant_id"),
-  merchantName: text("merchant_name").notNull(),
-  // The Category of its last Transaction.
-  category: text("category"),
-  schedule: text("schedule", {
-    enum: ["weekly", "every 2 weeks", "monthly", "yearly"],
-  }).notNull(),
-  nextExpectedDate: calendarDate("next_expected_date").notNull(),
-  // The amount of its last Transaction, in whole cents spent.
-  latestAmount: cents("latest_amount").notNull(),
-  // Each Transaction's ID, posted date, and amount in whole cents spent, oldest first, as JSON.
-  priceHistory: text("price_history", { mode: "json" })
-    .$type<{ transactionId: string; date: string; amount: number }[]>()
-    .notNull(),
-  // The Account its last Transaction landed on.
-  accountId: text("account_id")
-    .notNull()
-    .references(() => householdAccounts.id),
-  status: text("status", { enum: ["active", "inactive", "ended"] }).notNull(),
-  foundAt: moment("found_at").notNull(),
-  endedAt: moment("ended_at"),
-  endedBy: text("ended_by").references(() => members.id, { onDelete: "set null" }),
-});
+export const recurringCharges = sqliteTable(
+  "recurring_charges",
+  {
+    id: text("id").primaryKey(),
+    // The Merchant: the provider's Merchant ID, when it has one, and the clean name.
+    merchantId: text("merchant_id"),
+    merchantName: text("merchant_name").notNull(),
+    // The Category of its last Transaction.
+    category: text("category"),
+    schedule: text("schedule", {
+      enum: ["weekly", "every 2 weeks", "monthly", "yearly"],
+    }).notNull(),
+    nextExpectedDate: calendarDate("next_expected_date").notNull(),
+    // The amount of its last Transaction, in whole cents spent.
+    latestAmount: cents("latest_amount").notNull(),
+    // Each Transaction's ID, posted date, and amount in whole cents spent, oldest first, as JSON.
+    priceHistory: text("price_history", { mode: "json" })
+      .$type<{ transactionId: string; date: string; amount: number }[]>()
+      .notNull(),
+    // The Account its last Transaction landed on.
+    accountId: text("account_id")
+      .notNull()
+      .references(() => householdAccounts.id),
+    status: text("status", { enum: ["active", "inactive", "ended"] }).notNull(),
+    foundAt: moment("found_at").notNull(),
+    endedAt: moment("ended_at"),
+    endedBy: text("ended_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  // Delete history deletes by Account.
+  (table) => [index("recurring_charges_account_id").on(table.accountId)],
+);
 
 // Income series (spec 05, Steady Income): Income from one payer that repeats on a schedule at a
 // similar amount, on checking and savings Accounts. The checks after each sync find them again
 // from posted Income. Yearly series never count, so none is stored.
-export const incomeSeries = sqliteTable("income_series", {
-  id: text("id").primaryKey(),
-  // The payer: the Merchant on the Income Transactions, by the provider's Merchant ID when it has
-  // one, and the clean name.
-  merchantId: text("merchant_id"),
-  merchantName: text("merchant_name").notNull(),
-  schedule: text("schedule", {
-    enum: ["weekly", "every 2 weeks", "twice a month", "monthly"],
-  }).notNull(),
-  // A twice-a-month series' two fixed days of the month, the earlier first, as JSON. 31 is the last
-  // day of every month.
-  fixedDays: text("fixed_days", { mode: "json" }).$type<[number, number]>(),
-  nextExpectedDate: calendarDate("next_expected_date").notNull(),
-  // The amount of its last Transaction, in whole cents received.
-  latestAmount: cents("latest_amount").notNull(),
-  // Each Transaction's ID, posted date, and amount in whole cents received, oldest first, as JSON.
-  history: text("history", { mode: "json" })
-    .$type<{ transactionId: string; date: string; amount: number }[]>()
-    .notNull(),
-  // The Account its last Transaction landed on. Delete history deletes the series with it.
-  accountId: text("account_id")
-    .notNull()
-    .references(() => householdAccounts.id, { onDelete: "cascade" }),
-  status: text("status", { enum: ["active", "inactive"] }).notNull(),
-});
+export const incomeSeries = sqliteTable(
+  "income_series",
+  {
+    id: text("id").primaryKey(),
+    // The payer: the Merchant on the Income Transactions, by the provider's Merchant ID when it has
+    // one, and the clean name.
+    merchantId: text("merchant_id"),
+    merchantName: text("merchant_name").notNull(),
+    schedule: text("schedule", {
+      enum: ["weekly", "every 2 weeks", "twice a month", "monthly"],
+    }).notNull(),
+    // A twice-a-month series' two fixed days of the month, the earlier first, as JSON. 31 is the last
+    // day of every month.
+    fixedDays: text("fixed_days", { mode: "json" }).$type<[number, number]>(),
+    nextExpectedDate: calendarDate("next_expected_date").notNull(),
+    // The amount of its last Transaction, in whole cents received.
+    latestAmount: cents("latest_amount").notNull(),
+    // Each Transaction's ID, posted date, and amount in whole cents received, oldest first, as JSON.
+    history: text("history", { mode: "json" })
+      .$type<{ transactionId: string; date: string; amount: number }[]>()
+      .notNull(),
+    // The Account its last Transaction landed on. Delete history deletes the series with it.
+    accountId: text("account_id")
+      .notNull()
+      .references(() => householdAccounts.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["active", "inactive"] }).notNull(),
+  },
+  // Delete history deletes the Accounts, and the series go by cascade.
+  (table) => [index("income_series_account_id").on(table.accountId)],
+);
 
 // The Steady Income figure a Member typed in Settings, Household (spec 05, Steady Income). It
 // replaces the detected one until a Member clears it, which deletes the row. It has at most one

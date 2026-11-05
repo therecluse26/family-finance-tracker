@@ -9,14 +9,13 @@ RUN npm install --global pnpm@12.9.0
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# better-sqlite3, Sidequest's SQLite driver, compiles from its npm tarball, which the lockfile
-# pins. prebuild-install then downloads no binary, and node-gyp uses the image's own Node headers
-# instead of fetching them. The final image gets none of these build tools.
+# better-sqlite3, Sidequest's SQLite driver, compiles from the source in its npm tarball, which the
+# lockfile pins. node-gyp uses the image's own Node headers instead of fetching them. The final
+# image gets none of these build tools.
 FROM base AS native-build
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-ENV npm_config_build_from_source=true
 ENV npm_config_nodedir=/usr/local
 
 FROM native-build AS build
@@ -25,16 +24,21 @@ COPY . .
 RUN pnpm build
 
 FROM native-build AS prod-deps
-# Of better-sqlite3's build folder, only the compiled module stays. Its objects, its static SQLite
-# library, and its test extension are build leftovers. Its deps folder holds the SQLite source it
+# better-sqlite3's tarball also holds modules built for 8 platforms, and the driver loads the one
+# for its platform when it finds it. The image removes them and compiles its own with npm's
+# node-gyp; with no prebuilt module there, the driver loads build/Release/better_sqlite3.node.
+# Of the build folder, only that module stays. Its objects, its static SQLite library, and its
+# test extension are build leftovers. The deps and src folders hold the SQLite and C++ source it
 # compiles from, which nothing reads at run time.
 RUN pnpm install --frozen-lockfile --prod \
   && for package in node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3; do \
     build="$package/build" \
+    && rm -r "$package/prebuilds" \
+    && (cd "$package" && node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release) \
     && find "$build" -mindepth 1 ! -path "$build/Release" ! -path "$build/Release/better_sqlite3.node" \
       -delete \
     && test -f "$build/Release/better_sqlite3.node" \
-    && rm -r "$package/deps" || exit 1; \
+    && rm -r "$package/deps" "$package/src" || exit 1; \
   done
 
 FROM ${NODE_IMAGE}

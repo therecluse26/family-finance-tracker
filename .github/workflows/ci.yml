@@ -27,12 +27,9 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
-      # better-sqlite3 compiles from its npm tarball, which the lockfile pins, against this Node's
-      # own headers. Its install script then downloads no binary and no headers.
-      - name: Build native modules from source
-        run: |
-          echo "npm_config_build_from_source=true" >> "$GITHUB_ENV"
-          echo "npm_config_nodedir=$(dirname "$(dirname "$(command -v node)")")" >> "$GITHUB_ENV"
+      # better-sqlite3 has no install script: its npm tarball, which the lockfile pins, holds a
+      # module built for each platform, and the tests load the one for this runner. Nothing is
+      # downloaded. The Docker image compiles its own from the tarball's source instead.
       - run: pnpm install --frozen-lockfile
       - name: Biome
         run: pnpm lint
@@ -55,12 +52,6 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
-      # better-sqlite3 compiles from its npm tarball, which the lockfile pins, against this Node's
-      # own headers. Its install script then downloads no binary and no headers.
-      - name: Build native modules from source
-        run: |
-          echo "npm_config_build_from_source=true" >> "$GITHUB_ENV"
-          echo "npm_config_nodedir=$(dirname "$(dirname "$(command -v node)")")" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - name: License check
         run: pnpm check:licenses
@@ -152,10 +143,12 @@ jobs:
           fi
       - name: The image holds no native build leftovers
         run: |
-          # better-sqlite3's deps folder holds the SQLite source it compiles from.
+          # better-sqlite3's deps and src folders hold the source it compiles from. Its prebuilds
+          # folder holds the npm tarball's modules, which the image replaces with its own build.
           leftovers=$(docker run --rm --entrypoint find family-finance-tracker:ci /app/node_modules \
             \( -name '*.a' -o -name '*.o' -o -name test_extension.node \
-            -o -path '*/better-sqlite3/deps' \) -print)
+            -o -path '*/better-sqlite3/deps' -o -path '*/better-sqlite3/src' \
+            -o -path '*/better-sqlite3/prebuilds' \) -print)
           if [ -n "$leftovers" ]; then
             echo "$leftovers" | head -20
             exit 1

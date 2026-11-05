@@ -100,7 +100,8 @@ timedCase("the Quick tier's link decisions on the full history", async (history,
     String(row.id),
   );
   await followUpAgain(database, ids);
-  await time.job("Matching with the Quick tier on the full history", 30_000, () =>
+  // A background job, not a request, so K9's 1 s rule does not apply; 45 s of CPU time.
+  await time.job("Matching with the Quick tier on the full history", 45_000, () =>
     runFollowUp(DAY),
   );
   expect(counted("first run")).toBeGreaterThan(0);

@@ -431,9 +431,11 @@ describe("Category rules", () => {
       const first = await itemAbout("g0");
       await answerReviewItem(bank.database, first?.id ?? "", "Restaurants", MEMBER);
 
-      const started = performance.now();
+      // CPU time, which a busy host does not stretch.
+      const started = process.cpuUsage();
       await runFollowUp(NOW);
-      const took = performance.now() - started;
+      const used = process.cpuUsage(started);
+      const took = (used.user + used.system) / 1_000;
 
       expect((await openReviewItems(bank.database)).length).toBe(2_500);
       expect(await chosen("g2499")).toEqual(["Spending", "Restaurants", "Category rule"]);

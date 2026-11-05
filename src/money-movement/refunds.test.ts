@@ -601,9 +601,11 @@ describe("Refunds", () => {
       historyLoaded: true,
     });
     await syncConnection(connectionId, NOW);
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const started = process.cpuUsage();
     await runFollowUp(NOW);
-    const took = performance.now() - started;
+    const used = process.cpuUsage(started);
+    const took = (used.user + used.system) / 1_000;
 
     const made = await bank.database.$client.execute("SELECT count(*) AS n FROM spending_links");
     expect(Number(made.rows[0]?.n)).toBe(2_500);

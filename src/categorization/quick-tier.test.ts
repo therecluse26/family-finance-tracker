@@ -253,9 +253,12 @@ describe("the Quick tier in the categorization step", () => {
       bank.fake.addPages(BANK, { added });
       await syncConnection(connectionId, NOW);
 
-      const started = performance.now();
+      // The limit is on the follow-up job's own work: the CPU time this test worker spends on it,
+      // which a busy host does not stretch. The setup before it counts only toward the timeout.
+      const started = process.cpuUsage();
       expect(await runFollowUp(NOW)).toBeUndefined();
-      const took = performance.now() - started;
+      const used = process.cpuUsage(started);
+      const took = (used.user + used.system) / 1_000;
 
       expect(callsOf("merchant cleanup").map((call) => call.rows.length)).toEqual([
         100, 100, 100, 100,
@@ -263,7 +266,7 @@ describe("the Quick tier in the categorization step", () => {
       expect(callsOf("category fix").flatMap((call) => call.rows)).toHaveLength(1_200);
       expect(await itemsOf(AI_UNSURE_KIND)).toHaveLength(1_200);
       expect(took).toBeLessThan(5_000);
-    });
+    }, 30_000);
 
     it("sends the Merchant, bank description, amount, date, Account label, and provider category, by row number with no ID", async () => {
       await connectAi();

@@ -14,9 +14,11 @@ export function timingTable(rows: readonly TimingRow[], runStarted = 0): string 
     const cached = row.timedAt !== undefined && Date.parse(row.timedAt) < runStarted;
     const path = cached ? `${row.path} (cached build)` : row.path;
     const time = row.ms > row.limitMs ? `**${ms(row.ms)} (over)**` : ms(row.ms);
-    return `| ${path} | ${time} | ${ms(row.limitMs)} |`;
+    const wall = row.wallMs === undefined ? "—" : ms(row.wallMs);
+    return `| ${path} | ${time} | ${wall} | ${ms(row.limitMs)} |`;
   });
-  return ["| Path | Time | Limit |", "| --- | --: | --: |", ...lines].join("\n");
+  const header = ["| Path | CPU time | Wall time | Limit |", "| --- | --: | --: | --: |"];
+  return [...header, ...lines].join("\n");
 }
 
 export class TimingTableReporter implements Reporter {

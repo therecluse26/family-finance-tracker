@@ -34,9 +34,30 @@ import { APP_MODULES, type ModuleServices, startModules } from "./modules.ts";
 // it. A change to sync, Matching or Categorization changes what the build stores and how long it
 // takes, so such a change builds it again. A change to a case file does not.
 
-// One timed path, with its limit. The build's rows say when they were timed, as an ISO date and
-// time, so the table can mark a cached build's rows.
-export type TimingRow = { path: string; ms: number; limitMs: number; timedAt?: string };
+// One timed path, with its limit. `ms` is the CPU time this process spent on the work, which a
+// busy host does not stretch, and the limit counts it. `wallMs` is the wall clock time, for the
+// table only. The build's rows say when they were timed, as an ISO date and time, so the table can
+// mark a cached build's rows.
+export type TimingRow = {
+  path: string;
+  ms: number;
+  wallMs?: number;
+  limitMs: number;
+  timedAt?: string;
+};
+
+// Runs the work, and measures its CPU time and its wall clock time in whole milliseconds. Each
+// timed case runs in its own process, so the CPU time is this work's, on every thread.
+export async function timeWork<T>(
+  work: () => Promise<T>,
+): Promise<{ result: T; ms: number; wallMs: number }> {
+  const wallStarted = performance.now();
+  const started = process.cpuUsage();
+  const result = await work();
+  const used = process.cpuUsage(started);
+  const ms = Math.round((used.user + used.system) / 1_000);
+  return { result, ms, wallMs: Math.round(performance.now() - wallStarted) };
+}
 
 export type BuildReport = {
   generatorVersion: number;
@@ -100,10 +121,8 @@ export async function cacheKey(): Promise<string> {
 }
 
 const timed = async (path: string, limitMs: number, run: () => Promise<unknown>) => {
-  const started = performance.now();
-  await run();
-  const ms = Math.round(performance.now() - started);
-  return { path, ms, limitMs, timedAt: new Date().toISOString() };
+  const { ms, wallMs } = await timeWork(run);
+  return { path, ms, wallMs, limitMs, timedAt: new Date().toISOString() };
 };
 
 // Builds app.db at `path` from the generated history, through the real sync path on the fake

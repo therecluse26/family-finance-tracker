@@ -847,17 +847,22 @@ export async function deleteRemovedConnection(
       .delete(unconnectedAssignments)
       .where(inArray(unconnectedAssignments.accountId, accountIds));
     await markTransactionsUnhandled(tx, [...new Set([...partners, ...tiedHere])]);
-    const subjects = new Set([...accountIds, ...transactionIds]);
-    for (const item of await tx
-      .select({ id: reviewItems.id, subjectIds: reviewItems.subjectIds })
-      .from(reviewItems)
-      .where(isNull(reviewItems.closedAt))) {
-      if (!item.subjectIds.some((subject) => subjects.has(subject))) continue;
-      await tx
-        .update(reviewItems)
-        .set({ closedAt: at, closedReason: "history deleted" })
-        .where(eq(reviewItems.id, item.id));
-    }
+    // One statement closes each open item with an Account or a Transaction among its subjects.
+    const subject = sql`subject.value`;
+    await tx
+      .update(reviewItems)
+      .set({ closedAt: at, closedReason: "history deleted" })
+      .where(
+        and(
+          isNull(reviewItems.closedAt),
+          exists(
+            tx
+              .select({ id: subject })
+              .from(sql`json_each(${reviewItems.subjectIds}) as subject`)
+              .where(or(inArray(subject, accountIds), inArray(subject, deleted))),
+          ),
+        ),
+      );
     if (accountIds.length > 0) {
       await tx.delete(dailyBalances).where(inArray(dailyBalances.accountId, accountIds));
       await tx.delete(typedBalances).where(inArray(typedBalances.accountId, accountIds));

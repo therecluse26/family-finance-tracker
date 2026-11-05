@@ -856,7 +856,8 @@ describe("the privacy filter on app-built text", () => {
   });
 
   // Long inputs of one shape, through the whole request: a list of small numbers no longer takes
-  // seconds. The best of 3 runs is timed, so a busy machine does not fail the test.
+  // seconds. The best of 3 runs is timed in CPU time, which a busy machine does not stretch, so it
+  // does not fail the test.
   it.each([
     "3/",
     "1, ",
@@ -877,13 +878,14 @@ describe("the privacy filter on app-built text", () => {
   ])("filters 64,000 characters of %j quickly", (shape) => {
     const long = shape.repeat(Math.ceil(64_000 / shape.length));
     const times = [0, 1, 2].map(() => {
-      const start = performance.now();
+      const start = process.cpuUsage();
       try {
         ask(long);
       } catch {
         // A refusal is an answer too.
       }
-      return performance.now() - start;
+      const used = process.cpuUsage(start);
+      return (used.user + used.system) / 1_000;
     });
     expect(Math.min(...times)).toBeLessThan(100);
   });

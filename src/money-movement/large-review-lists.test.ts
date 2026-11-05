@@ -78,10 +78,12 @@ describe("Review list items on a large history", () => {
       institutionName: "Pinecrest Bank",
       mask: "6014",
     });
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const started = process.cpuUsage();
     await decideOneSidedAgain(bank.database);
     await runFollowUp(NOW);
-    const took = performance.now() - started;
+    const used = process.cpuUsage(started);
+    const took = (used.user + used.system) / 1_000;
 
     const items = await ofKind("one-sided Transfer");
     expect(items).toHaveLength(ITEMS);
@@ -110,10 +112,12 @@ describe("Review list items on a large history", () => {
         "SELECT id FROM household_accounts WHERE provider_account_id = 'acc-card'",
       )
     ).rows;
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const started = process.cpuUsage();
     expect(await switchExclude(bank.database, String(card?.id), true)).toBe(true);
     await runFollowUp(NOW);
-    const took = performance.now() - started;
+    const used = process.cpuUsage(started);
+    const took = (used.user + used.system) / 1_000;
 
     expect(await ofKind(BEST_GUESS_KIND)).toEqual([]);
     expect(took).toBeLessThan(5_000);

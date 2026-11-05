@@ -37,7 +37,7 @@
 //
 // Tests may use the built history too, such as to check totals against hand sums from
 // `history.generated.shown`. openLargeHistory builds it on first use, which takes about a minute.
-export type { BuildReport, TimingRow } from "./build.ts";
+export { type BuildReport, type TimingRow, timeWork } from "./build.ts";
 export {
   GENERATOR_VERSION,
   type GeneratedHistory,

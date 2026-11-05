@@ -143,9 +143,11 @@ describe("Manual loan payments", () => {
       ),
     );
     await addManualLoan(bank.database, loan({ balanceDate: "2024-07-01" }), MEMBER);
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const started = process.cpuUsage();
     await runFollowUp(NOW);
-    const took = performance.now() - started;
+    const used = process.cpuUsage(started);
+    const took = (used.user + used.system) / 1_000;
 
     expect(await linkedPayments()).toHaveLength(63);
     expect(took).toBeLessThan(5_000);

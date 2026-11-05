@@ -21,8 +21,8 @@ import {
 } from "./testing.ts";
 
 // The cap on the First run job and the bank-added-later job (src/bank/history-jobs-cap.test.ts),
-// on real Sidequest jobs. It has a file of its own: better-sqlite3, under Sidequest, can crash a
-// test worker as it exits when other tests ran in the same worker first.
+// on real Sidequest jobs. It waits on Sidequest's real timers, which is where better-sqlite3 12
+// aborted Node 24 (pnpm-workspace.yaml says why the app takes 13).
 
 const HOUR = 60 * 60 * 1000;
 const ATTEMPTS = 3;

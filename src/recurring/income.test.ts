@@ -462,13 +462,15 @@ describe("Steady Income", () => {
     await syncConnection(connectionId, clock);
     await runFollowUp(clock);
 
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const cpuMs = (used: NodeJS.CpuUsage) => (used.user + used.system) / 1_000;
+    const started = process.cpuUsage();
     await findIncomeSeries(bank.database, now);
-    const found = performance.now() - started;
-    const read = performance.now();
+    const found = cpuMs(process.cpuUsage(started));
+    const read = process.cpuUsage();
     const figure = await income();
     const next = await predicted();
-    const reading = performance.now() - read;
+    const reading = cpuMs(process.cpuUsage(read));
 
     expect(next.filter(([payer]) => payer !== "Venmo")).toEqual([
       ["Blue Lake Clinic", "twice a month", "2026-11-01", 150_000],

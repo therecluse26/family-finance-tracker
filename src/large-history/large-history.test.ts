@@ -18,6 +18,7 @@ import {
   K7_LINES,
   LATER_DAY,
   overLimit,
+  timeWork,
 } from "./index.ts";
 import { APP_MODULES, startModules } from "./modules.ts";
 import { timingTable } from "./reporter.ts";
@@ -137,38 +138,64 @@ describe("the large history", () => {
 
 describe("the timing table", () => {
   const rows = [
-    { path: "GET /api/totals", ms: 211, limitMs: 1_000 },
-    { path: "Follow-up after one more day", ms: 5_400, limitMs: 5_000 },
+    { path: "GET /api/totals", ms: 211, wallMs: 1_250, limitMs: 1_000 },
+    { path: "Follow-up after one more day", ms: 5_400, wallMs: 5_600, limitMs: 5_000 },
+    { path: "Sync of an older build", ms: 300, limitMs: 1_000 },
   ];
 
-  it("names each row over its limit", () => {
+  it("names each row whose CPU time is over its limit, whatever its wall time", () => {
     expect(overLimit(rows)).toEqual([
-      "Follow-up after one more day: 5400 ms, over its 5000 ms limit",
+      "Follow-up after one more day: 5400 ms of CPU time, over its 5000 ms limit",
     ]);
   });
 
-  it("prints each row's path, time, and limit, and marks a row over its limit", () => {
+  it("prints each row's path, CPU time, wall time, and limit, and marks a row over its limit", () => {
     expect(timingTable(rows)).toBe(
       [
-        "| Path | Time | Limit |",
-        "| --- | --: | --: |",
-        "| GET /api/totals | 211 ms | 1,000 ms |",
-        "| Follow-up after one more day | **5,400 ms (over)** | 5,000 ms |",
+        "| Path | CPU time | Wall time | Limit |",
+        "| --- | --: | --: | --: |",
+        "| GET /api/totals | 211 ms | 1,250 ms | 1,000 ms |",
+        "| Follow-up after one more day | **5,400 ms (over)** | 5,600 ms | 5,000 ms |",
+        "| Sync of an older build | 300 ms | — | 1,000 ms |",
       ].join("\n"),
     );
   });
 
+  it("times work by its CPU time, so waiting does not count, and by the wall clock too", async () => {
+    const waited = await timeWork(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return "waited";
+    });
+    expect(waited.result).toBe("waited");
+    expect(waited.wallMs).toBeGreaterThanOrEqual(190);
+    expect(waited.ms).toBeLessThan(100);
+
+    // Busy until this process has spent 200 ms of CPU time, however long a busy host takes.
+    const busy = await timeWork(async () => {
+      const started = process.cpuUsage();
+      const spent = () => {
+        const used = process.cpuUsage(started);
+        return (used.user + used.system) / 1_000;
+      };
+      while (spent() < 200) {
+        // Busy on purpose.
+      }
+    });
+    expect(busy.ms).toBeGreaterThanOrEqual(200);
+    expect(busy.wallMs).toBeGreaterThanOrEqual(busy.ms - 50);
+  });
+
   it("marks the rows of a build made before this run", () => {
-    const sync = { path: "Sync of the full history", ms: 20_000, limitMs: 40_000 };
+    const sync = { path: "Sync of the full history", ms: 20_000, wallMs: 21_000, limitMs: 40_000 };
     const runStarted = Date.parse("2026-11-04T18:00:00.000Z");
 
     const table = (timedAt: string) => timingTable([{ ...sync, timedAt }], runStarted);
 
     expect(table("2026-11-04T17:59:00.000Z")).toContain(
-      "| Sync of the full history (cached build) | 20,000 ms | 40,000 ms |",
+      "| Sync of the full history (cached build) | 20,000 ms | 21,000 ms | 40,000 ms |",
     );
     expect(table("2026-11-04T18:01:00.000Z")).toContain(
-      "| Sync of the full history | 20,000 ms | 40,000 ms |",
+      "| Sync of the full history | 20,000 ms | 21,000 ms | 40,000 ms |",
     );
   });
 });

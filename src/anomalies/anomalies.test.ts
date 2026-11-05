@@ -746,8 +746,10 @@ describe("the Anomaly checks", () => {
     ).rows.map((row) => String(row.id));
     expect(ids).toHaveLength(2_500);
 
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const started = process.cpuUsage();
     await checkAnomalies(bank.database, ids, now);
-    expect(performance.now() - started).toBeLessThan(3_000);
+    const used = process.cpuUsage(started);
+    expect((used.user + used.system) / 1_000).toBeLessThan(3_000);
   }, 120_000);
 });

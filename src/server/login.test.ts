@@ -286,7 +286,8 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       expect(await second.isSignedIn()).toBe(false);
     });
 
-    it("gives each Member 10 backup codes, each of which works", async () => {
+    // 10 password sign-ins, each a slow hash on purpose, so a busy host gets more than 5 seconds.
+    it("gives each Member 10 backup codes, each of which works", { timeout: 30_000 }, async () => {
       expect(alice.backupCodes).toHaveLength(10);
 
       for (const code of alice.backupCodes) {

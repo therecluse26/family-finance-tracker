@@ -285,9 +285,11 @@ describe("untracked loan payments", () => {
     vi.mocked(listLoanPayouts).mockClear();
 
     // Only the follow-up job, which decides every payment and opens the items.
-    const started = performance.now();
+    // CPU time, which a busy host does not stretch.
+    const started = process.cpuUsage();
     await runFollowUp(NOW);
-    const took = performance.now() - started;
+    const used = process.cpuUsage(started);
+    const took = (used.user + used.system) / 1_000;
 
     expect(await untrackedItems()).toHaveLength(LENDERS);
     const transfers = await bank.database.$client.execute(

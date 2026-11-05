@@ -3,7 +3,7 @@ import { aiCost, householdAi } from "../../ai/index.ts";
 import { asTheAiReads } from "../../ai/testing.ts";
 import { lookupTools, RECURRING_ROWS } from "../../chat/index.ts";
 import { HISTORY_NOW } from "../history.ts";
-import { REQUEST_LIMIT_MS, timedCase } from "../index.ts";
+import { REQUEST_LIMIT_MS, timedCase, timeWork } from "../index.ts";
 
 // Chat's lookup tools on the full history, each as the AI's tool call runs it, through the privacy
 // filter. Each has the 1 s request limit: Chat waits on it. Each answer's size goes in the table,
@@ -22,14 +22,17 @@ timedCase("Chat lookup tools", async (history, time) => {
   const tools = lookupTools({ database: history.database, ai, now: HISTORY_NOW });
   const sizes: Record<string, number> = {};
   const lookup = async (name: keyof typeof tools, input: unknown, what = "") => {
-    const started = performance.now();
-    const answer = asTheAiReads(await tools[name]?.run(input));
-    const ms = Math.round(performance.now() - started);
+    const {
+      result: answer,
+      ms,
+      wallMs,
+    } = await timeWork(async () => asTheAiReads(await tools[name]?.run(input)));
     const characters = JSON.stringify(answer).length;
     sizes[`${name}${what}`] = characters;
     time.add({
       path: `Chat tool ${name}${what}, ${characters.toLocaleString("en-US")} characters`,
       ms,
+      wallMs,
       limitMs: REQUEST_LIMIT_MS,
     });
     return answer;

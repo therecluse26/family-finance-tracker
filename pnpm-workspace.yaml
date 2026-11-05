@@ -2,5 +2,10 @@
 allowBuilds:
   esbuild: false
   better-sqlite3: true
+# better-sqlite3 12 aborts Node 24 when V8 frees a Statement outside a JS context
+# ((env) != nullptr in Statement::~Statement). 13.0.3 does not. Sidequest asks for ^12.6.2, so
+# every dependent (Sidequest, drizzle-orm, knex) gets 13.0.3 here.
+overrides:
+  better-sqlite3: 13.0.3
 ignoredOptionalDependencies:
   - "@napi-rs/nice"

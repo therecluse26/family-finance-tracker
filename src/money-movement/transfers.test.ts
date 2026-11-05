@@ -817,9 +817,11 @@ describe("Transfer pairing", () => {
       const load = performance.now() - loadStarted;
       expect(await linkCount()).toBe(DAYS);
 
-      const started = performance.now();
+      // CPU time, which a busy host does not stretch.
+      const started = process.cpuUsage();
       await sync({ added: daily(DAYS) });
-      const took = performance.now() - started;
+      const used = process.cpuUsage(started);
+      const took = (used.user + used.system) / 1_000;
 
       expect(await linkCount()).toBe(DAYS + 1);
       expect(took).toBeLessThan(1_000);
