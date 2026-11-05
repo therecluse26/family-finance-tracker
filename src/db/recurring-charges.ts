@@ -12,11 +12,14 @@ export type StoredRecurringCharge = typeof recurringCharges.$inferSelect;
 export type PostedSpendingRow = {
   id: string;
   postedDate: string;
+  authorizedDate: string | null;
   accountId: string;
   merchantId: string | null;
   merchantCleanName: string | null;
   spending: number;
   category: string | null;
+  // True when it arrived in its Connection's history load.
+  historyLoad: boolean;
 };
 
 // Every posted Spending Transaction that shows, oldest first. A Transaction with more than one
@@ -26,11 +29,13 @@ export async function listPostedSpending(database: Database): Promise<PostedSpen
     .select({
       id: transactions.id,
       postedDate: transactions.postedDate,
+      authorizedDate: transactions.authorizedDate,
       accountId: transactions.accountId,
       merchantId: transactions.merchantId,
       merchantCleanName: transactions.merchantCleanName,
       amount: transactionParts.amount,
       category: transactionParts.category,
+      historyLoad: transactions.historyLoad,
     })
     .from(transactionParts)
     .innerJoin(transactions, eq(transactions.id, transactionParts.transactionId))

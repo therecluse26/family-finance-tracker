@@ -29,6 +29,8 @@ import { markTransactionsUnhandled } from "./follow-up.ts";
 import { carryLinks } from "./links.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
 import {
+  alerts,
+  alertTransactions,
   connections,
   dailyBalances,
   followUpMarks,
@@ -852,6 +854,18 @@ export async function deleteRemovedConnection(
       await tx.delete(typedBalances).where(inArray(typedBalances.accountId, accountIds));
       await tx.delete(recurringCharges).where(inArray(recurringCharges.accountId, accountIds));
     }
+    // An Alert about any of these Transactions goes with them.
+    await tx
+      .delete(alerts)
+      .where(
+        inArray(
+          alerts.id,
+          tx
+            .select({ id: alertTransactions.alertId })
+            .from(alertTransactions)
+            .where(inArray(alertTransactions.transactionId, deleted)),
+        ),
+      );
     await tx.delete(transactions).where(onAccounts);
     await tx.delete(householdAccounts).where(eq(householdAccounts.connectionId, id));
     const [carried] = await tx

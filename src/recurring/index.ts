@@ -16,11 +16,20 @@ export {
   steadyIncome,
   typeSteadyIncome,
 } from "./income.ts";
+export { groupOf as merchantGroupOf, householdToday } from "./merchant-days.ts";
 export {
+  addDays,
   addMonths,
+  daysBetween,
   lastActiveDay,
   nextExpected,
   SCHEDULES,
   type Schedule,
 } from "./schedules.ts";
-export type { Status } from "./series.ts";
+export {
+  earlierOnSchedule,
+  fewestToFind,
+  type SeriesTxn,
+  type Status,
+  withinChargeBand,
+} from "./series.ts";

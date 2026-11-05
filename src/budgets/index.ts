@@ -28,6 +28,8 @@ export {
 } from "./month-start.ts";
 export {
   type CategoryProjection,
+  findLargePurchases,
+  type LargePurchase,
   type ProjectionTerms,
   projectCategories,
   projectedSpending,

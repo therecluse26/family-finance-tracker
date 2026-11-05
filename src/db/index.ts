@@ -34,6 +34,19 @@ export {
   type UseCost,
 } from "./ai-usage.ts";
 export {
+  type AlertKind,
+  type AlertState,
+  clearAnomalyCheckFailures,
+  countAnomalyCheckFailure,
+  listAlertKindsOf,
+  listAlerts,
+  listPressedAlertFacts,
+  type NewAlert,
+  restartAnomalyCheckCount,
+  type StoredAlert,
+  storeAlerts,
+} from "./alerts.ts";
+export {
   listDailyBalances,
   listPostedDayTotals,
   type StoredDailyBalance,

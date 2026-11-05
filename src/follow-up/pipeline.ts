@@ -15,7 +15,10 @@ import { log } from "../log.ts";
 export const FOLLOW_UP_STEPS = [
   "matching",
   "categorization",
-  "recurring charge and anomaly checks",
+  "recurring charge checks",
+  // The Anomaly checks read the Recurring charges the checks before them found (spec 06,
+  // Anomalies).
+  "anomaly checks",
   // This month's Bills Budgets, which follow the Recurring charges and loan payments the checks
   // found, before the Alerts read them (spec 05, Bills group).
   "Bills Budgets",

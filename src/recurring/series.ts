@@ -56,6 +56,10 @@ const WIDE_BAND = 150;
 
 // The fewest Transactions a new series needs.
 const FEWEST = { weekly: 3, "every 2 weeks": 3, monthly: 3, yearly: 2 } as const;
+
+// The fewest Transactions a Recurring charge on `schedule` is found with. Each later one continues
+// it, or revives it.
+export const fewestToFind = (schedule: Schedule): number => FEWEST[schedule];
 const FEWEST_TWICE_A_MONTH = 3;
 
 // Days from the previous Transaction to the next, at least and at most, a little wider than each
@@ -156,6 +160,32 @@ export const RECURRING_CHARGE_RULE: SeriesRule<Schedule> = {
     return undefined;
   },
 };
+
+// Amounts within 7.5% of each other, the band a new Recurring charge's amounts stay within.
+export const withinChargeBand = (amounts: readonly number[]) => withinPercent(amounts, BAND);
+
+// The earlier Transactions that make a weekly, 2-week, or monthly schedule with `txn`: each lands
+// one interval before it, within the margin, and within 7.5% of its amount. The yearly schedule
+// never counts here (spec 06, New Recurring charge). `earlier` is in date order. Each one comes
+// once, with the shortest schedule it fits.
+export function earlierOnSchedule(
+  txn: SeriesTxn,
+  earlier: readonly SeriesTxn[],
+): { txn: SeriesTxn; schedule: Schedule }[] {
+  const found: { txn: SeriesTxn; schedule: Schedule }[] = [];
+  const earliest = addDays(txn.date, -DAYS_APART.monthly[1]);
+  for (let at = earlier.length - 1; at >= 0; at -= 1) {
+    const each = earlier[at];
+    if (each === undefined || each.date < earliest) break;
+    if (!isBefore(each, txn) || each.date === txn.date) continue;
+    if (!withinChargeBand([txn.amount, each.amount])) continue;
+    const schedule = (["weekly", "every 2 weeks", "monthly"] as const).find((one) =>
+      inWindow(window(one, each.date), txn.date),
+    );
+    if (schedule !== undefined) found.push({ txn: each, schedule });
+  }
+  return found.reverse();
+}
 
 // The twice-a-month schedules whose fixed dates `date` is within the margin of. A date on or near
 // the last day of a month also fits the days that month lacks, up to 31.

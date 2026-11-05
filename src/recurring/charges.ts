@@ -158,7 +158,7 @@ export function startRecurringCharges(options: { database: Database; now?: () =>
   stop(): void;
 } {
   const { database, now = () => new Date() } = options;
-  const stop = registerFollowUpStep("recurring charge and anomaly checks", async () => {
+  const stop = registerFollowUpStep("recurring charge checks", async () => {
     await findRecurringCharges(database, now());
     await findIncomeSeries(database, now());
     return undefined;

@@ -560,6 +560,8 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ deleted: true }, 200);
   })
+  // The Alert list (spec 06, The Alert list), newest first.
+  .get("/alerts", async (c) => c.json({ alerts: await c.var.alerts.list() }))
   // Recurring charges (spec 06), by next expected date.
   .get("/recurring-charges", async (c) => c.json({ charges: await c.var.recurring.list() }))
   // A Member marks a Recurring charge ended. It never comes back by itself.

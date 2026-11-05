@@ -13,6 +13,7 @@ import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { aboutRoutes } from "./about.ts";
+import { alertRoutes } from "./alerts.ts";
 import { api } from "./api.ts";
 import { bankViews } from "./bank-data.ts";
 import { benchmarkRoutes } from "./benchmarks.ts";
@@ -148,6 +149,7 @@ export function createApp(
   const moneyMovement = moneyMovementRoutes(database);
   const categories = categoryRoutes(database);
   const recurring = recurringRoutes(database);
+  const alerts = alertRoutes(database);
   const about = aboutRoutes(database);
   const benchmarks = benchmarkRoutes(database);
   const budgets = budgetRoutes(database);
@@ -175,6 +177,7 @@ export function createApp(
         c.set("moneyMovement", moneyMovement);
         c.set("categories", categories);
         c.set("recurring", recurring);
+        c.set("alerts", alerts);
         c.set("about", about);
         c.set("benchmarks", benchmarks);
         c.set("budgets", budgets);

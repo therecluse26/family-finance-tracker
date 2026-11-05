@@ -1,4 +1,5 @@
 import { FOLLOW_UP_AI_USES, startAiRetries } from "../ai/index.ts";
+import { startAnomalyChecks } from "../anomalies/index.ts";
 import { type BankDataAdapter, startBank } from "../bank/index.ts";
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
@@ -88,9 +89,18 @@ export const APP_MODULES: readonly AppModule[] = [
     // A fixed time, so a Recurring charge's status does not change as the calendar moves on.
     start: ({ database }) => startRecurringCharges({ database, now: HISTORY_NOW }),
     step: {
-      name: "recurring charge and anomaly checks",
+      name: "recurring charge checks",
       path: "Recurring charge checks on the full history",
       buildLimitMs: 20_000,
+    },
+  },
+  {
+    name: "startAnomalyChecks",
+    start: ({ database }) => startAnomalyChecks({ database, now: HISTORY_NOW }),
+    step: {
+      name: "anomaly checks",
+      path: "Anomaly checks on the full history",
+      buildLimitMs: 6_000,
     },
   },
   {

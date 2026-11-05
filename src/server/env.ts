@@ -6,6 +6,7 @@ import type {
 } from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { AboutRoutes } from "./about-views.ts";
+import type { AlertRoutes } from "./alerts-views.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BankViews } from "./bank-views.ts";
 import type { BenchmarkRoutes } from "./benchmarks-views.ts";
@@ -55,6 +56,8 @@ export type ServerEnv = {
     categories: CategoryRoutes;
     // Recurring charges.
     recurring: RecurringRoutes;
+    // The Alert list.
+    alerts: AlertRoutes;
     // Settings, About: the version, the Source code link, and the Update check.
     about: AboutRoutes;
     // Each Category's Benchmark.

@@ -1109,3 +1109,72 @@ export const budgetMonthStarts = sqliteTable("budget_month_starts", {
   doneAt: moment("done_at"),
   failedTries: integer("failed_tries").notNull().default(0),
 });
+
+// Alerts (spec 06, The Alert list). The Anomaly checks create them after each sync. Each holds its
+// kind, the template's facts and text, the Transactions or Category it is about, a slot for the
+// AI's advice, and one state. The state is null until the Alerts step decides it, except for an
+// Anomaly found in a history load, which is "found in history" at once and is never sent.
+export const alerts = sqliteTable(
+  "alerts",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", {
+      enum: ["Duplicate charge", "Price increase", "New Recurring charge", "Large purchase"],
+    }).notNull(),
+    createdAt: moment("created_at").notNull(),
+    // The template's facts, as JSON: the Merchant, amounts in whole cents, and dates.
+    facts: text("facts", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    // The template's text from those facts, as it read on the day the Alert was created.
+    text: text("text").notNull(),
+    // The Category an Alert is about, when it is about a Category rather than Transactions.
+    category: text("category"),
+    // The AI's one or two sentences of advice, if any.
+    advice: text("advice"),
+    state: text("state", { enum: ["sent", "held back (weekly cap)", "found in history"] }),
+  },
+  (table) => [index("alerts_created_at").on(table.createdAt)],
+);
+
+// The Transactions an Alert is about. A Transaction fires each Anomaly at most once, so the checks
+// read these by Transaction. Deleting a Connection's history deletes its Alerts with them.
+export const alertTransactions = sqliteTable(
+  "alert_transactions",
+  {
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    alertId: text("alert_id")
+      .notNull()
+      .references(() => alerts.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.transactionId, table.alertId] }),
+    index("alert_transactions_alert_id").on(table.alertId),
+  ],
+);
+
+// Each "Not a problem" press on an Alert (spec 06, "Not a problem"): who pressed it, and when.
+export const alertPresses = sqliteTable(
+  "alert_presses",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    alertId: text("alert_id")
+      .notNull()
+      .references(() => alerts.id, { onDelete: "cascade" }),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    pressedAt: moment("pressed_at").notNull(),
+  },
+  (table) => [index("alert_presses_alert_id").on(table.alertId)],
+);
+
+// The Anomaly checks' failed tries in a row. A run that fails counts one; the run that reaches the
+// cap gives up on its Transactions and raises one System notice. It has at most one row, whose ID
+// is 1.
+export const anomalyChecks = sqliteTable(
+  "anomaly_checks",
+  {
+    id: integer("id").primaryKey(),
+    failedTries: integer("failed_tries").notNull().default(0),
+  },
+  (table) => [check("anomaly_checks_one_row", sql`${table.id} = 1`)],
+);

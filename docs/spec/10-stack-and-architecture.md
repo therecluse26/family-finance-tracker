@@ -147,10 +147,11 @@ A sync that adds, changes, or removes Transactions starts one follow-up job. A s
 
 1. **Matching:** Transfers, Refunds, Reimbursements, and Manual loan payments ([Money movement](03-money-movement.md), [Accounts and bank sync](02-accounts-and-bank-sync.md)). Rule-based Merchant cleanup has already run when each Transaction arrived, because Refund links need the Merchant ([Categorization](04-categorization.md#merchants)).
 2. **Categorization,** with AI Merchant cleanup for names the rules could not fix ([Categorization](04-categorization.md)).
-3. **Recurring charge and Anomaly checks** ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
-4. **Bills Budgets:** this month's Bills Budgets again, as early bills and loan interest post ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#bills-group-housing-utilities-phone-and-internet-insurance-taxes-and-government)).
-5. **Alerts** ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
-6. **The once-a-day Insight card check** ([AI](08-ai.md)).
+3. **Recurring charge checks** ([Anomalies and Alerts](06-anomalies-and-alerts.md#recurring-charges)).
+4. **Anomaly checks,** which read the Recurring charges step 3 found ([Anomalies and Alerts](06-anomalies-and-alerts.md#anomalies)).
+5. **Bills Budgets:** this month's Bills Budgets again, as early bills and loan interest post ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#bills-group-housing-utilities-phone-and-internet-insurance-taxes-and-government)).
+6. **Alerts** ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
+7. **The once-a-day Insight card check** ([AI](08-ai.md)).
 
 Rules:
 

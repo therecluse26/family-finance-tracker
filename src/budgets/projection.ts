@@ -133,6 +133,40 @@ function largeIn(facts: SpendingFacts, month: string): Set<string> {
   return large;
 }
 
+// A Large purchase, with the Category of its largest Spending part.
+export type LargePurchase = Purchase & { category: string | null };
+
+// The Large purchases among these Transactions (spec 06, Large purchase), oldest first: the same
+// purchases and test the projection's one-offs use.
+export async function findLargePurchases(
+  database: Database,
+  transactionIds: ReadonlySet<string>,
+  now = new Date(),
+): Promise<LargePurchase[]> {
+  const facts = await readSpendingFacts(database, now);
+  const large = facts.purchases.filter(
+    (purchase) =>
+      transactionIds.has(purchase.transactionId) && isLargePurchase(purchase, facts.purchases),
+  );
+  const largest = new Map<string, { category: string | null; amount: number }>();
+  const ids = new Set(large.map((purchase) => purchase.transactionId));
+  for (const part of facts.posted) {
+    if (part.type !== "Spending" || !ids.has(part.transactionId)) continue;
+    // A Bills part is not part of the purchase.
+    if (part.category !== null && isCategory(part.category)) {
+      if (categoryGroupOf(part.category) === "Bills") continue;
+    }
+    const found = largest.get(part.transactionId);
+    if (found === undefined || -part.amount > found.amount) {
+      largest.set(part.transactionId, { category: part.category, amount: -part.amount });
+    }
+  }
+  return large.map((purchase) => ({
+    ...purchase,
+    category: largest.get(purchase.transactionId)?.category ?? null,
+  }));
+}
+
 export type CategoryProjection = {
   // The month's Spending, net of Refunds and Reimbursements, as the Totals count it.
   spending: number;
