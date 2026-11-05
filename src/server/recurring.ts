@@ -8,6 +8,7 @@ import {
   steadyIncome,
   typeSteadyIncome,
 } from "../recurring/index.ts";
+import { afterSteadyIncomeTyped } from "../tailoring/index.ts";
 import type { RecurringChargeView, RecurringRoutes, SteadyIncomeView } from "./recurring-views.ts";
 
 // The Recurring charge, Steady Income, and payday routes, through the recurring module.
@@ -54,7 +55,10 @@ export function recurringRoutes(database: Database): RecurringRoutes {
     },
 
     async typeSteadyIncome(amount, memberId) {
-      return incomeView(await typeSteadyIncome(database, amount, memberId));
+      const typed = await typeSteadyIncome(database, amount, memberId);
+      // A typed figure can make an Income redraft due (spec 05, Which Proposals exist).
+      await afterSteadyIncomeTyped();
+      return incomeView(typed);
     },
 
     async paydays() {

@@ -1,16 +1,20 @@
 import { type HouseholdAi, PrivacyRefusal } from "../ai/index.ts";
+import { benchmarkSnapshot } from "../benchmarks/index.ts";
 import { type DraftTailoring, withinHalfOf } from "../budgets/index.ts";
 import { type Category, categoryGroupOf } from "../categories/index.ts";
 import {
   countTailoringRunFailure,
   type Database,
   dropTailoringRun,
+  endRedraftRun,
   endTailoringRun,
   goalRunProposalsId,
   listBankNames,
   listWaitingTailoringRuns,
+  type RedraftInputs,
   readBudgetInputs,
   readGoal,
+  recordRedraftInputs,
   requestTailoringRun,
   type StoredGoal,
   type StoredTailoringRun,
@@ -22,6 +26,7 @@ import { Job, startJobUnlessWaiting } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { raiseNotice } from "../notify/index.ts";
 import { namedCompany, propose, US_BANKS_AND_LENDERS } from "../proposals/index.ts";
+import { steadyIncome } from "../recurring/index.ts";
 import {
   aiFigures,
   askTailoring,
@@ -42,6 +47,9 @@ import {
 // - A Goal run: when a Goal is added or its words change (T89 asks for it), a Goal Budget change
 //   Proposal for the flexible Categories the Goal touches, and a Goal amount Proposal for a spend
 //   less Goal, and for a save Goal whose reading has no change. At most 2 Proposals.
+// - A redraft: when one of its triggers fires (src/tailoring/redrafts.ts), the full draft for
+//   flexible Categories, as one Proposal. Once handled, its inputs are the ones behind the current
+//   Budgets, so the same trigger does not repeat.
 // Each run makes one AI call. It waits in app.db until that call ends: an AI error retries after 1,
 // 5 and 30 minutes, then the run takes its no-AI path, no Proposal. A pause, such as the AI cost
 // cap, keeps it waiting until AI returns. With no AI provider, the run ends with no Proposal.
@@ -51,6 +59,10 @@ export const TAILORING_RUN_CAP = 3;
 
 export const TAILORING_STOPPED_TEXT =
   "The app could not tailor Budgets after 3 tries. Budgets stay as they are.";
+
+// A redraft asked for again during each of its runs, up to the cap.
+export const REDRAFT_STOPPED_TEXT =
+  "Household figures kept changing while the app redrafted Budgets, so it stopped after 3 runs. Budgets stay as they are.";
 
 type Services = {
   database: Database;
@@ -235,6 +247,99 @@ async function proposeGoalAmount(
   return 0;
 }
 
+// The redraft Proposal's reason when the AI's names a company.
+const REDRAFT_REASON = "The flexible Budgets, drafted again with the latest figures.";
+
+// True when a redraft's figure differs from the current Budget by 5% or more.
+const differs = (figure: number, budget: number) =>
+  figure !== budget && Math.abs(figure - budget) * 20 >= budget;
+
+// The redraft Proposal (spec 05, Which Proposals exist): the full draft for flexible Categories.
+// Each Category takes the AI's figure, within 50% of the formula's, or the formula's figure, after
+// the "must fit" step. A figure whose reason names a company is never used: that Category takes the
+// formula's. The Proposal lists each flexible Category with a Budget whose figure differs from its
+// Budget by 5% or more, kept within 50% of that Budget too (spec 08, rule 4). None differs, no
+// Proposal. Returns how many Proposals it made: 1 or 0.
+async function proposeRedraft(
+  { database, ai, now }: Services,
+  runId: string,
+  reply: TailoringReply,
+  figures: readonly CategoryFigure[],
+  redraft: RedraftInputs,
+): Promise<number> {
+  const flexible = new Set(
+    figures
+      .filter((each) => each.budget !== null && !isBills(each.category))
+      .map((each) => each.category),
+  );
+  const drafted = await aiFigures(ai, reply, flexible);
+  const companies = [...(await listBankNames(database)), ...US_BANKS_AND_LENDERS];
+  const lines: { category: string; amount: number; reason: string | null }[] = [];
+  for (const figure of figures) {
+    if (!flexible.has(figure.category) || figure.budget === null) continue;
+    let found = drafted.get(figure.category);
+    if (found !== undefined && namedCompany(found.reason, companies) !== undefined) {
+      found = undefined;
+    }
+    const amount = found?.amount ?? figure.formula;
+    if (amount === null) continue;
+    const kept = proposedFigure(figure, amount);
+    if (kept === undefined || !differs(kept, figure.budget)) continue;
+    lines.push({ category: figure.category, amount: kept, reason: found?.reason ?? null });
+  }
+  if (lines.length === 0) return 0;
+  const said = await screenText(ai, reply.reason);
+  const reason = said === "" || namedCompany(said, companies) !== undefined ? REDRAFT_REASON : said;
+  const result = await propose(
+    database,
+    { kind: "Budget change", source: "Budget tailoring", runId, reason, budgets: lines, redraft },
+    now(),
+  );
+  if (result.outcome === "shown") return 1;
+  log.warn("A redraft Proposal was refused", { guardrail: result.guardrail });
+  return 0;
+}
+
+// The inputs a redraft drafts at: I, and the shipped CE data year.
+function redraftInputsAt(income: number): RedraftInputs {
+  const { ce, sample } = benchmarkSnapshot();
+  return { steadyIncome: income, ceDataYear: ce.dataYear, sampleBenchmarks: sample };
+}
+
+// A redraft that ends with no Proposal is handled all the same: its inputs are recorded, so the
+// same trigger does not repeat. A redraft that cannot read them logs it and ends.
+async function redraftHandled(run: StoredTailoringRun, inputs?: RedraftInputs): Promise<void> {
+  if (run.kind !== "Redraft" || services === undefined) return;
+  try {
+    const { database, now } = services;
+    const at = now();
+    const measured = inputs ?? redraftInputsAt((await steadyIncome(database, at)).amount);
+    await recordRedraftInputs(database, measured, at);
+  } catch (error) {
+    log.error("A redraft could not record its inputs", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
+// A redraft's run ended. A trigger that fired during it, after the run read its stamp, keeps it
+// waiting, since the run read its figures before that trigger: it runs once more, in a new job.
+// Each run more counts toward the run cap, so a trigger that fires during every run still ends,
+// with one System notice.
+async function endRedraft(run: StoredTailoringRun): Promise<void> {
+  if (services === undefined) throw new Error("Budget tailoring is not running.");
+  const { database, startJob } = services;
+  if (!(await endRedraftRun(database, run.id, run.requestedAt))) return;
+  const tries = await countTailoringRunFailure(database, run.id);
+  log.info("A redraft was asked for again during its run", { tries });
+  if (tries >= TAILORING_RUN_CAP) {
+    await dropTailoringRun(database, run.id);
+    await raiseNotice({ kind: "event", text: REDRAFT_STOPPED_TEXT });
+    return;
+  }
+  await startJob();
+}
+
 // One waiting run: "next" when it ended, "wait" when AI is paused or its retry is not due, so the
 // runs after it wait too.
 async function runOne(run: StoredTailoringRun): Promise<"next" | "wait"> {
@@ -255,21 +360,25 @@ async function runOne(run: StoredTailoringRun): Promise<"next" | "wait"> {
     start = await goalStartToday(database, goal.id, at);
   }
   const today = await householdToday(database, at);
-  const { formula, budgets, benchmarks } = await readTailoringFacts(
+  const { formula, income, budgets, benchmarks } = await readTailoringFacts(
     database,
     today.slice(0, 7),
     at,
     today,
   );
   const figures = figuresOf(formula, budgets);
+  // A redraft drafts at the I its formula used, and the shipped CE data year.
+  const redraft = run.kind === "Redraft" ? redraftInputsAt(income) : undefined;
   const reply = await askTailoring({
     database,
     ai,
     now,
     run:
-      goal === undefined
-        ? { kind: "Tailoring" }
-        : { kind: "Goal", words: goal.words, goal: goalFactsOf(start, goal) },
+      goal !== undefined
+        ? { kind: "Goal", words: goal.words, goal: goalFactsOf(start, goal) }
+        : redraft !== undefined
+          ? { kind: "Redraft" }
+          : { kind: "Tailoring" },
     figures,
     benchmarks,
   });
@@ -277,7 +386,9 @@ async function runOne(run: StoredTailoringRun): Promise<"next" | "wait"> {
     if ("retryAt" in reply || ("pause" in reply && reply.pause !== "no AI provider")) {
       return "wait";
     }
-    await dropTailoringRun(database, run.id);
+    await redraftHandled(run, redraft);
+    if (redraft !== undefined) await endRedraft(run);
+    else await dropTailoringRun(database, run.id);
     log.info("A Budget tailoring run took its no-AI path", {
       kind: run.kind,
       why: "pause" in reply ? reply.pause : reply.failed,
@@ -292,6 +403,17 @@ async function runOne(run: StoredTailoringRun): Promise<"next" | "wait"> {
   }
   const runId =
     goal === undefined ? `${run.kind} run ${run.id}` : goalRunProposalsId(run.id, goal.id);
+  if (redraft !== undefined) {
+    // Each run of a redraft has its own run ID, from the stamp it read, so a run after a trigger
+    // during the last one has its own cap of Proposals. A retry after a failure keeps the stamp.
+    const redraftRunId = `${runId} at ${run.requestedAt.toISOString()}`;
+    const made = await proposeRedraft(services, redraftRunId, reply.output, figures, redraft);
+    // With no Proposal, the redraft is handled now; a Proposal records them when it closes.
+    if (made === 0) await redraftHandled(run, redraft);
+    await endRedraft(run);
+    log.info("A Budget tailoring run ended", { kind: run.kind, proposals: made });
+    return "next";
+  }
   // A Category Goal's limit comes from its own reading, so it holds whatever its start reads.
   const target = goal === undefined ? null : goalReadingOf(goal).target;
   const only = target?.kind === "Category" ? target.category : undefined;
@@ -317,6 +439,7 @@ export async function runWaitingTailoring(): Promise<number> {
     } catch (error) {
       const name = error instanceof Error ? error.name : "unknown";
       if (error instanceof PrivacyRefusal) {
+        await redraftHandled(run);
         await dropTailoringRun(database, run.id);
         log.error("The privacy filter refused a Budget tailoring run", { kind: run.kind });
         ended += 1;
@@ -325,6 +448,7 @@ export async function runWaitingTailoring(): Promise<number> {
       const tries = await countTailoringRunFailure(database, run.id);
       log.error("A Budget tailoring run failed", { kind: run.kind, tries, error: name });
       if (tries >= TAILORING_RUN_CAP) {
+        await redraftHandled(run);
         await dropTailoringRun(database, run.id);
         await raiseNotice({ kind: "event", text: TAILORING_STOPPED_TEXT });
         ended += 1;
@@ -358,6 +482,17 @@ export async function requestGoalTailoring(goalId: string): Promise<boolean> {
     services.now(),
   );
   await services.startJob();
+  return stored;
+}
+
+// A redraft trigger fired (src/tailoring/redrafts.ts). True when this call stored the run: a
+// redraft that already waits takes this trigger too, since it reads the figures when it runs. Its
+// stamp moves, so a redraft whose run is under way runs once more (endRedraft).
+export async function requestRedraft(trigger: string): Promise<boolean> {
+  if (services === undefined) throw new Error("Budget tailoring is not running.");
+  const stored = await requestTailoringRun(services.database, { kind: "Redraft" }, services.now());
+  log.info(stored ? "A redraft was asked for" : "A redraft already waits", { trigger });
+  if (stored) await services.startJob();
   return stored;
 }
 

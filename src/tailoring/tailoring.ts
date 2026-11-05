@@ -55,12 +55,13 @@ export type TailoringReply = z.infer<typeof tailoringReply>;
 // The task: the same words on every call. Which run it is comes with the facts.
 export const TAILORING_TASK = [
   "Task: Budget tailoring. Adjust the flexible Budgets for the Household's active Goals.",
-  "- The facts after this task name the run: the first draft, a Tailoring run, or a Goal run. They list each flexible Category's Budget and the formula's figure, with its Benchmark or no good Benchmark, and the Bills Budgets.",
+  "- The facts after this task name the run: the first draft, a Tailoring run, a redraft, or a Goal run. They list each flexible Category's Budget and the formula's figure, with its Benchmark or no good Benchmark, and the Bills Budgets.",
   "- Give an amount in whole dollars and a one-sentence reason for each flexible Category you change. Leave out a Category you keep as it is.",
   "- Keep each amount from 50% to 150% of the formula's figure. The app moves any amount outside to the nearer end.",
   "- Never change a Bills Budget or the Interest and fees Budget.",
   "- For a Category with no good Benchmark whose Budget looks high, say so in its reason.",
   "- In a Goal run, change only the flexible Categories that Goal touches. Give `goalAmount` when the facts ask for one: for a spend less Goal, a monthly Spending amount below its baseline; for a save Goal, a balance above its balance now. Give `goalReason` as one sentence for it. Otherwise both are null.",
+  "- In a redraft, the formula's figure is the new draft. For a Category you leave out, the app proposes the formula's figure.",
   "- `reason` is one sentence on the whole change.",
   "- Name no bank, card issuer, lender, or other company.",
 ].join("\n");
@@ -69,6 +70,7 @@ export const TAILORING_TASK = [
 export type TailoringRun =
   | { kind: "first draft" }
   | { kind: "Tailoring" }
+  | { kind: "Redraft" }
   | { kind: "Goal"; words: string; goal: GoalFacts };
 
 // What a Goal run's facts say about its Goal: a spend less Goal's baseline, or a save Goal's
@@ -115,7 +117,9 @@ export function tailoringFacts(input: {
       ? "## This run: the first draft. Its figures take effect at once.\n"
       : run.kind === "Tailoring"
         ? "## This run: a Tailoring run. Its figures become one Proposal.\n"
-        : "## This run: a Goal run. Its figures become a Proposal.\n",
+        : run.kind === "Redraft"
+          ? "## This run: a redraft of the flexible Budgets. Its figures become one Proposal.\n"
+          : "## This run: a Goal run. Its figures become a Proposal.\n",
   );
   if (run.kind === "Goal") {
     add(`## The Goal of this run\n- "${plain(run.words)}": `);
@@ -154,7 +158,8 @@ export function tailoringFacts(input: {
   return parts;
 }
 
-// What one Budget tailoring call needs from app.db, for the Household's month.
+// What one Budget tailoring call needs from app.db, for the Household's month: the formula's
+// figures after the "must fit" step, at `income`, the I they used.
 export async function readTailoringFacts(
   database: Database,
   month: string,
@@ -162,6 +167,7 @@ export async function readTailoringFacts(
   today: string,
 ): Promise<{
   formula: DraftedBudget[];
+  income: number;
   budgets: Map<Category, { amount: number; period: "monthly" | "yearly" }>;
   benchmarks: Map<Category, CategoryBenchmark>;
 }> {
@@ -173,7 +179,12 @@ export async function readTailoringFacts(
       { amount: budget.amount, period: budget.period },
     ]),
   );
-  return { formula, budgets, benchmarks: await benchmarksOf(database, now) };
+  return {
+    formula,
+    income: terms.income,
+    budgets,
+    benchmarks: await benchmarksOf(database, now),
+  };
 }
 
 // Each Category's Benchmark, as the AI reads it: amounts only, never the facts behind them.

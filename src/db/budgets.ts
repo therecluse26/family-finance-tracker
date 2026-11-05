@@ -31,7 +31,11 @@ import {
 export type StoredBudget = Omit<typeof budgets.$inferSelect, "noBudget">;
 // Only an "AI draft" Budget has a reason.
 export type NewBudget = Omit<StoredBudget, "id" | "reason"> & { reason?: string | null };
-export type BudgetInputs = Omit<typeof budgetInputs.$inferSelect, "id">;
+// The redraft marks are read through src/db/budget-tailoring.ts.
+export type BudgetInputs = Omit<
+  typeof budgetInputs.$inferSelect,
+  "id" | "redraftedAt" | "benchmarkRedraftAt"
+>;
 export type DraftAcceptance = Omit<typeof budgetDraftAcceptance.$inferSelect, "id">;
 export type MonthStart = Omit<typeof budgetMonthStarts.$inferSelect, "month">;
 
@@ -92,7 +96,7 @@ export async function readBudgetInputs(database: Database): Promise<BudgetInputs
     .from(budgetInputs)
     .where(eq(budgetInputs.id, BUDGET_INPUTS_ROW));
   if (row === undefined) return undefined;
-  const { id: _, ...inputs } = row;
+  const { id: _, redraftedAt: _redrafted, benchmarkRedraftAt: _benchmark, ...inputs } = row;
   return inputs;
 }
 

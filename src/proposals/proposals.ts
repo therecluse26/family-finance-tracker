@@ -97,6 +97,16 @@ const proposalInput = z.discriminatedUnion("kind", [
             .strict(),
         )
         .min(1),
+      // A redraft's inputs, which the app records once the Proposal closes (spec 05, What
+      // accepting a Proposal changes).
+      redraft: z
+        .object({
+          steadyIncome: cents,
+          ceDataYear: z.number().int().min(2000).max(9999),
+          sampleBenchmarks: z.boolean(),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   z
@@ -184,6 +194,14 @@ export async function propose(
   const parsed = proposalInput.safeParse(input);
   if (!parsed.success) return refused(GUARDRAIL.shape);
   const proposal = parsed.data;
+  // Only a Budget tailoring run redrafts.
+  if (
+    proposal.kind === "Budget change" &&
+    proposal.redraft !== undefined &&
+    proposal.source !== "Budget tailoring"
+  ) {
+    return refused(GUARDRAIL.shape);
+  }
   await expire(database, now);
   const month = (await householdDay(database, now)).slice(0, 7);
 
@@ -219,6 +237,9 @@ export async function propose(
       words: proposal.kind === "new Goal" ? proposal.words : null,
       createdAt: now,
       budgets: proposal.kind === "Budget change" ? proposal.budgets : [],
+      ...(proposal.kind === "Budget change" && proposal.redraft !== undefined
+        ? { redraft: proposal.redraft }
+        : {}),
     },
     MAX_PROPOSALS_PER_RUN,
   );

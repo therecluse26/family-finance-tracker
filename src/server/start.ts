@@ -48,6 +48,7 @@ import {
   requestGoalTailoring,
   requestTailoringJob,
   startBudgetTailoring,
+  startRedrafts,
   tailorFirstDraft,
 } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
@@ -147,6 +148,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // Budget tailoring: the AI's part in the first draft, and its Tailoring and Goal runs.
     const tailoring = startBudgetTailoring({ database, ai });
     const budgets = startBudgets({ database, tailorDraft: tailorFirstDraft });
+    // The redraft triggers: Income, Benchmark, New bank and Facts redrafts.
+    const redrafts = startRedrafts({ database, ai });
     const overspending = startOverspendingChecks({ database });
     const alertSending = startAlertSending({ database, ai });
     // The follow-up job's last step: the day's Insight card run, on the Writer tier.
@@ -166,6 +169,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       alertSending.stop();
       overspending.stop();
       budgets.stop();
+      redrafts.stop();
       tailoring.stop();
       anomalies.stop();
       recurring.stop();
@@ -186,6 +190,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     try {
       // Each Connection whose last sync attempt is more than 6 hours old syncs at once.
       await catchUpSyncs();
+      // A release with a newer CE data year asks for its Benchmark redraft as it first runs.
+      await redrafts.atStart();
       await jobs.tick();
       const server = await startServer({
         port: options.port,

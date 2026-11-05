@@ -13,6 +13,7 @@ import {
   notExists,
   sql,
 } from "drizzle-orm";
+import { type RedraftInputs, recordClosedRedrafts } from "./budget-tailoring.ts";
 import { listBudgetsInEffect, type StoredBudget } from "./budgets.ts";
 import type { Database, Queries } from "./client.ts";
 import type { GoalStart, NewGoal, StoredGoal } from "./goals.ts";
@@ -23,6 +24,7 @@ import {
   householdAccounts,
   proposalBudgets,
   proposals,
+  redraftProposals,
 } from "./schema.ts";
 
 // Proposals in app.db (spec 08, Proposals): each Proposal, its Categories, what accepting it
@@ -45,7 +47,11 @@ export type ProposalBudgetRow = StoredProposalBudget & { replacedAmount: number 
 export type NewProposal = Pick<
   StoredProposal,
   "kind" | "source" | "runId" | "reason" | "goalId" | "goalAmount" | "words" | "createdAt"
-> & { budgets: { category: string; amount: number; reason?: string | null }[] };
+> & {
+  budgets: { category: string; amount: number; reason?: string | null }[];
+  // A redraft's inputs, which its close records.
+  redraft?: RedraftInputs;
+};
 
 // What accepting a Goal Proposal set, for Undo: a Goal amount and its start, with what the Goal held
 // before; or the words of the new Goal it created.
@@ -79,7 +85,7 @@ export async function storeProposal(
   proposal: NewProposal,
   perRun: number,
 ): Promise<{ id: string; replaced: string[] } | "run full"> {
-  const { budgets: lines, ...fields } = proposal;
+  const { budgets: lines, redraft, ...fields } = proposal;
   return database.transaction(async (tx) => {
     const [made] = await tx
       .select({ count: count() })
@@ -88,6 +94,9 @@ export async function storeProposal(
     if ((made?.count ?? 0) >= perRun) return "run full";
     const id = crypto.randomUUID();
     await tx.insert(proposals).values({ id, ...fields, status: "open" });
+    if (redraft !== undefined) {
+      await tx.insert(redraftProposals).values({ proposalId: id, ...redraft });
+    }
     if (lines.length === 0) return { id, replaced: [] };
     await tx.insert(proposalBudgets).values(lines.map((line) => ({ proposalId: id, ...line })));
     const older = tx
@@ -125,6 +134,10 @@ export async function storeProposal(
         ),
       )
       .returning({ id: proposals.id });
+    await recordClosedRedrafts(
+      tx,
+      replaced.map((row) => row.id),
+    );
     return { id, replaced: replaced.map((row) => row.id) };
   });
 }
@@ -139,27 +152,32 @@ export async function listDueProposals(database: Database, before: Date): Promis
   return rows.map((row) => row.id);
 }
 
-// Closes these Proposals as "expired", each only while it is still open. Returns the IDs it closed.
+// Closes these Proposals as "expired", each only while it is still open, in one write with the
+// inputs of an expired redraft. Returns the IDs it closed.
 export async function expireProposals(
   database: Database,
   ids: readonly string[],
   at: Date,
 ): Promise<string[]> {
-  const closed: string[] = [];
-  for (let start = 0; start < ids.length; start += IDS_PER_QUERY) {
-    const rows = await database
-      .update(proposals)
-      .set({ status: "expired", closedAt: at })
-      .where(
-        and(
-          inArray(proposals.id, ids.slice(start, start + IDS_PER_QUERY)),
-          eq(proposals.status, "open"),
-        ),
-      )
-      .returning({ id: proposals.id });
-    closed.push(...rows.map((row) => row.id));
-  }
-  return closed;
+  return database.transaction(async (tx) => {
+    const closed: string[] = [];
+    for (let start = 0; start < ids.length; start += IDS_PER_QUERY) {
+      const rows = await tx
+        .update(proposals)
+        .set({ status: "expired", closedAt: at })
+        .where(
+          and(
+            inArray(proposals.id, ids.slice(start, start + IDS_PER_QUERY)),
+            eq(proposals.status, "open"),
+          ),
+        )
+        .returning({ id: proposals.id });
+      const expired = rows.map((row) => row.id);
+      await recordClosedRedrafts(tx, expired);
+      closed.push(...expired);
+    }
+    return closed;
+  });
 }
 
 async function withBudgets(database: Queries, rows: StoredProposal[]): Promise<ProposalRow[]> {
@@ -260,6 +278,8 @@ export async function storeBudgetChangeAccept(
   const { id, month, memberId, at } = accept;
   return database.transaction(async (tx) => {
     if (!(await claim(tx, id, "Budget change", memberId, at))) return false;
+    // Accepting a redraft also records its inputs (spec 05, What accepting a Proposal changes).
+    await recordClosedRedrafts(tx, [id]);
     const lines = await tx.select().from(proposalBudgets).where(eq(proposalBudgets.proposalId, id));
     const inEffect = new Map(
       (await listBudgetsInEffect(tx, month)).map((row) => [row.category, row]),
@@ -348,18 +368,24 @@ export async function reopenProposal(
   });
 }
 
-// Skips an open Proposal: it closes, with the Member and the time. False, with nothing changed,
-// when no open Proposal has the ID.
+// Skips an open Proposal: it closes, with the Member and the time. A skipped redraft still records
+// its inputs, in the same write. False, with nothing changed, when no open Proposal has the ID.
 export async function storeProposalSkip(
   database: Database,
   skip: { id: string; memberId: string; at: Date },
 ): Promise<boolean> {
-  const rows = await database
-    .update(proposals)
-    .set({ status: "skipped", closedAt: skip.at, closedBy: skip.memberId })
-    .where(and(eq(proposals.id, skip.id), eq(proposals.status, "open")))
-    .returning({ id: proposals.id });
-  return rows.length === 1;
+  return database.transaction(async (tx) => {
+    const rows = await tx
+      .update(proposals)
+      .set({ status: "skipped", closedAt: skip.at, closedBy: skip.memberId })
+      .where(and(eq(proposals.id, skip.id), eq(proposals.status, "open")))
+      .returning({ id: proposals.id });
+    await recordClosedRedrafts(
+      tx,
+      rows.map((row) => row.id),
+    );
+    return rows.length === 1;
+  });
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

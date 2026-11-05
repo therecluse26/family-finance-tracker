@@ -30,7 +30,7 @@ import { StubSmtp } from "../notify/testing.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { startRedo } from "../redo/index.ts";
 import type { Secrets } from "../secrets/index.ts";
-import { startBudgetTailoring, tailorFirstDraft } from "../tailoring/index.ts";
+import { startBudgetTailoring, startRedrafts, tailorFirstDraft } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
 import { HISTORY_NOW } from "./history.ts";
 
@@ -178,6 +178,28 @@ export const APP_MODULES: readonly AppModule[] = [
       name: "Bills Budgets",
       path: "Bills Budgets follow-up on the full history",
       buildLimitMs: 10_000,
+    },
+  },
+  {
+    name: "startRedrafts",
+    start: ({ database, secrets, makeModels = noAiProvider }) => {
+      const redrafts = startRedrafts({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+        now: HISTORY_NOW,
+      });
+      return { stop: redrafts.stop };
+    },
+    // Before the first draft, the step has no inputs to compare: the redraft case times it.
+    step: {
+      name: "redraft check",
+      path: "Redraft check follow-up on the full history",
+      buildLimitMs: 5_000,
     },
   },
   {

@@ -1242,8 +1242,9 @@ export const budgets = sqliteTable(
 );
 
 // The inputs behind the current Budgets (spec 05, Which Proposals exist): Steady Income and the CE
-// data year. The first draft records them, with its month: there is no Budget before it. It has
-// at most one row, whose ID is 1.
+// data year. The first draft records them, with its month: there is no Budget before it. A redraft
+// records its own once it is handled (spec 05, What accepting a Proposal changes). It has at most
+// one row, whose ID is 1.
 export const budgetInputs = sqliteTable(
   "budget_inputs",
   {
@@ -1260,7 +1261,13 @@ export const budgetInputs = sqliteTable(
     fixedCostsPassIncome: integer("fixed_costs_pass_income", { mode: "boolean" })
       .notNull()
       .default(false),
+    // When the first draft recorded them.
     recordedAt: moment("recorded_at").notNull(),
+    // When the redraft whose inputs these are drafted, or null for the first draft's. A redraft's
+    // inputs replace only older ones.
+    redraftedAt: moment("redrafted_at"),
+    // When the last Benchmark redraft started: there is at most one a year.
+    benchmarkRedraftAt: moment("benchmark_redraft_at"),
   },
   (table) => [check("budget_inputs_one_row", sql`${table.id} = 1`)],
 );
@@ -1605,14 +1612,15 @@ export const householdSummary = sqliteTable(
 
 // Budget tailoring runs (spec 05, Which Proposals exist; spec 08, Runs that reuse these uses): the
 // Tailoring run when an AI provider is set up after the first draft, and the Goal run when a Goal
-// is added or its words change. A run waits here until its one AI call ends, so it outlasts an AI
-// retry, a pause such as the AI cost cap, and a restart. A Goal run is deleted when it ends. The
-// Tailoring run is kept, with endedAt, so it runs once.
+// is added or its words change, and the redraft when one of its triggers fires. A run waits here
+// until its one AI call ends, so it outlasts an AI retry, a pause such as the AI cost cap, and a
+// restart. A Goal run and a redraft are deleted when they end. The Tailoring run is kept, with
+// endedAt, so it runs once.
 export const budgetTailoringRuns = sqliteTable(
   "budget_tailoring_runs",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    kind: text("kind", { enum: ["Tailoring", "Goal"] }).notNull(),
+    kind: text("kind", { enum: ["Tailoring", "Goal", "Redraft"] }).notNull(),
     // A Goal run's Goal. Deleting the Goal deletes its run.
     goalId: text("goal_id").references(() => goals.id, { onDelete: "cascade" }),
     requestedAt: moment("requested_at").notNull(),
@@ -1627,8 +1635,24 @@ export const budgetTailoringRuns = sqliteTable(
     uniqueIndex("budget_tailoring_runs_one_tailoring")
       .on(table.kind)
       .where(sql`${table.kind} = 'Tailoring'`),
+    // At most one redraft waits: triggers close together make one run.
+    uniqueIndex("budget_tailoring_runs_one_redraft")
+      .on(table.kind)
+      .where(sql`${table.kind} = 'Redraft'`),
   ],
 );
+
+// The inputs a redraft Proposal was drafted at (spec 05, What accepting a Proposal changes). When
+// the Proposal closes, by any route, they become the inputs behind the current Budgets.
+export const redraftProposals = sqliteTable("redraft_proposals", {
+  proposalId: text("proposal_id")
+    .primaryKey()
+    .references(() => proposals.id, { onDelete: "cascade" }),
+  // I, in whole cents per month.
+  steadyIncome: cents("steady_income").notNull(),
+  ceDataYear: integer("ce_data_year").notNull(),
+  sampleBenchmarks: integer("sample_benchmarks", { mode: "boolean" }).notNull(),
+});
 
 // The current Insight cards in the dashboard's AI box (spec 08, Insight cards): the 4 to 7 cards
 // the last Insight card run wrote, in the AI's order. A new run replaces the whole set. Each text
