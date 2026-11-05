@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+import { createGunzip, createGzip } from "node:zlib";
 import {
   checkDatabaseCopy,
   copyDatabaseInto,
@@ -13,6 +13,7 @@ import { daily, Job, type JobArgument, startJob } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { endCondition, raiseNotice } from "../notify/index.ts";
 import {
+  type BackupFile,
   type BackupKind,
   backupNames,
   deleteLeftoverFiles,
@@ -27,6 +28,10 @@ import {
 // file in the backup folder while the app keeps running, the integrity check on the copy, gzip,
 // and a rename to the final name. After each successful backup, the app deletes the backups past
 // the ones it keeps. Backups run one at a time.
+//
+// The `migration` safety copy runs at start, when migrations are pending, through the same steps.
+// It runs before the migrations, so a failed one stops the start with app.db unchanged. When
+// app.db has not changed since the last migration copy, it keeps that one and writes no file.
 
 // The daily backup's time, Household time.
 export const BACKUP_SCHEDULE = daily("03:00");
@@ -155,6 +160,67 @@ async function freeNames(
 
 const NAME_TRIES = 3;
 
+// Whether two streams give the same bytes. It reads both a chunk at a time and stops at the first
+// difference.
+async function sameBytes(a: AsyncIterable<Buffer>, b: AsyncIterable<Buffer>): Promise<boolean> {
+  const left = a[Symbol.asyncIterator]();
+  const right = b[Symbol.asyncIterator]();
+  let x: Buffer = Buffer.alloc(0);
+  let y: Buffer = Buffer.alloc(0);
+  let leftDone = false;
+  let rightDone = false;
+  try {
+    for (;;) {
+      if (x.length === 0 && !leftDone) {
+        const next = await left.next();
+        if (next.done) leftDone = true;
+        else x = next.value;
+      } else if (y.length === 0 && !rightDone) {
+        const next = await right.next();
+        if (next.done) rightDone = true;
+        else y = next.value;
+      } else if (x.length === 0 || y.length === 0) {
+        // One stream has ended: the same only when both have, with nothing left.
+        return x.length === 0 && y.length === 0;
+      } else {
+        const length = Math.min(x.length, y.length);
+        if (!x.subarray(0, length).equals(y.subarray(0, length))) return false;
+        x = x.subarray(length);
+        y = y.subarray(length);
+      }
+    }
+  } finally {
+    await left.return?.();
+    await right.return?.();
+  }
+}
+
+// The newest safety copy, when it is a migration copy of the same database as the new copy at
+// `path`, compared without gzip, whose bytes may differ. A start whose migration fails stops with
+// app.db unchanged, and the restart takes its copy again; this keeps one copy of that app.db, so a
+// restart loop never pushes out an older safety copy. A copy it cannot read counts as changed.
+async function unchangedMigrationCopy(
+  services: BackupServices,
+  path: string,
+): Promise<BackupFile | undefined> {
+  try {
+    const now = services.now();
+    const newest = (await listBackups(services.folder)).find(
+      (file) => !isRegular(file.kind) && file.at <= now,
+    );
+    if (newest?.kind !== "migration") return undefined;
+    // .pipe() passes on no read error, so the gunzip takes it, and the compare ends with it.
+    const kept = createGunzip();
+    createReadStream(join(services.folder, newest.name))
+      .on("error", (error) => kept.destroy(error))
+      .pipe(kept);
+    return (await sameBytes(createReadStream(path), kept)) ? newest : undefined;
+  } catch (error) {
+    log.warn("Could not compare the safety copy with the last one", errorFields(error));
+    return undefined;
+  }
+}
+
 // Backups hold readable history, so only the app's user may read them, as with the Master key file.
 const BACKUP_MODE = 0o600;
 
@@ -184,6 +250,13 @@ async function makeBackup(services: BackupServices, kind: BackupKind): Promise<B
       log.error("A backup's copy failed its integrity check", { kind });
       return { ok: false, failure: step };
     }
+    if (kind === "migration") {
+      const kept = await unchangedMigrationCopy(services, copy);
+      if (kept !== undefined) {
+        log.info("Kept the safety copy: app.db has not changed since it", { file: kept.name });
+        return { ok: true, name: kept.name, at: kept.at };
+      }
+    }
     step = "write failed";
     // "wx" refuses a path that exists, so the gzip never writes through a link.
     await pipeline(
@@ -201,12 +274,14 @@ async function makeBackup(services: BackupServices, kind: BackupKind): Promise<B
   }
   log.info("Made a backup", { kind, file: names.name });
   try {
-    const deleted = await deleteOldBackups(services.folder);
+    const deleted = await deleteOldBackups(services.folder, services.now());
     if (deleted.length > 0) log.info("Deleted old backups", { count: deleted.length });
   } catch (error) {
     log.error("Could not delete old backups", errorFields(error));
   }
-  await endBackupFailed(services.database);
+  // A migration copy runs before the migrations and before the notify module starts, so the next
+  // regular backup ends the notice.
+  if (kind !== "migration") await endBackupFailed(services.database);
   return { ok: true, name: names.name, at };
 }
 
@@ -227,6 +302,24 @@ async function endBackupFailed(database: Database): Promise<void> {
 export function backUp(kind: BackupKind): Promise<BackupResult> {
   const started = running();
   return oneAtATime(() => makeBackup(started, kind));
+}
+
+export class SafetyCopyError extends Error {
+  override name = "SafetyCopyError";
+}
+
+// The `migration` safety copy (spec 10, Startup, step 4), at start, after the refusals and before
+// the migrations. It returns the copy's name, or the last migration copy's name when app.db has not
+// changed since that one. It throws when the copy fails, so the start stops before it migrates.
+// The failed backup's line says which step failed.
+export async function takeMigrationCopy(): Promise<string> {
+  const result = await backUp("migration");
+  if (result.ok) return result.name;
+  throw new SafetyCopyError(
+    `The safety copy before migrations failed (${result.failure}), so the app stopped before it ` +
+      "changed app.db. Check that the backup folder has free space and that the app can write " +
+      "to it, then start the app again.",
+  );
 }
 
 // At start, before any backup runs: deletes the temporary files a stopped backup left behind.
@@ -316,23 +409,24 @@ export type BackupStatus = {
   folder: string;
   // False when the app cannot read the folder.
   readable: boolean;
-  // The newest backup's time, of any kind, that is not later than now, or null.
+  // The newest backup's time, of any kind, or null. Each field counts only backups that name no
+  // later time than now.
   lastBackupAt: Date | null;
   files: number;
   bytes: number;
 };
 
 // What Settings show: the folder in use, the last successful backup, the number of files, and their
-// total size.
+// total size. A backup that names a later time than now is left out, as retention leaves it out.
 export async function backupStatus(): Promise<BackupStatus> {
   const { folder, now } = running();
   try {
-    const backups = await listBackups(folder);
     const moment = now();
+    const backups = (await listBackups(folder)).filter((file) => file.at <= moment);
     return {
       folder,
       readable: true,
-      lastBackupAt: backups.find((file) => file.at <= moment)?.at ?? null,
+      lastBackupAt: backups[0]?.at ?? null,
       files: backups.length,
       bytes: backups.reduce((sum, file) => sum + file.bytes, 0),
     };

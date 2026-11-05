@@ -15,7 +15,9 @@ export {
   latestBackupTime,
   RETRY_AFTER_MS,
   runDailyBackup,
+  SafetyCopyError,
   startBackups,
+  takeMigrationCopy,
 } from "./backup.ts";
 export {
   BACKUP_KINDS,

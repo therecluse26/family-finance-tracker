@@ -67,9 +67,12 @@ export function isRegular(kind: BackupKind): boolean {
 }
 
 // Keeps the newest 7 regular backups and the newest 3 safety copies, and deletes the older ones.
-// Returns the names it deleted.
-export async function deleteOldBackups(folder: string): Promise<string[]> {
-  const backups = await listBackups(folder);
+// Each count is its own, so a safety copy never deletes a regular backup, and the other way round.
+// A backup that names a later time than now, such as one copied from a server whose clock ran
+// ahead, is neither counted nor deleted, so it never pushes out a new backup. Returns the names it
+// deleted.
+export async function deleteOldBackups(folder: string, now: Date): Promise<string[]> {
+  const backups = (await listBackups(folder)).filter((file) => file.at <= now);
   const old = [
     ...backups.filter((file) => isRegular(file.kind)).slice(REGULAR_KEPT),
     ...backups.filter((file) => !isRegular(file.kind)).slice(SAFETY_KEPT),

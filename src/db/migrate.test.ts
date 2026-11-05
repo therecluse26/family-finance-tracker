@@ -130,6 +130,57 @@ describe("the database", () => {
     expect(await tables(database)).toEqual(["first", "second"]);
   });
 
+  it("runs beforeMigrating once, before it migrates, only when a migration is pending, and stops unchanged when it throws", async () => {
+    const database = await open();
+    const v1 = folder("v1", [FIRST_MIGRATION]);
+    const v2 = folder("v2", [FIRST_MIGRATION, SECOND_MIGRATION]);
+    await applyMigrations(database, v1);
+    const seen: { pending: number; tables: string[] }[] = [];
+    const beforeMigrating = async (check: { pending: number }) => {
+      seen.push({ pending: check.pending, tables: await tables(database) });
+    };
+
+    await applyMigrations(database, v1, { beforeMigrating });
+    expect(seen).toEqual([]);
+
+    const failing = applyMigrations(database, v2, {
+      beforeMigrating: async () => {
+        throw new Error("The safety copy failed.");
+      },
+    });
+    await expect(failing).rejects.toThrow("The safety copy failed.");
+    expect(await tables(database)).toEqual(["first"]);
+
+    expect(await applyMigrations(database, v2, { beforeMigrating })).toBe(1);
+    expect(seen).toEqual([{ pending: 1, tables: ["first"] }]);
+    expect(await tables(database)).toEqual(["first", "second"]);
+  });
+
+  it.each([
+    ["holds a newer migration", [FIRST_MIGRATION, LATER_MIGRATION], NewerDatabaseError],
+    [
+      "would skip a migration",
+      [FIRST_MIGRATION, MIDDLE_MIGRATION, SECOND_MIGRATION, LATER_MIGRATION],
+      SkippedMigrationError,
+    ],
+  ])(
+    "refuses before beforeMigrating when app.db %s, with a migration pending",
+    async (_kind, shipped, error) => {
+      const database = await open();
+      await applyMigrations(database, folder("written", [FIRST_MIGRATION, SECOND_MIGRATION]));
+      let ran = false;
+
+      const result = applyMigrations(database, folder("shipped", shipped), {
+        beforeMigrating: async () => {
+          ran = true;
+        },
+      });
+
+      await expect(result).rejects.toThrow(error);
+      expect(ran).toBe(false);
+    },
+  );
+
   it("reports applied, pending, newer, and skipped migrations without changing app.db", async () => {
     const database = await open();
     const v2 = folder("v2", [FIRST_MIGRATION, SECOND_MIGRATION]);

@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,9 +12,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { gunzipSync } from "node:zlib";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../auth/index.ts";
 import { addMember } from "../auth/testing.ts";
+import { SafetyCopyError } from "../backups/index.ts";
 import {
   applyMigrations,
   checkMigrations,
@@ -88,6 +91,7 @@ describe("starting the app", () => {
 
   afterEach(async () => {
     finishSlowJob();
+    vi.restoreAllMocks();
     await Promise.all(running.map((app) => app.close()));
     rmSync(dir, { recursive: true, force: true });
   });
@@ -143,6 +147,13 @@ describe("starting the app", () => {
       });
     });
   }
+
+  // The backup folder the start uses, with no /backups mount, and the migration copies in it.
+  const backupFolder = () => join(dir, "backups");
+  const migrationCopies = () =>
+    existsSync(backupFolder())
+      ? readdirSync(backupFolder()).filter((name) => name.endsWith("-migration.db.gz"))
+      : [];
 
   // What a start could change in app.db: its data keys and its migrations.
   async function readFileState() {
@@ -217,15 +228,144 @@ describe("starting the app", () => {
       () => folder("next", [FIRST_MIGRATION, MIDDLE_MIGRATION, SECOND_MIGRATION]),
       SkippedMigrationError,
     ],
-  ])("refuses to start on %s, and never listens", async (_kind, written, shipped, error) => {
-    await migrateFile(written());
-    const port = await freePort();
+    // One shipped migration is pending, and app.db holds one this version does not have.
+    [
+      "a database from a newer version, with a migration pending",
+      () => folder("other", [FIRST_MIGRATION, MIDDLE_MIGRATION]),
+      v2,
+      NewerDatabaseError,
+    ],
+  ])(
+    "refuses to start on %s, takes no safety copy, and never listens",
+    async (_kind, written, shipped, error) => {
+      await migrateFile(written());
+      const port = await freePort();
 
-    await expect(start(shipped(), port)).rejects.toThrow(error);
-    await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
-    const database = await openDatabase(url);
-    expect((await checkMigrations(database, written())).applied).toBe(APP + 2);
-    closeDatabase(database);
+      await expect(start(shipped(), port)).rejects.toThrow(error);
+      await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
+      expect(migrationCopies()).toEqual([]);
+      const database = await openDatabase(url);
+      expect((await checkMigrations(database, written())).applied).toBe(APP + 2);
+      closeDatabase(database);
+    },
+  );
+
+  describe("the migration safety copy", () => {
+    // The migrations a migration copy holds, read from the gunzipped copy.
+    async function migrationsIn(name: string) {
+      const plain = join(dir, `${name}.plain`);
+      writeFileSync(plain, gunzipSync(readFileSync(join(backupFolder(), name))));
+      const copy = await openDatabase(`file:${plain}`);
+      try {
+        return await checkMigrations(copy, v2());
+      } finally {
+        closeDatabase(copy);
+      }
+    }
+
+    it("takes one copy before it migrates when an update brings a pending migration", async () => {
+      await stop(await start(v1()));
+
+      const app = await start(v2());
+
+      const [copy, ...others] = migrationCopies();
+      expect(others).toEqual([]);
+      expect(copy).toMatch(/^app-\d{8}T\d{6}Z-migration\.db\.gz$/);
+      expect(await migrationsIn(copy ?? "")).toMatchObject({ applied: APP + 1, pending: 1 });
+      expect((await checkMigrations(app.database, v2())).pending).toBe(0);
+    });
+
+    it("keeps one copy, and every older safety copy, while a migration that always fails restarts the app", async () => {
+      await stop(await start(v1()));
+      const before = await readFileState();
+      const older = ["app-20200101T000000Z-migration.db.gz", "app-20200102T000000Z-restore.db.gz"];
+      for (const name of older) writeFileSync(join(backupFolder(), name), "an older copy");
+      // Its second migration makes the first one's table again, so it fails at every start.
+      const failing = folder("failing", [
+        FIRST_MIGRATION,
+        { ...SECOND_MIGRATION, sql: FIRST_MIGRATION.sql },
+      ]);
+
+      for (let restart = 0; restart < 5; restart += 1) {
+        await expect(start(failing)).rejects.toThrow();
+      }
+
+      const copies = migrationCopies().filter((name) => !older.includes(name));
+      expect(copies).toHaveLength(1);
+      expect(readdirSync(backupFolder())).toEqual(expect.arrayContaining(older));
+      expect(await migrationsIn(copies[0] ?? "")).toMatchObject({ applied: APP + 1 });
+      expect(await readFileState()).toEqual(before);
+    });
+
+    it("takes no copy when no migration is pending", async () => {
+      await stop(await start(v2()));
+
+      await stop(await start(v2()));
+
+      expect(migrationCopies()).toEqual([]);
+    });
+
+    it("takes no copy on a fresh install with no app.db", async () => {
+      expect(existsSync(path)).toBe(false);
+
+      await stop(await start(v2()));
+
+      expect(migrationCopies()).toEqual([]);
+      expect(readdirSync(backupFolder())).toEqual([expect.stringMatching(/-daily\.db\.gz$/)]);
+    });
+
+    // A process that runs as root writes through a read-only folder.
+    it.skipIf(process.getuid?.() === 0)(
+      "stops before it migrates when the copy fails, with app.db unchanged, and the same at every restart until the folder works",
+      async () => {
+        await stop(await start(v1()));
+        const before = readFileSync(path);
+        const files = readdirSync(backupFolder());
+        chmodSync(backupFolder(), 0o500);
+        const lines: string[] = [];
+        vi.spyOn(process.stdout, "write").mockImplementation(
+          (chunk) => lines.push(String(chunk)) > 0,
+        );
+        const port = await freePort();
+        const thrown: unknown[] = [];
+
+        try {
+          // Each restart fails the same way and leaves no file, so a restart loop never fills the
+          // disk.
+          for (let restart = 0; restart < 3; restart += 1) {
+            thrown.push(await start(v2(), port).catch((error: unknown) => error));
+            expect(thrown.at(-1)).toBeInstanceOf(SafetyCopyError);
+            await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
+            expect(readFileSync(path).equals(before)).toBe(true);
+            expect(readdirSync(backupFolder())).toEqual(files);
+          }
+        } finally {
+          chmodSync(backupFolder(), 0o700);
+        }
+        vi.restoreAllMocks();
+
+        const logged = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+        expect(logged.filter((line) => line.msg === "A backup failed")).toEqual(
+          Array.from({ length: 3 }, () =>
+            expect.objectContaining({ level: "error", kind: "migration", failure: "copy failed" }),
+          ),
+        );
+        // The error lines, and the error the app logs as it exits, name no path but the backup
+        // folder's.
+        const errors = JSON.stringify([
+          ...logged.filter((line) => line.level === "error"),
+          ...thrown.map((error) => (error as Error).message),
+        ]);
+        expect(errors.replaceAll(backupFolder(), "")).not.toContain(dir);
+        expect((thrown[0] as Error).message).toContain("stopped before it changed app.db");
+        expect((await readFileState()).migrations).toMatchObject({ applied: APP + 1, pending: 1 });
+
+        const app = await start(v2());
+
+        expect(migrationCopies()).toHaveLength(1);
+        expect((await checkMigrations(app.database, v2())).pending).toBe(0);
+      },
+    );
   });
 
   it("makes one data key at the first start, and decrypts with it after a restart", async () => {
@@ -272,20 +412,19 @@ describe("starting the app", () => {
     const app = await start(v1());
     // The only settings the app changes, each with its value.
     const changes = { journal_mode: "wal", busy_timeout: 5000 };
-    // SQLite gives these settings no table-valued function, so no query can read them.
-    const unreadable = [
-      "case_sensitive_like",
-      "incremental_vacuum",
-      "mmap_size",
-      "shrink_memory",
-      "temp_store_directory",
-      "wal_autocheckpoint",
-      "wal_checkpoint",
-    ];
+    // These are actions, not settings, so no query can read them.
+    const unreadable = ["incremental_vacuum", "shrink_memory", "wal_checkpoint"];
 
     const expected = await readPlainSettings(`file:${join(dir, "plain.db")}`);
     expect(expected.unreadable).toEqual(unreadable);
     expect(Object.keys(expected.values).length).toBeGreaterThan(30);
+    // Read with a statement, or by their effect, as no table-valued function reads them.
+    expect(expected.values).toMatchObject({
+      case_sensitive_like: 0,
+      mmap_size: expect.anything(),
+      wal_autocheckpoint: 1000,
+    });
+    expect(expected.values).toHaveProperty("temp_store_directory");
 
     const compare = async () => {
       const actual = await readEverySetting(app.database.$client);

@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDatabase, listOpenNotices, openDatabase } from "../db/index.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
@@ -24,7 +24,9 @@ import {
   deleteLeftoverBackupFiles,
   latestBackupTime,
   runDailyBackup,
+  SafetyCopyError,
   startBackups,
+  takeMigrationCopy,
 } from "./index.ts";
 
 // Backups of app.db (spec 11, How the app makes a backup; When backups run; How many are kept;
@@ -246,9 +248,11 @@ describe("backups", () => {
       expect((await backupStatus()).lastBackupAt).toEqual(NOW);
     });
 
-    it("is left out of the status when its time is not a real one", async () => {
+    it("is left out of the status when its time is not a real one, or later than now", async () => {
       plant(IMPOSSIBLE, 50);
       plant("app-20261131T030000Z-daily.db.gz", 50);
+      plant(FUTURE, 50);
+      plant("app-20261102T080001Z-migration.db.gz", 50);
 
       expect(await backupStatus()).toEqual({
         folder,
@@ -333,6 +337,120 @@ describe("backups", () => {
       ].sort(),
     );
     expect(readFileSync(outside, "utf8")).toBe("mine");
+  });
+
+  describe("the migration safety copy", () => {
+    it("is a backup of kind migration, made through the same steps", async () => {
+      const name = await takeMigrationCopy();
+
+      expect(name).toBe("app-20261102T080000Z-migration.db.gz");
+      expect(files()).toEqual([name]);
+      expect(await labelsIn(name)).toEqual(["kept"]);
+      expect(statSync(join(folder, name)).mode & 0o777).toBe(0o600);
+    });
+
+    it("keeps the last migration copy, and writes no file, while app.db has not changed since it", async () => {
+      const first = await takeMigrationCopy();
+
+      for (let start = 0; start < 3; start += 1) {
+        clock = new Date(clock.getTime() + HOUR_MS);
+        expect(await takeMigrationCopy()).toBe(first);
+        expect(files()).toEqual([first]);
+      }
+
+      await test.database.$client.execute("INSERT INTO probe (label) VALUES ('new')");
+      const second = await takeMigrationCopy();
+
+      expect(second).toBe("app-20261102T110000Z-migration.db.gz");
+      expect(files()).toEqual([first, second]);
+      expect(await labelsIn(second)).toEqual(["kept", "new"]);
+    });
+
+    it.each([
+      ["a restore copy of the same app.db", "restore", (same: Buffer) => gzipSync(same)],
+      ["a migration copy it cannot read", "migration", () => Buffer.from("not gzip")],
+      [
+        "a migration copy one byte shorter",
+        "migration",
+        (same: Buffer) => gzipSync(same.subarray(0, -1)),
+      ],
+      [
+        "a migration copy one byte longer",
+        "migration",
+        (same: Buffer) => gzipSync(Buffer.concat([same, Buffer.from([0])])),
+      ],
+      [
+        "a migration copy with one byte changed",
+        "migration",
+        (same: Buffer) => {
+          const changed = Buffer.from(same);
+          changed[changed.length - 1] = (changed.at(-1) ?? 0) ^ 1;
+          return gzipSync(changed);
+        },
+      ],
+    ])("takes a new copy when the newest safety copy is %s", async (_case, kind, content) => {
+      const first = await takeMigrationCopy();
+      const newest = `app-20261102T083000Z-${kind}.db.gz`;
+      writeFileSync(join(folder, newest), content(gunzipSync(readFileSync(join(folder, first)))));
+      // Later than now, so neither counted nor compared.
+      plant("app-20301231T000000Z-migration.db.gz");
+      clock = new Date(clock.getTime() + HOUR_MS);
+
+      const second = await takeMigrationCopy();
+
+      expect(second).toBe("app-20261102T090000Z-migration.db.gz");
+      expect(files()).toEqual(
+        [first, newest, second, "app-20301231T000000Z-migration.db.gz"].sort(),
+      );
+    });
+
+    it.each([
+      ["VACUUM INTO cannot write", () => rmSync(folder, { recursive: true }), "copy failed"],
+      ["the integrity check fails", () => (checkPasses = false), "check failed"],
+    ])("throws, and leaves no file, when %s", async (_case, breakStep, failure) => {
+      breakStep();
+
+      const copy = takeMigrationCopy();
+
+      await expect(copy).rejects.toThrow(SafetyCopyError);
+      await expect(copy).rejects.toThrow(`(${failure})`);
+      expect(existsSync(folder) ? files() : []).toEqual([]);
+    });
+
+    it("counts with the safety copies only: it deletes the oldest one, and never a regular backup", async () => {
+      const regular = [
+        ...Array.from({ length: 5 }, (_, i) => `app-2026102${i}T030000Z-daily.db.gz`),
+        "app-20261025T090000Z-manual.db.gz",
+        "app-20261026T090000Z-manual.db.gz",
+      ];
+      const safety = [
+        "app-20261001T120000Z-migration.db.gz",
+        "app-20261005T120000Z-restore.db.gz",
+        "app-20261010T120000Z-migration.db.gz",
+      ];
+      // Later than now, as from a server whose clock ran ahead: never counted, so never deleted,
+      // and never a reason to delete the new copy.
+      const later = [
+        "app-20261201T120000Z-migration.db.gz",
+        "app-20261202T120000Z-migration.db.gz",
+        "app-20261203T120000Z-restore.db.gz",
+      ];
+      // Names the app never wrote, and a time that is not a real one.
+      const foreign = [
+        "app-20261131T120000Z-migration.db.gz",
+        "app-20261002T120000Z-migration.db.gz;",
+        "app-20261002T120000Z-migration.db.gz{",
+        "app-20261002T120000Z-migration%2edb.gz",
+        "app-20261002T120000Z-migration．db.gz",
+        "app-20261002T120000Z-migration.db.gz\t",
+        " app-20261002T120000Z-migration.db.gz",
+      ];
+      for (const name of [...regular, ...safety, ...later, ...foreign]) plant(name);
+
+      const name = await takeMigrationCopy();
+
+      expect(files()).toEqual([name, ...regular, ...safety.slice(1), ...later, ...foreign].sort());
+    });
   });
 
   it("deletes nothing after a failed backup", async () => {

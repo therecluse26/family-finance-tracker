@@ -63,11 +63,18 @@ function migrations(count: number): string {
   return count === 1 ? "a migration" : `${count} migrations`;
 }
 
+export type MigrateOptions = {
+  // Runs after the refusals, when migrations are pending, before the migrator applies any. The start
+  // takes the `migration` safety copy here. A throw stops it with app.db unchanged.
+  beforeMigrating?: (check: MigrationCheck) => Promise<void>;
+};
+
 // Applies the pending migrations in `migrationsFolder` and returns how many it applied. It leaves
 // app.db unchanged and throws when a newer version wrote app.db, or when it would skip a migration.
 export async function applyMigrations(
   database: Database,
   migrationsFolder: string,
+  options: MigrateOptions = {},
 ): Promise<number> {
   const check = await checkMigrations(database, migrationsFolder);
   if (check.newer > 0) {
@@ -83,6 +90,7 @@ export async function applyMigrations(
         "migrations are out of order. app.db is unchanged.",
     );
   }
+  if (check.pending > 0) await options.beforeMigrating?.(check);
   await migrate(database, { migrationsFolder, migrationsTable: MIGRATIONS_TABLE });
   return check.pending;
 }

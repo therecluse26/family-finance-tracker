@@ -33,13 +33,20 @@ const MIGRATION_FILE = /^drizzle\/[^/]+\.sql$/;
 const PAIR_OFF = `${WORD} foreign_keys=OFF;`;
 const PAIR_ON = `${WORD} foreign_keys=ON;`;
 const BREAKPOINT = "--> statement-breakpoint";
+const SETTINGS_READER = "src/db/testing.ts";
+const READS = ["mmap_size", "temp_store_directory", "wal_autocheckpoint"].map(
+  (name) => `${name}: "${WORD} ${name}",`,
+);
 
 // The driver setup applies WAL mode when it opens app.db. The driver applies the busy timeout
 // itself. A generated migration may hold drizzle-kit's pair around a table rebuild, as drizzle-kit
 // writes it: OFF, then ON. The pair sets nothing, because the driver's migrate() already turns
 // foreign keys off outside the migration's transaction, and SQLite ignores the pair inside one.
+// The tests' settings reader reads three settings that have no table-valued function, each by its
+// name with no value, which only reads.
 function allowedLines(path: string): string[] {
   if (path === DRIVER_SETUP) return [WAL];
+  if (path === SETTINGS_READER) return READS;
   if (MIGRATION_FILE.test(path)) {
     return [PAIR_OFF, PAIR_ON].flatMap((line) => [line, `${line}${BREAKPOINT}`]);
   }
@@ -52,6 +59,7 @@ const RULE = [
   `- in ${DRIVER_SETUP}: ${WAL}`,
   `- in drizzle/*.sql, drizzle-kit's pair, OFF then ON: ${PAIR_OFF} and ${PAIR_ON}`,
   `  each alone on its line or followed by ${BREAKPOINT}`,
+  `- in ${SETTINGS_READER}, the tests' reads with no value: ${READS.join(" ")}`,
   "To read a setting, use its table-valued function, such as",
   'SELECT * FROM pragma_integrity_check(). See "Database files" in',
   "docs/spec/10-stack-and-architecture.md.",
@@ -237,6 +245,33 @@ describe(`${WORD} statements`, () => {
       "drizzle/meta/0003_rebuild.sql:4",
     ]);
     expect(flagsIn("src/db/rebuild.sql", MIGRATION_PAIR)).toHaveLength(2);
+  });
+
+  it("passes the settings reader's three reads in the settings reader", () => {
+    const code = `const READ_BY_STATEMENT = {\n${READS.map((line) => `  ${line}`).join("\n")}\n};`;
+
+    expect(flagsIn(SETTINGS_READER, code)).toEqual([]);
+  });
+
+  it.each(READS)("flags the read %s with a value in the settings reader", (line) => {
+    for (const value of [" = 0", "=0", " = 0;", "; WORD synchronous = OFF"]) {
+      const setter = line.replace(/",$/, `${withWord(value)}",`);
+      expect(flagsIn(SETTINGS_READER, setter)).toEqual([`${SETTINGS_READER}:1`]);
+    }
+  });
+
+  it.each(READS)("flags the read %s outside the settings reader", (line) => {
+    expect(flagsIn("src/db/backup.ts", line)).toEqual(["src/db/backup.ts:1"]);
+    expect(flagsIn("src/server/testing.ts", line)).toEqual(["src/server/testing.ts:1"]);
+  });
+
+  it("flags another read, and a comment that names the word, in the settings reader", () => {
+    const code = withWord('journal_mode: "WORD journal_mode",\n// WORD mmap_size');
+
+    expect(flagsIn(SETTINGS_READER, code)).toEqual([
+      `${SETTINGS_READER}:1`,
+      `${SETTINGS_READER}:2`,
+    ]);
   });
 
   it("names the line of each use it flags", () => {

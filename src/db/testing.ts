@@ -87,14 +87,30 @@ const NOT_SETTINGS = new Set([
   "table_xinfo", // Describes one table, so it needs a table name.
 ]);
 
+// Settings that SQLite gives no table-valued function, each with the statement that reads it. With
+// a name and no value, the statement only reads. The search test allows exactly these three lines
+// in this file, each written whole, and flags any of them with a value, or in any other file.
+const READ_BY_STATEMENT: Record<string, string> = {
+  mmap_size: "PRAGMA mmap_size",
+  temp_store_directory: "PRAGMA temp_store_directory",
+  wal_autocheckpoint: "PRAGMA wal_autocheckpoint",
+};
+
+// Settings that no statement reads, each read by its effect instead.
+const READ_BY_EFFECT: Record<string, string> = {
+  // 1 when on, as LIKE then tells 'a' from 'A', and 0 when off.
+  case_sensitive_like: "SELECT 'a' NOT LIKE 'A'",
+};
+
 export type EverySetting = {
   // Each setting's value: a single value, or a list of rows.
   values: Record<string, unknown>;
-  // Settings that SQLite gives no table-valued function, so no query can read them.
+  // Names in the list that are actions, not settings, so no query can read them.
   unreadable: string[];
 };
 
-// Reads every setting that SQLite's table-valued functions can read on one connection.
+// Reads every setting on one connection: through SQLite's table-valued functions where they exist,
+// else through the settings statement with no value, which only reads, else through its effect.
 export async function readEverySetting(client: Pick<Client, "execute">): Promise<EverySetting> {
   const listed = await client.execute("SELECT name FROM pragma_pragma_list() ORDER BY name");
   const values: Record<string, unknown> = {};
@@ -108,8 +124,12 @@ export async function readEverySetting(client: Pick<Client, "execute">): Promise
       result = await client.execute(`SELECT * FROM pragma_${name}()`);
     } catch (error) {
       if (!String(error).includes(`no such table: pragma_${name}`)) throw error;
-      unreadable.push(name);
-      continue;
+      const read = READ_BY_STATEMENT[name] ?? READ_BY_EFFECT[name];
+      if (read === undefined) {
+        unreadable.push(name);
+        continue;
+      }
+      result = await client.execute(read);
     }
     const rows = result.rows.map((cells) => result.columns.map((_column, i) => cells[i]));
     values[name] = rows.length === 1 && rows[0]?.length === 1 ? rows[0][0] : rows;

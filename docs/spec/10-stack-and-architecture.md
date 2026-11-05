@@ -174,7 +174,7 @@ Rules:
 | The Master key file | The Master key | The `secrets` module | Never. It lives outside `/data` ([Members, login, and security](09-members-login-security.md)). |
 
 - v1 supports only the local database file. The driver stays `@libsql/client`, so adding Turso later stays a small job.
-- `PRAGMA` appears only in the driver setup: WAL mode and the busy `timeout`. App code never sets a `PRAGMA`.
+- In app code, `PRAGMA` appears only in the driver setup: WAL mode and the busy `timeout`. App code never sets a `PRAGMA`. The one other use is test-only and read-only: the tests' settings reader in `src/db/testing.ts` reads `mmap_size`, `temp_store_directory` and `wal_autocheckpoint`, which have no table-valued function, each by its name with no value.
 - Generated migrations may hold the `PRAGMA foreign_keys=OFF;` and `PRAGMA foreign_keys=ON;` pair that drizzle-kit writes around a table rebuild. The pair changes nothing, because the driver already turns foreign keys off while it applies migrations. No other `PRAGMA` may appear in a migration.
 - Every query is awaited. Code never calls a synchronous driver API.
 - Sidequest's SQLite backend uses `better-sqlite3`, a native module. The image includes its build for amd64 and arm64 ([Install and first-run setup](12-install-and-first-run.md)).

@@ -11,6 +11,7 @@ import {
   deleteLeftoverBackupFiles,
   runDailyBackup,
   startBackups,
+  takeMigrationCopy,
 } from "../backups/index.ts";
 import {
   type BankDataAdapter,
@@ -71,16 +72,29 @@ async function settleAll(promises: Promise<unknown>[]): Promise<void> {
 // scheduler tick has run.
 export async function startApp(options: StartOptions): Promise<RunningApp> {
   const database = await openDatabase(options.databaseUrl);
+  let backups: { stop(): void } | undefined;
   try {
     log.info("Opened the database", { url: options.databaseUrl });
     // Before migrations, so a Master key that cannot decrypt the stored data key changes nothing.
     await checkDataKey(database, options.masterKey);
-    const applied = await applyMigrations(database, options.migrationsFolder);
-    log.info("Applied migrations", { count: applied });
-    const secrets = await unlockSecrets(database, options.masterKey);
     // The Household time zone, from the Household facts. Until the wizard's step 4 is done, both
     // the bank module and the scheduler use UTC.
     const timeZone = () => householdTimeZone(database);
+    // Before migrations, so the safety copy can run.
+    const backupFolder = await chooseBackupFolder(options.backupFolders);
+    backups = startBackups({ database, folder: backupFolder, timeZone });
+    log.info("Chose the backup folder", { folder: backupFolder });
+    // Before any backup can run.
+    await deleteLeftoverBackupFiles();
+    const applied = await applyMigrations(database, options.migrationsFolder, {
+      // Step 4: the safety copy, after the refusals, so a refused app.db never rotates good copies
+      // out. app.db with no migration applied holds nothing yet, as on a fresh install.
+      beforeMigrating: async (check) => {
+        if (check.applied > 0) await takeMigrationCopy();
+      },
+    });
+    log.info("Applied migrations", { count: applied });
+    const secrets = await unlockSecrets(database, options.masterKey);
     const address = (path: string) => options.security.appUrl.address(path);
     const https = options.security.appUrl.mode === "https";
     const notify = startNotify({
@@ -115,7 +129,6 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const alertSending = startAlertSending({ database });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
-    let backups: { stop(): void } | undefined;
     const stopModules = () => {
       backups?.stop();
       updateCheck.stop();
@@ -134,11 +147,6 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     };
     let jobs: Awaited<ReturnType<typeof startJobs>>;
     try {
-      const backupFolder = await chooseBackupFolder(options.backupFolders);
-      backups = startBackups({ database, folder: backupFolder, timeZone });
-      log.info("Chose the backup folder", { folder: backupFolder });
-      // Before any backup can run.
-      await deleteLeftoverBackupFiles();
       jobs = await startJobs({ ...options.jobs, database, timeZone });
     } catch (error) {
       stopModules();
@@ -189,6 +197,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       throw error;
     }
   } catch (error) {
+    backups?.stop();
     closeDatabase(database);
     throw error;
   }
