@@ -31,6 +31,7 @@ import { startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
+import { startMonthlyReview } from "../monthly-review/index.ts";
 import {
   pushSettings,
   requestDelivery,
@@ -123,6 +124,9 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         ...Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
         // Budget tailoring retries in its own job, which runs each waiting run.
         "budget tailoring": requestTailoringJob,
+        // The Monthly review's check each minute finds its own retry due, so its retry starts
+        // nothing more.
+        "monthly review": async () => undefined,
       },
     });
     // The Matching and Categorization steps, and the Alerts step for its advice, ask the Quick tier
@@ -140,10 +144,12 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const alertSending = startAlertSending({ database, ai });
     // The follow-up job's last step: the day's Insight card run, on the Writer tier.
     const insights = startInsightCards({ database, ai });
+    const monthlyReview = startMonthlyReview({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {
       backups?.stop();
+      monthlyReview.stop();
       updateCheck.stop();
       cpiFetch.stop();
       insights.stop();

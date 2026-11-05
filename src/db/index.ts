@@ -365,6 +365,18 @@ export {
   SkippedMigrationError,
 } from "./migrate.ts";
 export {
+  endMonthlyReviewRun,
+  listHealthyConnectionSyncs,
+  listMonthlyReviewProposalReasons,
+  listOpenMonthlyReviewRuns,
+  markMonthlyReviewDue,
+  markMonthlyReviewProposed,
+  readMonthlyReviewRun,
+  type StoredMonthlyReviewRun,
+  storeMonthlyReviewReply,
+  storeMonthlyReviewRetry,
+} from "./monthly-review-runs.ts";
+export {
   listMonthlyReviews,
   listPlanTicks,
   listReviewLinks,

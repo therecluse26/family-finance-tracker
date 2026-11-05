@@ -19,6 +19,11 @@ import type { ModelUse } from "./ai-view.ts";
 // The wait before each retry: after the first failed call, the second, and the third.
 export const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000] as const;
 
+// The Monthly review never takes its no-AI path after the third retry: it tries again every 6
+// hours until the review is written (spec 08, Failures). The monthly-review module ends its run
+// at its cap, and ends the retry with it.
+export const MONTHLY_REVIEW_RETRY_MS = 6 * 60 * 60_000;
+
 // The background uses that run in the follow-up job (spec 08, Every AI use). Their retry asks for
 // a follow-up job.
 export const FOLLOW_UP_AI_USES: readonly ModelUse[] = [
@@ -35,7 +40,8 @@ export type AiRetries = {
   // call.
   waitsUntil(use: ModelUse, now: Date): Promise<Date | undefined>;
   // One more failed call. Returns when the use tries again, or undefined after the last retry,
-  // when the use takes its no-AI path and waits for no retry.
+  // when the use takes its no-AI path and waits for no retry. The Monthly review has no last
+  // retry.
   failed(use: ModelUse, now: Date): Promise<Date | undefined>;
   // The call worked, or the AI provider rejected the key: the use waits for no retry.
   ended(use: ModelUse): Promise<void>;
@@ -49,7 +55,9 @@ export function aiRetries(database: Database): AiRetries {
     },
     async failed(use, now) {
       const failures = ((await readAiRetry(database, use))?.failures ?? 0) + 1;
-      const delay = RETRY_DELAYS_MS[failures - 1];
+      const delay =
+        RETRY_DELAYS_MS[failures - 1] ??
+        (use === "monthly review" ? MONTHLY_REVIEW_RETRY_MS : undefined);
       if (delay === undefined) {
         await clearAiRetry(database, use);
         return undefined;

@@ -20,3 +20,18 @@ export {
   type IdeaKind,
   type StoredReview,
 } from "./review-view.ts";
+export {
+  checkMonthlyReview,
+  MONTHLY_REVIEW_TASK,
+  MonthlyReviewDueJob,
+  MonthlyReviewJob,
+  markReviewDue,
+  ON_THE_FIRST,
+  REVIEW_HOUR,
+  REVIEW_STOPPED,
+  REVIEW_WAIT_MS,
+  type ReviewAnswer,
+  type ReviewCheck,
+  reviewAnswer,
+  startMonthlyReview,
+} from "./writing.ts";

@@ -1449,6 +1449,23 @@ export const reviewLinksDone = sqliteTable("review_links_done", {
   doneAt: moment("done_at").notNull(),
 });
 
+// Each Monthly review's run (spec 08, Monthly review; Failures): one row per month the review is
+// due for, from the 1st until the review is written or the run ends without one. It holds the
+// AI's reply from the moment it comes back, so a failure after the call never pays for a second.
+export const monthlyReviewRuns = sqliteTable("monthly_review_runs", {
+  // The month the review is about, written YYYY-MM.
+  month: text("month").primaryKey(),
+  dueAt: moment("due_at").notNull(),
+  // No try before this time: the AI retry's time, or a wait after a pause or a failure.
+  retryAt: moment("retry_at"),
+  // The Writer's reply, in the review fields, before the app stores the review.
+  reply: text("reply", { mode: "json" }).$type<Record<string, unknown>>(),
+  // When the reply's Budget changes went to the proposals module.
+  proposedAt: moment("proposed_at"),
+  endedAt: moment("ended_at"),
+  outcome: text("outcome", { enum: ["written", "no AI provider", "stopped"] }),
+});
+
 // The Anomaly checks' failed tries in a row. A run that fails counts one; the run that reaches the
 // cap gives up on its Transactions and raises one System notice. It has at most one row, whose ID
 // is 1.

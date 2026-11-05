@@ -24,6 +24,7 @@ import {
 import { householdTimeZone } from "../household/index.ts";
 import { startInsightCards } from "../insights/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
+import { startMonthlyReview } from "../monthly-review/index.ts";
 import { startNotify } from "../notify/index.ts";
 import { StubSmtp } from "../notify/testing.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
@@ -218,6 +219,21 @@ export const APP_MODULES: readonly AppModule[] = [
       path: "Insight card check on the full history",
       buildLimitMs: 10_000,
     },
+  },
+  {
+    name: "startMonthlyReview",
+    // Its jobs run on the 1st and each minute, never in a follow-up step.
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startMonthlyReview({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+        now: HISTORY_NOW,
+      }),
   },
   {
     name: "startCpiFetch",

@@ -7,6 +7,7 @@ import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
 import { MonthStartJob } from "../budgets/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
+import { MonthlyReviewDueJob, MonthlyReviewJob, ON_THE_FIRST } from "../monthly-review/index.ts";
 import { BudgetTailoringJob } from "../tailoring/index.ts";
 import { UpdateCheckJob } from "../updates/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
@@ -21,6 +22,8 @@ export {
   BackupJob,
   BudgetTailoringJob,
   CpiFetchJob,
+  MonthlyReviewDueJob,
+  MonthlyReviewJob,
   MonthStartJob,
   ProvisionalResultsJob,
   SyncScheduleJob,
@@ -55,4 +58,11 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // Backs up app.db at 3:00 AM, Household time (spec 11, When backups run). A failed backup starts
   // its own retry an hour later. Its job finds the day's backup done when one is newer than 3:00 AM.
   { name: "backup", schedule: BACKUP_SCHEDULE, job: BackupJob },
+  // The review of the month just ended comes due at midnight on the 1st, Household time (spec 08,
+  // Monthly review). A 1st missed while the app was down comes due at the next start.
+  { name: "monthly review", schedule: ON_THE_FIRST, job: MonthlyReviewDueJob },
+  // Writes a due Monthly review once every Healthy Connection has synced on the 1st, or at noon,
+  // and tries again at its retry times. Most minutes it finds nothing due. Its job logs only when
+  // it does something.
+  { name: "monthly review check", schedule: everyMinute, job: MonthlyReviewJob, quiet: true },
 ];
