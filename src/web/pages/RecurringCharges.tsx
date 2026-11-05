@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
 import type { RecurringChargeView } from "../../server/recurring-views.ts";
 import { api } from "../api.ts";
+import { keepAmountsWhole } from "../components/Amounts.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
 import { browserZone } from "./Accounts.tsx";
 
@@ -72,7 +73,7 @@ export function RecurringChargeRow(props: {
         aria-expanded={state.open === true}
         onClick={() => actions.toggle(charge)}
       >
-        {chargeLine(charge, props.today)}
+        {keepAmountsWhole(chargeLine(charge, props.today))}
       </button>
       {state.open === true ? (
         <ul className="ml-4 mt-1 text-gray-700" aria-label="Price history">

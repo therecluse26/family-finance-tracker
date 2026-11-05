@@ -1232,7 +1232,8 @@ describe("the dashboard's layout", () => {
     const boxes = [...html.matchAll(BOXES)].map((match) => match[1] ?? "");
 
     // The AI box, then the right column top to bottom: Left to spend, Goals, the four number
-    // tiles, "A usual month", and "Coming up". Each part is a box.
+    // tiles, "A usual month", and "Coming up". Each part is a box, and as in prototype variant H
+    // each number tile is a box of its own, with no box around the four.
     expect(boxes).toEqual([
       "ai-box",
       "left-to-spend",
@@ -1241,12 +1242,22 @@ describe("the dashboard's layout", () => {
       "usual-month",
       "coming-up",
     ]);
-    for (const box of boxes) {
+    for (const box of boxes.filter((box) => box !== "number-tiles")) {
       expect(styleOf(box, 375).get("border-width")).toBe("1px");
     }
+    expect(styleOf("number-tiles", 375).has("border-width")).toBe(false);
+    expect(styleOf("tile", 375).get("border-width")).toBe("1px");
+    expect(html.match(/data-slot="tile"/g)).toHaveLength(4);
     expect(html.indexOf('data-slot="ai-column"')).toBeLessThan(
       html.indexOf('data-slot="right-column"'),
     );
+
+    // The header, as in prototype variant H: the month at the left and "Day N of M · synced" at
+    // the right, on one line where both fit.
+    expect(styleOf("dashboard-header", 375).get("display")).toBe("flex");
+    expect(styleOf("dashboard-header", 375).get("flex-wrap")).toBe("wrap");
+    expect(styleOf("dashboard-header", 375).get("justify-content")).toBe("space-between");
+    expect(styleOf("dashboard-header", 375).get("align-items")).toBe("baseline");
 
     // 375 px: one column, so the boxes stack in that order, the AI box first.
     expect(styleOf("columns", 375).get("display")).toBe("grid");
@@ -1266,6 +1277,8 @@ describe("the dashboard's layout", () => {
   // The width inside the number tiles box and "A usual month" box, measured in Chromium inside the
   // Shell at each screen width. From 900 px the right column is narrower than at 375 px.
   const BOX_AT = { 375: 309, 900: 210, 1050: 360, 1200: 510 } as const;
+  // The number tiles have no box around them, so they share the column's full width: 34 px more.
+  const TILES_AT = { 375: 343, 900: 244, 1050: 394, 1200: 544 } as const;
   const columns = (count: number) => `repeat(${count}, minmax(0, 1fr))`;
 
   it("sizes the tiles and the Category groups by their box, not by the screen", async () => {
@@ -1277,10 +1290,10 @@ describe("the dashboard's layout", () => {
     }
     // The four number tiles: two by two in a narrow box, four in a row from a 480 px box. At
     // 900 px each tile in a row of four would be 47 px, too narrow for its amount.
-    expect(styleOf("tiles", 375, BOX_AT[375]).get("grid-template-columns")).toBe(columns(2));
-    expect(styleOf("tiles", 900, BOX_AT[900]).get("grid-template-columns")).toBe(columns(2));
-    expect(styleOf("tiles", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(2));
-    expect(styleOf("tiles", 1200, BOX_AT[1200]).get("grid-template-columns")).toBe(columns(4));
+    expect(styleOf("tiles", 375, TILES_AT[375]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 900, TILES_AT[900]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 1050, TILES_AT[1050]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 1200, TILES_AT[1200]).get("grid-template-columns")).toBe(columns(4));
     expect(styleOf("tiles", 1200, 479).get("grid-template-columns")).toBe(columns(2));
     expect(styleOf("tiles", 1200, 480).get("grid-template-columns")).toBe(columns(4));
     // No screen width alone moves them.

@@ -233,14 +233,17 @@ describe("the Review list page", () => {
     );
     expect(rows).toEqual([
       "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking No AI was available, so the app guessed Restaurants. Yes, Restaurants Not this",
-      "Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · $500.00 · Everyday Checking These match as a Transfer, but nothing more ties them, so they are not linked. Yes, they are one Transfer Not this",
-      "Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · $500.00 · Everyday Checking Two sets of Transfer pairs were equally good, so the app picked this one. Yes, they are one Transfer Not this",
+      "Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · +$500.00 · Everyday Checking These match as a Transfer, but nothing more ties them, so they are not linked. Yes, they are one Transfer Not this",
+      "Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · +$500.00 · Everyday Checking Two sets of Transfer pairs were equally good, so the app picked this one. Yes, they are one Transfer Not this",
       "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking It names no account, so it counts as a Transfer. Which account is this? Keep it as a Transfer Not this",
-      "Oct 12 · Corner Bistro · $30.00 · Everyday Checking Money from a person with no link counts as Income. Keep as Income Not this",
+      "Oct 12 · Corner Bistro · +$30.00 · Everyday Checking Money from a person with no link counts as Income. Keep as Income Not this",
       "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking Payments to Lakeside Auto count as Transfers, so their interest cannot show. Add it as a Manual loan Not this",
       "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking This payment may belong to Lakeside Auto. Link to this loan Not this",
       "Lakeside Auto No payment to Lakeside Auto has linked since 2026-08-15. Keep the loan open Not this",
     ]);
+    // A signed amount never breaks after its sign (spec 07, Number formats).
+    expect(html).toContain(' · <span class="whitespace-nowrap">−$42.50</span> · ');
+    expect(html).toContain(' · <span class="whitespace-nowrap">+$500.00</span> · ');
     // The untracked loan's best answer opens the Manual loan form, with the lender filled in.
     expect(html).toContain('href="/settings/banks?lender=Lakeside%20Auto#manual-loans"');
   });

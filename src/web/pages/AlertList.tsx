@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { calendarDateIn, dateLabel } from "../../format.ts";
 import type { AlertPartView, AlertView } from "../../server/alerts-views.ts";
 import { api } from "../api.ts";
+import { keepAmountsWhole } from "../components/Amounts.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
 import { AiMark } from "../components/Status.tsx";
 import { browserZone } from "./Accounts.tsx";
@@ -41,7 +42,7 @@ export function AlertPart(props: {
   const pressed = part.notAProblem[0];
   return (
     <li className="mt-2">
-      <p>{part.text}</p>
+      <p>{keepAmountsWhole(part.text)}</p>
       {part.advice === null ? null : (
         <p className="mt-1 text-gray-700">
           <AiMark /> {part.advice}

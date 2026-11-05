@@ -1,16 +1,15 @@
+import { Children, isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
+import { XAxis, type XAxisProps } from "recharts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  AccountView,
-  BalancePointView,
-  ConnectionView,
-  TransactionView,
-} from "../../server/bank-views.ts";
+import { monthLabel } from "../../format.ts";
+import type { AccountView, BalancePointView, ConnectionView } from "../../server/bank-views.ts";
+import type { TransactionRowView } from "../../server/money-movement-views.ts";
 import { accountEdits } from "../account-edits.ts";
-import { BalanceChart, chartRows } from "../components/BalanceChart.tsx";
+import { BalanceChart, chartRows, monthTicks } from "../components/BalanceChart.tsx";
 import { routes } from "../routes.tsx";
-import { Account, AccountDetail, daysBefore } from "./Account.tsx";
+import { Account, AccountDetail, daysBefore, TransactionList } from "./Account.tsx";
 import { AccountList, groupOf, marksOf } from "./Accounts.tsx";
 
 // The Account list and each Account's page (spec 07, Account list).
@@ -182,16 +181,71 @@ describe("an Account's page", () => {
     expect(synced).not.toContain("estimated");
   });
 
+  it("marks the balance line's axis by month, as a chart label such as Oct 2025", () => {
+    const point = (date: string): BalancePointView => ({
+      date,
+      currentBalance: 100,
+      availableBalance: null,
+      estimated: false,
+    });
+    const rows = chartRows(
+      ["2025-11-09", "2025-11-30", "2025-12-01", "2025-12-11", "2026-01-03", "2026-01-18"].map(
+        point,
+      ),
+    );
+
+    // The first day shown in each month, even when the history starts mid-month.
+    expect(monthTicks(rows)).toEqual(["2025-11-09", "2025-12-01", "2026-01-03"]);
+    expect(monthTicks(rows).map(monthLabel)).toEqual(["Nov 2025", "Dec 2025", "Jan 2026"]);
+    expect(monthTicks([])).toEqual([]);
+
+    // The chart itself puts those marks on its axis. A server render draws no axis, so read the
+    // axis the chart asks Recharts for.
+    const axisOf = (node: ReactNode): XAxisProps | undefined => {
+      if (!isValidElement<{ children?: ReactNode }>(node)) return undefined;
+      if (node.type === XAxis) return node.props as XAxisProps;
+      return Children.toArray(node.props.children).map(axisOf).find(Boolean);
+    };
+    const axis = axisOf(
+      BalanceChart({
+        points: ["2025-11-09", "2025-12-01", "2025-12-11", "2026-01-03"].map(point),
+        today: TODAY,
+      }),
+    );
+    expect(axis?.ticks).toEqual(["2025-11-09", "2025-12-01", "2026-01-03"]);
+    const format = axis?.tickFormatter as ((date: string, index: number) => string) | undefined;
+    expect(axis?.ticks?.map((date, index) => format?.(String(date), index))).toEqual([
+      "Nov 2025",
+      "Dec 2025",
+      "Jan 2026",
+    ]);
+  });
+
   it("shows the marks, the edits that apply, and the Transactions", () => {
-    const txn: TransactionView = {
+    // The bank's line and the provider's name differ from the Merchant's clean name, and the
+    // purchase date from the posted date: the row shows the Merchant and the purchase date, as the
+    // Transactions page does.
+    const txn: TransactionRowView = {
       id: "t1",
       accountId: ACCOUNT.id,
       amount: -4_250,
-      postedDate: "2026-10-12",
-      authorizedDate: null,
+      postedDate: "2026-10-13",
+      authorizedDate: "2026-10-12",
       pending: false,
-      description: "CORNER BISTRO",
-      merchantName: "Corner Bistro",
+      description: "TST* CORNER BISTRO 0042",
+      merchantName: "CORNER BISTRO #42",
+      merchant: "Corner Bistro",
+      parts: [],
+    };
+    const income: TransactionRowView = {
+      ...txn,
+      id: "t2",
+      amount: 186_590,
+      postedDate: "2026-10-16",
+      authorizedDate: null,
+      description: "NORTHWIND LOGISTICS PAYROLL",
+      merchantName: null,
+      merchant: "Northwind Logistics",
     };
     const page = (facts: Partial<Parameters<typeof AccountDetail>[0]["facts"]>) =>
       text(
@@ -204,11 +258,18 @@ describe("an Account's page", () => {
         ),
       );
 
-    const checking = page({ marks: ["excluded"], transactions: [txn] });
+    const checking = page({ marks: ["excluded"], transactions: [income, txn] });
     expect(checking).toContain("excluded");
     expect(checking).toContain("Exclude");
     expect(checking).toContain("Close this Account");
-    expect(checking).toMatch(/Oct 12 +Corner Bistro +−\$42\.50/);
+    expect(checking).toMatch(
+      /Oct 16 +Northwind Logistics +\+\$1,865\.90 +Oct 12 +Corner Bistro +−\$42\.50/,
+    );
+    expect(checking).not.toContain("CORNER BISTRO");
+    // A signed amount never breaks after its sign (spec 07, Number formats).
+    const rows = inRouter(<TransactionList transactions={[income, txn]} today={TODAY} />);
+    expect(rows).toContain('<span class="whitespace-nowrap">+$1,865.90</span>');
+    expect(rows).toContain('<span class="whitespace-nowrap">−$42.50</span>');
     expect(checking).not.toContain("Loan type");
 
     const loan = page({

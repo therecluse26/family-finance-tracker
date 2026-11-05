@@ -98,6 +98,8 @@ describe("the Recurring charges page", () => {
     const html = renderToString(
       <RecurringChargeList charges={CHARGES} states={{}} today={TODAY} actions={noActions} />,
     );
+    // A signed amount never breaks after its sign (spec 07, Number formats).
+    expect(html).toContain('Streamly · <span class="whitespace-nowrap">−$15.49</span> · monthly');
     const rows = [...html.matchAll(/<button[^>]*aria-expanded[^>]*>(.*?)<\/button>/gs)].map(
       (match) => text(match[1] ?? ""),
     );

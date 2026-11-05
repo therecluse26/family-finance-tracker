@@ -5,10 +5,14 @@ import type {
   AccountView,
   BalancePointView,
   ConnectionView,
-  TransactionView,
+  TransactionListView,
   UnconnectedAccountView,
 } from "../../server/bank-views.ts";
-import type { LoanView, ManualLoanView } from "../../server/money-movement-views.ts";
+import type {
+  LoanView,
+  ManualLoanView,
+  TransactionRowView,
+} from "../../server/money-movement-views.ts";
 import { accountEdits } from "../account-edits.ts";
 import { api } from "../api.ts";
 import { BalanceChart } from "../components/BalanceChart.tsx";
@@ -16,6 +20,7 @@ import { BUTTON, ErrorLine, FIELD } from "../components/Fields.tsx";
 import { accountLabel, browserZone, Marks, marksOf } from "./Accounts.tsx";
 import { ManualLoanForm } from "./settings/ManualLoans.tsx";
 import { UnconnectedAccountForm } from "./settings/UnconnectedAccounts.tsx";
+import { merchantOf } from "./Transactions.tsx";
 
 // An Account's page (spec 07, Account list): its balance over time, with estimated days marked,
 // and its Transactions from the last year. A Member closes or reopens it, sets its Exclude switch,
@@ -156,22 +161,25 @@ export function LoanSettings(props: { loan: LoanView; onChanged: () => void }) {
 }
 
 export function TransactionList(props: {
-  transactions: readonly TransactionView[];
+  transactions: readonly TransactionRowView[];
   today: string;
 }) {
   if (props.transactions.length === 0) {
     return <p className="mt-3 text-gray-600">No Transactions in the last year.</p>;
   }
+  // Each row names the Merchant and its day as the Transactions page does.
   return (
     <ul>
       {props.transactions.map((txn) => (
         <li key={txn.id} className="mt-2 flex justify-between gap-x-4">
           <span>
-            <span className="text-gray-600">{dateLabel(txn.postedDate, props.today)}</span>{" "}
-            {txn.merchantName ?? txn.description}
+            <span className="text-gray-600">
+              {dateLabel(txn.authorizedDate ?? txn.postedDate, props.today)}
+            </span>{" "}
+            {merchantOf(txn)}
             {txn.pending ? <span className="ml-2 text-sm text-gray-500">pending</span> : null}
           </span>
-          <span>{dollarsAndCents(txn.amount, { signed: true })}</span>
+          <span className="whitespace-nowrap">{dollarsAndCents(txn.amount, { signed: true })}</span>
         </li>
       ))}
     </ul>
@@ -183,7 +191,7 @@ export type AccountFacts = {
   account: AccountView;
   marks: string[];
   points: BalancePointView[];
-  transactions: TransactionView[];
+  transactions: TransactionRowView[];
   // A connected loan's settings.
   loan?: LoanView;
   unconnected?: UnconnectedAccountView;
@@ -251,7 +259,7 @@ async function loadFacts(
     account,
     marks: marksOf(account, connections, today, zone),
     points: ((await balances.json()) as { points: BalancePointView[] }).points,
-    transactions: ((await txns.json()) as { transactions: TransactionView[] }).transactions,
+    transactions: ((await txns.json()) as TransactionListView).transactions,
   };
   if (account.kind === "unconnected") {
     const res = await api["unconnected-accounts"].$get();

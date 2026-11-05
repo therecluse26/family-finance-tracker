@@ -6,6 +6,7 @@ import type {
   ReviewItemView,
   ReviewTransactionView,
 } from "../../server/review-views.ts";
+import { keepAmountsWhole } from "../components/Amounts.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
 import { acceptOf, answerItem, reviewListRequests } from "../review-list.ts";
 import type { ShellContext } from "../Shell.tsx";
@@ -19,12 +20,12 @@ const BUTTON = "rounded border border-gray-300 px-3 py-1";
 const ACCEPT = "rounded bg-blue-700 px-3 py-1 text-white disabled:opacity-50";
 
 // "Oct 9 · Corner Bistro · −$42.50 · Everyday Checking". A Transaction's day is its purchase date
-// when it has one.
+// when it has one. Money in shows "+", since the list shows both (spec 07, Number formats).
 export function transactionLine(txn: ReviewTransactionView, today: string): string {
   return [
     dateLabel(txn.authorizedDate ?? txn.postedDate, today),
     txn.merchantName ?? txn.description,
-    dollarsAndCents(txn.amount),
+    dollarsAndCents(txn.amount, { signed: true }),
     ...(txn.accountName === null ? [] : [txn.accountName]),
   ].join(" · ");
 }
@@ -38,7 +39,7 @@ function Subject(props: { item: ReviewItemView; today: string }) {
     <ul>
       {item.transactions.map((txn) => (
         <li key={txn.id} className="font-semibold">
-          {transactionLine(txn, props.today)}
+          {keepAmountsWhole(transactionLine(txn, props.today))}
         </li>
       ))}
     </ul>

@@ -5,6 +5,7 @@ import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
 import type { AccountView, TransactionListView } from "../../server/bank-views.ts";
 import type { TransactionRowView } from "../../server/money-movement-views.ts";
 import { api } from "../api.ts";
+import { keepAmountsWhole } from "../components/Amounts.tsx";
 import { ErrorLine, FIELD } from "../components/Fields.tsx";
 import {
   categoryOrType,
@@ -29,7 +30,8 @@ export const merchantOf = (txn: TransactionRowView) =>
   txn.merchant ?? txn.merchantName ?? txn.description;
 
 // "Oct 9 · Corner Bistro · −$42.50 · Everyday Checking ··1234 · Restaurants". A Transaction's day is
-// its purchase date when it has one.
+// its purchase date when it has one. Money in shows "+", since the list shows both (spec 07, Number
+// formats).
 export function rowLine(
   txn: TransactionRowView,
   accounts: ReadonlyMap<string, string>,
@@ -38,7 +40,7 @@ export function rowLine(
   return [
     dateLabel(txn.authorizedDate ?? txn.postedDate, today),
     merchantOf(txn),
-    dollarsAndCents(txn.amount),
+    dollarsAndCents(txn.amount, { signed: true }),
     accounts.get(txn.accountId) ?? "An Account",
     categoryOrType(txn.parts),
   ].join(" · ");
@@ -142,7 +144,7 @@ export function TransactionRows(props: {
       {props.transactions.map((txn) => (
         <li key={txn.id} className="mt-2 flex justify-between gap-x-4">
           <Link className={LINK} to={transactionPath(txn.id)}>
-            {rowLine(txn, props.accounts, props.today)}
+            {keepAmountsWhole(rowLine(txn, props.accounts, props.today))}
           </Link>
           {txn.pending ? <span className="text-sm text-gray-500">pending</span> : null}
         </li>

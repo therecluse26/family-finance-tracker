@@ -12,6 +12,7 @@ import type {
   TransferLinkView,
 } from "../../server/money-movement-views.ts";
 import { api } from "../api.ts";
+import { keepAmountsWhole } from "../components/Amounts.tsx";
 import { FIELD } from "../components/Fields.tsx";
 import { readOpenCount } from "../review-list.ts";
 import type { ShellContext } from "../Shell.tsx";
@@ -253,7 +254,7 @@ function LinkEvidence(props: {
       {matched === undefined ? null : (
         <p>
           <Link className={LINK} to={transactionPath(matched.id)}>
-            {rowLine(matched, props.accounts, props.today)}
+            {keepAmountsWhole(rowLine(matched, props.accounts, props.today))}
           </Link>
         </p>
       )}
@@ -345,7 +346,8 @@ export function TransactionDetailBody(props: {
     <>
       <h1 className="text-2xl font-semibold">{merchantOf(txn)}</h1>
       <p className="mt-1">
-        {dateLabel(txn.authorizedDate ?? txn.postedDate, today)} · {dollarsAndCents(txn.amount)} ·{" "}
+        {dateLabel(txn.authorizedDate ?? txn.postedDate, today)} ·{" "}
+        <span className="whitespace-nowrap">{dollarsAndCents(txn.amount)}</span> ·{" "}
         {labels.get(txn.accountId) ?? "An Account"}
         {txn.pending ? <span className="ml-2 text-sm text-gray-500">pending</span> : null}
       </p>

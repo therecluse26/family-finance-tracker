@@ -300,11 +300,14 @@ describe("the Transactions page", () => {
     expect(lines).toEqual([
       "Nov 3 · Corner Bistro · −$42.50 · Rewards Card ··9876 · Restaurants pending",
       "Oct 12 · Target · −$120.00 · Rewards Card ··9876 · Split: Groceries, Clothing",
-      "Oct 12 · Target · $30.00 · Rewards Card ··9876 · Refund: Groceries",
-      "Dec 31, 2025 · ACME PAYROLL · $3,200.00 · Everyday Checking ··1234 · Income",
+      "Oct 12 · Target · +$30.00 · Rewards Card ··9876 · Refund: Groceries",
+      "Dec 31, 2025 · ACME PAYROLL · +$3,200.00 · Everyday Checking ··1234 · Income",
       "Oct 12 · Lakeside Auto · −$42.50 · Rewards Card ··9876 · Interest and fees + Transfer",
       "Oct 12 · Corner Bistro · −$42.50 · Rewards Card ··9876 · Not decided yet",
     ]);
+    // A signed amount never breaks after its sign (spec 07, Number formats).
+    expect(html).toContain(' · <span class="whitespace-nowrap">+$3,200.00</span> · ');
+    expect(html).toContain(' · <span class="whitespace-nowrap">−$120.00</span> · ');
     expect(html).toContain('href="/transactions/split"');
     expect(
       text(inRouter(<TransactionRows transactions={[]} accounts={new Map()} today={TODAY} />)),
@@ -489,10 +492,18 @@ describe("the Transaction detail view", () => {
         ],
       },
     );
-    const html = text(inRouter(body(transfer)));
+    const shown = inRouter(body(transfer));
+    const html = text(shown);
+
+    // A signed amount never breaks after its sign (spec 07, Number formats): in the header, and in
+    // the Transaction each link matched.
+    expect(shown).toMatch(
+      /<p class="mt-1">Oct 12(<!-- -->)? ·(<!-- -->)? <span class="whitespace-nowrap">−\$500\.00<\/span>/,
+    );
+    expect(shown).toContain(' · <span class="whitespace-nowrap">+$500.00</span> · ');
 
     expect(html).toContain(
-      "Transfer with: Oct 12 · PAYMENT THANK YOU · $500.00 · Rewards Card ··9876 · Transfer Tier: Unclear No strong signal matched. The AI said yes, with high confidence. Made by the AI. The app picked it from two equally good sets of pairs. Undo",
+      "Transfer with: Oct 12 · PAYMENT THANK YOU · +$500.00 · Rewards Card ··9876 · Transfer Tier: Unclear No strong signal matched. The AI said yes, with high confidence. Made by the AI. The app picked it from two equally good sets of pairs. Undo",
     );
     expect(html).toContain(
       "Linked to the loan Lakeside Auto Tier: Strong Signals that matched: lender name. The AI was not asked. Made by a Member. Undo",
@@ -511,7 +522,7 @@ describe("the Transaction detail view", () => {
           ),
         ),
       ),
-    ).toContain("Reduced by this Refund: Oct 20 · Target · $30.00");
+    ).toContain("Reduced by this Refund: Oct 20 · Target · +$30.00");
   });
 
   it("sends each edit to its route, and shows what it did", async () => {

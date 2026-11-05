@@ -73,9 +73,12 @@ const BOX = "rounded border border-gray-200 p-4";
 
 export function DashboardHeader(props: { month: DashboardMonth; line: string }) {
   return (
-    <header>
+    <header
+      className="flex flex-wrap items-baseline justify-between gap-x-3"
+      data-slot="dashboard-header"
+    >
       <h1 className="text-2xl font-semibold">{props.month.name}</h1>
-      <p className="text-gray-600">{props.line}</p>
+      <p className="text-sm text-gray-600">{props.line}</p>
     </header>
   );
 }
@@ -319,8 +322,8 @@ function NumberTileItem(props: { tile: NumberTile }) {
   const { tile } = props;
   const direction = directionOf(tile.tile.amount, tile.tile.usual, tile.moreIs);
   return (
-    <li className="min-w-0" data-tile={tile.key}>
-      <Link className="block rounded p-2 hover:bg-gray-50" to={tile.to}>
+    <li className="min-w-0 rounded border border-gray-200" data-slot="tile" data-tile={tile.key}>
+      <Link className="block h-full rounded p-3 hover:bg-gray-50" to={tile.to}>
         <span className="block text-sm text-gray-600">{tile.label}</span>
         <span className="block text-xl font-semibold" data-slot="tile-amount">
           {wholeDollars(tile.tile.amount)}
@@ -337,14 +340,15 @@ function NumberTileItem(props: { tile: NumberTile }) {
   );
 }
 
-// Four tiles in a row, two by two on a phone (spec 07, 4. Number tiles). The box, not the screen,
-// sets the columns: from 900 px the right column can be narrower than a phone.
+// Four tiles in a row, two by two on a phone (spec 07, 4. Number tiles), each in its own box, as in
+// prototype variant H. The space they share, not the screen, sets the columns: from 900 px the
+// right column can be narrower than a phone.
 export function NumberTilesBox(props: { tiles: NumberTilesView }) {
   return (
-    <section aria-label="Number tiles" className={`${BOX} @container`} data-slot="number-tiles">
+    <section aria-label="Number tiles" className="@container" data-slot="number-tiles">
       <ul
         aria-label="Number tiles"
-        className="grid grid-cols-2 gap-2 @min-[480px]:grid-cols-4"
+        className="grid grid-cols-2 gap-3 @min-[480px]:grid-cols-4"
         data-slot="tiles"
       >
         {numberTiles(props.tiles).map((tile) => (

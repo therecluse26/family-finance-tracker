@@ -7,7 +7,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { dateLabel, dollarsAndCents, wholeDollars } from "../../format.ts";
+import { dateLabel, dollarsAndCents, monthLabel, wholeDollars } from "../../format.ts";
 import type { BalancePointView } from "../../server/bank-views.ts";
 
 // An Account's balance over time (spec 07, Account list). One line in one color: known days are
@@ -34,6 +34,13 @@ export function chartRows(points: readonly BalancePointView[]): ChartRow[] {
   });
 }
 
+// The axis marks: the first day shown in each month, labelled "Oct 2025" (spec 07, Number formats).
+export function monthTicks(rows: readonly ChartRow[]): string[] {
+  return rows
+    .filter((row, index) => row.date.slice(0, 7) !== rows[index - 1]?.date.slice(0, 7))
+    .map((row) => row.date);
+}
+
 export function BalanceChart(props: { points: readonly BalancePointView[]; today: string }) {
   const rows = chartRows(props.points);
   if (rows.length === 0) return <p className="mt-3 text-gray-600">No balances yet.</p>;
@@ -44,7 +51,12 @@ export function BalanceChart(props: { points: readonly BalancePointView[]; today
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
             <CartesianGrid stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="date" tickFormatter={label} tick={{ fill: "#4b5563", fontSize: 12 }} />
+            <XAxis
+              dataKey="date"
+              ticks={monthTicks(rows)}
+              tickFormatter={monthLabel}
+              tick={{ fill: "#4b5563", fontSize: 12 }}
+            />
             <YAxis
               tickFormatter={(cents: number) => wholeDollars(cents)}
               tick={{ fill: "#4b5563", fontSize: 12 }}

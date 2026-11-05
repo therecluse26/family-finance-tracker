@@ -47,7 +47,12 @@ const ALERTS: AlertView[] = [
     ],
     "2 Categories are over Budget",
   ),
-  alert("waiting", "2026-11-05T01:00:00.000Z", "Price increase", null),
+  alert("waiting", "2026-11-05T01:00:00.000Z", "Price increase", null, [
+    part("waiting", {
+      createdAt: "2026-11-05T01:00:00.000Z",
+      text: "Streamly went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3.",
+    }),
+  ]),
 ];
 
 const text = (html: string) =>
@@ -74,15 +79,20 @@ describe("the Alert list page", () => {
     );
     const rows = [
       ...html.matchAll(/<li class="mt-4[^>]*>(.*?)<\/li>(?=<li class="mt-4|<\/ul>$)/gs),
-    ].map((match) => text(match[1] ?? ""));
+    ].map((match) =>
+      // An amount kept whole sits inside the words, so its span adds no space.
+      text((match[1] ?? "").replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/g, "$1")),
+    );
 
     expect(rows).toEqual([
       // 1 AM UTC on Nov 5 is Nov 4 in New York. The Alerts step has not decided it yet.
-      "Nov 4 · Price increase Alert waiting. Not a problem",
+      "Nov 4 · Price increase Streamly went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3. Not a problem",
       "Nov 4 · Over Budget · sent 2 Categories are over Budget Groceries is $40.00 over its Budget. Not a problem Dining is $12.00 over its Budget. AI Plan two meals at home this week. Not a problem",
       "Nov 2 · Large purchase · held back (weekly cap) Alert held. Not a problem",
       "Dec 30, 2025 · Duplicate charge · found in history Alert found. Not a problem",
     ]);
+    // A signed amount never breaks after its sign (spec 07, Number formats).
+    expect(html).toContain('(<span class="whitespace-nowrap">+$2.50</span>, +16%)');
     expect(alertLine(ALERTS[0] as AlertView, TODAY, ZONE)).toBe(
       "Nov 2 · Large purchase · held back (weekly cap)",
     );
