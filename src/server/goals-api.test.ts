@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
-import { addGoal, listGoals, markSetupStep } from "../db/index.ts";
+import { addGoal, listGoals, markSetupStep, storeAiSettings } from "../db/index.ts";
 import { startGoal } from "../goals/index.ts";
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
@@ -80,6 +80,7 @@ describe("the Goal routes", () => {
         id: saving,
         words: "Save $1,000",
         authorId: memberId,
+        author: "Alice",
         date: "2026-10-01",
         status: "active",
         reading: { target: { kind: "Saving" }, change: { amount: 100_000 }, deadline: null },
@@ -95,6 +96,47 @@ describe("the Goal routes", () => {
       }),
       expect.objectContaining({ id: noTarget, list: "active", progress: null }),
     ]);
+  });
+
+  it("names each Goal's author, and no one once that Member is gone", async () => {
+    const orphan = await addGoal(test.database, {
+      words: "Spend less on books",
+      authorId: null,
+      date: "2026-10-02",
+      target: null,
+      change: null,
+      deadline: null,
+    });
+
+    const named = new Map((await goals()).map((goal) => [goal.id, goal.author]));
+    expect(named).toEqual(
+      new Map([
+        [saving, "Alice"],
+        [noTarget, "Alice"],
+        [orphan, null],
+      ]),
+    );
+  });
+
+  it("says whether the Household has an AI provider", async () => {
+    const aiProvider = async () =>
+      ((await (await browser.get("/api/goals")).json()) as { aiProvider: boolean }).aiProvider;
+
+    expect(await aiProvider()).toBe(false);
+    await storeAiSettings(
+      test.database,
+      {
+        provider: "openai-compatible",
+        apiKey: null,
+        baseUrl: "http://127.0.0.1:9/v1",
+        gatewayToken: null,
+        quickModel: "test-quick",
+        writerModel: "test-writer",
+        keyRejectedAt: null,
+      },
+      0,
+    );
+    expect(await aiProvider()).toBe(true);
   });
 
   it("marks an active Goal done or dropped, by the signed-in Member", async () => {

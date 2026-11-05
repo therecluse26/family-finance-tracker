@@ -146,6 +146,13 @@ Four tiles in a row (two by two on a phone):
   - each predicted payday, with the payer's name ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md));
   - each connected card's payment due, at the statement balance, on the due date. A card whose statement balance is already paid shows no row;
   - each loan payment due: a connected loan's next payment from its loan details, and a Manual loan's regular payment on its usual day.
+- An active Recurring charge whose expected date has come with no charge yet shows on today's position, and counts in the big number and in "Checking after". It says "late" in place of the date only when its expected date is before today in Household time; one expected today shows today's date. An inactive one leaves Coming up ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
+- A connected loan with no minimum payment in its loan details falls back as a Manual loan does: the amount of its last payment, due one month after it, on the same day of the month or the month's last day. Its last payment is one of these, in this order; with neither, it shows no row.
+  - The paying side of its last Transfer pair, from the past 3 months.
+  - Else the last [untracked loan payment](03-money-movement.md#untracked-loans) to its lender in the past 3 months. This counts only when both hold:
+    - no other open loan in the Household, of any kind (connected with or without a minimum payment, paired or not, or Manual), has that lender's name;
+    - the lender's untracked loan payments in those 3 months come at most once in each calendar month.
+- A Recurring charge or Income series whose interval is shorter than the window shows at every expected date in the window: its next date, then one interval after each.
 - **The balance:** the combined current balance of all connected checking Accounts. Each row's "Checking after" is that balance after the row.
 - A Recurring charge that last landed on a credit card shows "on card" in "Checking after". It does not move the checking balance. The card's payment due does.
 - Paydays show in bold with a "+" amount.

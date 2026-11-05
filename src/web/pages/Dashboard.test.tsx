@@ -10,6 +10,8 @@ import type {
   MonthBudgetView,
   UsualMonthView,
 } from "../../server/budgets-views.ts";
+import type { ComingUpView } from "../../server/coming-up-views.ts";
+import type { GoalView } from "../../server/goals-views.ts";
 import type { NoticeView } from "../../server/notice-views.ts";
 import {
   changeAgainstUsual,
@@ -23,11 +25,12 @@ import {
   statusLines,
   usualMonthLine,
 } from "../dashboard.ts";
+import type { GoalsAnswer } from "../goals.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
 import { DashboardReport, StatusLineList } from "./Dashboard.tsx";
 
-// The dashboard (spec 07, The dashboard; Header and status lines; 2. Left to spend; 4. Number
-// tiles; 5. "A usual month"), drawn from its requests' answers. The numbers themselves are checked
+// The dashboard (spec 07, The dashboard; Header and status lines; 2. Left to spend; 3. Goals;
+// 4. Number tiles; 5. "A usual month"; 6. Coming up), drawn from its requests' answers. The numbers themselves are checked
 // on the demo household, through the app's HTTP interface, in src/server/dashboard-page.test.ts.
 
 const ZONE = "America/New_York";
@@ -148,6 +151,113 @@ const USUAL_MONTH: UsualMonthView = {
   ],
 };
 
+// Two charges, one on a card, a payday, and a card's payment due, from $1,000 in checking.
+const COMING_UP: ComingUpView = {
+  from: "2026-10-21",
+  to: "2026-11-03",
+  outgoing: 62_699,
+  checking: 100_000,
+  lowest: { amount: 40_000, date: "2026-10-25" },
+  rows: [
+    {
+      date: "2026-10-22",
+      late: false,
+      kind: "Recurring charge",
+      what: "Streamflix",
+      amount: -1_799,
+      onCard: true,
+      checkingAfter: null,
+    },
+    {
+      date: "2026-10-25",
+      late: false,
+      kind: "card payment",
+      what: "Rewards Card payment",
+      amount: -60_000,
+      onCard: false,
+      checkingAfter: 40_000,
+    },
+    {
+      date: "2026-10-30",
+      late: false,
+      kind: "payday",
+      what: "Northwind Logistics",
+      amount: 186_590,
+      onCard: false,
+      checkingAfter: 226_590,
+    },
+    {
+      date: "2026-11-02",
+      late: false,
+      kind: "Recurring charge",
+      what: "Ironworks Fitness",
+      amount: -900,
+      onCard: false,
+      checkingAfter: 225_690,
+    },
+  ],
+};
+
+const goal = (fields: Partial<GoalView> = {}): GoalView => ({
+  id: "g1",
+  words: "Spend less on eating out",
+  authorId: "m1",
+  author: "Alex",
+  date: "2026-09-02",
+  status: "active",
+  endedOn: null,
+  endedBy: null,
+  reading: { target: { kind: "Category", category: "Restaurants" }, change: null, deadline: null },
+  goalAmount: 48_000,
+  startsOn: "2026-09-01",
+  list: "active",
+  progress: {
+    kind: "spend less",
+    percentage: 62,
+    state: "Behind",
+    detail: "On pace for $540 this month; Goal is $480",
+    estimated: false,
+  },
+  ...fields,
+});
+
+// Three active Goals (one Behind, one On track from an estimate, one Done this month), then one in
+// the done list and one in the dropped list, which the dashboard leaves out.
+const GOALS: GoalsAnswer = {
+  aiProvider: true,
+  goals: [
+    goal(),
+    goal({
+      id: "g2",
+      words: "Save $5,000 for the trip by June",
+      author: "Sam",
+      reading: { target: { kind: "Saving" }, change: { amount: 500_000 }, deadline: "2027-06-30" },
+      progress: {
+        kind: "save toward an amount",
+        percentage: 40,
+        state: "On track",
+        detail: "$2,000 of $5,000",
+        estimated: true,
+      },
+    }),
+    goal({
+      id: "g3",
+      words: "Pay off the car",
+      status: "done",
+      endedOn: "2026-10-12",
+      progress: {
+        kind: "pay down a loan",
+        percentage: 100,
+        state: "Done",
+        detail: "$0 left",
+        estimated: false,
+      },
+    }),
+    goal({ id: "g4", words: "Old done Goal", status: "done", list: "done", progress: null }),
+    goal({ id: "g5", words: "Dropped Goal", status: "dropped", list: "dropped", progress: null }),
+  ],
+};
+
 const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   timeZone: ZONE,
   month: dashboardMonth(NOW, ZONE),
@@ -157,6 +267,8 @@ const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   budgets: BUDGETS,
   numberTiles: NUMBER_TILES,
   usualMonth: USUAL_MONTH,
+  comingUp: COMING_UP,
+  goals: GOALS,
   ...fields,
 });
 
@@ -657,6 +769,197 @@ describe('"A usual month"', () => {
   });
 });
 
+describe("Goals", () => {
+  it("shows N of M on track, then a box per active Goal with its author, words, status, bar, and detail", () => {
+    const html = render(data());
+    const box = slotHtml(html, "goals");
+
+    expect(text(box.slice(0, box.indexOf("<ul")))).toBe("Goals 2 of 3 on track Add a Goal");
+    // A screen reader reads the heading's own text, so a space parts "Goals" from the count.
+    expect(
+      text(/<h2 id="goals"[^>]*>(.*?)<\/h2>/s.exec(box)?.[1]?.replace(/<[^>]+>/g, "") ?? ""),
+    ).toBe("Goals 2 of 3 on track");
+    expect(slotHtml(html, "add-goal")).toBe("Add a Goal");
+    expect(box).toMatch(/<a (?=[^>]*href="\/goals")[^>]*data-slot="add-goal"/);
+    expect(listItems(box, "Active Goals")).toEqual([
+      "Alex “Spend less on eating out” ◆ Behind 62% On pace for $540 this month; Goal is $480",
+      "Sam “Save $5,000 for the trip by June” ✓ On track 40% estimated $2,000 of $5,000",
+      "Alex “Pay off the car” ✓ Done 100% $0 left",
+    ]);
+    // Each bar is as long as its percentage.
+    expect(
+      [...box.matchAll(/data-slot="goal-bar" style="width:(\d+)%"/g)].map((m) => m[1]),
+    ).toEqual(["62", "40", "100"]);
+    // The done and dropped lists are on the Goals page only.
+    expect(box).not.toContain("Old done Goal");
+    expect(box).not.toContain("Dropped Goal");
+  });
+
+  it("names a removed Member, and shows only the words for a Goal with no progress", () => {
+    const html = render(
+      data({
+        goals: {
+          aiProvider: true,
+          goals: [
+            goal({ author: null, authorId: null }),
+            goal({ id: "g2", words: "Be better with money", progress: null }),
+            goal({
+              id: "g3",
+              words: "Save for a rainy day",
+              progress: {
+                kind: "save toward an amount",
+                percentage: null,
+                state: null,
+                detail: "Goal amount not set yet",
+                estimated: false,
+              },
+            }),
+          ],
+        },
+      }),
+    );
+
+    expect(slotText(html, "on-track")).toBe("0 of 3 on track");
+    expect(listItems(slotHtml(html, "goals"), "Active Goals")).toEqual([
+      "A removed Member “Spend less on eating out” ◆ Behind 62% On pace for $540 this month; Goal is $480",
+      "Alex “Be better with money”",
+      "Alex “Save for a rainy day” Goal amount not set yet",
+    ]);
+  });
+
+  it("says that Goals need an AI provider, linking to the AI settings, with no AI provider", () => {
+    const html = render(data({ goals: { ...GOALS, aiProvider: false } }));
+    const box = slotHtml(html, "goals");
+
+    expect(box).toMatch(/<a (?=[^>]*href="\/settings\/ai")[^>]*data-slot="needs-ai"/);
+    expect(slotText(html, "needs-ai")).toBe("Goals need an AI provider");
+    expect(box).not.toContain("Add a Goal");
+    // The active Goals still show.
+    expect(listItems(box, "Active Goals")).toHaveLength(3);
+  });
+
+  it("shows only the heading and Add a Goal with no active Goal", () => {
+    const ended = GOALS.goals.filter((shown) => shown.list !== "active");
+    const box = slotHtml(render(data({ goals: { aiProvider: true, goals: ended } })), "goals");
+
+    expect(text(box)).toBe("Goals Add a Goal");
+    expect(box).not.toContain("<ul");
+  });
+});
+
+// The rows of the table in the element with `data-slot`: each row's class and its cells' words.
+function tableRows(html: string, slot: string): { className: string; cells: string[] }[] {
+  const body = /<tbody>(.*?)<\/tbody>/s.exec(slotHtml(html, slot))?.[1] ?? "";
+  return [...body.matchAll(/<tr([^>]*)>(.*?)<\/tr>/gs)].map((row) => ({
+    className: /class="([^"]*)"/.exec(row[1] ?? "")?.[1] ?? "",
+    cells: [...(row[2] ?? "").matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map((cell) =>
+      text(cell[1] ?? ""),
+    ),
+  }));
+}
+
+describe("Coming up", () => {
+  it("shows the total due, the lowest checking balance, and each row in cents, paydays in bold", () => {
+    const html = render(data());
+    const box = slotHtml(html, "coming-up");
+
+    expect(text(box)).toContain("Due in the next 14 days");
+    expect(slotText(html, "due-total")).toBe("$627");
+    expect(slotText(html, "lowest")).toBe("Lowest checking balance: $400 on Oct 25");
+    expect(text(/<thead>(.*?)<\/thead>/s.exec(box)?.[1] ?? "")).toBe(
+      "Date What Amount Checking after",
+    );
+    const rows = tableRows(html, "coming-up");
+    expect(rows.map((row) => row.cells)).toEqual([
+      ["Oct 22", "Streamflix", "−$17.99", "on card"],
+      ["Oct 25", "Rewards Card payment", "−$600.00", "$400.00"],
+      ["Oct 30", "Northwind Logistics payday", "+$1,865.90", "$2,265.90"],
+      ["Nov 2", "Ironworks Fitness", "−$9.00", "$2,256.90"],
+    ]);
+    expect(rows.map((row) => row.className.includes("font-semibold"))).toEqual([
+      false,
+      false,
+      true,
+      false,
+    ]);
+  });
+
+  it("holds the same rows on two lines each for a narrow box, paydays in bold", () => {
+    const html = render(data());
+    const lines = [...slotHtml(html, "due-lines").matchAll(/<li([^>]*)>(.*?)<\/li>/gs)].map(
+      (item) => ({
+        bold: (item[1] ?? "").includes("font-semibold"),
+        lines: [...(item[2] ?? "").matchAll(/<span class="flex[^"]*">(.*?)<\/span><\/span>/gs)].map(
+          (line) => text(`${line[1] ?? ""}</span>`),
+        ),
+      }),
+    );
+
+    expect(lines).toEqual([
+      { bold: false, lines: ["Oct 22 Streamflix", "−$17.99 on card"] },
+      { bold: false, lines: ["Oct 25 Rewards Card payment", "−$600.00 $400.00"] },
+      { bold: true, lines: ["Oct 30 Northwind Logistics payday", "+$1,865.90 $2,265.90"] },
+      { bold: false, lines: ["Nov 2 Ironworks Fitness", "−$9.00 $2,256.90"] },
+    ]);
+  });
+
+  it('says "late" in place of the date for a late Recurring charge', () => {
+    const late = {
+      date: "2026-10-20",
+      late: true,
+      kind: "Recurring charge",
+      what: "Oakwood Property Management",
+      amount: -180_000,
+      onCard: false,
+      checkingAfter: -80_000,
+    } as const;
+    const html = render(data({ comingUp: { ...COMING_UP, rows: [late, ...COMING_UP.rows] } }));
+
+    expect(tableRows(html, "coming-up")[0]?.cells).toEqual([
+      "late",
+      "Oakwood Property Management",
+      "−$1,800.00",
+      "−$800.00",
+    ]);
+    expect(text(slotHtml(html, "due-lines"))).toMatch(/^late Oakwood Property Management/);
+  });
+
+  it("opens the Recurring charges page when tapped", () => {
+    const box = slotHtml(render(data()), "coming-up");
+
+    expect(box).toMatch(/^<a [^>]*href="\/recurring-charges"/);
+    expect(box.trim().endsWith("</a>")).toBe(true);
+  });
+
+  it("shows no lowest line and no checking balance with no connected checking Account", () => {
+    const html = render(
+      data({
+        comingUp: {
+          ...COMING_UP,
+          checking: null,
+          lowest: null,
+          rows: COMING_UP.rows.map((row) => ({ ...row, checkingAfter: null })),
+        },
+      }),
+    );
+
+    expect(html).not.toContain('data-slot="lowest"');
+    expect(tableRows(html, "coming-up").map((row) => row.cells[3])).toEqual([
+      "on card",
+      "",
+      "",
+      "",
+    ]);
+  });
+
+  it("shows $0 and an empty table with nothing due", () => {
+    const html = render(data({ comingUp: { ...COMING_UP, outgoing: 0, rows: [] } }));
+
+    expect(slotText(html, "due-total")).toBe("$0");
+    expect(tableRows(html, "coming-up")).toEqual([]);
+  });
+});
+
 // --- Layout at a screen width, from the page's own Tailwind classes ----------------------------
 
 type Rule = { minWidth: number; minBox: number; className: string; body: string };
@@ -791,5 +1094,45 @@ describe("the dashboard's layout", () => {
     expect(styleOf("groups", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(2));
     expect(styleOf("groups", 1200, BOX_AT[1200]).get("grid-template-columns")).toBe(columns(3));
     expect(styleOf("groups", 1920).get("grid-template-columns")).toBe(columns(1));
+  });
+
+  it("shows Coming up's rows on two lines in a box under 360 px, and as a table from 360 px", async () => {
+    const html = render(data());
+    const styleOf = await layoutOf(html);
+
+    // The box has the number tiles' width. At 900 px it is 210 px, too narrow for four columns.
+    expect(styleOf("coming-up", 375).get("container-type")).toBe("inline-size");
+    for (const screen of [375, 900] as const) {
+      expect(styleOf("due-rows", screen, BOX_AT[screen]).get("display")).toBe("none");
+      expect(styleOf("due-lines", screen, BOX_AT[screen]).has("display")).toBe(false);
+    }
+    for (const screen of [1050, 1200] as const) {
+      expect(styleOf("due-rows", screen, BOX_AT[screen]).get("display")).toBe("table");
+      expect(styleOf("due-lines", screen, BOX_AT[screen]).get("display")).toBe("none");
+    }
+    expect(styleOf("due-rows", 1200, 359).get("display")).toBe("none");
+    expect(styleOf("due-rows", 1200, 360).get("display")).toBe("table");
+    // No screen width alone switches them.
+    expect(styleOf("due-rows", 1920).get("display")).toBe("none");
+  });
+
+  it("puts the Goal boxes in a row of equal boxes in a wide box, and stacks them on a phone", async () => {
+    const html = render(data());
+    const styleOf = await layoutOf(html);
+
+    // The Goals box sits in the same column as the number tiles, so it has their width.
+    expect(styleOf("goals", 375).get("container-type")).toBe("inline-size");
+    for (const screen of [375, 900, 1050] as const) {
+      expect(styleOf("goal-boxes", screen, BOX_AT[screen]).get("grid-template-columns")).toBe(
+        columns(1),
+      );
+      expect(styleOf("goal-boxes", screen, BOX_AT[screen]).has("grid-auto-flow")).toBe(false);
+    }
+    // One row, each column the same width; a grid row stretches each box to the same height.
+    expect(styleOf("goal-boxes", 1200, BOX_AT[1200]).get("grid-auto-flow")).toBe("column");
+    expect(styleOf("goal-boxes", 1200, BOX_AT[1200]).get("grid-auto-columns")).toBe(
+      "minmax(0, 1fr)",
+    );
+    expect(styleOf("goal-boxes", 1200, BOX_AT[1200]).has("align-items")).toBe(false);
   });
 });

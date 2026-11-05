@@ -14,12 +14,14 @@ import {
 import { STATUS_ICON, wholeDollars } from "../../format.ts";
 import type { NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
+import type { ComingUpView } from "../../server/coming-up-views.ts";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
 import { Status, TONE_COLOR } from "../components/Status.tsx";
 import {
   barShare,
   closeNotice,
+  comingUpRow,
   type DashboardData,
   type DashboardMonth,
   dashboardMonth,
@@ -34,6 +36,7 @@ import {
   leftText,
   leftToSpend,
   loadDashboard,
+  lowestLine,
   meterLine,
   type NumberTile,
   numberTiles,
@@ -48,14 +51,16 @@ import {
   type YearlyRow,
   yearlyLine,
 } from "../dashboard.ts";
+import { activeGoals, type GoalsAnswer, onTrackLine } from "../goals.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
+import { GoalCard, NeedsAiLink } from "./Goals.tsx";
 import { UpdateMode } from "./settings/Connections.tsx";
 
 // The dashboard (spec 07, The dashboard): the header, the status lines, then a box for each part.
 // From 900 px wide, the AI box is the left column and stays in view while the right column
-// scrolls. Narrower, every box stacks in one column, the AI box first. The AI box, Goals, and
-// Coming up come with their own tickets.
+// scrolls. Narrower, every box stacks in one column, the AI box first. The AI box comes with its
+// own ticket.
 
 const BOX = "rounded border border-gray-200 p-4";
 
@@ -228,6 +233,51 @@ function LeftToSpendNumbers(props: {
         </ul>
       )}
     </>
+  );
+}
+
+// --- Goals -------------------------------------------------------------------------------------
+
+// The active Goals (spec 07, 3. Goals): "N of M on track", then one equal-height box per Goal in a
+// row. In a narrow box, as on a phone, the boxes stack. The heading has "Add a Goal", or, with no
+// AI provider, says that Goals need one and links to the AI settings.
+export function GoalsBox(props: { answer: GoalsAnswer }) {
+  const active = activeGoals(props.answer.goals);
+  return (
+    <section aria-labelledby="goals" className={`${BOX} @container`} data-slot="goals">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="goals" className="font-semibold">
+          Goals
+          {/* A space, so a screen reader reads "Goals, 2 of 3 on track" as two words. */}
+          {active.length === 0 ? null : " "}
+          {active.length === 0 ? null : (
+            <span className="ml-1 font-normal text-gray-600" data-slot="on-track">
+              {onTrackLine(active)}
+            </span>
+          )}
+        </h2>
+        {props.answer.aiProvider ? (
+          <Link className="text-sm text-blue-700 underline" data-slot="add-goal" to="/goals">
+            Add a Goal
+          </Link>
+        ) : (
+          <NeedsAiLink />
+        )}
+      </div>
+      {active.length === 0 ? null : (
+        <ul
+          aria-label="Active Goals"
+          className="mt-3 grid grid-cols-1 gap-2 @min-[480px]:auto-cols-fr @min-[480px]:grid-flow-col"
+          data-slot="goal-boxes"
+        >
+          {active.map((goal) => (
+            <li key={goal.id} className="min-w-0 rounded border border-gray-100 p-2">
+              <GoalCard goal={goal} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -515,6 +565,86 @@ export function UsualMonthBox(props: {
   );
 }
 
+// --- Coming up -------------------------------------------------------------------------------
+
+// What is due from tomorrow to 14 days from today (spec 07, 6. Coming up). The rows show cents;
+// the big number is a total, in whole dollars. Tapping the box opens the Recurring charges page.
+// A narrow box shows each row on two lines; a wide one, a table.
+export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }) {
+  const { view, month } = props;
+  const lowest = lowestLine(view, month.today);
+  const rows = view.rows.map((each) => ({
+    key: `${each.kind}-${each.date}-${each.what}`,
+    kind: each.kind,
+    ...comingUpRow(each, month.today),
+  }));
+  return (
+    <section aria-labelledby="coming-up" className={`${BOX} @container`} data-slot="coming-up">
+      <Link className="block rounded hover:bg-gray-50" to="/recurring-charges">
+        <h2 id="coming-up" className="font-semibold">
+          Due in the next 14 days
+        </h2>
+        <span className="mt-1 block text-3xl font-semibold" data-slot="due-total">
+          {wholeDollars(view.outgoing)}
+        </span>
+        {lowest === undefined ? null : (
+          <span className="block text-gray-600" data-slot="lowest">
+            {lowest}
+          </span>
+        )}
+        {/* In a box under 360 px, as at 900 px or on a phone, each row takes two lines: the date
+            and what, then the amount and the checking balance after it. From 360 px, a table. */}
+        <ul
+          aria-label="Due rows"
+          className="mt-3 text-sm @min-[360px]:hidden"
+          data-slot="due-lines"
+        >
+          {rows.map((row) => (
+            <li
+              key={row.key}
+              className={`mt-2 ${row.payday ? "font-semibold" : ""}`}
+              data-row={row.kind}
+            >
+              <span className="flex justify-between gap-2">
+                <span className="shrink-0 whitespace-nowrap">{row.date}</span>
+                <span className="min-w-0 text-right break-words">{row.what}</span>
+              </span>
+              <span className="flex justify-end gap-3 tabular-nums">
+                <span>{row.amount}</span>
+                <span className="text-gray-600">{row.checkingAfter}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <table className="mt-3 hidden w-full text-sm @min-[360px]:table" data-slot="due-rows">
+          <thead>
+            <tr className="text-left text-gray-600">
+              <th className="font-normal">Date</th>
+              <th className="font-normal">What</th>
+              <th className="text-right font-normal">Amount</th>
+              <th className="text-right font-normal">Checking after</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={row.key}
+                className={row.payday ? "font-semibold" : undefined}
+                data-row={row.kind}
+              >
+                <td>{row.date}</td>
+                <td>{row.what}</td>
+                <td className="text-right tabular-nums">{row.amount}</td>
+                <td className="text-right tabular-nums">{row.checkingAfter}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Link>
+    </section>
+  );
+}
+
 // --- Layout ------------------------------------------------------------------------------------
 
 // A box that its own ticket fills.
@@ -531,8 +661,10 @@ function Slot(props: { title: string; slot: string }) {
 export function DashboardColumns(props: {
   ai: ReactNode;
   leftToSpend: ReactNode;
+  goals: ReactNode;
   numberTiles: ReactNode;
   usualMonth: ReactNode;
+  comingUp: ReactNode;
 }) {
   return (
     <div
@@ -547,10 +679,10 @@ export function DashboardColumns(props: {
       </div>
       <div className="flex min-w-0 flex-col gap-4" data-slot="right-column">
         {props.leftToSpend}
-        <Slot title="Goals" slot="goals" />
+        {props.goals}
         {props.numberTiles}
         {props.usualMonth}
-        <Slot title="Coming up" slot="coming-up" />
+        {props.comingUp}
       </div>
     </div>
   );
@@ -580,6 +712,7 @@ export function DashboardReport(props: {
       <DashboardColumns
         ai={<Slot title="This week" slot="ai-box" />}
         leftToSpend={<LeftToSpendBox left={leftToSpend(data.budgets)} month={data.month} />}
+        goals={<GoalsBox answer={data.goals} />}
         numberTiles={<NumberTilesBox tiles={data.numberTiles} />}
         usualMonth={
           <UsualMonthBox
@@ -590,6 +723,7 @@ export function DashboardReport(props: {
             {...(props.openGroup === undefined ? {} : { initialOpen: props.openGroup })}
           />
         }
+        comingUp={<ComingUpBox view={data.comingUp} month={data.month} />}
       />
     </>
   );

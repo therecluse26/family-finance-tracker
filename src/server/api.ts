@@ -677,6 +677,8 @@ export const api = new Hono<ServerEnv>()
   .get("/totals", async (c) => c.json({ months: await c.var.moneyMovement.totals() }))
   // The dashboard's four number tiles (spec 07, 4. Number tiles), on the Household's date.
   .get("/number-tiles", async (c) => c.json(await c.var.bank.numberTiles()))
+  // "Coming up" (spec 07, 6. Coming up): what is due in the next 14 days, Household time.
+  .get("/coming-up", async (c) => c.json(await c.var.comingUp.view()))
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
   // Progress per Connection while its history loads (spec 02, First history load).
   .get("/history-status", async (c) => c.json(await c.var.bank.historyStatus()))
@@ -1018,8 +1020,10 @@ export const api = new Hono<ServerEnv>()
     return c.json({ accepted }, 200);
   })
   // Every Goal with its progress (spec 05, Goals): the active Goals first, then the done list, then
-  // the dropped list.
-  .get("/goals", async (c) => c.json({ goals: await c.var.goals.list() }))
+  // the dropped list. With no AI provider, the pages say that Goals need one.
+  .get("/goals", async (c) =>
+    c.json({ goals: await c.var.goals.list(), aiProvider: await c.var.goals.aiProvider() }),
+  )
   // A Member marks an active Goal done or dropped.
   .post("/goals/:id/status", jsonOnly, async (c) => {
     const body = goalStatusBody.safeParse(await jsonBody(c));

@@ -11,7 +11,7 @@ import {
 import { log } from "../log.ts";
 import { type Merchant, merchantKey } from "../merchants/index.ts";
 import { groupOf, householdToday } from "./merchant-days.ts";
-import { addMonths, lastActiveDay, type SeriesSchedule } from "./schedules.ts";
+import { addMonths, lastActiveDay, nextExpected, type SeriesSchedule } from "./schedules.ts";
 import { factsOf, INCOME_RULE, replayMerchant, type SeriesTxn } from "./series.ts";
 
 // Steady Income (spec 05, Steady Income): the Household's regular Income per month, from repeating
@@ -48,7 +48,14 @@ export type IncomeSeries = {
 };
 
 // A predicted payday: a counted series' next expected date, at its latest amount.
-export type Payday = { payer: Merchant; schedule: IncomeSchedule; date: string; amount: number };
+export type Payday = {
+  payer: Merchant;
+  schedule: IncomeSchedule;
+  // A twice-a-month series' two fixed days of the month.
+  fixedDays: [number, number] | null;
+  date: string;
+  amount: number;
+};
 
 export type SteadyIncome = {
   // I, in whole cents per month: the typed figure while a Member has one, else the detected one.
@@ -118,7 +125,7 @@ export async function findIncomeSeries(database: Database, now = new Date()): Pr
   });
 }
 
-function scheduleOf(stored: StoredIncomeSeries): SeriesSchedule {
+function scheduleOf(stored: Pick<StoredIncomeSeries, "schedule" | "fixedDays">): SeriesSchedule {
   if (stored.schedule !== "twice a month") return stored.schedule;
   if (stored.fixedDays === null) throw new Error("A twice-a-month series has two fixed days.");
   return { days: stored.fixedDays };
@@ -233,8 +240,14 @@ export async function paydays(database: Database, now = new Date()): Promise<Pay
     .map(({ series }) => ({
       payer: series.payer,
       schedule: series.schedule,
+      fixedDays: series.fixedDays,
       date: series.nextExpectedDate,
       amount: series.latestAmount,
     }))
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+// The payday one interval after `date`, on the series' own schedule.
+export function paydayAfter(payday: Payday, date: string): string {
+  return nextExpected(scheduleOf(payday), date);
 }

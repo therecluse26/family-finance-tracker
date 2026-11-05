@@ -39,6 +39,8 @@ export type GoalView = {
   words: string;
   // The ID of the Member who wrote it, or null once that Member is gone.
   authorId: string | null;
+  // That Member's name, or null once that Member is gone.
+  author: string | null;
   // The Goal's date, written YYYY-MM-DD.
   date: string;
   status: "active" | "done" | "dropped";
@@ -64,6 +66,8 @@ export type GoalRoutes = {
   // Every Goal with its progress: the active Goals first, then the done list, then the dropped
   // list.
   list(): Promise<GoalView[]>;
+  // True while the Household has an AI provider. Without one, Members cannot add a Goal.
+  aiProvider(): Promise<boolean>;
   // A Member marks an active Goal done or dropped. Undefined when no Goal has the ID.
   mark(
     id: string,

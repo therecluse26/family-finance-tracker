@@ -19,6 +19,7 @@ import { bankViews } from "./bank-data.ts";
 import { benchmarkRoutes } from "./benchmarks.ts";
 import { budgetRoutes } from "./budgets.ts";
 import { categoryRoutes } from "./categories.ts";
+import { comingUpRoutes } from "./coming-up.ts";
 import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
@@ -157,6 +158,7 @@ export function createApp(
   const budgets = budgetRoutes(database);
   const goals = goalRoutes(database);
   const pictures = pictureRoutes(database);
+  const comingUp = comingUpRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -187,6 +189,7 @@ export function createApp(
         c.set("budgets", budgets);
         c.set("goals", goals);
         c.set("pictures", pictures);
+        c.set("comingUp", comingUp);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

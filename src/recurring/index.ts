@@ -11,6 +11,7 @@ export {
   findIncomeSeries,
   type IncomeSchedule,
   type Payday,
+  paydayAfter,
   paydays,
   type SteadyIncome,
   steadyIncome,

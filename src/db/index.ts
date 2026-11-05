@@ -140,6 +140,12 @@ export {
   type Queries,
 } from "./client.ts";
 export {
+  listCardPaymentsSince,
+  listDueAccounts,
+  listPairedLoanPayments,
+  listUntrackedLoanPaymentsSince,
+} from "./coming-up.ts";
+export {
   type CpiFetchState,
   type CpiSeries,
   type FetchedCpi,
@@ -286,7 +292,7 @@ export {
   readLastMasterKeyCheck,
   recordMasterKeyCheck,
 } from "./master-key-checks.ts";
-export { listMembersByJoinOrder } from "./members.ts";
+export { listMemberNamesById, listMembersByJoinOrder } from "./members.ts";
 export {
   applyMigrations,
   checkMigrations,

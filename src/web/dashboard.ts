@@ -3,6 +3,7 @@ import {
   type Direction,
   dateLabel,
   directionAgainstUsual,
+  dollarsAndCents,
   monthLabel,
   percent,
   type StatusWord,
@@ -16,14 +17,17 @@ import type {
   NumberTileView,
 } from "../server/bank-views.ts";
 import type { BudgetsView, MonthBudgetView, UsualMonthView } from "../server/budgets-views.ts";
+import type { ComingUpRowView, ComingUpView } from "../server/coming-up-views.ts";
 import type { HouseholdFactsView } from "../server/household-views.ts";
 import type { NoticeView } from "../server/notice-views.ts";
 import { api } from "./api.ts";
 import { browserZone } from "./browser-zone.ts";
+import { type GoalsAnswer, loadGoals } from "./goals.ts";
 import { transactionsPath } from "./transactions.ts";
 
 // The dashboard's numbers and words (spec 07, The dashboard): its header, its status lines, Left
-// to spend, the number tiles, and "A usual month". The app draws every number from its own data.
+// to spend, Goals, the number tiles, "A usual month", and "Coming up". The app draws every number
+// from its own data.
 
 const MONTH_NAMES = [
   "January",
@@ -416,6 +420,39 @@ export function rowNote(row: GroupBudgetRow): BudgetStatusShown | undefined {
   return undefined;
 }
 
+// --- Coming up -------------------------------------------------------------------------------
+
+// One row of the table (spec 07, 6. Coming up), in cents. A payday shows "+"; money out shows "−".
+// A Recurring charge on a card says "on card" in place of the checking balance. A late Recurring
+// charge says "late" in place of its date.
+export type ComingUpRow = {
+  date: string;
+  what: string;
+  amount: string;
+  checkingAfter: string;
+  payday: boolean;
+};
+
+export function comingUpRow(row: ComingUpRowView, today: string): ComingUpRow {
+  return {
+    date: row.late ? "late" : dateLabel(row.date, today),
+    what: row.kind === "payday" ? `${row.what} payday` : row.what,
+    amount: dollarsAndCents(row.amount, { signed: true }),
+    checkingAfter: row.onCard
+      ? "on card"
+      : row.checkingAfter === null
+        ? ""
+        : dollarsAndCents(row.checkingAfter),
+    payday: row.kind === "payday",
+  };
+}
+
+// "Lowest checking balance: $1,240 on Nov 12". None with no connected checking Account.
+export function lowestLine(view: Pick<ComingUpView, "lowest">, today: string): string | undefined {
+  if (view.lowest === null) return undefined;
+  return `Lowest checking balance: ${wholeDollars(view.lowest.amount)} on ${dateLabel(view.lowest.date, today)}`;
+}
+
 // --- Requests ----------------------------------------------------------------------------------
 
 export type DashboardData = {
@@ -427,6 +464,8 @@ export type DashboardData = {
   budgets: BudgetsView;
   numberTiles: NumberTilesView;
   usualMonth: UsualMonthView;
+  comingUp: ComingUpView;
+  goals: GoalsAnswer;
 };
 
 async function read<T>(res: Promise<Response>): Promise<T> {
@@ -438,11 +477,13 @@ async function read<T>(res: Promise<Response>): Promise<T> {
 // Everything the dashboard shows, in the Household's month on `now`. Until the wizard sets the
 // Household time zone, the browser's stands in.
 export async function loadDashboard(now = new Date()): Promise<DashboardData> {
-  const [household, connections, history, notices] = await Promise.all([
+  const [household, connections, history, notices, comingUp, goals] = await Promise.all([
     read<{ facts: HouseholdFactsView | null }>(api.household.$get()),
     read<{ connections: ConnectionView[] }>(api.connections.$get()),
     read<HistoryStatusView>(api["history-status"].$get()),
     read<{ notices: NoticeView[] }>(api.notices.$get()),
+    read<ComingUpView>(api["coming-up"].$get()),
+    loadGoals(),
   ]);
   const timeZone = household.facts?.timeZone ?? browserZone();
   const month = dashboardMonth(now, timeZone);
@@ -460,6 +501,8 @@ export async function loadDashboard(now = new Date()): Promise<DashboardData> {
     budgets,
     numberTiles,
     usualMonth,
+    comingUp,
+    goals,
   };
 }
 

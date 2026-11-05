@@ -3,6 +3,7 @@ import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { Accounts } from "./pages/Accounts.tsx";
 import { Budgets } from "./pages/Budgets.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
+import { Goals } from "./pages/Goals.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
@@ -48,6 +49,7 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
 const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/accounts": Accounts,
   "/budgets": Budgets,
+  "/goals": Goals,
   "/review-list": ReviewList,
   "/transactions": Transactions,
 };

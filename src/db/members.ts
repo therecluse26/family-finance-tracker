@@ -12,3 +12,13 @@ export async function listMembersByJoinOrder(
     .from(members)
     .orderBy(asc(members.createdAt), asc(members.id));
 }
+
+// Each Member's ID and name, so a page can name the Member who wrote something.
+export async function listMemberNamesById(
+  database: Database,
+): Promise<{ id: string; name: string }[]> {
+  return database
+    .select({ id: members.id, name: members.name })
+    .from(members)
+    .orderBy(asc(members.createdAt), asc(members.id));
+}

@@ -13,6 +13,7 @@ import type { BankViews } from "./bank-views.ts";
 import type { BenchmarkRoutes } from "./benchmarks-views.ts";
 import type { BudgetRoutes } from "./budgets-views.ts";
 import type { CategoryRoutes } from "./category-views.ts";
+import type { ComingUpRoutes } from "./coming-up-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
@@ -70,6 +71,8 @@ export type ServerEnv = {
     goals: GoalRoutes;
     // The pictures on the picture menu, drawn from app.db.
     pictures: PictureRoutes;
+    // "Coming up" on the dashboard.
+    comingUp: ComingUpRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
   };
