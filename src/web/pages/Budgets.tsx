@@ -15,6 +15,7 @@ import {
   typedBudget,
 } from "../budgets.ts";
 import { ErrorLine, FIELD } from "../components/Fields.tsx";
+import { UndoableProposals } from "../components/Proposal.tsx";
 import { Status } from "../components/Status.tsx";
 import { browserZone } from "./Accounts.tsx";
 
@@ -227,6 +228,8 @@ export function Budgets() {
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [accept, setAccept] = useState<RowState>({});
   const [error, setError] = useState<string | undefined>();
+  // Counts the page's reads, so the accepted Proposals read again with it.
+  const [reads, setReads] = useState(0);
 
   const setState = (category: string, change: RowState) =>
     setStates((all) => ({ ...all, [category]: { ...all[category], ...change } }));
@@ -242,6 +245,7 @@ export function Budgets() {
       const res = await budgetRequests.budgets(month);
       if (!res.ok) return setError("That did not work.");
       setView((await res.json()) as BudgetsView);
+      setReads((count) => count + 1);
       setError(undefined);
     } catch {
       setError("The server did not answer.");
@@ -280,6 +284,7 @@ export function Budgets() {
     <main>
       <h1 className="text-2xl font-semibold">Budgets</h1>
       <ErrorLine error={error} />
+      <UndoableProposals key={reads} kinds={["Budget change"]} onChanged={() => void load()} />
       {view === undefined ? null : (
         <BudgetsReport view={view} states={states} accept={accept} actions={actions} />
       )}

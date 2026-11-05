@@ -19,6 +19,7 @@ import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
+import type { ProposalAcceptResult } from "./proposals-views.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -144,6 +145,28 @@ const NO_BUDGET = "This Category has no Budget to change.";
 
 // Done on a note in the AI box, or "Done ✓" tapped again to clear the mark.
 const noteDoneBody = z.object({ done: z.boolean() }).strict();
+
+// Accept, Skip, and Undo on a Proposal send an empty JSON body.
+const emptyBody = z.object({}).strict();
+
+// "Save and accept" on a Proposal (spec 08, Proposals): the Member's Edit of any of a Budget
+// change's amounts, in whole cents, a Goal amount, or a new Goal's words. A Member's own edit is not
+// bound by the 50% rule.
+const proposalEditBody = z
+  .object({
+    budgets: z
+      .record(
+        z.string().refine((name) => CATEGORY_NAMES.has(name)),
+        z.number().int().min(0).max(MAX_BUDGET_CENTS),
+      )
+      .optional(),
+    goalAmount: z.number().int().min(0).max(MAX_BUDGET_CENTS).optional(),
+    words: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine((edit) => Object.keys(edit).length > 0);
+
+const NO_OPEN_PROPOSAL = "No open Proposal has this ID.";
 
 // A Member's mark on a Goal (spec 05, Rules).
 const goalStatusBody = z.object({ status: z.enum(["done", "dropped"]) }).strict();
@@ -503,6 +526,14 @@ const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   await next();
 };
 
+// The answer to Accept or "Save and accept" on a Proposal.
+function proposalAnswer(c: Context<ServerEnv>, result: ProposalAcceptResult) {
+  if (result === undefined) return c.json({ error: NO_OPEN_PROPOSAL }, 404);
+  if (result === "not open") return c.json({ error: "This Proposal is closed." }, 409);
+  if (typeof result === "object") return c.json({ error: result.refused }, 400);
+  return c.json({ accepted: true }, 200);
+}
+
 // The range of GET /api/accounts/:id/balances.
 function balanceQuery(query: Record<string, string>): BalanceQuery | undefined {
   const { from, to } = query;
@@ -794,6 +825,54 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "No Alert note in the AI box has this ID." }, 404);
     }
     return c.json({ done }, 200);
+  })
+  // Accept on a Proposal (spec 08, Lifecycle): it applies the change, and records the Member and
+  // the time. It makes no AI call.
+  .post("/proposals/:id/accept", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty JSON body." }, 400);
+    }
+    return proposalAnswer(c, await c.var.proposals.accept(c.req.param("id"), c.var.member.id));
+  })
+  // "Save and accept" after Edit: the Member's own amounts or words, then Accept.
+  .post("/proposals/:id/edit", jsonOnly, async (c) => {
+    const body = proposalEditBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json({ error: "Enter each amount in dollars and cents, or the Goal's words." }, 400);
+    }
+    const edit = Object.fromEntries(
+      Object.entries(body.data).filter(([, value]) => value !== undefined),
+    );
+    return proposalAnswer(
+      c,
+      await c.var.proposals.accept(c.req.param("id"), c.var.member.id, edit),
+    );
+  })
+  // Skip closes the Proposal, and nothing changes. It makes no AI call.
+  .post("/proposals/:id/skip", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty JSON body." }, 400);
+    }
+    if (!(await c.var.proposals.skip(c.req.param("id"), c.var.member.id))) {
+      return c.json({ error: NO_OPEN_PROPOSAL }, 404);
+    }
+    return c.json({ skipped: true }, 200);
+  })
+  // The accepted Proposals whose Undo is still offered, and Undo on one of them.
+  .get("/proposals/undoable", async (c) => c.json({ proposals: await c.var.proposals.undoable() }))
+  .post("/proposals/:id/undo", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty JSON body." }, 400);
+    }
+    const undone = await c.var.proposals.undo(c.req.param("id"), c.var.member.id);
+    if (undone === "not found") return c.json({ error: "No Proposal has this ID." }, 404);
+    if (undone === "already undone") {
+      return c.json({ error: "This change is already undone." }, 409);
+    }
+    if (undone === "not offered") {
+      return c.json({ error: "A later change touched the same Budget or Goal." }, 409);
+    }
+    return c.json({ undone: true }, 200);
   })
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
   // Progress per Connection while its history loads (spec 02, First history load).

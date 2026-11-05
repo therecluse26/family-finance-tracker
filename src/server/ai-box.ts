@@ -1,11 +1,19 @@
 import type { AiSettings } from "../ai/index.ts";
 import { alertNotes, markAlertNote } from "../anomalies/index.ts";
 import type { Database } from "../db/index.ts";
-import type { AiBoxGroupName, AiBoxNoteView, AiBoxRoutes, AiBoxView } from "./ai-box-views.ts";
+import { openProposals } from "../proposals/index.ts";
+import type {
+  AiBoxGroupName,
+  AiBoxNoteView,
+  AiBoxProposalView,
+  AiBoxRoutes,
+  AiBoxView,
+} from "./ai-box-views.ts";
+import { proposalView } from "./proposals.ts";
 
 // The dashboard's AI box, "This week" (spec 07, 1. AI box): every current note, in three groups.
-// Alert notes come from the anomalies module; the AI provider's status gives the "Set up AI for
-// insights" note and the paused line.
+// Open Proposals come from the proposals module, and Alert notes from the anomalies module; the AI
+// provider's status gives the "Set up AI for insights" note and the paused line.
 
 const GROUPS: AiBoxGroupName[] = ["Worth acting on", "Heads up", "Good news"];
 
@@ -25,9 +33,17 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
 
   return {
     async view() {
-      // Proposals go before the Alert notes, and Insight cards after them, when they come.
+      const now = new Date();
+      // Open Proposals go first in "Worth acting on", newest first.
+      const proposals: AiBoxProposalView[] = (await openProposals(database, now)).map(
+        (proposal) => {
+          const view = proposalView(proposal);
+          return { kind: "Proposal", id: view.id, createdAt: view.createdAt, proposal: view };
+        },
+      );
+      // Insight cards go after the Alert notes, when they come.
       const notes: (AiBoxNoteView & { group: AiBoxGroupName })[] = (
-        await alertNotes(database, new Date())
+        await alertNotes(database, now)
       ).map((note) => ({
         kind: "Alert note",
         id: note.id,
@@ -42,14 +58,16 @@ export function aiBoxRoutes(database: Database, ai: AiSettings | undefined): AiB
         done: note.done,
       }));
       const groups = GROUPS.flatMap((name) => {
-        const inGroup = notes
-          .filter((note) => note.group === name)
-          .map(({ group, ...note }) => note);
+        const inGroup = [
+          ...(name === "Worth acting on" ? proposals : []),
+          ...notes.filter((note) => note.group === name).map(({ group, ...note }) => note),
+        ];
         return inGroup.length === 0 ? [] : [{ name, notes: inGroup }];
       });
       return {
-        worthActingOn: notes.filter((note) => note.group === "Worth acting on" && !note.done)
-          .length,
+        worthActingOn:
+          proposals.length +
+          notes.filter((note) => note.group === "Worth acting on" && !note.done).length,
         groups,
         ...(await paused()),
       };

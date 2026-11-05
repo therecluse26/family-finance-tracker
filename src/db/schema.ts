@@ -1226,6 +1226,10 @@ export const budgets = sqliteTable(
     // every other Budget.
     pinned: integer("pinned", { mode: "boolean" }),
     setAt: moment("set_at").notNull(),
+    // True on a row that ends the Category's Budget: from its month on, the Category has no Budget
+    // in effect, and earlier months keep theirs. Undo writes one for a Proposal that gave a Category
+    // its first Budget in an earlier month (spec 08, Lifecycle). Its amount is 0.
+    noBudget: integer("no_budget", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [index("budgets_takes_effect").on(table.takesEffect)],
 );
@@ -1448,4 +1452,68 @@ export const overspendingChecks = sqliteTable(
     failedTries: integer("failed_tries").notNull().default(0),
   },
   (table) => [check("overspending_checks_one_row", sql`${table.id} = 1`)],
+);
+
+// Proposals (spec 08, Proposals; spec 05, What accepting a Proposal changes): a change the AI
+// suggests, which changes nothing until a Member accepts it. Each holds its kind, its source and
+// the run that made it, the AI's one-sentence reason, and one status. A Budget change keeps its
+// Categories in proposal_budgets.
+export const proposals = sqliteTable(
+  "proposals",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: ["Budget change", "Goal amount", "new Goal"] }).notNull(),
+    source: text("source", { enum: ["Chat", "Monthly review", "Budget tailoring"] }).notNull(),
+    // The Chat answer, Monthly review or Budget tailoring run that made it. A run makes at most 2.
+    runId: text("run_id").notNull(),
+    reason: text("reason").notNull(),
+    // A Goal amount: its Goal, and the amount in whole cents. A new Goal: its words, and once a
+    // Member accepts it, the Goal it created.
+    goalId: text("goal_id").references(() => goals.id, { onDelete: "cascade" }),
+    goalAmount: cents("goal_amount"),
+    words: text("words"),
+    status: text("status", {
+      enum: ["open", "accepted", "skipped", "replaced", "expired"],
+    }).notNull(),
+    createdAt: moment("created_at").notNull(),
+    // When it closed, and the Member who accepted or skipped it. A replaced or expired Proposal has
+    // no Member.
+    closedAt: moment("closed_at"),
+    closedBy: text("closed_by").references(() => members.id, { onDelete: "set null" }),
+    // What accepting a Goal Proposal set, for Undo: the db module's AppliedGoalChange.
+    applied: text("applied", { mode: "json" }).$type<Record<string, unknown>>(),
+    // When a Member undid the accepted change, and who.
+    undoneAt: moment("undone_at"),
+    undoneBy: text("undone_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    index("proposals_status").on(table.status),
+    index("proposals_run").on(table.source, table.runId),
+    index("proposals_goal_id").on(table.goalId),
+  ],
+);
+
+// Each Category of a Budget change Proposal, with its proposed Budget. Once a Member accepts it:
+// the Budget record it wrote, and the one in effect before, for Undo.
+export const proposalBudgets = sqliteTable(
+  "proposal_budgets",
+  {
+    proposalId: text("proposal_id")
+      .notNull()
+      .references(() => proposals.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    // Whole cents: per month for a monthly Budget, per calendar year for a yearly one.
+    amount: cents("amount").notNull(),
+    appliedBudgetId: integer("applied_budget_id").references(() => budgets.id, {
+      onDelete: "set null",
+    }),
+    // Null when the Category had no Budget.
+    replacedBudgetId: integer("replaced_budget_id").references(() => budgets.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.proposalId, table.category] }),
+    index("proposal_budgets_category").on(table.category),
+  ],
 );

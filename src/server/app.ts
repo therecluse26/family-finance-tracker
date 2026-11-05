@@ -32,6 +32,7 @@ import { masterKeyRoutes } from "./master-key.ts";
 import { moneyMovementRoutes } from "./money-movement.ts";
 import { noticeRoutes } from "./notices.ts";
 import { pictureRoutes } from "./pictures.ts";
+import { proposalRoutes } from "./proposals.ts";
 import { recurringRoutes } from "./recurring.ts";
 import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
@@ -193,6 +194,7 @@ export function createApp(
   const channels = channelSettings(database);
   const topMerchants = topMerchantRoutes(database);
   const aiBox = aiBoxRoutes(database, services.ai);
+  const proposals = proposalRoutes(database);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -228,6 +230,7 @@ export function createApp(
         c.set("channels", channels);
         c.set("topMerchants", topMerchants);
         c.set("aiBox", aiBox);
+        c.set("proposals", proposals);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

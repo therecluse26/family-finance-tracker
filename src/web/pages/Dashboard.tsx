@@ -25,6 +25,7 @@ import {
 } from "../ai-box.ts";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
+import { ProposalCard } from "../components/Proposal.tsx";
 import { AiMark, Status, TONE_COLOR } from "../components/Status.tsx";
 import {
   barShare,
@@ -790,15 +791,23 @@ export function AiBox(props: {
               <span className="text-sm font-normal text-gray-600">{group.notes.length}</span>
             </h3>
             <ul aria-label={group.name} className="mt-2 flex flex-col gap-2">
-              {group.notes.map((note) => (
-                <AiNote
-                  key={note.id}
-                  note={note}
-                  busy={busy === note.id}
-                  onDone={(mark) => void done(note.id, mark)}
-                  {...(props.whyOpen === note.id ? { whyOpen: true } : {})}
-                />
-              ))}
+              {group.notes.map((note) =>
+                note.kind === "Proposal" ? (
+                  <ProposalCard
+                    key={note.id}
+                    proposal={note.proposal}
+                    onChanged={props.onChanged}
+                  />
+                ) : (
+                  <AiNote
+                    key={note.id}
+                    note={note}
+                    busy={busy === note.id}
+                    onDone={(mark) => void done(note.id, mark)}
+                    {...(props.whyOpen === note.id ? { whyOpen: true } : {})}
+                  />
+                ),
+              )}
             </ul>
           </section>
         ))

@@ -23,6 +23,7 @@ import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
+import type { ProposalRoutes } from "./proposals-views.ts";
 import type { RecurringRoutes } from "./recurring-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
 import type { TopMerchantRoutes } from "./top-merchants-views.ts";
@@ -84,6 +85,8 @@ export type ServerEnv = {
     topMerchants: TopMerchantRoutes;
     // The dashboard's AI box, "This week".
     aiBox: AiBoxRoutes;
+    // Accept, Edit, Skip, and Undo on Proposals.
+    proposals: ProposalRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.

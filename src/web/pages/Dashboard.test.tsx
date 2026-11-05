@@ -3,7 +3,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { compile } from "tailwindcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AiBoxNoteView, AiBoxView } from "../../server/ai-box-views.ts";
+import type { AiBoxNoteView, AiBoxProposalView, AiBoxView } from "../../server/ai-box-views.ts";
 import type { ConnectionView, NumberTilesView } from "../../server/bank-views.ts";
 import type {
   BudgetStatusView,
@@ -1179,6 +1179,38 @@ describe('the AI box, "This week"', () => {
     expect(text(noAi)).toBe(
       "This week 0 things worth acting on Nothing new this week. Set up AI for insights",
     );
+  });
+
+  it("shows an open Proposal first in Worth acting on: its change, its reason, Accept, Edit, Skip, and Ask about this, with no Done", () => {
+    const proposal: AiBoxProposalView = {
+      kind: "Proposal",
+      id: "p1",
+      createdAt: "2026-10-20T14:00:00.000Z",
+      proposal: {
+        id: "p1",
+        kind: "Budget change",
+        source: "Budget tailoring",
+        createdAt: "2026-10-20T14:00:00.000Z",
+        reason: "Takeout has been steady, so a lower Budget fits.",
+        changes: ["Restaurants Budget: $600 → $480"],
+        budgets: [{ category: "Restaurants", from: 60_000, to: 48_000, period: "monthly" }],
+        goal: null,
+        words: null,
+      },
+    };
+    const [worth, ...rest] = AI_BOX.groups;
+    const html = box({
+      worthActingOn: 2,
+      groups: [{ name: "Worth acting on", notes: [proposal, ...(worth?.notes ?? [])] }, ...rest],
+    });
+
+    expect(slotText(html, "ai-heading")).toBe("2 things worth acting on");
+    const items = listItems(html, "Worth acting on");
+    expect(items).toHaveLength(3);
+    expect(items[0]).toBe(
+      "Proposal Restaurants Budget: $600 → $480 Takeout has been steady, so a lower Budget fits. AI Accept Edit Skip Ask about this",
+    );
+    expect(items[0]).not.toContain("Done");
   });
 
   it("shows Good news last", () => {

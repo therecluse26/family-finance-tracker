@@ -1,0 +1,264 @@
+import { type FormEvent, useEffect, useState } from "react";
+import type {
+  ProposalEditView,
+  ProposalKindView,
+  ProposalView,
+} from "../../server/proposals-views.ts";
+import { typedBudget } from "../budgets.ts";
+import { centsOf } from "../pages/settings/UnconnectedAccounts.tsx";
+import {
+  acceptProposal,
+  loadUndoable,
+  saveAndAccept,
+  skipProposal,
+  undoProposal,
+} from "../proposals.ts";
+import { ErrorLine, FIELD } from "./Fields.tsx";
+import { AiMark } from "./Status.tsx";
+
+// A Proposal's card (spec 07, 1. AI box; spec 08, Proposals): the change, such as "Restaurants
+// Budget: $600 → $480", the AI's reason, and "Accept", "Edit", "Skip", and "Ask about this". It has
+// no Done button. "Edit" lets the Member change the amount or the words, then "Save and accept".
+
+export const ENTER_AMOUNT = "Enter each amount in dollars and cents.";
+export const ENTER_WORDS = "Enter the Goal in your own words.";
+
+// What Edit shows at first: each amount as a Member types it, or the new Goal's words.
+export type EditFields = { amounts: Record<string, string>; words: string };
+
+export function editFields(proposal: ProposalView): EditFields {
+  const amounts: Record<string, string> = {};
+  for (const budget of proposal.budgets) amounts[budget.category] = typedBudget(budget.to);
+  if (proposal.goal !== null) amounts.goal = typedBudget(proposal.goal.goalAmount);
+  return { amounts, words: proposal.words ?? "" };
+}
+
+// The Member's Edit as the server takes it, or the words to show when a field will not do.
+export function editOf(proposal: ProposalView, fields: EditFields): ProposalEditView | string {
+  if (proposal.kind === "new Goal") {
+    const words = fields.words.trim();
+    return words === "" ? ENTER_WORDS : { words };
+  }
+  const cents = (typed: string | undefined) => {
+    const amount = centsOf(typed ?? "");
+    return amount === undefined || amount < 0 ? undefined : amount;
+  };
+  if (proposal.kind === "Goal amount") {
+    const goalAmount = cents(fields.amounts.goal);
+    return goalAmount === undefined ? ENTER_AMOUNT : { goalAmount };
+  }
+  const budgets: Record<string, number> = {};
+  for (const { category } of proposal.budgets) {
+    const amount = cents(fields.amounts[category]);
+    if (amount === undefined) return ENTER_AMOUNT;
+    budgets[category] = amount;
+  }
+  return { budgets };
+}
+
+// "Save and accept" from the Edit fields.
+function saveFields(proposal: ProposalView, fields: EditFields): Promise<string | undefined> {
+  const edit = editOf(proposal, fields);
+  if (typeof edit === "string") return Promise.resolve(edit);
+  return saveAndAccept(proposal.id, edit);
+}
+
+const NOTE_BUTTON = "rounded border border-gray-300 px-2 py-0.5 text-sm disabled:opacity-50";
+
+function EditForm(props: {
+  proposal: ProposalView;
+  busy: boolean;
+  onSave: (fields: EditFields) => void;
+  onCancel: () => void;
+}) {
+  const { proposal } = props;
+  const [fields, setFields] = useState(() => editFields(proposal));
+  const amount = (key: string) => (value: string) =>
+    setFields({ ...fields, amounts: { ...fields.amounts, [key]: value } });
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    props.onSave(fields);
+  }
+
+  return (
+    <form className="mt-2" onSubmit={submit} data-slot="proposal-edit">
+      {proposal.budgets.map((budget) => (
+        <label key={budget.category} className="mt-2 block text-sm">
+          {budget.category} Budget{budget.period === "yearly" ? " a year" : ""}, in dollars
+          <input
+            className={FIELD}
+            inputMode="decimal"
+            value={fields.amounts[budget.category] ?? ""}
+            onChange={(e) => amount(budget.category)(e.target.value)}
+          />
+        </label>
+      ))}
+      {proposal.goal === null ? null : (
+        <label className="mt-2 block text-sm">
+          Goal amount, in dollars
+          <input
+            className={FIELD}
+            inputMode="decimal"
+            value={fields.amounts.goal ?? ""}
+            onChange={(e) => amount("goal")(e.target.value)}
+          />
+        </label>
+      )}
+      {proposal.kind === "new Goal" ? (
+        <label className="mt-2 block text-sm">
+          The Goal, in your own words
+          <input
+            className={FIELD}
+            value={fields.words}
+            onChange={(e) => setFields({ ...fields, words: e.target.value })}
+          />
+        </label>
+      ) : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="submit" className={NOTE_BUTTON} disabled={props.busy}>
+          Save and accept
+        </button>
+        <button type="button" className={NOTE_BUTTON} onClick={props.onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export function ProposalCard(props: {
+  proposal: ProposalView;
+  onChanged: () => void;
+  editing?: boolean;
+}) {
+  const { proposal } = props;
+  const [editing, setEditing] = useState(props.editing ?? false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  async function act(send: () => Promise<string | undefined>) {
+    setBusy(true);
+    const failed = await send();
+    setBusy(false);
+    setError(failed);
+    if (failed === undefined) props.onChanged();
+  }
+
+  return (
+    <li className="rounded border border-gray-100 p-2 wrap-anywhere" data-slot="proposal">
+      <p className="text-xs text-gray-600">Proposal</p>
+      {proposal.changes.map((change) => (
+        <p key={change} className="font-medium" data-slot="proposal-change">
+          {change}
+        </p>
+      ))}
+      <p className="mt-1 text-sm" data-slot="proposal-reason">
+        {proposal.reason} <AiMark />
+      </p>
+      <ErrorLine error={error} />
+      {editing ? (
+        <EditForm
+          proposal={proposal}
+          busy={busy}
+          onSave={(fields) => void act(() => saveFields(proposal, fields))}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            disabled={busy}
+            onClick={() => void act(() => acceptProposal(proposal.id))}
+          >
+            Accept
+          </button>
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            disabled={busy}
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            disabled={busy}
+            onClick={() => void act(() => skipProposal(proposal.id))}
+          >
+            Skip
+          </button>
+          {/* Opening a Chat thread with the Proposal attached comes with Chat. */}
+          <button type="button" className={NOTE_BUTTON} disabled>
+            Ask about this
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+// The accepted Proposals of these kinds whose Undo is still offered (spec 08, Lifecycle): Undo puts
+// back what the Proposal replaced, until a later change touches the same Budget or Goal.
+export function UndoableProposals(props: {
+  kinds: readonly ProposalKindView[];
+  onChanged: () => void;
+  // The list to show at first, for a page drawn without the server.
+  initial?: ProposalView[];
+}) {
+  const [proposals, setProposals] = useState<ProposalView[] | undefined>(props.initial);
+  const [busy, setBusy] = useState<string | undefined>();
+  const [error, setError] = useState<string | undefined>();
+
+  async function load() {
+    try {
+      setProposals(await loadUndoable());
+    } catch {
+      setProposals([]);
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the list opens.
+  useEffect(() => {
+    if (props.initial === undefined) void load();
+  }, []);
+
+  async function undo(id: string) {
+    setBusy(id);
+    const failed = await undoProposal(id);
+    setBusy(undefined);
+    setError(failed);
+    await load();
+    if (failed === undefined) props.onChanged();
+  }
+
+  const shown = (proposals ?? []).filter((proposal) => props.kinds.includes(proposal.kind));
+  if (shown.length === 0 && error === undefined) return null;
+  return (
+    <section aria-label="Accepted Proposals" className="mt-4" data-slot="undoable-proposals">
+      <h2 className="font-semibold">Accepted Proposals</h2>
+      <ErrorLine error={error} />
+      <ul className="mt-2 flex flex-col gap-2">
+        {shown.map((proposal) => (
+          <li
+            key={proposal.id}
+            className="flex flex-wrap items-baseline gap-2"
+            data-slot="undoable"
+          >
+            <span>{proposal.changes.join("; ")}</span>
+            <button
+              type="button"
+              className={NOTE_BUTTON}
+              disabled={busy === proposal.id}
+              onClick={() => void undo(proposal.id)}
+            >
+              Undo
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}

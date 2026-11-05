@@ -8,7 +8,7 @@ import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/
 import { type AlertKind, type AlertState, markSetupStep, storeAlerts } from "../db/index.ts";
 import { createLogger } from "../log.ts";
 import { loadAiBox, markAlertNoteDone } from "../web/ai-box.ts";
-import type { AiBoxView } from "./ai-box-views.ts";
+import type { AiBoxGroupName, AiBoxNoteView, AiBoxView } from "./ai-box-views.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
@@ -84,6 +84,11 @@ const FACTS: Record<AlertKind, AlertFacts> = {
     date: "2026-10-16",
     budget: null,
   },
+};
+
+// The box with Alert notes only: these tests store no Proposal (src/server/proposals-api.test.ts).
+type AlertNotesView = Omit<AiBoxView, "groups"> & {
+  groups: { name: AiBoxGroupName; notes: AiBoxNoteView[] }[];
 };
 
 let webRoot: string;
@@ -172,9 +177,9 @@ describe('the AI box, "This week"', () => {
   const view = async (browser = alice) => {
     const res = await browser.get("/api/ai-box");
     expect(res.status).toBe(200);
-    return (await res.json()) as AiBoxView;
+    return (await res.json()) as AlertNotesView;
   };
-  const shape = (box: AiBoxView) =>
+  const shape = (box: AlertNotesView) =>
     box.groups.map((group) => ({ name: group.name, notes: group.notes.map((note) => note.id) }));
   const done = (id: string, body: unknown, browser = alice, headers = {}) =>
     browser.send("PUT", `/api/ai-box/alert-notes/${encodeURIComponent(id)}/done`, body, headers);
@@ -407,7 +412,7 @@ describe('the AI box, "This week"', () => {
     });
 
     expect(await markAlertNoteDone("over-budget", true)).toBeUndefined();
-    expect((await loadAiBox()).groups[0]?.notes[0]?.done).toBe(true);
+    expect(((await loadAiBox()) as AlertNotesView).groups[0]?.notes[0]?.done).toBe(true);
     expect(await markAlertNoteDone("no-such-alert", true)).toBe(
       "No Alert note in the AI box has this ID.",
     );

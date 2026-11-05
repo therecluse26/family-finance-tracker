@@ -6,6 +6,7 @@ import type { GoalView } from "../../server/goals-views.ts";
 import type { HouseholdFactsView } from "../../server/household-views.ts";
 import { api } from "../api.ts";
 import { ErrorLine } from "../components/Fields.tsx";
+import { UndoableProposals } from "../components/Proposal.tsx";
 import { AiMark, Estimated, Status } from "../components/Status.tsx";
 import {
   AI_SETTINGS,
@@ -197,6 +198,8 @@ export function Goals() {
   const [loaded, setLoaded] = useState<Loaded | undefined>();
   const [busy, setBusy] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  // Counts the page's reads, so the accepted Proposals read again with it.
+  const [reads, setReads] = useState(0);
 
   // Dates are the Household's, as on the dashboard.
   async function load() {
@@ -217,6 +220,7 @@ export function Goals() {
         accountNames: new Map(listed.map((account) => [account.id, account.name])),
         today: calendarDateIn(new Date(), facts?.timeZone ?? browserZone()),
       });
+      setReads((count) => count + 1);
       setError(undefined);
     } catch {
       setError("The Goals did not load.");
@@ -240,6 +244,11 @@ export function Goals() {
     <main>
       <h1 className="text-2xl font-semibold">Goals</h1>
       <ErrorLine error={error} />
+      <UndoableProposals
+        key={reads}
+        kinds={["Goal amount", "new Goal"]}
+        onChanged={() => void load()}
+      />
       {loaded === undefined ? null : (
         <GoalsReport
           answer={loaded.answer}

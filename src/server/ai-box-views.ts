@@ -1,5 +1,7 @@
-// What the AI box routes answer. This file imports nothing, so the web app's type check can follow
-// it through api.ts.
+// What the AI box routes answer. This file imports only another views file, so the web app's type
+// check can follow it through api.ts.
+
+import type { ProposalView } from "./proposals-views.ts";
 
 export type AiBoxGroupName = "Worth acting on" | "Heads up" | "Good news";
 
@@ -25,12 +27,21 @@ export type AiBoxNoteView = {
   done: boolean;
 };
 
+// An open Proposal in the AI box (spec 07, 1. AI box): always in "Worth acting on", first in its
+// group, with "Accept", "Edit", "Skip", and "Ask about this", and no Done button.
+export type AiBoxProposalView = {
+  kind: "Proposal";
+  id: string;
+  createdAt: string;
+  proposal: ProposalView;
+};
+
 export type AiBoxView = {
-  // The notes in "Worth acting on" that are not Done, for the heading.
+  // The notes in "Worth acting on" that are not Done, for the heading. Every open Proposal counts.
   worthActingOn: number;
   // In order: "Worth acting on", "Heads up", "Good news". An empty group is left out. Inside a
   // group: Proposals first, then Alert notes newest first, then Insight cards in the AI's order.
-  groups: { name: AiBoxGroupName; notes: AiBoxNoteView[] }[];
+  groups: { name: AiBoxGroupName; notes: (AiBoxProposalView | AiBoxNoteView)[] }[];
   // True with no AI provider: the box shows "Set up AI for insights".
   setUpAi: boolean;
   // While background AI is paused: at the AI cost cap until a date written YYYY-MM-DD, or with a

@@ -1,4 +1,16 @@
-import { and, desc, eq, inArray, isNull, like, lte, min, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNull,
+  like,
+  lte,
+  min,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Database, Queries } from "./client.ts";
 import {
   budgetDraftAcceptance,
@@ -13,11 +25,15 @@ import {
 // budgets module decides; these functions store and read. A draft reads Spending through
 // listPostedParts and tracked loan payments through the loan reads.
 
-export type StoredBudget = typeof budgets.$inferSelect;
+// A Budget as the app reads it. A row that ends a Category's Budget (`noBudget`) is never one: it
+// only hides the Budget before it.
+export type StoredBudget = Omit<typeof budgets.$inferSelect, "noBudget">;
 export type NewBudget = Omit<StoredBudget, "id">;
 export type BudgetInputs = Omit<typeof budgetInputs.$inferSelect, "id">;
 export type DraftAcceptance = Omit<typeof budgetDraftAcceptance.$inferSelect, "id">;
 export type MonthStart = Omit<typeof budgetMonthStarts.$inferSelect, "month">;
+
+const { noBudget: _noBudget, ...BUDGET_COLUMNS } = getTableColumns(budgets);
 
 const BUDGET_INPUTS_ROW = 1;
 const ACCEPTANCE_ROW = 1;
@@ -102,13 +118,14 @@ export async function storeFirstDraft(
 }
 
 // Each Category's Budget in effect in `month` (YYYY-MM): the newest monthly Budget that takes
-// effect in it or before, and the newest yearly Budget that takes effect in its year or before.
+// effect in it or before, and the newest yearly Budget that takes effect in its year or before. A
+// Category whose newest row ends its Budget has none.
 export async function listBudgetsInEffect(
   database: Queries,
   month: string,
 ): Promise<StoredBudget[]> {
   const rows = await database
-    .select()
+    .select({ ...BUDGET_COLUMNS, noBudget: budgets.noBudget })
     .from(budgets)
     .where(
       or(
@@ -117,9 +134,11 @@ export async function listBudgetsInEffect(
       ),
     )
     .orderBy(desc(budgets.takesEffect), desc(budgets.id));
-  const newest = new Map<string, StoredBudget>();
-  for (const row of rows) if (!newest.has(row.category)) newest.set(row.category, row);
-  return [...newest.values()];
+  const newest = new Map<string, StoredBudget | null>();
+  for (const { noBudget, ...row } of rows) {
+    if (!newest.has(row.category)) newest.set(row.category, noBudget ? null : row);
+  }
+  return [...newest.values()].filter((row): row is StoredBudget => row !== null);
 }
 
 // A Budget the formula sets for a month (spec 05, When the app drafts; Changing Budgets).
@@ -189,7 +208,7 @@ export async function storeBudgetEdit(
         // Only a Bills Budget has a pinned flag.
         pinned: current.pinned === null ? null : true,
       })
-      .returning();
+      .returning(BUDGET_COLUMNS);
     return stored;
   });
 }
@@ -218,7 +237,7 @@ export async function storeFollowTheBill(
         source: "Member edit",
         pinned: false,
       })
-      .returning();
+      .returning(BUDGET_COLUMNS);
     return stored ?? "no Budget";
   });
 }
