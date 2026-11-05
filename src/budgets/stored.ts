@@ -45,6 +45,8 @@ export type MonthBudgets = {
   // FIXED_COSTS_PASS_INCOME when the draft stayed above Steady Income after its cuts, else
   // undefined.
   fitNote: string | undefined;
+  // True once the first draft ran, when the first history load ended.
+  drafted: boolean;
   // True once a Member accepted the whole draft with "Accept all".
   draftAccepted: boolean;
   // Each Category's Budget in effect that month, in Category list order.
@@ -78,5 +80,5 @@ export async function budgetsForMonth(database: Database, month: string): Promis
   }
   const fitNote = inputs?.fixedCostsPassIncome === true ? FIXED_COSTS_PASS_INCOME : undefined;
   const draftAccepted = (await readDraftAcceptance(database)) !== undefined;
-  return { notice, fitNote, draftAccepted, budgets, groups };
+  return { notice, fitNote, drafted: inputs !== undefined, draftAccepted, budgets, groups };
 }

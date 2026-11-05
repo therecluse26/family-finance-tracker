@@ -5,9 +5,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { benchmarkSnapshot } from "../benchmarks/index.ts";
 import { draftFirstBudgets } from "../budgets/index.ts";
-import { markSetupStep } from "../db/index.ts";
+import { markSetupStep, type NewBudget, storeFirstDraft } from "../db/index.ts";
+import { saveHouseholdFacts } from "../household/index.ts";
 import { createLogger } from "../log.ts";
+import { typeSteadyIncome } from "../recurring/index.ts";
 import { createApp } from "./app.ts";
+import type { BenchmarksView } from "./benchmarks-views.ts";
 import type { BudgetsView } from "./budgets-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
@@ -61,7 +64,7 @@ describe("the Budget route", () => {
   it("has no Budget before the first draft", async () => {
     const view = await budgets("2026-11");
 
-    expect(view).toMatchObject({ month: "2026-11", notice, budgets: [] });
+    expect(view).toMatchObject({ month: "2026-11", notice, drafted: false, budgets: [] });
     expect(view.groups.map(({ categoryGroup }) => categoryGroup)).toEqual([
       "Bills",
       "Shopping",
@@ -78,6 +81,7 @@ describe("the Budget route", () => {
     expect(await budgets("2026-11")).toMatchObject({
       month: "2026-11",
       notice,
+      drafted: true,
       budgets: [
         {
           category: "Interest and fees",
@@ -93,6 +97,8 @@ describe("the Budget route", () => {
           projected: null,
           status: "on track",
           shareOfYear: null,
+          // Interest and fees has no Benchmark.
+          context: null,
         },
       ],
       unbudgeted: [],
@@ -109,6 +115,71 @@ describe("the Budget route", () => {
     });
     expect((await budgets("2027-03")).budgets).toHaveLength(1);
     expect((await budgets("2026-10")).budgets).toEqual([]);
+  });
+
+  describe("the Benchmark context of a Bills Budget", () => {
+    const at = new Date("2026-11-04T14:00:00.000Z");
+    const budget = (category: string, amount: number, fields: Partial<NewBudget> = {}) => ({
+      category,
+      amount,
+      period: "monthly" as const,
+      takesEffect: "2026-11",
+      source: "formula" as const,
+      setBy: null,
+      pinned: null,
+      setAt: at,
+      ...fields,
+    });
+
+    beforeEach(async () => {
+      await typeSteadyIncome(test.database, 600_000, memberId, at);
+      await storeFirstDraft(test.database, {
+        inputs: {
+          steadyIncome: 600_000,
+          ceDataYear: benchmarkSnapshot().ce.dataYear,
+          sampleBenchmarks: benchmarkSnapshot().sample,
+          firstDraftMonth: "2026-11",
+          fixedCostsPassIncome: false,
+          recordedAt: at,
+        },
+        budgets: [
+          budget("Housing", 246_000, { pinned: false }),
+          budget("Interest and fees", 0, { pinned: false }),
+          budget("Restaurants", 30_000),
+          budget("Travel", 480_000, { period: "yearly", takesEffect: "2026" }),
+        ],
+      });
+    });
+
+    const contexts = async () =>
+      Object.fromEntries(
+        (await budgets("2026-11")).budgets.map(({ category, context }) => [category, context]),
+      );
+
+    it('shows "<Category> is X% of Income; typical is Y%" on a Bills Budget with a Benchmark only', async () => {
+      await saveHouseholdFacts(
+        test.database,
+        { zipCode: "10001", ages: [40, 38, 7], rentOrOwn: "rent" },
+        memberId,
+        at,
+      );
+      const { categories } = (await (
+        await browser.get("/api/benchmarks")
+      ).json()) as BenchmarksView;
+      const housing = categories.find((each) => each.category === "Housing");
+      if (housing?.share == null) throw new Error("Housing has no Benchmark");
+
+      expect(await contexts()).toEqual({
+        Housing: `Housing is 41% of Income; typical is ${Math.round(housing.share * 100)}%`,
+        "Interest and fees": null,
+        Restaurants: null,
+        Travel: null,
+      });
+    });
+
+    it("shows none before the Household facts are recorded", async () => {
+      expect((await contexts()).Housing).toBeNull();
+    });
   });
 
   it("answers 400 to a missing or badly written month", async () => {

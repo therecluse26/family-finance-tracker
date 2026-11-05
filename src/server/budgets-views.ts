@@ -30,6 +30,10 @@ export type MonthBudgetView = BudgetView & {
   // A yearly Budget's share of the year passed: the day of the year ÷ the days in the year. Null
   // for a monthly Budget.
   shareOfYear: number | null;
+  // A Bills Budget's Benchmark context (spec 05, Context for Bills Budgets), such as "Housing is
+  // 41% of Income; typical is 33%". Null for a Category with no context Benchmark, before the
+  // Household facts are recorded, and with Steady Income at $0.
+  context: string | null;
 };
 
 export type BudgetsView = {
@@ -40,6 +44,8 @@ export type BudgetsView = {
   // The draft's note when it stayed above Steady Income after the "must fit" cuts: "The fixed costs
   // pass Steady Income." Null otherwise.
   fitNote: string | null;
+  // True once the first draft ran. Before it, no month has a Budget.
+  drafted: boolean;
   // True once a Member accepted the whole draft with "Accept all".
   draftAccepted: boolean;
   // Each Category's Budget in effect that month, in Category list order. A Category with no Budget
