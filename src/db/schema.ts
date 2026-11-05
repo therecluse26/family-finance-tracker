@@ -1641,3 +1641,45 @@ export const insightCards = sqliteTable(
   },
   (table) => [uniqueIndex("insight_cards_position").on(table.position)],
 );
+
+// Chat threads (spec 08, Chat; Threads). Every thread is shared: every Member sees it, and any
+// Member can continue or delete it. Its title is its first Member message, cut to 60 characters.
+// A thread started with "Ask about this" keeps the note it was started from, as the chat module
+// built it for the AI (src/chat/note.ts): what the note is about, its title, and its pieces.
+export const chatThreads = sqliteTable(
+  "chat_threads",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    note: text("note", { mode: "json" }).$type<Record<string, unknown>>(),
+    createdAt: moment("created_at").notNull(),
+    // When its last message was written. Threads run newest first by it.
+    lastMessageAt: moment("last_message_at").notNull(),
+  },
+  (table) => [index("chat_threads_last_message_at").on(table.lastMessageAt)],
+);
+
+// The messages of a Chat thread, oldest first. A Member's message keeps the Member and their name
+// as it was then: a removed Member's messages keep their name (spec 09, Members). An AI message
+// holds the AI's answer with "Member A" labels, which the screen turns into names.
+export const chatMessages = sqliteTable(
+  "chat_messages",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    author: text("author", { enum: ["Member", "AI"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    memberName: text("member_name"),
+    text: text("text").notNull(),
+    createdAt: moment("created_at").notNull(),
+  },
+  (table) => [
+    index("chat_messages_thread_id").on(table.threadId),
+    check(
+      "chat_messages_author",
+      sql`(${table.author} = 'Member' AND ${table.memberName} IS NOT NULL) OR (${table.author} = 'AI' AND ${table.memberId} IS NULL AND ${table.memberName} IS NULL)`,
+    ),
+  ],
+);

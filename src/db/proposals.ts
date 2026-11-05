@@ -4,9 +4,11 @@ import {
   count,
   eq,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   notExists,
   sql,
@@ -528,4 +530,23 @@ export async function storeProposalUndo(
       .where(and(eq(proposals.id, id), isNull(proposals.undoneAt)));
     return "undone";
   });
+}
+
+// The Proposals of the Chat runs whose IDs start with `prefix`, such as a thread's ID and "/",
+// oldest first, whatever their status. It reads the range of IDs, so the run index serves it.
+export async function listChatProposals(
+  database: Database,
+  prefix: string,
+): Promise<ProposalRow[]> {
+  if (prefix === "") throw new RangeError("A Chat run prefix is never empty.");
+  const last = prefix.at(-1) ?? "";
+  const after = prefix.slice(0, -1) + String.fromCodePoint((last.codePointAt(0) ?? 0) + 1);
+  const rows = await database
+    .select()
+    .from(proposals)
+    .where(
+      and(eq(proposals.source, "Chat"), gte(proposals.runId, prefix), lt(proposals.runId, after)),
+    )
+    .orderBy(asc(proposals.createdAt), asc(sql`rowid`));
+  return withBudgets(database, rows);
 }

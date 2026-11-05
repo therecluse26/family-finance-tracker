@@ -3,7 +3,9 @@ export { namedCompany, US_BANKS_AND_LENDERS } from "./companies.ts";
 export {
   type AcceptResult,
   acceptProposal,
+  type ChatProposal,
   type ClosedProposal,
+  chatProposals,
   closedProposals,
   GUARDRAIL,
   MAX_PROPOSALS_PER_RUN,

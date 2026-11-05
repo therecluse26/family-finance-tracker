@@ -1,7 +1,14 @@
 import { listMemberNamesById, markAiKeyRejected } from "../db/index.ts";
 import { log } from "../log.ts";
 import { isBackground } from "./ai-view.ts";
-import { AiCallError, type AiFailure, callModel, readPrivacyFacts } from "./call.ts";
+import {
+  AiCallError,
+  type AiFailure,
+  callModel,
+  readPrivacyFacts,
+  type StreamEnd,
+  streamModel,
+} from "./call.ts";
 import { type AiPause, AiPausedError } from "./outbound.ts";
 import { memberLabel, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, plainData } from "./prompt.ts";
@@ -39,6 +46,11 @@ export type HouseholdAi = {
   // AI text for the screen, in the one plain voice: no emoji, "!" turned into ".", and each
   // Member's name in place of their label.
   forScreen(aiText: string): Promise<string>;
+  // forScreen for many AI texts, such as a Chat thread's answers, with one read of the names.
+  forScreenAll(aiTexts: readonly string[]): Promise<string[]>;
+  // Why a use would pause now, as generate and stream pause, or undefined when it may call. It
+  // makes no call.
+  pauseFor(use: AiCall["use"], options?: { sendAnyway?: boolean }): Promise<AiPause | undefined>;
   // Each Account's label, such as "Ally checking", by its ID, for the text of a call.
   accountLabels(): Promise<ReadonlyMap<string, string>>;
   // Each Member's label, such as "Member A", by their ID: the label the privacy filter gives the
@@ -48,6 +60,18 @@ export type HouseholdAi = {
   // made plain, then filtered as app-built text. Its typed values, such as amounts and dates, pass
   // as the app built them (src/ai/typed.ts). Throws when the filter cannot pass it.
   toolResult(data: unknown): Promise<unknown>;
+  // Chat's answer, streamed to the browser as the AI writes it (spec 08, Answers), as @ai-sdk/react
+  // reads it. A pause makes no call, as for generate. `ended` runs once when the answer ends,
+  // before the browser hears that it ended: with the AI's whole text, with "Member A" labels, or
+  // with why it failed. A failure never retries by itself, and the browser shows `ended`'s words
+  // for it with "Try again".
+  stream(
+    call: AiCall,
+    options: {
+      sendAnyway?: boolean;
+      ended: (end: StreamEnd) => Promise<string | undefined>;
+    },
+  ): Promise<{ ready: true; response: Response } | { ready: false; pause: AiPause }>;
 };
 
 export function householdAi(options: AiOptions): HouseholdAi {
@@ -111,8 +135,37 @@ export function householdAi(options: AiOptions): HouseholdAi {
           : { ready: false, retryAt };
       }
     },
+    async stream(call, { sendAnyway = false, ended }) {
+      const { use } = call;
+      if (isBackground(use)) throw new TypeError("Only Chat streams its answer.");
+      const found = await calls.modelFor(use, { sendAnyway });
+      if (!found.ready) return found;
+      // The names the screen shows, read once for the whole answer.
+      const shown = await filter();
+      const response = streamModel(found.model, call, {
+        screen: (aiText) => shown.showMemberNames(plainVoice(aiText)),
+        async ended(end) {
+          if ("failed" in end) {
+            // Never the prompt or the reply: only the use and what failed.
+            logger.warn("An AI call failed", { use, failure: end.failed });
+            if (end.failed === "key rejected") await keyRejected(found.generation);
+          }
+          return ended(end);
+        },
+      });
+      return { ready: true, response };
+    },
     // The voice first, so a Member's own name stays as written.
     forScreen: async (aiText) => (await filter()).showMemberNames(plainVoice(aiText)),
+    async forScreenAll(aiTexts) {
+      if (aiTexts.length === 0) return [];
+      const shown = await filter();
+      return aiTexts.map((aiText) => shown.showMemberNames(plainVoice(aiText)));
+    },
+    async pauseFor(use, { sendAnyway = false } = {}) {
+      const found = await calls.modelFor(use, { sendAnyway });
+      return found.ready ? undefined : found.pause;
+    },
     accountLabels: async () => (await filter()).accountLabels,
     memberLabels: async () =>
       new Map(

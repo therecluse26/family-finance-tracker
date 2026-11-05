@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useId, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   Bar,
   BarChart,
@@ -30,6 +30,7 @@ import {
   SET_UP_AI,
   worthActingOnHeading,
 } from "../ai-box.ts";
+import { askAboutAlertNote, askAboutPath, askAboutProposal } from "../chat.ts";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
 import { Picture } from "../components/Picture.tsx";
@@ -699,6 +700,9 @@ function AiNote(props: {
   goodNews: boolean;
   busy: boolean;
   onDone: (done: boolean) => void;
+  // "Ask about this": a new Chat thread with the note attached. Chat takes Alert notes only, so an
+  // Insight card's button stays disabled.
+  onAsk?: () => void;
   whyOpen?: boolean;
 }) {
   const { note } = props;
@@ -780,8 +784,12 @@ function AiNote(props: {
           >
             {note.done ? "Done ✓" : "Done"}
           </button>
-          {/* Opening a Chat thread with the note attached comes with Chat. */}
-          <button type="button" className={NOTE_BUTTON} disabled>
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            disabled={props.onAsk === undefined}
+            onClick={props.onAsk}
+          >
             Ask about this
           </button>
         </div>
@@ -818,6 +826,7 @@ export function AiBox(props: {
   whyOpen?: string;
 }) {
   const { view } = props;
+  const navigate = useNavigate();
   const [busy, setBusy] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const paused = pausedLine(view.paused, props.today);
@@ -871,6 +880,7 @@ export function AiBox(props: {
                     key={note.id}
                     proposal={note.proposal}
                     onChanged={props.onChanged}
+                    onAsk={() => navigate(askAboutPath, { state: askAboutProposal(note.proposal) })}
                   />
                 ) : note.kind === "Review link" ? (
                   <ReviewLinkNote
@@ -886,6 +896,11 @@ export function AiBox(props: {
                     goodNews={group.name === "Good news"}
                     busy={busy === note.id}
                     onDone={(mark) => void done(note, mark)}
+                    {...(note.kind === "Alert note"
+                      ? {
+                          onAsk: () => navigate(askAboutPath, { state: askAboutAlertNote(note) }),
+                        }
+                      : {})}
                     {...(props.whyOpen === note.id ? { whyOpen: true } : {})}
                   />
                 ),

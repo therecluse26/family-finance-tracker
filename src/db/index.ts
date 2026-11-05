@@ -152,6 +152,18 @@ export {
   storeCategoryRule,
 } from "./category-rules.ts";
 export {
+  type ChatAuthor,
+  type ChatMessageRow,
+  deleteChatThread,
+  listChatMessages,
+  listChatThreads,
+  type NewChatMessage,
+  readChatThread,
+  type StoredChatThread,
+  storeChatMessage,
+  storeChatThread,
+} from "./chat.ts";
+export {
   APP_DB_URL,
   closeDatabase,
   type Database,
@@ -388,6 +400,7 @@ export {
   claimGoalAmount,
   expireProposals,
   listBankNames,
+  listChatProposals,
   listDueProposals,
   listOpenProposals,
   listProposalsClosedSince,

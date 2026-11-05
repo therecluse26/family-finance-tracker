@@ -23,6 +23,7 @@ import {
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
+import { chat } from "../chat/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { householdTimeZone } from "../household/index.ts";
@@ -39,6 +40,7 @@ import {
 } from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
+import { householdSummary } from "../summary/index.ts";
 import { requestTailoringJob, startBudgetTailoring, tailorFirstDraft } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
 import type { Security } from "./security-mode.ts";
@@ -180,6 +182,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         ai: aiSettings({ database, secrets, cost, afterChange: tailoring.afterAiChange }),
         smtp: smtpSettings({ database, secrets, address }),
         push: pushSettings({ database, secrets, available: https }),
+        chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
       });
       // The startup check, once the app listens, so a slow or hung backup folder never holds up
       // the start: a daily backup runs when none is from the most recent 3:00 AM, Household time.

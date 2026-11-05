@@ -21,7 +21,7 @@ export {
   type ModelUse,
   onGateway,
 } from "./ai-view.ts";
-export { AiCallError, type AiFailure } from "./call.ts";
+export { AiCallError, type AiFailure, type StreamEnd } from "./call.ts";
 export { type AiCost, aiCost, type CountedCall } from "./cost.ts";
 export { type AiReply, type HouseholdAi, householdAi } from "./household-ai.ts";
 export { type AiPause, AiPausedError } from "./outbound.ts";

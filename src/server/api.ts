@@ -172,6 +172,37 @@ const NO_OPEN_PROPOSAL = "No open Proposal has this ID.";
 const planItem = z.enum(["0", "1", "2"]).transform(Number);
 const NO_REVIEW = "No Monthly review has this month.";
 
+// A new Chat thread (spec 08, Threads): its first message, the AI box note it asks about, if any,
+// and the Member's yes to "Send anyway?" at the AI cost cap. The app reads the note itself.
+const chatThreadBody = z
+  .object({
+    text: z.string().max(20_000),
+    note: z
+      .object({ kind: z.enum(["Alert note", "Proposal"]), id: z.string().min(1).max(100) })
+      .strict()
+      .nullable(),
+    sendAnyway: z.boolean(),
+  })
+  .strict();
+
+// What @ai-sdk/react's useChat sends for an answer: the thread's ID, its messages as the page holds
+// them, and why it sends. The app reads only the new message's text from them, and the thread's
+// history from app.db. "regenerate-message" answers the thread's last message again: "Try again",
+// "Send anyway", or a new thread's first answer.
+const chatAnswerBody = z.object({
+  id: z.string().min(1).max(100),
+  trigger: z.enum(["submit-message", "regenerate-message"]),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["system", "user", "assistant"]),
+        parts: z.array(z.object({ type: z.string(), text: z.unknown().optional() })).max(100),
+      }),
+    )
+    .max(500),
+  sendAnyway: z.boolean().optional(),
+});
+
 // A Member's mark on a Goal (spec 05, Rules).
 const goalStatusBody = z.object({ status: z.enum(["done", "dropped"]) }).strict();
 
@@ -529,6 +560,9 @@ const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   }
   await next();
 };
+
+// The Member signed in, as Chat stores them on a message: their ID and name, never their email.
+const chatMember = (c: Context<ServerEnv>) => ({ id: c.var.member.id, name: c.var.member.name });
 
 // The answer to Accept or "Save and accept" on a Proposal.
 function proposalAnswer(c: Context<ServerEnv>, result: ProposalAcceptResult) {
@@ -888,6 +922,49 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "A later change touched the same Budget or Goal." }, 409);
     }
     return c.json({ undone: true }, 200);
+  })
+  // Chat (spec 08, Chat; spec 07, Chat page): whether it can answer now, and every thread, newest
+  // first by last message. Every Member sees every thread.
+  .get("/chat", async (c) =>
+    c.json({ status: await c.var.chat.status(), threads: await c.var.chat.threads() }),
+  )
+  .get("/chat/threads/:id", async (c) => {
+    const thread = await c.var.chat.thread(chatMember(c), c.req.param("id"));
+    if (thread === undefined) return c.json({ error: "No Chat thread has this ID." }, 404);
+    return c.json(thread, 200);
+  })
+  // A new thread with its first message. Nothing goes to the AI here: its answer comes from
+  .post("/chat/threads", jsonOnly, async (c) => {
+    const body = chatThreadBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Type a message." }, 400);
+    const started = await c.var.chat.start(chatMember(c), body.data);
+    if ("threadId" in started) return c.json(started, 201);
+    const { status, ...refused } = started;
+    return c.json(refused, status);
+  })
+  // Any Member can delete any thread, with its messages. Its Proposals stay in the AI box.
+  .delete("/chat/threads/:id", async (c) => {
+    if (!(await c.var.chat.remove(c.req.param("id")))) {
+      return c.json({ error: "No Chat thread has this ID." }, 404);
+    }
+    return c.json({ deleted: true }, 200);
+  })
+  // The answer, streamed as the AI writes it (spec 08, Answers). With "submit-message", the new
+  // message is the last one sent, a Member's text; the app stores it first.
+  .post("/chat", jsonOnly, async (c) => {
+    const body = chatAnswerBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Type a message." }, 400);
+    const { id, trigger, messages, sendAnyway = false } = body.data;
+    let text: string | null = null;
+    if (trigger === "submit-message") {
+      const last = messages.at(-1);
+      const parts = last?.role === "user" ? last.parts : [];
+      text = parts.map((part) => (part.type === "text" ? String(part.text ?? "") : "")).join("");
+    }
+    const answered = await c.var.chat.answer(chatMember(c), id, { text, sendAnyway });
+    if (answered instanceof Response) return answered;
+    const { status, ...refused } = answered;
+    return c.json(refused, status);
   })
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
   // Progress per Connection while its history loads (spec 02, First history load).

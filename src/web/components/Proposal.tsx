@@ -131,6 +131,8 @@ export function ProposalCard(props: {
   proposal: ProposalView;
   onChanged: () => void;
   editing?: boolean;
+  // "Ask about this": a new Chat thread with the Proposal attached. Without it, the button waits.
+  onAsk?: () => void;
 }) {
   const { proposal } = props;
   const [editing, setEditing] = useState(props.editing ?? false);
@@ -190,8 +192,12 @@ export function ProposalCard(props: {
           >
             Skip
           </button>
-          {/* Opening a Chat thread with the Proposal attached comes with Chat. */}
-          <button type="button" className={NOTE_BUTTON} disabled>
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            disabled={props.onAsk === undefined}
+            onClick={props.onAsk}
+          >
             Ask about this
           </button>
         </div>

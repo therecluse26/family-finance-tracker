@@ -111,6 +111,12 @@ export type StubMessage = {
   content: string | readonly { type: string; text?: string; output?: unknown }[];
 };
 
+// One part of a streamed reply, as a model sends it.
+type StreamPart =
+  Awaited<ReturnType<MockLanguageModelV4["doStream"]>>["stream"] extends ReadableStream<infer Part>
+    ? Part
+    : never;
+
 // A tool call a test model makes: the tool's name and its input.
 export type StubToolCall = { toolName: string; input: unknown };
 
@@ -135,6 +141,8 @@ export class StubModels {
   beforeAnswer: () => Promise<void> = async () => {};
   // A streamed reply that fails after its text and before its finish part, with its usage.
   streamFails = false;
+  // A streamed reply's text and tool input go out in pieces of this many characters, or in one.
+  streamPiece: number | undefined;
 
   readonly makeModels: AiModelMaker = (connection, models: TierModels) => {
     this.connections.push(connection);
@@ -168,11 +176,18 @@ export class StubModels {
             modelId: models[tier],
             maxOutputTokens: options.maxOutputTokens,
           });
+          this.prompts.push(options.prompt as StubMessage[]);
+          this.offered.push({
+            tools: (options.tools ?? []).map((each) => each.name),
+            toolChoice: options.toolChoice?.type,
+          });
           await this.beforeAnswer();
-          const { usage, finishReason, providerMetadata } = this.answer(
+          if (this.answers[tier] === "hang") await aborted(options.abortSignal);
+          const { content, usage, finishReason, providerMetadata } = this.answer(
             tier,
             connection,
             options.prompt as StubMessage[],
+            options.toolChoice?.type !== "none",
           );
           if (this.streamFails) {
             const text = this.reply;
@@ -187,12 +202,43 @@ export class StubModels {
               }),
             };
           }
+          const pieces = (text: string) => {
+            const size = this.streamPiece ?? Math.max(text.length, 1);
+            const each: string[] = [];
+            for (let start = 0; start < text.length; start += size) {
+              each.push(text.slice(start, start + size));
+            }
+            return each;
+          };
           return {
-            stream: simulateReadableStream({
+            stream: simulateReadableStream<StreamPart>({
               chunks: [
-                { type: "text-start" as const, id: "1" },
-                { type: "text-delta" as const, id: "1", delta: this.reply },
-                { type: "text-end" as const, id: "1" },
+                ...content.flatMap((part): StreamPart[] =>
+                  part.type === "text"
+                    ? [
+                        { type: "text-start" as const, id: "1" },
+                        ...pieces(part.text).map((delta) => ({
+                          type: "text-delta" as const,
+                          id: "1",
+                          delta,
+                        })),
+                        { type: "text-end" as const, id: "1" },
+                      ]
+                    : [
+                        {
+                          type: "tool-input-start" as const,
+                          id: part.toolCallId,
+                          toolName: part.toolName,
+                        },
+                        ...pieces(part.input).map((delta) => ({
+                          type: "tool-input-delta" as const,
+                          id: part.toolCallId,
+                          delta,
+                        })),
+                        { type: "tool-input-end" as const, id: part.toolCallId },
+                        part,
+                      ],
+                ),
                 {
                   type: "finish" as const,
                   finishReason,

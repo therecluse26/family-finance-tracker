@@ -3,6 +3,7 @@ import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { Accounts } from "./pages/Accounts.tsx";
 import { AlertList } from "./pages/AlertList.tsx";
 import { Budgets } from "./pages/Budgets.tsx";
+import { Chat } from "./pages/Chat.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { Goals } from "./pages/Goals.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
@@ -54,6 +55,7 @@ const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/accounts": Accounts,
   "/alert-list": AlertList,
   "/budgets": Budgets,
+  "/chat": Chat,
   "/goals": Goals,
   "/recurring-charges": RecurringCharges,
   "/review-list": ReviewList,
@@ -91,6 +93,8 @@ export const routes: RouteObject[] = [
       { path: "transactions/:id", Component: TransactionDetail },
       // One month's Monthly review, opened from the Reviews page or the AI box's review link.
       { path: "reviews/:month", Component: MonthlyReviewPage },
+      // A Chat thread, opened from the Chat page.
+      { path: "chat/:id", Component: Chat },
       {
         path: "settings",
         Component: Settings,

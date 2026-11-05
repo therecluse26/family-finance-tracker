@@ -1,5 +1,6 @@
 import {
   APICallError,
+  createUIMessageStreamResponse,
   EmptyResponseBodyError,
   generateText,
   InvalidResponseDataError,
@@ -11,17 +12,19 @@ import {
   Output,
   RetryError,
   stepCountIs,
+  streamText,
   type ToolSet,
   TypeValidationError,
   tool,
+  type UIMessageChunk,
   wrapLanguageModel,
 } from "ai";
 import { type Database, listAccounts, listMembersByJoinOrder } from "../db/index.ts";
 import { readHouseholdFacts } from "../household/index.ts";
 import type { Logger } from "../log.ts";
 import type { AiTier, ModelCheck, TierModels } from "./ai-view.ts";
-import { costMiddleware, type OutboundCall } from "./outbound.ts";
-import { type PrivacyFacts, privacyFilter } from "./privacy.ts";
+import { type AiPause, AiPausedError, costMiddleware, type OutboundCall } from "./outbound.ts";
+import { type PrivacyFacts, PrivacyRefusal, privacyFilter } from "./privacy.ts";
 import { type AiCall, type AiTools, buildPrompt, plainData } from "./prompt.ts";
 import {
   type AiConnection,
@@ -236,6 +239,19 @@ function toolSet(tools: AiTools, ran: { count: number }): ToolSet {
   );
 }
 
+// A call's tools, and the loop that runs them: at most 5 tool calls for the question.
+function toolLoop(tools: AiTools | undefined, ran: { count: number }) {
+  if (tools === undefined) return {};
+  return {
+    tools: toolSet(tools, ran),
+    // A round with a tool call runs at least one tool until the 5th, so the loop takes at most 5
+    // rounds of calls, then one answer.
+    stopWhen: stepCountIs(TOOL_CALLS + 1),
+    // The tools stay in the request, as an AI provider needs them to read earlier calls.
+    prepareStep: () => (ran.count < TOOL_CALLS ? undefined : { toolChoice: "none" as const }),
+  };
+}
+
 // One call with a model from privateModels: the prompt in its one order, its use's reply limit,
 // and, with a schema, a structured reply checked against it. With tools, the AI SDK runs each tool
 // the AI calls and sends its result back, one model call each round. The AI SDK makes no retry of
@@ -261,17 +277,7 @@ export async function callModel<OUTPUT>(
       maxOutputTokens: prompt.maxOutputTokens,
       ...(prompt.providerOptions === undefined ? {} : { providerOptions: prompt.providerOptions }),
       ...(call.output === undefined ? {} : { output: Output.object({ schema: call.output }) }),
-      ...(call.tools === undefined
-        ? {}
-        : {
-            tools: toolSet(call.tools, ran),
-            // A round with a tool call runs at least one tool until the 5th, so the loop takes at
-            // most 5 rounds of calls, then one answer.
-            stopWhen: stepCountIs(TOOL_CALLS + 1),
-            // The tools stay in the request, as an AI provider needs them to read earlier calls.
-            prepareStep: () =>
-              ran.count < TOOL_CALLS ? undefined : { toolChoice: "none" as const },
-          }),
+      ...toolLoop(call.tools, ran),
       maxRetries: 0,
       abortSignal: timeout.signal,
     });
@@ -284,4 +290,154 @@ export async function callModel<OUTPUT>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// How a streamed answer ended: with the AI's whole text, as it wrote it, with "Member A" labels;
+// with an AI error or a rejected key; paused by its gate between rounds, such as at the AI cost
+// cap; or refused by the privacy filter, so its request did not go out.
+export type StreamEnd =
+  | { answered: string }
+  | { failed: AiFailure | "key rejected" }
+  | { paused: AiPause }
+  | { refused: true };
+
+// What ends a streamed answer that failed. An error that is none of these, such as a database
+// error in a gate, counts as a server error: a stream cannot throw to its route.
+function streamEndOf(error: unknown, timedOut: boolean): StreamEnd {
+  if (timedOut) return { failed: "timeout" };
+  if (error instanceof AiPausedError) return { paused: error.pause };
+  if (error instanceof PrivacyRefusal) return { refused: true };
+  return { failed: callErrorOf(error)?.failure ?? "server error" };
+}
+
+// Where AI text so far may be cut for the screen: after its last whitespace, and before a "Member"
+// that a label's letters may still follow. What comes after waits for more text.
+function screenCut(text: string): number {
+  let cut = text.length;
+  while (cut > 0 && !/\s/u.test(text[cut - 1] ?? "")) cut -= 1;
+  const label = /[Mm]ember\s*$/u.exec(text.slice(0, cut));
+  return label === null ? cut : label.index;
+}
+
+// AI text as the screen shows it while it streams. `screen` turns the text so far into the
+// screen's words, such as a Member's name in place of "Member A". Each new piece of text sends
+// only what the screen shows past what it showed before, so a label split over two pieces is never
+// sent half turned.
+function screenedText(screen: (aiText: string) => string) {
+  let aiText = "";
+  let shown = "";
+  const past = (next: string) => {
+    if (next.length <= shown.length) return "";
+    const added = next.slice(shown.length);
+    shown = next;
+    return added;
+  };
+  return {
+    add(delta: string): string {
+      aiText += delta;
+      return past(screen(aiText.slice(0, screenCut(aiText))));
+    },
+    end: () => past(screen(aiText)),
+    text: () => aiText,
+  };
+}
+
+// Chat's answer as it streams (spec 08, Answers): one model round, then one more for each round
+// of tool calls, with callModel's 5-call cap, 120-second limit, and no retry. The browser gets
+// the answer's text as the screen shows it, through @ai-sdk/react's message stream, and nothing
+// else: no tool call, no tool result, no reasoning. The answer runs to its end even when the
+// browser leaves, and `ended` runs once, before the stream's last part. It returns the words the
+// browser shows for a failure, or undefined when the answer stands.
+export function streamModel(
+  model: LanguageModel,
+  call: AiCall<undefined>,
+  hooks: {
+    screen: (aiText: string) => string;
+    ended: (end: StreamEnd) => Promise<string | undefined>;
+  },
+): Response {
+  if (call.output !== undefined) throw new TypeError("A streamed answer is text.");
+  const prompt = buildPrompt(call);
+  // The timeout is the app's own, so a test's fake clock moves it.
+  const timeout = new AbortController();
+  const timer = setTimeout(
+    () => timeout.abort(new DOMException("No reply within 120 seconds.", "TimeoutError")),
+    CALL_TIMEOUT_MS,
+  );
+  const ran = { count: 0 };
+  const result = streamText({
+    model,
+    system: prompt.system,
+    messages: prompt.messages,
+    maxOutputTokens: prompt.maxOutputTokens,
+    ...(prompt.providerOptions === undefined ? {} : { providerOptions: prompt.providerOptions }),
+    ...toolLoop(call.tools, ran),
+    maxRetries: 0,
+    abortSignal: timeout.signal,
+    // Errors come as parts of the stream, which answer() reads.
+    onError: () => {},
+  });
+  const text = screenedText(hooks.screen);
+  let left = false;
+  let send: (chunk: UIMessageChunk) => void = () => {};
+  let textStarted = false;
+  const sendText = (delta: string) => {
+    if (delta === "") return;
+    if (!textStarted) send({ type: "text-start", id: "answer" });
+    textStarted = true;
+    send({ type: "text-delta", id: "answer", delta });
+  };
+
+  async function answer(): Promise<void> {
+    let failure: unknown;
+    let failed = false;
+    try {
+      for await (const part of result.fullStream) {
+        if (part.type === "text-start" && /\S$/u.test(text.text())) {
+          // Each round's text starts a new paragraph.
+          sendText(text.add("\n\n"));
+        } else if (part.type === "text-delta") {
+          sendText(text.add(part.text));
+        } else if (part.type === "error" && !failed) {
+          failed = true;
+          failure = part.error;
+        }
+      }
+    } catch (error) {
+      if (!failed) failure = error;
+      failed = true;
+    } finally {
+      clearTimeout(timer);
+    }
+    const end: StreamEnd = failed
+      ? streamEndOf(failure, timeout.signal.aborted)
+      : { answered: text.text() };
+    const words = await hooks.ended(end);
+    if (words !== undefined) {
+      send({ type: "error", errorText: words });
+      return;
+    }
+    sendText(text.end());
+    if (textStarted) send({ type: "text-end", id: "answer" });
+    send({ type: "finish" });
+  }
+
+  const stream = new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      send = (chunk) => {
+        if (!left) controller.enqueue(chunk);
+      };
+      send({ type: "start" });
+      void answer()
+        .catch(() => send({ type: "error", errorText: "The answer stopped. Try again." }))
+        .finally(() => {
+          if (!left) controller.close();
+          left = true;
+        });
+    },
+    cancel() {
+      left = true;
+    },
+  });
+  return createUIMessageStreamResponse({ stream });
 }

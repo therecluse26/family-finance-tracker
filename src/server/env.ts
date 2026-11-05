@@ -17,6 +17,7 @@ import type { BankViews } from "./bank-views.ts";
 import type { BenchmarkRoutes } from "./benchmarks-views.ts";
 import type { BudgetRoutes } from "./budgets-views.ts";
 import type { CategoryRoutes } from "./category-views.ts";
+import type { ChatRoutes } from "./chat-views.ts";
 import type { ComingUpRoutes } from "./coming-up-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
@@ -90,6 +91,8 @@ export type ServerEnv = {
     proposals: ProposalRoutes;
     // The Reviews page: the past Monthly reviews and the plan's ticks.
     monthlyReviews: MonthlyReviewRoutes;
+    // Chat threads, and their answers.
+    chat: ChatRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.

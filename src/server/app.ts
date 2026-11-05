@@ -9,6 +9,7 @@ import {
   connectionRepairing,
   type PlaidSettings,
 } from "../bank/index.ts";
+import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
@@ -24,6 +25,7 @@ import { bankViews } from "./bank-data.ts";
 import { benchmarkRoutes } from "./benchmarks.ts";
 import { budgetRoutes } from "./budgets.ts";
 import { categoryRoutes } from "./categories.ts";
+import { chatRoutes } from "./chat.ts";
 import { comingUpRoutes } from "./coming-up.ts";
 import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
@@ -174,6 +176,8 @@ export function createApp(
     ai?: AiSettings;
     smtp?: SmtpSettings;
     push?: PushSettings;
+    // Chat's answers. Without it, Chat says AI is not set up.
+    chat?: Chat;
   } = {},
 ) {
   const bank = bankViews(database);
@@ -197,6 +201,7 @@ export function createApp(
   const aiBox = aiBoxRoutes(database, services.ai);
   const proposals = proposalRoutes(database);
   const monthlyReviews = monthlyReviewRoutes(database);
+  const chat = chatRoutes(database, services.chat);
   const plaidConnecting = bankConnecting("plaid");
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
@@ -234,6 +239,7 @@ export function createApp(
         c.set("aiBox", aiBox);
         c.set("proposals", proposals);
         c.set("monthlyReviews", monthlyReviews);
+        c.set("chat", chat);
         c.set("plaidConnecting", plaidConnecting);
         c.set("removing", removing);
         c.set("repairing", repairing);

@@ -46,6 +46,8 @@ export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 // - facts: app-built facts this call needs past the summary, as pieces, such as Budget tailoring's
 //   figures. Each number the app made goes as a typed value, as in the summary. It comes after the
 //   task and any batch, as one user message.
+// - note: for Chat, the note a thread was started from with "Ask about this", as pieces, as the
+//   summary may be. It goes after the task, before the turns.
 // - changes: anything else that changes, such as Alert facts, feedback, or a Chat's turns.
 // - alerts: for Alert advice, how many Alerts the call advises on, which sets its reply limit.
 // - output: the schema of a structured reply. Without it, the reply is text.
@@ -60,6 +62,7 @@ export type AiCall<OUTPUT = undefined> = {
   task: string;
   batch?: readonly BatchItem[];
   facts?: readonly SummaryPart[];
+  note?: readonly SummaryPart[];
   changes?: readonly AiMessage[];
   alerts?: number;
   output?: AiSchema<OUTPUT>;
@@ -148,6 +151,7 @@ const CALL_KEYS: ReadonlySet<string> = new Set([
   "task",
   "batch",
   "facts",
+  "note",
   "changes",
   "alerts",
   "output",
@@ -270,6 +274,7 @@ export function checkCall(call: AiCall<unknown>): void {
     typeof call.task === "string" &&
     (call.summary === undefined || isSummary(call.summary)) &&
     (call.facts === undefined || (Array.isArray(call.facts) && isSummary(call.facts))) &&
+    (call.note === undefined || (Array.isArray(call.note) && isSummary(call.note))) &&
     (call.changes === undefined ||
       (Array.isArray(call.changes) && call.changes.every(isMessage))) &&
     (call.batch === undefined || (Array.isArray(call.batch) && call.batch.every(isBatchItem)));
@@ -277,6 +282,9 @@ export function checkCall(call: AiCall<unknown>): void {
     throw new TypeError(
       "An AI call holds only its summary, task, batch, text messages, and Chat's tools: no IDs.",
     );
+  }
+  if (call.note !== undefined && call.use !== "chat") {
+    throw new TypeError("Only Chat takes an attached note.");
   }
   if (call.tools !== undefined) {
     if (call.use !== "chat") throw new TypeError("Only Chat takes tools.");
@@ -432,6 +440,7 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
   }
   // Facts go as the summary's pieces do, each typed value bare with the filter's mark.
   if (call.facts !== undefined) messages.push(summaryMessage(call.facts, false));
+  if (call.note !== undefined) messages.push(summaryMessage(call.note, false));
   for (const message of call.changes ?? []) {
     if ("parts" in message) {
       messages.push(summaryMessage(message.parts, false));

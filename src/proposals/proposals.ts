@@ -8,6 +8,7 @@ import {
   expireProposals,
   listBankNames,
   listBudgetsInEffect,
+  listChatProposals,
   listDueProposals,
   listGoals,
   listOpenProposals,
@@ -16,6 +17,7 @@ import {
   type ProposalKind,
   type ProposalRow,
   type ProposalSource,
+  type ProposalStatus,
   readGoal,
   readProposal,
   reopenProposal,
@@ -531,4 +533,24 @@ export async function undoProposal(
   });
   if (undone === "undone") log.info("A Member undid a Proposal");
   return undone;
+}
+
+// A Chat Proposal as its thread shows it: its card, the run that made it, and its status.
+export type ChatProposal = Proposal & { runId: string; status: ProposalStatus };
+
+// The Proposals of the Chat runs whose IDs start with `runPrefix`, such as one thread's, oldest
+// first, whatever their status (spec 08, Proposals: where it shows). Expired ones close first.
+export async function chatProposals(
+  database: Database,
+  runPrefix: string,
+  now = new Date(),
+): Promise<ChatProposal[]> {
+  await expire(database, now);
+  const month = (await householdDay(database, now)).slice(0, 7);
+  const rows = await listChatProposals(database, runPrefix);
+  const cards = await cardsOf(database, rows, month);
+  return rows.flatMap((row, index) => {
+    const card = cards[index];
+    return card === undefined ? [] : [{ ...card, runId: row.runId, status: row.status }];
+  });
 }

@@ -1,14 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { aiCost, aiSettings } from "../ai/index.ts";
+import { aiCost, aiSettings, householdAi } from "../ai/index.ts";
 import { createAuth } from "../auth/index.ts";
 import { startBackups } from "../backups/index.ts";
 import { plaidSettings } from "../bank/index.ts";
+import { chat } from "../chat/index.ts";
 import { applyMigrations, openDatabase } from "../db/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { pushSettings, startNotify } from "../notify/index.ts";
 import { checkDataKey, loadMasterKey, unlockSecrets } from "../secrets/index.ts";
+import { householdSummary } from "../summary/index.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 
@@ -39,13 +41,12 @@ export async function createDevApp(
   mkdirSync(backupFolder, { recursive: true });
   startBackups({ database, folder: backupFolder, timeZone: () => householdTimeZone(database) });
   const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
+  const cost = aiCost({ database, timeZone: () => householdTimeZone(database) });
+  const ai = householdAi({ database, secrets, cost });
   return createApp(webRoot, security, auth, database, secrets, {
     plaid: plaidSettings({ database, secrets }),
     push: pushSettings({ database, secrets, available: security.appUrl.mode === "https" }),
-    ai: aiSettings({
-      database,
-      secrets,
-      cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
-    }),
+    ai: aiSettings({ database, secrets, cost }),
+    chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
   });
 }

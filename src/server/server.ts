@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import type { AiSettings } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
+import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
@@ -25,6 +26,7 @@ export function startServer(options: {
   ai?: AiSettings;
   smtp?: SmtpSettings;
   push?: PushSettings;
+  chat?: Chat;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
@@ -40,6 +42,7 @@ export function startServer(options: {
             ...(options.ai === undefined ? {} : { ai: options.ai }),
             ...(options.smtp === undefined ? {} : { smtp: options.smtp }),
             ...(options.push === undefined ? {} : { push: options.push }),
+            ...(options.chat === undefined ? {} : { chat: options.chat }),
           },
         ).fetch,
         port: options.port,
