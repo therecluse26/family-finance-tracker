@@ -1,0 +1,1 @@
+ALTER TABLE `alerts` ADD `advised_at` text;

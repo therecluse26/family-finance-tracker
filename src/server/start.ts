@@ -117,7 +117,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       database,
       runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
     });
-    // The Matching and Categorization steps ask the Quick tier through the one AI call path.
+    // The Matching and Categorization steps, and the Alerts step for its advice, ask the Quick tier
+    // through the one AI call path.
     const cost = aiCost({ database, timeZone });
     const ai = householdAi({ database, secrets, cost });
     const moneyMovement = startMoneyMovement({ database, ai });
@@ -126,7 +127,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const anomalies = startAnomalyChecks({ database });
     const budgets = startBudgets({ database });
     const overspending = startOverspendingChecks({ database });
-    const alertSending = startAlertSending({ database });
+    const alertSending = startAlertSending({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {

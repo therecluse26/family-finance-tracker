@@ -223,6 +223,25 @@ describe("an AI call", () => {
         categoryFix([{ row: 2, amount: -1 }]),
         { use: "alert advice", task: "Advise." },
         { use: "alert advice", task: "Advise.", alerts: 0 },
+        // An app-built message as parts: only a user message, only text and typed values.
+        {
+          use: "alert advice",
+          task: "Advise.",
+          alerts: 1,
+          changes: [{ role: "assistant", parts: ["Alerts."] } as never],
+        },
+        {
+          use: "alert advice",
+          task: "Advise.",
+          alerts: 1,
+          changes: [{ role: "user", parts: ["Lunch: $", { amount: "49.99" } as never] }],
+        },
+        {
+          use: "alert advice",
+          task: "Advise.",
+          alerts: 1,
+          changes: [{ role: "user", parts: ["Alerts."], typed: true } as never],
+        },
         { use: "chat", summary: SUMMARY, task: "Answer.", alerts: 1 },
         { use: "chat", summary: ["Spending: ", { amount: "2310.00" } as never], task: "Answer." },
         { use: "chat", summary: [SUMMARY, 2310 as never], task: "Answer." },
@@ -263,6 +282,35 @@ describe("an AI call", () => {
 
       const advice = buildPrompt({ use: "alert advice", task: "Advise.", alerts: 2, changes });
       expect(marked(advice)).toEqual([false, true, false, false]);
+    });
+
+    it("sends an app-built message given as parts as one user message, with each typed value marked for the filter", () => {
+      const built = buildPrompt({
+        use: "alert advice",
+        task: "Advise.",
+        alerts: 1,
+        changes: [
+          {
+            role: "user",
+            parts: ["Lunch: $", typedAmount(4_999), " on ", typedDate("2026-11-09")],
+          },
+        ],
+      });
+
+      expect(marked(built)).toEqual([false, false]);
+      const content = built.messages[1]?.content;
+      if (!Array.isArray(content)) throw new Error("Expected the message's text parts.");
+      expect(content.map((part) => (part.type === "text" ? part.text : ""))).toEqual([
+        "Lunch: $",
+        "49.99",
+        " on ",
+        "2026-11-09",
+      ]);
+      expect(
+        content.map(
+          (part) => part.type === "text" && part.providerOptions?.privacyFilter !== undefined,
+        ),
+      ).toEqual([false, true, false, true]);
     });
 
     it("sends each batch row as JSON with no escape the AI would read as other characters", () => {

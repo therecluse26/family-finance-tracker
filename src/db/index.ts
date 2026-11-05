@@ -35,6 +35,12 @@ export {
   type UseCost,
 } from "./ai-usage.ts";
 export {
+  type AlertForAdvice,
+  listAlertsToAdvise,
+  listNotAProblemAlerts,
+  storeAlertAdvice,
+} from "./alert-advice.ts";
+export {
   type AlertDecision,
   type AlertKind,
   type AlertState,

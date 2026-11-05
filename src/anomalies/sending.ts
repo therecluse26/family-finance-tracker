@@ -1,3 +1,4 @@
+import type { HouseholdAi } from "../ai/index.ts";
 import {
   type AlertDecision,
   type AlertKind,
@@ -21,6 +22,7 @@ import { householdTimeZone } from "../household/index.ts";
 import { log } from "../log.ts";
 import { askForDelivery, endCondition, raiseNotice } from "../notify/index.ts";
 import { addDays } from "../recurring/index.ts";
+import { adviseAlerts } from "./advice.ts";
 import { mergedHeading } from "./templates.ts";
 
 // The Alerts step (spec 06, Sending Alerts; The weekly cap; Merging). It runs last among the
@@ -205,16 +207,25 @@ export async function decideAlerts(
   return { ...done, sentIds };
 }
 
-// Registers the Alerts step, after the Overspending checks. A run that fails counts a try and
-// throws, so the follow-up job runs again. The run that reaches the cap raises one System notice
+// Registers the Alerts step, after the Overspending checks. With `ai`, the step first asks for the
+// AI's advice on the new Alerts, in one call (src/anomalies/advice.ts), and decides them when the
+// call ends. While that call waits for its retry, the step leaves its Transactions unhandled and
+// stops the job: the retry starts a new one. A run that fails counts a try and throws, so the
+// follow-up job runs again. The run that reaches the cap raises one System notice
 // and leaves its Alerts undecided: they send nothing, and the job goes on. The next run decides
 // them, and the next run that succeeds ends the notice. A run that sends Alerts asks for their
 // delivery once their decisions are stored. The start calls it before jobs run.
-export function startAlertSending(options: { database: Database }): { stop(): void } {
-  const { database } = options;
+export function startAlertSending(options: { database: Database; ai?: HouseholdAi }): {
+  stop(): void;
+} {
+  const { database, ai } = options;
   const stop = registerFollowUpStep("alerts", async () => {
     let sentIds: string[];
     try {
+      if (ai !== undefined) {
+        const waits = await adviseAlerts({ database, ai });
+        if (waits !== undefined) return { handled: [], again: waits.again };
+      }
       ({ sentIds } = await decideAlerts(database));
     } catch (error) {
       const tries = await countAlertDecisionFailure(database);

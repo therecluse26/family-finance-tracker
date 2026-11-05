@@ -1310,6 +1310,10 @@ export const alerts = sqliteTable(
     category: text("category"),
     // The AI's one or two sentences of advice, if any.
     advice: text("advice"),
+    // When the advice call was done with the Alert: its advice stored, or none, such as with no AI
+    // provider or after the last retry failed. Null until then. An Alert gets its advice before the
+    // Alerts step decides it, and never later.
+    advisedAt: moment("advised_at"),
     state: text("state", { enum: ["sent", "held back (weekly cap)", "found in history"] }),
   },
   (table) => [index("alerts_created_at").on(table.createdAt)],

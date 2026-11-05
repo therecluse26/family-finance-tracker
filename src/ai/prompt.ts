@@ -14,8 +14,12 @@ import { FIXED_RULES } from "./voice.ts";
 // Member wrote, such as a Chat message, a note a Member wrote, or an earlier AI reply in a Chat's
 // history: the privacy filter does its best on it, but never refuses the call over it (spec 08,
 // Privacy filter). Without it, the text is app-built, and the filter's final check reads it. A
-// typed message never holds app-built text.
-export type AiMessage = { role: "user" | "assistant"; text: string; typed?: boolean };
+// typed message never holds app-built text. An app-built user message may come as `parts` instead,
+// as the Household summary does, so each number the app made goes as a typed value, such as an
+// Alert's amounts in Alert advice.
+export type AiMessage =
+  | { role: "user" | "assistant"; text: string; typed?: boolean }
+  | { role: "user"; parts: readonly SummaryPart[] };
 
 // One piece of the Household summary: app-built text, or a number the app made, such as an amount
 // or a date, as a typed value (src/ai/typed.ts). The privacy filter reads each text and keeps each
@@ -145,6 +149,7 @@ const CALL_KEYS: ReadonlySet<string> = new Set([
   "tools",
 ]);
 const MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "text", "typed"]);
+const PARTS_MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "parts"]);
 const TOOL_KEYS: ReadonlySet<string> = new Set(["description", "input", "run"]);
 // A tool's name, as every AI provider takes it.
 const TOOL_NAME = /^[a-z][a-z_]{0,63}$/;
@@ -157,6 +162,16 @@ const onlyKeys = (value: object, keys: ReadonlySet<string>) =>
 const isMessage = (message: unknown): message is AiMessage =>
   typeof message === "object" &&
   message !== null &&
+  (isPartsMessage(message) || isTextMessage(message));
+
+const isPartsMessage = (message: object): boolean =>
+  onlyKeys(message, PARTS_MESSAGE_KEYS) &&
+  "role" in message &&
+  message.role === "user" &&
+  "parts" in message &&
+  isParts(message.parts);
+
+const isTextMessage = (message: object): boolean =>
   onlyKeys(message, MESSAGE_KEYS) &&
   "role" in message &&
   (message.role === "user" || message.role === "assistant") &&
@@ -173,10 +188,10 @@ function isTypedValue(value: unknown): boolean {
   }
 }
 
-const isSummary = (summary: unknown): boolean =>
-  typeof summary === "string" ||
-  (Array.isArray(summary) &&
-    summary.every((part) => typeof part === "string" || isTypedValue(part)));
+const isParts = (parts: unknown): boolean =>
+  Array.isArray(parts) && parts.every((part) => typeof part === "string" || isTypedValue(part));
+
+const isSummary = (summary: unknown): boolean => typeof summary === "string" || isParts(summary);
 
 const isBatchItem = (item: unknown): item is BatchItem =>
   typeof item === "object" &&
@@ -296,8 +311,9 @@ const userText = (text: string, cached: boolean): ModelMessage => ({
   ...(cached ? { providerOptions: CACHE_MARK } : {}),
 });
 
-// The Household summary as one user message. Given as pieces, each text is a text part, and each
-// typed value a text part of its bare value with the filter's mark, which the filter takes off.
+// The Household summary, or another app-built message given as parts, as one user message. Given
+// as pieces, each text is a text part, and each typed value a text part of its bare value with the
+// filter's mark, which the filter takes off.
 function summaryMessage(summary: string | readonly SummaryPart[], cached: boolean): ModelMessage {
   if (typeof summary === "string") return userText(summary, cached);
   return {
@@ -409,6 +425,10 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
     });
   }
   for (const message of call.changes ?? []) {
+    if ("parts" in message) {
+      messages.push(summaryMessage(message.parts, false));
+      continue;
+    }
     messages.push({
       role: message.role,
       content: message.text,
