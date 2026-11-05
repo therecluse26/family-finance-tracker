@@ -27,6 +27,7 @@ import { startNotify } from "../notify/index.ts";
 import { StubSmtp } from "../notify/testing.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { startBudgetTailoring, tailorFirstDraft } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
 import { HISTORY_NOW } from "./history.ts";
 
@@ -150,8 +151,25 @@ export const APP_MODULES: readonly AppModule[] = [
     },
   },
   {
+    name: "startBudgetTailoring",
+    // A case runs the Budget tailoring job itself.
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startBudgetTailoring({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+        now: HISTORY_NOW,
+        startJob: async () => {},
+      }),
+  },
+  {
     name: "startBudgets",
-    start: ({ database }) => startBudgets({ database, now: HISTORY_NOW }),
+    start: ({ database }) =>
+      startBudgets({ database, now: HISTORY_NOW, tailorDraft: tailorFirstDraft }),
     // Before the first draft, the step finds no Budget to set: the Budget draft case times it.
     step: {
       name: "Bills Budgets",

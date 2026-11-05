@@ -55,6 +55,7 @@ const monthly = (category: Category, dollars: number): Budget => ({
   source: "formula",
   setBy: null,
   pinned: categoryGroupOf(category) === "Bills" ? false : null,
+  reason: null,
 });
 
 describe("the projection and status", () => {

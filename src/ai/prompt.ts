@@ -43,6 +43,9 @@ export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 // - batch: a Quick batch's Transactions, at most 100. Each goes out as its own text, a JSON object
 //   with its row number in the batch, so the privacy filter reads each on its own and a removal
 //   never joins two rows.
+// - facts: app-built facts this call needs past the summary, as pieces, such as Budget tailoring's
+//   figures. Each number the app made goes as a typed value, as in the summary. It comes after the
+//   task and any batch, as one user message.
 // - changes: anything else that changes, such as Alert facts, feedback, or a Chat's turns.
 // - alerts: for Alert advice, how many Alerts the call advises on, which sets its reply limit.
 // - output: the schema of a structured reply. Without it, the reply is text.
@@ -56,6 +59,7 @@ export type AiCall<OUTPUT = undefined> = {
   summary?: string | readonly SummaryPart[];
   task: string;
   batch?: readonly BatchItem[];
+  facts?: readonly SummaryPart[];
   changes?: readonly AiMessage[];
   alerts?: number;
   output?: AiSchema<OUTPUT>;
@@ -143,6 +147,7 @@ const CALL_KEYS: ReadonlySet<string> = new Set([
   "summary",
   "task",
   "batch",
+  "facts",
   "changes",
   "alerts",
   "output",
@@ -264,6 +269,7 @@ export function checkCall(call: AiCall<unknown>): void {
     onlyKeys(call, CALL_KEYS) &&
     typeof call.task === "string" &&
     (call.summary === undefined || isSummary(call.summary)) &&
+    (call.facts === undefined || (Array.isArray(call.facts) && isSummary(call.facts))) &&
     (call.changes === undefined ||
       (Array.isArray(call.changes) && call.changes.every(isMessage))) &&
     (call.batch === undefined || (Array.isArray(call.batch) && call.batch.every(isBatchItem)));
@@ -424,6 +430,8 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
       ),
     });
   }
+  // Facts go as the summary's pieces do, each typed value bare with the filter's mark.
+  if (call.facts !== undefined) messages.push(summaryMessage(call.facts, false));
   for (const message of call.changes ?? []) {
     if ("parts" in message) {
       messages.push(summaryMessage(message.parts, false));

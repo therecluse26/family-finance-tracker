@@ -38,6 +38,7 @@ import {
 } from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
+import { requestTailoringJob, startBudgetTailoring, tailorFirstDraft } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
@@ -115,7 +116,11 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // A background AI use in the follow-up job retries in a new follow-up job.
     const aiRetries = startAiRetries({
       database,
-      runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
+      runners: {
+        ...Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
+        // Budget tailoring retries in its own job, which runs each waiting run.
+        "budget tailoring": requestTailoringJob,
+      },
     });
     // The Matching and Categorization steps, and the Alerts step for its advice, ask the Quick tier
     // through the one AI call path.
@@ -125,7 +130,9 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const categorization = startCategorization({ database, ai });
     const recurring = startRecurringCharges({ database });
     const anomalies = startAnomalyChecks({ database });
-    const budgets = startBudgets({ database });
+    // Budget tailoring: the AI's part in the first draft, and its Tailoring and Goal runs.
+    const tailoring = startBudgetTailoring({ database, ai });
+    const budgets = startBudgets({ database, tailorDraft: tailorFirstDraft });
     const overspending = startOverspendingChecks({ database });
     const alertSending = startAlertSending({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
@@ -137,6 +144,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       alertSending.stop();
       overspending.stop();
       budgets.stop();
+      tailoring.stop();
       anomalies.stop();
       recurring.stop();
       categorization.stop();
@@ -165,7 +173,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         database,
         secrets,
         plaid: plaidSettings({ database, secrets }),
-        ai: aiSettings({ database, secrets, cost }),
+        ai: aiSettings({ database, secrets, cost, afterChange: tailoring.afterAiChange }),
         smtp: smtpSettings({ database, secrets, address }),
         push: pushSettings({ database, secrets, available: https }),
       });

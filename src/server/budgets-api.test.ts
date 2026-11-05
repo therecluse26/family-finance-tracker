@@ -227,6 +227,7 @@ describe("the Budget route", () => {
           source: "Member edit",
           setBy: memberId,
           pinned: true,
+          reason: null,
         },
       });
       expect((await budgets(thisMonth())).budgets[0]).toMatchObject({ amount: 12_345 });

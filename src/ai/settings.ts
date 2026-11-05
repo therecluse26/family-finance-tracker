@@ -100,6 +100,10 @@ export type AiOptions = {
   logger?: Logger;
   // System notices: the notify module's, unless a test gives its own.
   notices?: Partial<AiNotices>;
+  // Runs after each save, and each change of the AI cost cap, that may let background AI run
+  // again: an AI provider set up, a key fixed, a price entered, or a cap raised. Budget tailoring
+  // starts its waiting runs from it. Its failure never fails the save.
+  afterChange?: () => Promise<void>;
 };
 
 export type AiNotices = {
@@ -139,6 +143,17 @@ export function aiSettings(options: AiOptions): AiSettings {
     if (until !== undefined) return { state: "cost cap", until };
     if (!(await gates.historyLoaded())) return { state: "waits for history" };
     return { state: "on" };
+  }
+
+  // What runs after a change that may let background AI run again. It never fails the change.
+  async function changed(): Promise<void> {
+    try {
+      await options.afterChange?.();
+    } catch (error) {
+      logger.warn("The work after an AI settings change could not start", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
   }
 
   // A failed notice never fails the save or the removal that led to it.
@@ -286,6 +301,7 @@ export function aiSettings(options: AiOptions): AiSettings {
       }
       const ai = await view();
       if (ai === undefined) throw new Error("The AI settings were not saved.");
+      await changed();
       return { saved: true, check, ai };
     },
 
@@ -299,6 +315,7 @@ export function aiSettings(options: AiOptions): AiSettings {
 
     async setCostCap(capCents) {
       await cost.setCap(capCents);
+      await changed();
       return cost.usage();
     },
   };

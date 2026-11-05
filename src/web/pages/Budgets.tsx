@@ -16,7 +16,7 @@ import {
 } from "../budgets.ts";
 import { ErrorLine, FIELD } from "../components/Fields.tsx";
 import { UndoableProposals } from "../components/Proposal.tsx";
-import { Status } from "../components/Status.tsx";
+import { AiMark, Status } from "../components/Status.tsx";
 import { browserZone } from "./Accounts.tsx";
 
 // The Budgets page (spec 07, Budgets page): every Category by Category group, with this month's
@@ -119,6 +119,11 @@ export function BudgetRowItem(props: { row: BudgetRow; state: RowState; actions:
         </span>
       </div>
       {budget?.context == null ? null : <p className="text-sm text-gray-600">{budget.context}</p>}
+      {budget?.reason == null ? null : (
+        <p className="text-sm text-gray-600" data-slot="budget-reason">
+          {budget.reason} <AiMark />
+        </p>
+      )}
       {budget === undefined ? null : (
         <>
           {budget.pinned === null ? null : (

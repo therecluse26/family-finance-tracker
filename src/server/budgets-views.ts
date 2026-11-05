@@ -14,6 +14,8 @@ export type BudgetView = {
   setBy: string | null;
   // A Bills Budget's pinned flag, or null for every other Budget.
   pinned: boolean | null;
+  // The AI's one-sentence reason for an "AI draft" Budget, or null.
+  reason: string | null;
 };
 
 export type BudgetStatusView = "Over Budget" | "On pace" | "on track";

@@ -35,6 +35,7 @@ const budget = (
   takesEffect: "2026-11",
   source: "formula",
   setBy: null,
+  reason: null,
   pinned: null,
   spending: 0,
   projected: null,
@@ -247,6 +248,19 @@ describe("the Budgets page", () => {
       "is 41% of Income; typical is 33%",
       "is 3% of Income; typical is 4%",
     ]);
+  });
+
+  it("shows an AI draft Budget's reason, marked as written by AI", () => {
+    const reason = "Eating out can drop a little to make room for the trip.";
+    const html = report({
+      ...VIEW,
+      budgets: [housing, { ...restaurants, source: "AI draft", reason }],
+    });
+
+    expect(html).toContain('data-slot="budget-reason"');
+    expect(text(html)).toContain(`${reason} AI`);
+    expect(text(report(VIEW))).not.toContain("Written by AI");
+    expect(report(VIEW)).not.toContain("budget-reason");
   });
 
   it(`says "${BEFORE_FIRST_DRAFT}" before the first draft`, () => {

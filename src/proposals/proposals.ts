@@ -81,7 +81,18 @@ const proposalInput = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("Budget change"),
       ...common,
-      budgets: z.array(z.object({ category: z.string(), amount: cents }).strict()).min(1),
+      // A Budget tailoring run gives a one-sentence reason per Category.
+      budgets: z
+        .array(
+          z
+            .object({
+              category: z.string(),
+              amount: cents,
+              reason: text(MAX_REASON_LENGTH).nullable().optional(),
+            })
+            .strict(),
+        )
+        .min(1),
     })
     .strict(),
   z
@@ -176,6 +187,7 @@ export async function propose(
   if (proposal.kind === "Budget change") {
     const broken = await budgetRefusal(database, proposal.source, proposal.budgets, month);
     if (broken !== undefined) return refused(broken);
+    for (const line of proposal.budgets) if (line.reason != null) texts.push(line.reason);
   } else if (proposal.kind === "Goal amount") {
     // A Goal amount sets the number progress counts toward. It never changes one already set.
     const goal = await readGoal(database, proposal.goalId);
@@ -225,7 +237,8 @@ export type ProposedBudget = {
 };
 
 // A Proposal as its card shows it (spec 07, 1. AI box): the change, one line each, such as
-// "Restaurants Budget: $600 → $480", and the AI's reason.
+// "Restaurants Budget: $600 → $480", and the AI's reason. A Budget tailoring run's line ends with
+// its Category's reason.
 export type Proposal = {
   id: string;
   kind: ProposalKind;
@@ -241,10 +254,11 @@ export type Proposal = {
   words: string | null;
 };
 
-function budgetLine({ category, from, to, period }: ProposedBudget): string {
+function budgetLine({ category, from, to, period }: ProposedBudget, reason: string | null): string {
   const each = period === "yearly" ? " a year" : "";
   const was = from === null ? "no Budget" : `${wholeDollars(from)}${each}`;
-  return `${category} Budget: ${was} → ${wholeDollars(to)}${each}`;
+  const line = `${category} Budget: ${was} → ${wholeDollars(to)}${each}`;
+  return reason === null ? line : `${line}. ${reason}`;
 }
 
 async function cardsOf(
@@ -280,7 +294,7 @@ async function cardsOf(
         : null;
     const changes =
       row.kind === "Budget change"
-        ? budgets.map(budgetLine)
+        ? budgets.map((budget, index) => budgetLine(budget, row.budgets[index]?.reason ?? null))
         : goal !== null
           ? [`Goal amount for "${goal.words}": ${wholeDollars(goal.goalAmount)}`]
           : [`New Goal: "${row.words ?? ""}"`];

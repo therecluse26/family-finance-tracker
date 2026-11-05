@@ -5,9 +5,11 @@ export {
   type GoalReading,
   type GoalStartResult,
   type GoalTarget,
+  goalStartToday,
   listGoalsWithProgress,
   markGoal,
   readGoalsWithProgress,
+  readingOf as goalReadingOf,
   startGoal,
 } from "./goals.ts";
 export {

@@ -1,7 +1,12 @@
 // The budgets module's interface (spec 05, Drafting Budgets, Stored Budgets). Other modules import
 // from here.
 export { acceptDraft, editBudget, followTheBill } from "./edits.ts";
-export { draftFirstBudgets, startBudgets } from "./first-draft.ts";
+export {
+  type DraftTailoring,
+  draftFirstBudgets,
+  startBudgets,
+  withinHalfOf,
+} from "./first-draft.ts";
 export { type FittedDraft, fitToIncome } from "./fit.ts";
 export {
   type CategoryTerms,

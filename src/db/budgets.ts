@@ -17,6 +17,7 @@ import {
   budgetInputs,
   budgetMonthStarts,
   budgets,
+  budgetTailoringRuns,
   transactionParts,
   transactions,
 } from "./schema.ts";
@@ -28,7 +29,8 @@ import {
 // A Budget as the app reads it. A row that ends a Category's Budget (`noBudget`) is never one: it
 // only hides the Budget before it.
 export type StoredBudget = Omit<typeof budgets.$inferSelect, "noBudget">;
-export type NewBudget = Omit<StoredBudget, "id">;
+// Only an "AI draft" Budget has a reason.
+export type NewBudget = Omit<StoredBudget, "id" | "reason"> & { reason?: string | null };
 export type BudgetInputs = Omit<typeof budgetInputs.$inferSelect, "id">;
 export type DraftAcceptance = Omit<typeof budgetDraftAcceptance.$inferSelect, "id">;
 export type MonthStart = Omit<typeof budgetMonthStarts.$inferSelect, "month">;
@@ -95,10 +97,12 @@ export async function readBudgetInputs(database: Database): Promise<BudgetInputs
 }
 
 // Stores the first draft: its inputs and its Budgets, in one write. Its month's Month start work is
-// then done. False, with nothing written, when a first draft is already stored.
+// then done. False, with nothing written, when a first draft is already stored. With `tailored`,
+// the draft took the AI's figures, so the Tailoring run is stored as ended in the same write and
+// never runs. A Tailoring run already waiting ends with it.
 export async function storeFirstDraft(
   database: Database,
-  draft: { inputs: BudgetInputs; budgets: readonly NewBudget[] },
+  draft: { inputs: BudgetInputs; budgets: readonly NewBudget[]; tailored?: boolean },
 ): Promise<boolean> {
   return database.transaction(async (tx) => {
     const claimed = await tx
@@ -108,6 +112,18 @@ export async function storeFirstDraft(
       .returning({ id: budgetInputs.id });
     if (claimed.length === 0) return false;
     if (draft.budgets.length > 0) await tx.insert(budgets).values([...draft.budgets]);
+    if (draft.tailored === true) {
+      // A Tailoring run an earlier try of this step asked for ends here, and none is added.
+      const at = draft.inputs.recordedAt;
+      await tx
+        .update(budgetTailoringRuns)
+        .set({ endedAt: at })
+        .where(and(eq(budgetTailoringRuns.kind, "Tailoring"), isNull(budgetTailoringRuns.endedAt)));
+      await tx
+        .insert(budgetTailoringRuns)
+        .values({ kind: "Tailoring", requestedAt: at, endedAt: at })
+        .onConflictDoNothing();
+    }
     const done = { doneAt: draft.inputs.recordedAt, failedTries: 0 };
     await tx
       .insert(budgetMonthStarts)

@@ -591,6 +591,7 @@ describe("Budget drafts", () => {
         source: "formula",
         setBy: null,
         pinned: false,
+        reason: null,
       });
       expect(budgets.find((budget) => budget.category === "Superstores")?.pinned).toBeNull();
       expect(groups.find((group) => group.categoryGroup === "Bills")).toEqual({

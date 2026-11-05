@@ -1230,6 +1230,9 @@ export const budgets = sqliteTable(
     // in effect, and earlier months keep theirs. Undo writes one for a Proposal that gave a Category
     // its first Budget in an earlier month (spec 08, Lifecycle). Its amount is 0.
     noBudget: integer("no_budget", { mode: "boolean" }).notNull().default(false),
+    // The AI's one-sentence reason for an "AI draft" Budget (spec 05, The AI's part in a draft),
+    // with each Member's name in place of their label. Null for every other Budget.
+    reason: text("reason"),
   },
   (table) => [index("budgets_takes_effect").on(table.takesEffect)],
 );
@@ -1547,6 +1550,9 @@ export const proposalBudgets = sqliteTable(
     category: text("category").notNull(),
     // Whole cents: per month for a monthly Budget, per calendar year for a yearly one.
     amount: cents("amount").notNull(),
+    // The AI's one-sentence reason for this Category, from a Budget tailoring run, with each
+    // Member's name in place of their label. Null from Chat and the Monthly review.
+    reason: text("reason"),
     appliedBudgetId: integer("applied_budget_id").references(() => budgets.id, {
       onDelete: "set null",
     }),
@@ -1574,4 +1580,31 @@ export const householdSummary = sqliteTable(
     builtAt: moment("built_at").notNull(),
   },
   (table) => [check("household_summary_one_row", sql`${table.id} = 1`)],
+);
+
+// Budget tailoring runs (spec 05, Which Proposals exist; spec 08, Runs that reuse these uses): the
+// Tailoring run when an AI provider is set up after the first draft, and the Goal run when a Goal
+// is added or its words change. A run waits here until its one AI call ends, so it outlasts an AI
+// retry, a pause such as the AI cost cap, and a restart. A Goal run is deleted when it ends. The
+// Tailoring run is kept, with endedAt, so it runs once.
+export const budgetTailoringRuns = sqliteTable(
+  "budget_tailoring_runs",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kind: text("kind", { enum: ["Tailoring", "Goal"] }).notNull(),
+    // A Goal run's Goal. Deleting the Goal deletes its run.
+    goalId: text("goal_id").references(() => goals.id, { onDelete: "cascade" }),
+    requestedAt: moment("requested_at").notNull(),
+    // How many times the run threw an error other than an AI error. At the cap, the run ends.
+    failedTries: integer("failed_tries").notNull().default(0),
+    // When the Tailoring run ended: its AI call answered, or the first draft took the AI's figures.
+    endedAt: moment("ended_at"),
+  },
+  (table) => [
+    index("budget_tailoring_runs_goal_id").on(table.goalId),
+    // The Tailoring run is stored once ever: at most one row.
+    uniqueIndex("budget_tailoring_runs_one_tailoring")
+      .on(table.kind)
+      .where(sql`${table.kind} = 'Tailoring'`),
+  ],
 );

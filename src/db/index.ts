@@ -111,6 +111,15 @@ export {
   type TransactionPage,
 } from "./bank-data.ts";
 export {
+  countTailoringRunFailure,
+  dropTailoringRun,
+  endTailoringRun,
+  listWaitingTailoringRuns,
+  requestTailoringRun,
+  type StoredTailoringRun,
+  type TailoringRunRequest,
+} from "./budget-tailoring.ts";
+export {
   type BudgetInputs,
   countMonthStartFailure,
   type DraftAcceptance,

@@ -31,7 +31,7 @@ export type ProposalBudgetRow = StoredProposalBudget & { replacedAmount: number 
 export type NewProposal = Pick<
   StoredProposal,
   "kind" | "source" | "runId" | "reason" | "goalId" | "goalAmount" | "words" | "createdAt"
-> & { budgets: { category: string; amount: number }[] };
+> & { budgets: { category: string; amount: number; reason?: string | null }[] };
 
 // What accepting a Goal Proposal set, for Undo: a Goal amount and its start, with what the Goal held
 // before; or the words of the new Goal it created.

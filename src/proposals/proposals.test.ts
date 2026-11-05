@@ -115,7 +115,7 @@ describe("Proposals", () => {
   };
 
   const budgetChange = (
-    budgets: { category: string; amount: number }[],
+    budgets: { category: string; amount: number; reason?: string }[],
     fields: Partial<ProposalInput> = {},
   ): ProposalInput =>
     ({
@@ -413,6 +413,30 @@ describe("Proposals", () => {
       );
       // A word that only holds a name passes.
       await shown(reason("Clothes purchased this fall were mostly one-offs."));
+    });
+
+    it("shows a Budget tailoring line's own reason after its change, and refuses one that names a company", async () => {
+      await refusedWith(
+        budgetChange([
+          { category: "Clothing", amount: $(150), reason: "Clothes cost less at Wells Fargo." },
+        ]),
+        GUARDRAIL.company,
+      );
+      const id = await shown(
+        budgetChange([
+          { category: "Restaurants", amount: $(480), reason: "Takeout is steady." },
+          { category: "Clothing", amount: $(150) },
+        ]),
+      );
+
+      expect(
+        (await openProposals(bank.database, NOW)).find((each) => each.id === id),
+      ).toMatchObject({
+        changes: [
+          "Restaurants Budget: $600 → $480. Takeout is steady.",
+          "Clothing Budget: $200 → $150",
+        ],
+      });
     });
 
     it("matches each shipped name in its own words", () => {

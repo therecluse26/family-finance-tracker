@@ -7,6 +7,7 @@ import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
 import { MonthStartJob } from "../budgets/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
+import { BudgetTailoringJob } from "../tailoring/index.ts";
 import { UpdateCheckJob } from "../updates/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
 import type { ScheduledTask } from "./scheduler.ts";
@@ -18,6 +19,7 @@ export { TickJob } from "./sidequest.ts";
 export {
   AiRetryJob,
   BackupJob,
+  BudgetTailoringJob,
   CpiFetchJob,
   MonthStartJob,
   ProvisionalResultsJob,
@@ -44,6 +46,9 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // Household time (spec 05, When the app drafts). A failed run tries again the next day, up to its
   // cap. On other days its job finds the month done.
   { name: "month start", schedule: daily("00:10"), job: MonthStartJob },
+  // Runs each waiting Budget tailoring run once a day, such as one paused at the AI cost cap until
+  // the 1st (spec 08, The AI cost cap). With no run waiting, its job makes no AI call and no write.
+  { name: "budget tailoring", schedule: daily("00:20"), job: BudgetTailoringJob, quiet: true },
   // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no
   // request.
   { name: "update check", schedule: daily("05:00"), job: UpdateCheckJob },

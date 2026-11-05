@@ -136,7 +136,8 @@ function changeOf(stored: unknown): GoalChange | null {
   return null;
 }
 
-const readingOf = (goal: StoredGoal): GoalReading => ({
+// A stored Goal's reading, as the goals module reads it.
+export const readingOf = (goal: StoredGoal): GoalReading => ({
   target: targetOf(goal.target),
   change: changeOf(goal.change),
   deadline: goal.deadline,
@@ -393,6 +394,32 @@ export async function startGoal(
     ...start,
   });
   return stored ? { goalAmount, startsOn: facts.today } : "no active Goal";
+}
+
+// What a Goal amount Proposal for an active Goal reads (spec 05, Progress): the Goal's kind, the
+// reading's change, and its start if its Goal amount took effect today: the baseline of a spend
+// less Goal, the balance of a save Goal, or what the loan owes. Undefined for a Goal that is not
+// active or has no target, and when the loan or its balance is not known.
+export async function goalStartToday(
+  database: Database,
+  id: string,
+  now = new Date(),
+): Promise<
+  | {
+      kind: GoalKind;
+      change: GoalChange | null;
+      startBalance: number | null;
+      baseline: number | null;
+    }
+  | undefined
+> {
+  const goal = await readGoal(database, id);
+  if (goal === undefined || goal.status !== "active") return undefined;
+  const { target, change } = readingOf(goal);
+  if (target === null) return undefined;
+  const facts = new Facts(database, now, await householdDay(database, now));
+  const start = await startOf(facts, goal, target);
+  return start === undefined ? undefined : { kind: kindOf(target), change, ...start };
 }
 
 // True when a complete calendar month the Goal was active for the whole of ended at or under the
