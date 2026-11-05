@@ -113,8 +113,13 @@ export const STATUS_ICON: Record<StatusTone, string> = {
 // The words each tone may show.
 export type StatusWord<Tone extends StatusTone> = {
   critical: "Over Budget" | `${string} over`;
-  serious: "On pace to go over" | `on pace for ${string}` | "Behind" | "Worth acting on";
-  good: "On track" | "under Budget" | "Done" | "Good news";
+  serious:
+    | "On pace to go over"
+    | `${number} on pace to go over`
+    | `on pace for ${string}`
+    | "Behind"
+    | "Worth acting on";
+  good: "On track" | "on track" | "under Budget" | "Done" | "Good news";
   accent: "Heads up";
   muted: "about usual";
 }[Tone];

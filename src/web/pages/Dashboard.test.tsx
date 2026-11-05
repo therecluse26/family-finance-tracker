@@ -3,23 +3,32 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { compile } from "tailwindcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConnectionView } from "../../server/bank-views.ts";
-import type { BudgetsView, MonthBudgetView } from "../../server/budgets-views.ts";
+import type { ConnectionView, NumberTilesView } from "../../server/bank-views.ts";
+import type {
+  BudgetStatusView,
+  BudgetsView,
+  MonthBudgetView,
+  UsualMonthView,
+} from "../../server/budgets-views.ts";
 import type { NoticeView } from "../../server/notice-views.ts";
 import {
+  changeAgainstUsual,
   type DashboardData,
   dashboardMonth,
+  groupBars,
   headerLine,
   leftText,
   paceLine,
   retryHistoryJobs,
+  statusLines,
+  usualMonthLine,
 } from "../dashboard.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
-import { DashboardReport } from "./Dashboard.tsx";
+import { DashboardReport, StatusLineList } from "./Dashboard.tsx";
 
-// The dashboard (spec 07, The dashboard; Header and status lines; 2. Left to spend), drawn from
-// its requests' answers. The numbers themselves are checked on the demo household, through the
-// app's HTTP interface, in src/server/dashboard-page.test.ts.
+// The dashboard (spec 07, The dashboard; Header and status lines; 2. Left to spend; 4. Number
+// tiles; 5. "A usual month"), drawn from its requests' answers. The numbers themselves are checked
+// on the demo household, through the app's HTTP interface, in src/server/dashboard-page.test.ts.
 
 const ZONE = "America/New_York";
 // Oct 20, 2026, noon in New York.
@@ -101,6 +110,44 @@ const BUDGETS: BudgetsView = {
   ],
 };
 
+const tile = (amount: number, usual: number | null) => ({
+  amount,
+  usual,
+  trend: [{ at: "2026-09", amount: usual ?? 0 }],
+});
+
+// September's Spending $120 above its usual, Income at its usual, Cash on hand $655 below, and
+// Debt $200 above, with two Manual loans.
+const NUMBER_TILES: NumberTilesView = {
+  lastMonth: "2026-09",
+  spending: tile(412_000, 400_000),
+  income: tile(650_000, 650_000),
+  cashOnHand: tile(1_234_500, 1_300_000),
+  debt: { ...tile(820_000, 800_000), estimatedLoans: 2 },
+};
+
+const bars = (spending: number, budget: number | null) => [
+  { month: "2026-09", spending, budget: null },
+  { month: "2026-10", spending, budget },
+];
+
+const USUAL_MONTH: UsualMonthView = {
+  usual: 300_000,
+  groups: [
+    {
+      categoryGroup: "Bills",
+      categories: ["Housing", "Utilities"],
+      bars: bars(150_000, 200_000),
+    },
+    {
+      categoryGroup: "Shopping",
+      categories: ["Groceries", "Superstores", "Clothing"],
+      bars: bars(36_000, 110_000),
+    },
+    { categoryGroup: "Transportation", categories: ["Gas"], bars: bars(0, null) },
+  ],
+};
+
 const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   timeZone: ZONE,
   month: dashboardMonth(NOW, ZONE),
@@ -108,12 +155,20 @@ const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   history: { waitEnded: true, aiMayRun: true, loading: [] },
   notices: [],
   budgets: BUDGETS,
+  numberTiles: NUMBER_TILES,
+  usualMonth: USUAL_MONTH,
   ...fields,
 });
 
-function render(shown: DashboardData): string {
+function render(shown: DashboardData, openGroup?: string): string {
   const page = (
-    <DashboardReport data={shown} onClose={() => {}} onRetry={() => {}} onChanged={() => {}} />
+    <DashboardReport
+      data={shown}
+      onClose={() => {}}
+      onRetry={() => {}}
+      onChanged={() => {}}
+      {...(openGroup === undefined ? {} : { openGroup })}
+    />
   );
   const router = createMemoryRouter([{ path: "/", element: page }], { initialEntries: ["/"] });
   return renderToString(<RouterProvider router={router} />);
@@ -131,6 +186,13 @@ function slotText(html: string, slot: string): string {
   const match = new RegExp(`<(\\w+)[^>]*data-slot="${slot}"[^>]*>(.*?)</\\1>`, "s").exec(html);
   if (match === null) throw new Error(`No data-slot="${slot}".`);
   return text(match[2] ?? "");
+}
+
+// The HTML inside the element with `data-slot`, which must hold no element of its own tag.
+function slotHtml(html: string, slot: string): string {
+  const match = new RegExp(`<(\\w+)[^>]*data-slot="${slot}"[^>]*>(.*?)</\\1>`, "s").exec(html);
+  if (match === null) throw new Error(`No data-slot="${slot}".`);
+  return match[2] ?? "";
 }
 
 // The words of each <li> in the list labelled `label`.
@@ -266,11 +328,29 @@ describe("the dashboard's status lines", () => {
       "● Your history is ready Close",
     ]);
     const buttons = buttonsOf(
-      <DashboardReport data={shown} onClose={() => {}} onRetry={onRetry} onChanged={() => {}} />,
+      <StatusLineList
+        lines={statusLines(shown.notices, shown.connections, shown.history, shown.month.today)}
+        onClose={() => {}}
+        onRetry={onRetry}
+        onChanged={() => {}}
+      />,
     );
     expect([...buttons.keys()]).toEqual(["Retry", "Close"]);
     buttons.get("Retry")?.();
     expect(onRetry).toHaveBeenCalledTimes(1);
+
+    // The page hands its own Retry to those status lines.
+    const page = DashboardReport({
+      data: shown,
+      onClose: () => {},
+      onRetry,
+      onChanged: () => {},
+    });
+    const parts = isValidElement<{ children?: ReactNode }>(page)
+      ? [page.props.children].flat()
+      : [];
+    const lines = parts.find((part) => isValidElement(part) && part.type === StatusLineList);
+    expect(isValidElement<{ onRetry?: unknown }>(lines) && lines.props.onRetry).toBe(onRetry);
   });
 });
 
@@ -388,15 +468,205 @@ describe("Left to spend", () => {
   });
 });
 
+// The `href` of each link in `html`, in order.
+const hrefs = (html: string) =>
+  [...html.matchAll(/<a [^>]*href="([^"]*)"/g)].map((match) =>
+    (match[1] ?? "").replace(/&amp;/g, "&"),
+  );
+
+describe("the number tiles", () => {
+  it("shows each number, its direction against usual, the estimated loans, and where each opens", () => {
+    const html = render(data());
+    const tiles = /<ul aria-label="Number tiles"[^>]*>(.*?)<\/ul>/s.exec(html)?.[1];
+
+    expect(listItems(html, "Number tiles")).toEqual([
+      "Spending in September $4,120 ▲ $120 above usual",
+      "Income in September $6,500 ● about usual",
+      "Cash on hand $12,345 ▼ $655 below usual",
+      "Debt $8,200 ▲ $200 above usual Debt includes 2 estimated loans",
+    ]);
+    expect(hrefs(tiles ?? "")).toEqual([
+      "/top-merchants",
+      "/transactions?type=Income&month=2026-09",
+      "/accounts",
+      "/accounts",
+    ]);
+    // More Spending or Debt is bad (orange); less Cash on hand is bad too; no change is grey.
+    expect(tiles).toContain('class="block text-sm text-orange-700">▲ $120 above usual');
+    expect(tiles).toContain('class="block text-sm text-gray-500">● about usual');
+    expect(tiles).toContain('class="block text-sm text-orange-700">▼ $655 below usual');
+  });
+
+  it("says about usual within 2% of the usual, either way", () => {
+    expect(changeAgainstUsual(102_000, 100_000)).toBe(0);
+    expect(changeAgainstUsual(98_000, 100_000)).toBe(0);
+    expect(changeAgainstUsual(102_001, 100_000)).toBe(2_001);
+    expect(changeAgainstUsual(97_999, 100_000)).toBe(-2_001);
+    // Debt's usual is what is owed; a usual of $0 has no band.
+    expect(changeAgainstUsual(0, 0)).toBe(0);
+    expect(changeAgainstUsual(5_000, 0)).toBe(5_000);
+  });
+
+  it("shows no direction and no note before a complete month, and no note with no Manual loan", () => {
+    const html = render(
+      data({
+        numberTiles: {
+          ...NUMBER_TILES,
+          spending: tile(0, null),
+          debt: { ...tile(820_000, null), estimatedLoans: 0 },
+        },
+      }),
+    );
+    const [spending, , , debt] = listItems(html, "Number tiles");
+
+    expect(spending).toBe("Spending in September $0");
+    expect(debt).toBe("Debt $8,200");
+  });
+});
+
+// A monthly Budget in October, with its Spending, projection, and status.
+const monthly = (
+  category: string,
+  categoryGroup: string,
+  amount: number,
+  spending: number,
+  projected: number,
+  status: BudgetStatusView,
+  context: string | null = null,
+): MonthBudgetView => ({
+  category,
+  categoryGroup,
+  amount,
+  period: "monthly",
+  takesEffect: "2026-10",
+  source: "formula",
+  setBy: null,
+  pinned: categoryGroup === "Bills" ? false : null,
+  spending,
+  projected,
+  status,
+  shareOfYear: null,
+  context,
+});
+
+// Shopping: Groceries Over Budget, Clothing On pace, and Superstores with no Budget. Bills: Housing
+// On pace, with its Benchmark context, and Utilities on track.
+const USUAL_BUDGETS: BudgetsView = {
+  ...BUDGETS,
+  budgets: [
+    monthly(
+      "Housing",
+      "Bills",
+      180_000,
+      140_000,
+      185_000,
+      "On pace",
+      "Housing is 41% of Income; typical is 33%",
+    ),
+    monthly("Utilities", "Bills", 20_000, 10_000, 15_000, "on track"),
+    monthly("Groceries", "Shopping", 50_000, 61_000, 80_000, "Over Budget"),
+    monthly("Clothing", "Shopping", 20_000, 15_000, 26_000, "On pace"),
+  ],
+  unbudgeted: [
+    { category: "Superstores", categoryGroup: "Shopping", spending: 4_000, projected: 6_000 },
+  ],
+  groups: [
+    { ...group("Bills", 200_000, 150_000, 200_000), overBudget: 0, onPace: 1, status: "On pace" },
+    {
+      ...group("Shopping", 70_000, 80_000, 112_000),
+      overBudget: 1,
+      onPace: 1,
+      status: "Over Budget",
+    },
+    group("Transportation", 0, null, null),
+  ],
+};
+
+describe('"A usual month"', () => {
+  it("shows the usual, the month's pace against it, and each group's Spending, Budget, and status", () => {
+    const html = render(data({ budgets: USUAL_BUDGETS }));
+
+    expect(slotText(html, "usual")).toBe("$3,000");
+    // On pace for $3,120 against a usual of $3,000: $120 above, past the 2% band.
+    expect(slotText(html, "usual-line")).toBe("October is on pace for $3,120, $120 above usual");
+    expect(html).toContain('class="text-orange-700" data-slot="usual-line"');
+    expect(listItems(html, "Category groups")).toEqual([
+      "Bills $1,500 of $2,000 ◆ 1 on pace to go over",
+      "Shopping $800 of $700 ▲ 1 over",
+      "Transportation $0, no Budget",
+    ]);
+    // No group's Budgets show until a Member taps a group.
+    expect(html).not.toContain('data-slot="group-budgets"');
+  });
+
+  it("words the pace line below usual and about usual", () => {
+    const month = dashboardMonth(NOW, ZONE);
+    expect(usualMonthLine(month, 290_000, 300_000)).toEqual({
+      tone: "good",
+      text: "October is on pace for $2,900, $100 below usual",
+    });
+    expect(usualMonthLine(month, 306_000, 300_000)).toEqual({
+      tone: "muted",
+      text: "October is on pace for $3,060, about usual",
+    });
+    expect(usualMonthLine(month, 306_000, null)).toEqual({
+      tone: "muted",
+      text: "October is on pace for $3,060",
+    });
+  });
+
+  it("marks this month's bar and draws no Budget line before the first draft", () => {
+    const shopping = USUAL_MONTH.groups[1];
+    if (shopping === undefined) throw new Error("No Shopping group.");
+
+    expect(groupBars(shopping, dashboardMonth(NOW, ZONE))).toEqual([
+      { month: "2026-09", label: "Sep 2026", spending: 36_000, budget: null, current: false },
+      { month: "2026-10", label: "Oct 2026", spending: 36_000, budget: 110_000, current: true },
+    ]);
+  });
+
+  it("opens a group's Budgets worst first, each row opening its Transactions, with Close", () => {
+    const html = render(data({ budgets: USUAL_BUDGETS }), "Shopping");
+    const panel = slotHtml(html, "group-budgets");
+
+    expect(text(panel)).toMatch(/^Shopping Budgets Close /);
+    expect(listItems(panel, "Shopping Budgets")).toEqual([
+      "Groceries $610 / $500 ▲ $110 over",
+      "Clothing $150 / $200 ◆ on pace for $260",
+      "Superstores $40 no Budget",
+    ]);
+    expect(hrefs(panel)).toEqual([
+      "/transactions?category=Groceries&month=2026-10",
+      "/transactions?category=Clothing&month=2026-10",
+      "/transactions?category=Superstores&month=2026-10",
+    ]);
+    // Each flexible row with a Budget has a meter with a "today" tick.
+    expect(panel.match(/data-slot="row-meter"/g)).toHaveLength(2);
+    expect(panel.match(/data-slot="today"/g)).toHaveLength(2);
+  });
+
+  it("gives Bills rows their Benchmark context and no today tick", () => {
+    const panel = slotHtml(render(data({ budgets: USUAL_BUDGETS }), "Bills"), "group-budgets");
+
+    expect(listItems(panel, "Bills Budgets")).toEqual([
+      "Housing $1,400 / $1,800 ◆ on pace for $1,850 Housing is 41% of Income; typical is 33%",
+      "Utilities $100 / $200",
+    ]);
+    expect(panel.match(/data-slot="row-meter"/g)).toHaveLength(2);
+    expect(panel).not.toContain('data-slot="today"');
+  });
+});
+
 // --- Layout at a screen width, from the page's own Tailwind classes ----------------------------
 
-type Rule = { minWidth: number; className: string; body: string };
+type Rule = { minWidth: number; minBox: number; className: string; body: string };
 
-// The class rules in Tailwind's CSS, each with the screen width it needs: 0, or the N of an
-// `@media (width >= Npx)` around it.
+// The class rules in Tailwind's CSS, each with the screen width it needs (0, or the N of an
+// `@media (width >= Npx)` around it) and the box width it needs (0, or the N of an
+// `@container (width >= Npx)` around it).
 function rulesOf(css: string): Rule[] {
   const rules: Rule[] = [];
-  const walk = (block: string, minWidth: number) => {
+  const walk = (block: string, minWidth: number, minBox: number) => {
     let at = 0;
     while (true) {
       const open = block.indexOf("{", at);
@@ -415,30 +685,33 @@ function rulesOf(css: string): Rule[] {
       ).trim();
       const body = block.slice(open + 1, end - 1);
       const media = /^@media \(width >= (\d+)px\)$/.exec(head);
-      if (media !== null) walk(body, Number(media[1]));
+      const container = /^@container \(width >= (\d+)px\)$/.exec(head);
+      if (media !== null) walk(body, Number(media[1]), minBox);
+      else if (container !== null) walk(body, minWidth, Number(container[1]));
       else if (head.startsWith(".")) {
-        rules.push({ minWidth, className: head.slice(1).replace(/\\(.)/g, "$1"), body });
+        rules.push({ minWidth, minBox, className: head.slice(1).replace(/\\(.)/g, "$1"), body });
       }
       at = end;
     }
   };
-  walk(css, 0);
+  walk(css, 0, 0);
   return rules;
 }
 
-// The CSS properties each element with a data-slot gets at a screen width.
+// The CSS properties each element with a data-slot gets at a screen width, inside a box `box` px
+// wide (its nearest `@container`).
 async function layoutOf(html: string) {
   const all = [...html.matchAll(/class="([^"]*)"/g)].flatMap((match) =>
     (match[1] ?? "").split(/\s+/),
   );
   const rules = rulesOf((await compile("@tailwind utilities;")).build([...new Set(all)]));
-  return (slot: string, width: number) => {
+  return (slot: string, width: number, box = 0) => {
     const classes = new Set(
       (new RegExp(`class="([^"]*)"[^>]*data-slot="${slot}"`).exec(html)?.[1] ?? "").split(/\s+/),
     );
     const style = new Map<string, string>();
     for (const rule of rules) {
-      if (rule.minWidth > width || !classes.has(rule.className)) continue;
+      if (rule.minWidth > width || rule.minBox > box || !classes.has(rule.className)) continue;
       for (const declaration of rule.body.split(";")) {
         const [property = "", ...value] = declaration.split(":");
         if (property.trim() !== "") style.set(property.trim(), value.join(":").trim());
@@ -486,5 +759,37 @@ describe("the dashboard's layout", () => {
     // 900 px is the first width with two columns.
     expect(styleOf("columns", 899).has("grid-template-columns")).toBe(false);
     expect(styleOf("columns", 900).get("grid-template-columns")).toBe("minmax(16rem,22rem) 1fr");
+  });
+
+  // The width inside the number tiles box and "A usual month" box, measured in Chromium inside the
+  // Shell at each screen width. From 900 px the right column is narrower than at 375 px.
+  const BOX_AT = { 375: 309, 900: 210, 1050: 360, 1200: 510 } as const;
+  const columns = (count: number) => `repeat(${count}, minmax(0, 1fr))`;
+
+  it("sizes the tiles and the Category groups by their box, not by the screen", async () => {
+    const html = render(data());
+    const styleOf = await layoutOf(html);
+
+    for (const box of ["number-tiles", "usual-month"]) {
+      expect(styleOf(box, 375).get("container-type")).toBe("inline-size");
+    }
+    // The four number tiles: two by two in a narrow box, four in a row from a 480 px box. At
+    // 900 px each tile in a row of four would be 47 px, too narrow for its amount.
+    expect(styleOf("tiles", 375, BOX_AT[375]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 900, BOX_AT[900]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 1200, BOX_AT[1200]).get("grid-template-columns")).toBe(columns(4));
+    expect(styleOf("tiles", 1200, 479).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 1200, 480).get("grid-template-columns")).toBe(columns(4));
+    // No screen width alone moves them.
+    expect(styleOf("tiles", 1920).get("grid-template-columns")).toBe(columns(2));
+
+    // The Category groups: one column in the 900 px right column, two on a phone, three in a
+    // wide box.
+    expect(styleOf("groups", 900, BOX_AT[900]).get("grid-template-columns")).toBe(columns(1));
+    expect(styleOf("groups", 375, BOX_AT[375]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("groups", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("groups", 1200, BOX_AT[1200]).get("grid-template-columns")).toBe(columns(3));
+    expect(styleOf("groups", 1920).get("grid-template-columns")).toBe(columns(1));
   });
 });

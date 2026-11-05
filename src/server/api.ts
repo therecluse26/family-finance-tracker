@@ -661,6 +661,8 @@ export const api = new Hono<ServerEnv>()
   // Spending, Income, and Saving by month, by Category, and by Category group. Posted Transactions
   // only.
   .get("/totals", async (c) => c.json({ months: await c.var.moneyMovement.totals() }))
+  // The dashboard's four number tiles (spec 07, 4. Number tiles), on the Household's date.
+  .get("/number-tiles", async (c) => c.json(await c.var.bank.numberTiles()))
   .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
   // Progress per Connection while its history loads (spec 02, First history load).
   .get("/history-status", async (c) => c.json(await c.var.bank.historyStatus()))
@@ -948,6 +950,15 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Write the month as YYYY-MM." }, 400);
     }
     return c.json(await c.var.budgets.budgets(month));
+  })
+  // "A usual month" on the dashboard (spec 07, 5. "A usual month"): each Category group's
+  // Spending and Budget in the 12 complete months before the month and in the month so far.
+  .get("/usual-month", async (c) => {
+    const month = c.req.query("month");
+    if (month === undefined || !MONTH.test(month)) {
+      return c.json({ error: "Write the month as YYYY-MM." }, 400);
+    }
+    return c.json(await c.var.budgets.usualMonth(month));
   })
   // A Member's edit of any Budget (spec 05, Changing Budgets): it takes effect this month, or for a
   // yearly Budget the whole current year. An edited Bills Budget is pinned.

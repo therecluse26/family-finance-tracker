@@ -163,8 +163,32 @@ export type UnconnectedAccountBody = {
   balance: number | null;
 };
 
+// A number tile (spec 07, 4. Number tiles), in whole cents: its number, its 12-month usual, and
+// its trend line. The usual is null before the first complete month of history.
+export type NumberTileView = {
+  amount: number;
+  usual: number | null;
+  // Up to 12 points, oldest first. Each is a month, YYYY-MM, or for today's balance a date,
+  // YYYY-MM-DD.
+  trend: { at: string; amount: number }[];
+};
+
+// The four number tiles. Spending and Income are the last complete month's; Cash on hand and Debt
+// are today's current balances. Debt is what is owed, so it is positive.
+export type NumberTilesView = {
+  // The last complete month, YYYY-MM.
+  lastMonth: string;
+  spending: NumberTileView;
+  income: NumberTileView;
+  cashOnHand: NumberTileView;
+  // How many Manual loans the Debt counts: their balances are the app's own estimates.
+  debt: NumberTileView & { estimatedLoans: number };
+};
+
 export type BankViews = {
   accounts(): Promise<AccountView[]>;
+  // The dashboard's four number tiles, on the Household's date.
+  numberTiles(): Promise<NumberTilesView>;
   // A Member closes or reopens any Account. Undefined when no Account has the ID.
   closeAccount(id: string): Promise<AccountView | undefined>;
   reopenAccount(id: string): Promise<AccountView | undefined>;

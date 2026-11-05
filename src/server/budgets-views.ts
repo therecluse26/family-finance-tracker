@@ -76,8 +76,30 @@ export type BudgetsView = {
 
 export type DraftAcceptanceView = { acceptedAt: Date; acceptedBy: string | null };
 
+// "A usual month" (spec 07, 5. "A usual month"). It counts the same Categories as Left to spend:
+// every one but Travel, and Gifts and donations. A month before the first posted Transaction is
+// left out.
+export type UsualMonthView = {
+  // Whole cents: the median of the Spending of the 12 complete months before the month, or null
+  // before the first complete month of history.
+  usual: number | null;
+  // Each Category group, in the group order.
+  groups: {
+    categoryGroup: string;
+    // The Categories the box counts, in Category list order.
+    categories: string[];
+    // The 12 complete months, then the month so far, oldest first. Whole cents: the group's
+    // Spending, and its Budget in effect that month, the sum of its Categories' monthly Budgets.
+    // The Budget is null before the first draft's month, and when no Category in the group has a
+    // monthly Budget.
+    bars: { month: string; spending: number; budget: number | null }[];
+  }[];
+};
+
 export type BudgetRoutes = {
   budgets(month: string): Promise<BudgetsView>;
+  // "A usual month" for a month written YYYY-MM.
+  usualMonth(month: string): Promise<UsualMonthView>;
   // A Member's edit, or undefined when the Category has no Budget.
   edit(category: string, amount: number, memberId: string): Promise<BudgetView | undefined>;
   followTheBill(

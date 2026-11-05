@@ -5,10 +5,53 @@ import {
   budgetsForMonth,
   editBudget,
   followTheBill,
+  YEARLY_CATEGORIES,
 } from "../budgets/index.ts";
-import { categoryGroupOf } from "../categories/index.ts";
+import { CATEGORY_GROUPS, type Category, categoryGroupOf } from "../categories/index.ts";
 import type { Database } from "../db/index.ts";
-import type { BudgetRoutes } from "./budgets-views.ts";
+import { totalsByMonth } from "../money-movement/index.ts";
+import type { BudgetRoutes, UsualMonthView } from "./budgets-views.ts";
+import { median, monthsBefore } from "./usual.ts";
+
+// "A usual month" (spec 07, 5. "A usual month"): each Category group's Spending and Budget in the
+// 12 complete months before `month` and in `month` so far, in the Categories Left to spend counts.
+// A past month uses the Budget in effect that month.
+async function usualMonth(database: Database, month: string): Promise<UsualMonthView> {
+  const totals = await totalsByMonth(database);
+  const first = totals[0]?.month;
+  const byMonth = new Map(totals.map((each) => [each.month, each.byCategory]));
+  const months = [...monthsBefore(month, 12), month].filter(
+    (each) => each === month || (first !== undefined && each >= first),
+  );
+  const budgetsIn = new Map<string, Awaited<ReturnType<typeof budgetsForMonth>>["budgets"]>();
+  for (const each of months) budgetsIn.set(each, (await budgetsForMonth(database, each)).budgets);
+
+  const groups = CATEGORY_GROUPS.map((group) => {
+    const categories: Category[] = group.categories
+      .map(({ name }) => name)
+      .filter((name) => !YEARLY_CATEGORIES.includes(name));
+    const bars = months.map((each) => {
+      const byCategory = byMonth.get(each) ?? {};
+      const monthly = (budgetsIn.get(each) ?? []).filter(
+        (budget) => budget.categoryGroup === group.name && budget.period === "monthly",
+      );
+      return {
+        month: each,
+        spending: categories.reduce((sum, category) => sum + (byCategory[category] ?? 0), 0),
+        budget:
+          monthly.length === 0 ? null : monthly.reduce((sum, budget) => sum + budget.amount, 0),
+      };
+    });
+    return { categoryGroup: group.name as string, categories: categories as string[], bars };
+  });
+  const complete = months.filter((each) => each < month);
+  const spendingIn = (each: string) =>
+    groups.reduce(
+      (sum, group) => sum + (group.bars.find((bar) => bar.month === each)?.spending ?? 0),
+      0,
+    );
+  return { usual: median(complete.map(spendingIn)), groups };
+}
 
 // Each monthly Budget's Benchmark context line, by Category (spec 05, Context for Bills Budgets).
 // Only a Bills Budget has a context Benchmark, so the Benchmarks are read only when one is in
@@ -81,6 +124,7 @@ export function budgetRoutes(database: Database): BudgetRoutes {
         }),
       };
     },
+    usualMonth: (month) => usualMonth(database, month),
     edit: (category, amount, memberId) => editBudget(database, { category, amount, memberId }),
     followTheBill: (category, memberId) => followTheBill(database, { category, memberId }),
     acceptAll: (memberId) => acceptDraft(database, memberId),
