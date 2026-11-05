@@ -1,6 +1,7 @@
 import { generateText, jsonSchema, stepCountIs, tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as z from "zod";
 import { addUnconnectedAccount, loginTables } from "../db/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
 import { createLogger } from "../log.ts";
@@ -11,7 +12,7 @@ import { householdAi } from "./household-ai.ts";
 import type { OutboundCall } from "./outbound.ts";
 import { memberPrice } from "./prices.ts";
 import { PrivacyRefusal } from "./privacy.ts";
-import type { AiCall } from "./prompt.ts";
+import { type AiCall, aiTool } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { aiSettings } from "./settings.ts";
 import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
@@ -919,29 +920,194 @@ describe("the one AI call path", () => {
     ]);
   });
 
-  it("takes no tools and no response schema, so none goes out", async () => {
-    const ai = await connect("anthropic");
-    const parameters = jsonSchema({ type: "object", properties: { name: { const: "Dana" } } });
-
-    await expect(
-      // @ts-expect-error An AI call takes no tools.
-      ai.generate({ ...call, tools: { payers: tool({ inputSchema: parameters }) } }),
-    ).rejects.toThrow(TypeError);
-    await expect(
-      // @ts-expect-error An AI call takes no response schema.
-      ai.generate({ ...call, responseFormat: { type: "json", schema: parameters } }),
-    ).rejects.toThrow(TypeError);
-    await expect(
-      ai.generate({
-        ...call,
-        // @ts-expect-error A message holds only its role and text.
-        changes: [{ role: "user", text: "Hi", providerOptions: { anthropic: {} } }],
+  describe("Chat's tools", () => {
+    // A lookup whose result holds a Member's name split by a newline, a last 4, and a card number
+    // split by tabs, as app-built data.
+    const payers = aiTool({
+      description: "Who paid what in a month",
+      input: z.object({ month: z.string() }),
+      run: async ({ month }) => ({
+        month,
+        payers: [{ who: "Ravi\nOkafor", memo: "card 4111\t1111\t1111\t1111", amount: "12.50" }],
+        last4: "4821",
       }),
-    ).rejects.toThrow(TypeError);
+    });
 
-    // Only the two checks on save.
-    expect(capture.requests).toHaveLength(2);
-    expect(await counted()).toEqual(["check on save", "check on save"]);
+    // The tool results in each request the test models got, by round.
+    const toolResults = (stub: StubModels) =>
+      stub.prompts.map((messages) =>
+        messages.flatMap((message) =>
+          message.role === "tool" && typeof message.content !== "string"
+            ? message.content.map((part) => part.output)
+            : [],
+        ),
+      );
+
+    // Test models that call `payers` until the request holds `rounds` tool results, then answer.
+    const callingPayers = (rounds: number) => {
+      const stub = new StubModels();
+      stub.callTools = (messages) =>
+        messages.filter((message) => message.role === "tool").length < rounds
+          ? [{ toolName: "payers", input: { month: "2026-10" } }]
+          : [];
+      return stub;
+    };
+
+    it("runs a tool the AI calls, and sends its result back filtered, with no escape the AI reads differently", async () => {
+      const stub = callingPayers(1);
+      const ai = await connect("anthropic", stub.makeModels);
+
+      expect(await ai.generate({ ...call, tools: { payers } })).toEqual({
+        ready: true,
+        text: "O",
+        output: undefined,
+      });
+
+      const [result] = toolResults(stub).at(-1) ?? [];
+      expect(result).toEqual({
+        type: "json",
+        value: {
+          month: "2026-10",
+          payers: [{ who: "Member B", memo: "card [removed]", amount: "12.50" }],
+          last4: "[removed]",
+        },
+      });
+      expect(JSON.stringify(result)).not.toMatch(/\\[^\\"]/);
+      expect(stub.offered.slice(2).map((each) => each.tools)).toEqual([["payers"], ["payers"]]);
+      expect(await counted()).toEqual(["check on save", "check on save", "chat", "chat"]);
+    });
+
+    it("runs at most 5 of the 10 tools the AI calls in one round, then offers none", async () => {
+      const stub = new StubModels();
+      stub.callTools = (messages) =>
+        messages.some((message) => message.role === "tool")
+          ? []
+          : Array.from({ length: 10 }, (_, index) => ({
+              toolName: "lookup",
+              input: { month: `2026-0${index % 9}` },
+            }));
+      stub.reply = "Done";
+      const ai = await connect("anthropic", stub.makeModels);
+      let runs = 0;
+      const lookup = aiTool({
+        description: "Who paid what in a month",
+        input: z.object({ month: z.string() }),
+        run: async () => {
+          runs += 1;
+          return { paid: "12.50" };
+        },
+      });
+
+      expect(await ai.generate({ ...call, tools: { lookup } })).toMatchObject({ text: "Done" });
+
+      expect(runs).toBe(5);
+      const results = toolResults(stub).at(-1) ?? [];
+      expect(results).toHaveLength(10);
+      expect(results.filter((result) => JSON.stringify(result).includes("12.50"))).toHaveLength(5);
+      expect(results.slice(5)).toEqual(
+        Array(5).fill({ type: "json", value: { error: "No more lookups for this question." } }),
+      );
+      expect(stub.offered.slice(2).map((each) => each.toolChoice)).toEqual(["auto", "none"]);
+    });
+
+    it("offers no tool after 5 calls in 5 rounds, so the AI answers with what it has", async () => {
+      const stub = callingPayers(99);
+      stub.reply = "Done";
+      const ai = await connect("anthropic", stub.makeModels);
+
+      expect(await ai.generate({ ...call, tools: { payers } })).toMatchObject({
+        ready: true,
+        text: "Done",
+      });
+
+      expect(stub.offered.slice(2).map((each) => each.toolChoice)).toEqual([
+        "auto",
+        "auto",
+        "auto",
+        "auto",
+        "auto",
+        "none",
+      ]);
+      expect(toolResults(stub).at(-1)).toHaveLength(5);
+    });
+
+    it("tells the AI only that a tool failed, never its error", async () => {
+      const stub = callingPayers(1);
+      const ai = await connect("anthropic", stub.makeModels);
+      const failing = aiTool({
+        description: "Who paid what in a month",
+        input: z.object({ month: z.string() }),
+        run: async () => {
+          throw new Error("SELECT * FROM transactions WHERE memo = 'Dana Whitfield 4821'");
+        },
+      });
+
+      await ai.generate({ ...call, tools: { payers: failing } });
+
+      expect(toolResults(stub).at(-1)).toEqual([
+        { type: "json", value: { error: "The lookup failed." } },
+      ]);
+    });
+
+    it("refuses tools outside Chat, tools aiTool did not make, and an optional field, so none goes out", async () => {
+      const ai = await connect("anthropic");
+      const parameters = jsonSchema({ type: "object", properties: { name: { const: "Dana" } } });
+      const optional = aiTool({
+        description: "Who paid",
+        input: z.object({ month: z.string().optional() }),
+        run: async () => ({}),
+      });
+
+      await expect(
+        ai.generate({ use: "reading a goal", task: "Read.", tools: { payers } }),
+      ).rejects.toThrow("Only Chat takes tools.");
+      await expect(
+        // @ts-expect-error A call's tools are made by aiTool.
+        ai.generate({ ...call, tools: { payers: tool({ inputSchema: parameters }) } }),
+      ).rejects.toThrow(TypeError);
+      await expect(ai.generate({ ...call, tools: { Payers: payers } })).rejects.toThrow(TypeError);
+      await expect(ai.generate({ ...call, tools: { payers: optional } })).rejects.toThrow(
+        TypeError,
+      );
+      await expect(
+        // @ts-expect-error An AI call takes no response schema.
+        ai.generate({ ...call, responseFormat: { type: "json", schema: parameters } }),
+      ).rejects.toThrow(TypeError);
+      await expect(
+        ai.generate({
+          ...call,
+          // @ts-expect-error A message holds only its role and text.
+          changes: [{ role: "user", text: "Hi", providerOptions: { anthropic: {} } }],
+        }),
+      ).rejects.toThrow(TypeError);
+
+      // Only the two checks on save.
+      expect(capture.requests).toHaveLength(2);
+      expect(await counted()).toEqual(["check on save", "check on save"]);
+    });
+
+    it("filters a tool's result as app-built data, with each text made plain first", async () => {
+      const ai = householdAi(options());
+
+      const result = await ai.toolResult({
+        who: "PAID\tWhitfield",
+        memo: "Zelle to dana.w@example.com",
+        balance: "-4821.00",
+        place: "near 10001",
+        card: "4111\n1111\n1111\n1111",
+        note: "Weekly\nshop \uD800",
+      });
+
+      expect(result).toEqual({
+        who: "PAID Member A",
+        memo: "Zelle to [removed]",
+        balance: "-[removed].00",
+        place: "near [removed]",
+        card: "[removed]",
+        note: "Weekly shop \uFFFD",
+      });
+      expect(JSON.stringify(result)).not.toMatch(/\\[^\\"]/);
+    });
   });
 
   it("sends nothing, and checks nothing on save, when it cannot read what it hides", async () => {

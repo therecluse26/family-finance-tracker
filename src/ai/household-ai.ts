@@ -4,7 +4,7 @@ import { isBackground } from "./ai-view.ts";
 import { AiCallError, type AiFailure, callModel, readPrivacyFacts } from "./call.ts";
 import { type AiPause, AiPausedError } from "./outbound.ts";
 import { privacyFilter } from "./privacy.ts";
-import { type AiCall, filterBatch } from "./prompt.ts";
+import { type AiCall, filterBatch, plainData } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
 import { type AiOptions, aiCalls, KEY_REJECTED_CONDITION, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
@@ -41,6 +41,9 @@ export type HouseholdAi = {
   forScreen(aiText: string): Promise<string>;
   // Each Account's label, such as "Ally checking", by its ID, for the text of a call.
   accountLabels(): Promise<ReadonlyMap<string, string>>;
+  // A tool's result as the AI reads it (spec 08, Privacy filter): plain JSON data, with each text
+  // made plain, then filtered as app-built text. Throws when the filter cannot pass it.
+  toolResult(data: unknown): Promise<unknown>;
 };
 
 export function householdAi(options: AiOptions): HouseholdAi {
@@ -107,5 +110,6 @@ export function householdAi(options: AiOptions): HouseholdAi {
     // The voice first, so a Member's own name stays as written.
     forScreen: async (aiText) => (await filter()).showMemberNames(plainVoice(aiText)),
     accountLabels: async () => (await filter()).accountLabels,
+    toolResult: async (data) => (await filter()).json(plainData(data)),
   };
 }

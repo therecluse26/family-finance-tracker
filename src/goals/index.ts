@@ -7,6 +7,7 @@ export {
   type GoalTarget,
   listGoalsWithProgress,
   markGoal,
+  readGoalsWithProgress,
   startGoal,
 } from "./goals.ts";
 export {

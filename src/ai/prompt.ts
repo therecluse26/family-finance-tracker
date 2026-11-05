@@ -34,10 +34,11 @@ export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 // - changes: anything else that changes, such as Alert facts, feedback, or a Chat's turns.
 // - alerts: for Alert advice, how many Alerts the call advises on, which sets its reply limit.
 // - output: the schema of a structured reply. Without it, the reply is text.
+// - tools: Chat's tools, such as the lookup tools (spec 08, Lookup tools), each made by aiTool.
+//   Only Chat takes tools.
 //
-// A call takes no tools for now: the type says so, and the call path refuses one at run time. The
-// leak check skips tool and response schemas, so the Chat ticket must build them only from
-// constants in the code, never from Household data.
+// A call takes no tool choice and no response schema of its own: the type says so, and the call
+// path refuses one at run time.
 export type AiCall<OUTPUT = undefined> = {
   use: ModelUse;
   summary?: string;
@@ -46,10 +47,37 @@ export type AiCall<OUTPUT = undefined> = {
   changes?: readonly AiMessage[];
   alerts?: number;
   output?: AiSchema<OUTPUT>;
-  tools?: never;
+  tools?: AiTools;
   toolChoice?: never;
   responseFormat?: never;
 };
+
+// One tool the AI may call. The privacy filter's final check skips each tool's input schema, so its
+// description and input schema are built only from constants in the code, such as the fixed
+// Category list, never from Household data. `run` checks its input against the schema, and answers
+// with plain JSON data that the call path makes plain and the privacy filter reads on its way out.
+export type AiTool = {
+  description: string;
+  input: z.ZodObject;
+  run(input: unknown): Promise<unknown>;
+};
+
+// The tools of one call, by name, such as search_transactions.
+export type AiTools = Readonly<Record<string, AiTool>>;
+
+// A tool whose run gets its input checked against its schema first. Optional fields are
+// .nullable(), never .optional(), as in a reply schema.
+export function aiTool<Shape extends z.ZodRawShape>(tool: {
+  description: string;
+  input: z.ZodObject<Shape>;
+  run(input: z.infer<z.ZodObject<Shape>>): Promise<unknown>;
+}): AiTool {
+  return {
+    description: tool.description,
+    input: tool.input,
+    run: async (input) => tool.run(tool.input.parse(input)),
+  };
+}
 
 // Spec 08, Limits on each call: the most reply tokens each use may take.
 const QUICK_BATCH_TOKENS = 4_000;
@@ -106,8 +134,12 @@ const CALL_KEYS: ReadonlySet<string> = new Set([
   "changes",
   "alerts",
   "output",
+  "tools",
 ]);
 const MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "text", "typed"]);
+const TOOL_KEYS: ReadonlySet<string> = new Set(["description", "input", "run"]);
+// A tool's name, as every AI provider takes it.
+const TOOL_NAME = /^[a-z][a-z_]{0,63}$/;
 // An ID's field name, such as id, transactionId, transaction_id, uuid, or accountGuid.
 const ID_FIELD = /(?:^|_)(?:id|uuid|guid)$|(?:Id|ID|Uuid|UUID|Guid|GUID)$/;
 
@@ -148,6 +180,31 @@ function everyFieldRequired(node: unknown): boolean {
   return Object.values(node).every(everyFieldRequired);
 }
 
+const isAiTool = (tool: unknown): tool is AiTool =>
+  typeof tool === "object" &&
+  tool !== null &&
+  onlyKeys(tool, TOOL_KEYS) &&
+  "description" in tool &&
+  typeof tool.description === "string" &&
+  "input" in tool &&
+  tool.input instanceof z.ZodObject &&
+  "run" in tool &&
+  typeof tool.run === "function";
+
+// Chat's tools: each made by aiTool, with a name every AI provider takes, and an input schema that
+// passes as a reply schema does.
+function checkTools(tools: unknown): void {
+  if (typeof tools !== "object" || tools === null || Array.isArray(tools)) {
+    throw new TypeError("A call's tools are an object of tools by name.");
+  }
+  for (const [name, tool] of Object.entries(tools)) {
+    if (!TOOL_NAME.test(name) || !isAiTool(tool)) {
+      throw new TypeError("Each tool is made by aiTool, under a lowercase name.");
+    }
+    checkSchema(tool.input);
+  }
+}
+
 function checkSchema(schema: unknown): void {
   if (!(schema instanceof z.ZodType)) throw new TypeError("A reply schema is a Zod schema.");
   let json: unknown;
@@ -175,8 +232,12 @@ export function checkCall(call: AiCall<unknown>): void {
     (call.batch === undefined || (Array.isArray(call.batch) && call.batch.every(isBatchItem)));
   if (!plain) {
     throw new TypeError(
-      "An AI call holds only its summary, task, batch, and text messages: no tools and no IDs.",
+      "An AI call holds only its summary, task, batch, text messages, and Chat's tools: no IDs.",
     );
+  }
+  if (call.tools !== undefined) {
+    if (call.use !== "chat") throw new TypeError("Only Chat takes tools.");
+    checkTools(call.tools);
   }
   if ((call.summary !== undefined) !== (tier === "writer")) {
     throw new TypeError("Every Writer use, and no Quick use, has the Household summary.");
@@ -220,6 +281,29 @@ const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 // A batch field's text as the AI reads it: well-formed, with a space for each control character.
 const plainField = (text: string) => text.toWellFormed().replace(CONTROL, " ");
 
+// JSON data as the AI reads it, such as a tool's result: each text and field name well-formed, with
+// a space for each control character. Its JSON then holds no escape but \" and \\, so the privacy
+// filter reads the characters the AI reads. Anything but JSON data is refused.
+export function plainData(value: unknown): unknown {
+  if (typeof value === "string") return plainField(value);
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(plainData);
+  if (typeof value === "object" && value !== null) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype === Object.prototype || prototype === null) {
+      return Object.fromEntries(
+        Object.entries(value).map(([field, item]) => [plainField(field), plainData(item)]),
+      );
+    }
+  }
+  throw new TypeError("A tool answers with plain JSON data.");
+}
+
+// Whether JSON text holds an escape other than \" and \\, such as \n, which the AI reads as another
+// character than the privacy filter read.
+export const holdsOtherEscape = (json: string) => json.replace(/\\[\\"]/g, "").includes("\\");
+
 // A Quick batch with each text value filtered on its own, before any row is written as JSON (spec
 // 08, Privacy filter). A removal then never takes a row number, a field name, or the next field
 // with it, so each row stays one JSON object with its own row number. Each value is made plain
@@ -256,7 +340,7 @@ function batchRow(row: number, item: BatchItem): string {
     typeof value === "string" ? plainField(value) : value,
   ]);
   const text = JSON.stringify(Object.fromEntries([["row", row], ...fields]));
-  if (text.replace(/\\[\\"]/g, "").includes("\\")) {
+  if (holdsOtherEscape(text)) {
     throw new TypeError("A Quick batch row's JSON holds an escape the AI reads differently.");
   }
   return text;

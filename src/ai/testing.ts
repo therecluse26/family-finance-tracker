@@ -101,8 +101,11 @@ export type StubUsage = {
 // One message of a request, as the model gets it after the privacy filter.
 export type StubMessage = {
   role: string;
-  content: string | readonly { type: string; text?: string }[];
+  content: string | readonly { type: string; text?: string; output?: unknown }[];
 };
+
+// A tool call a test model makes: the tool's name and its input.
+export type StubToolCall = { toolName: string; input: unknown };
 
 export class StubModels {
   answers: Record<AiTier, StubAnswer> = { quick: "work", writer: "work" };
@@ -111,6 +114,12 @@ export class StubModels {
   // When set, makes each reply that works from the request's messages in place of `reply`, such as
   // a Quick batch's answers to the rows it was sent.
   replyTo: ((messages: StubMessage[]) => string) | undefined;
+  // When set, a reply that works calls these tools in place of a text reply, while it returns any.
+  callTools: ((messages: StubMessage[]) => readonly StubToolCall[]) | undefined;
+  // The tools each call offered by name, and its tool choice, such as "auto" or "none".
+  readonly offered: { tools: string[]; toolChoice: string | undefined }[] = [];
+  // The messages of each request, as the model got them after the privacy filter.
+  readonly prompts: StubMessage[][] = [];
   usage: StubUsage = { noCache: 5, cacheRead: 0, cacheWrite: 0, output: 1 };
   providerMetadata: ProviderMetadata | undefined;
   readonly connections: AiConnection[] = [];
@@ -132,9 +141,19 @@ export class StubModels {
             modelId: models[tier],
             maxOutputTokens: options.maxOutputTokens,
           });
+          this.prompts.push(options.prompt as StubMessage[]);
+          this.offered.push({
+            tools: (options.tools ?? []).map((each) => each.name),
+            toolChoice: options.toolChoice?.type,
+          });
           await this.beforeAnswer();
           if (this.answers[tier] === "hang") await aborted(options.abortSignal);
-          return this.answer(tier, connection, options.prompt as StubMessage[]);
+          return this.answer(
+            tier,
+            connection,
+            options.prompt as StubMessage[],
+            options.toolChoice?.type !== "none",
+          );
         },
         doStream: async (options) => {
           this.calls.push({
@@ -181,7 +200,7 @@ export class StubModels {
     return { quick: model("quick"), writer: model("writer") };
   };
 
-  private answer(tier: AiTier, connection: AiConnection, messages: StubMessage[]) {
+  private answer(tier: AiTier, connection: AiConnection, messages: StubMessage[], mayCall = false) {
     const secrets = `${connection.apiKey ?? ""} ${connection.gatewayToken ?? ""}`;
     const headers = {
       authorization: `Bearer ${connection.apiKey ?? ""}`,
@@ -205,9 +224,21 @@ export class StubModels {
       throw Object.assign(new Error(`connect ETIMEDOUT ${secrets}`), { config: { headers } });
     }
     const { noCache, cacheRead, cacheWrite, output } = this.usage;
+    const toolCalls = (mayCall ? this.callTools?.(messages) : undefined) ?? [];
     return {
-      content: [{ type: "text" as const, text: this.replyTo?.(messages) ?? this.reply }],
-      finishReason: { unified: "length" as const, raw: "length" },
+      content:
+        toolCalls.length === 0
+          ? [{ type: "text" as const, text: this.replyTo?.(messages) ?? this.reply }]
+          : toolCalls.map((call, index) => ({
+              type: "tool-call" as const,
+              toolCallId: `call-${index + 1}`,
+              toolName: call.toolName,
+              input: JSON.stringify(call.input),
+            })),
+      finishReason:
+        toolCalls.length === 0
+          ? { unified: "length" as const, raw: "length" }
+          : { unified: "tool-calls" as const, raw: "tool_use" },
       usage: {
         inputTokens: { total: noCache + cacheRead + cacheWrite, noCache, cacheRead, cacheWrite },
         outputTokens: { total: output, text: output, reasoning: 0 },

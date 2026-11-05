@@ -360,6 +360,11 @@ export {
 } from "./steady-income.ts";
 export { claimTotpStep } from "./totp-steps.ts";
 export {
+  type FoundTransactions,
+  searchTransactions,
+  type TransactionSearch,
+} from "./transaction-search.ts";
+export {
   addUnconnectedAccount,
   assignToUnconnectedAccount,
   listAssignedMoves,

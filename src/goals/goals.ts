@@ -481,7 +481,18 @@ const unset = (kind: GoalKind): Omit<GoalProgress, "estimated"> => ({
 // Every Goal with its progress on `now`'s day, Household time: the active Goals first, then the
 // done list, then the dropped list, each oldest first. An active Goal that meets its "Done when"
 // rule is set to done today, in one write.
-export async function listGoalsWithProgress(database: Database, now = new Date()): Promise<Goal[]> {
+export function listGoalsWithProgress(database: Database, now = new Date()): Promise<Goal[]> {
+  return goalsWithProgress(database, now, true);
+}
+
+// The Goals as listGoalsWithProgress gives them, for a read that writes nothing, such as Chat's
+// lookup: an active Goal that meets its "Done when" rule shows done today, and stays active in
+// app.db until the Goals page or the next read that saves sets it.
+export function readGoalsWithProgress(database: Database, now = new Date()): Promise<Goal[]> {
+  return goalsWithProgress(database, now, false);
+}
+
+async function goalsWithProgress(database: Database, now: Date, save: boolean): Promise<Goal[]> {
   const facts = new Facts(database, now, await householdDay(database, now));
   const stored = await listGoals(database);
   const goals: Goal[] = [];
@@ -510,7 +521,9 @@ export async function listGoalsWithProgress(database: Database, now = new Date()
     });
   }
   const done = new Set(
-    await endGoals(database, met, { status: "done", endedOn: facts.today, endedBy: null }),
+    save
+      ? await endGoals(database, met, { status: "done", endedOn: facts.today, endedBy: null })
+      : met,
   );
   for (const goal of goals) {
     if (!done.has(goal.id)) continue;

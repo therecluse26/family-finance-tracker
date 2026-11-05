@@ -10,7 +10,10 @@ import {
   NoOutputGeneratedError,
   Output,
   RetryError,
+  stepCountIs,
+  type ToolSet,
   TypeValidationError,
+  tool,
   wrapLanguageModel,
 } from "ai";
 import { type Database, listAccounts, listMembersByJoinOrder } from "../db/index.ts";
@@ -19,7 +22,7 @@ import type { Logger } from "../log.ts";
 import type { AiTier, ModelCheck, TierModels } from "./ai-view.ts";
 import { costMiddleware, type OutboundCall } from "./outbound.ts";
 import { type PrivacyFacts, privacyFilter } from "./privacy.ts";
-import { type AiCall, buildPrompt } from "./prompt.ts";
+import { type AiCall, type AiTools, buildPrompt, plainData } from "./prompt.ts";
 import {
   type AiConnection,
   type AiModelMaker,
@@ -36,6 +39,18 @@ import {
 
 // Spec 08, Failures: no reply within 120 seconds is an AI error.
 const CALL_TIMEOUT_MS = 120_000;
+
+// Spec 08, Answers: at most 5 tool calls for each question, counted across every round, the calls
+// one round makes together included. After the 5th, the app offers no more tools, and the AI
+// answers with what it has, so every tool loop ends.
+const TOOL_CALLS = 5;
+
+// What the AI reads when a tool fails, in place of the tool's own error, which can hold a query and
+// its values.
+const TOOL_FAILED = { error: "The lookup failed." };
+
+// What the AI reads for a call past the 5th. The tool does not run.
+const NO_MORE_TOOLS = { error: "No more lookups for this question." };
 
 // What the filter hides, read fresh for each request, so a new Member or Account counts at once.
 export async function readPrivacyFacts(database: Database): Promise<PrivacyFacts> {
@@ -196,9 +211,35 @@ function callErrorOf(error: unknown): AiCallError | undefined {
   return networkCode(last) ? new AiCallError("network") : undefined;
 }
 
+// The AI SDK's tools for a call's tools. Each result goes out as plain JSON data, which the privacy
+// filter reads on its way out, like every other part of the request. `ran` counts the tools run for
+// this question: past the 5th, a call gets a fixed reply and runs nothing.
+function toolSet(tools: AiTools, ran: { count: number }): ToolSet {
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, each]) => [
+      name,
+      tool({
+        description: each.description,
+        inputSchema: each.input,
+        execute: async (input: unknown) => {
+          // Counted before any wait, so calls the AI makes together cannot pass the cap.
+          if (ran.count >= TOOL_CALLS) return NO_MORE_TOOLS;
+          ran.count += 1;
+          try {
+            return plainData(await each.run(input));
+          } catch {
+            return TOOL_FAILED;
+          }
+        },
+      }),
+    ]),
+  );
+}
+
 // One call with a model from privateModels: the prompt in its one order, its use's reply limit,
-// and, with a schema, a structured reply checked against it. The AI SDK makes no retry of its own:
-// background uses retry on their own schedule, and Chat and reading a Goal never retry by
+// and, with a schema, a structured reply checked against it. With tools, the AI SDK runs each tool
+// the AI calls and sends its result back, one model call each round. The AI SDK makes no retry of
+// its own: background uses retry on their own schedule, and Chat and reading a Goal never retry by
 // themselves (spec 08, Failures). Throws an AiCallError when the AI provider fails.
 export async function callModel<OUTPUT>(
   model: LanguageModel,
@@ -211,6 +252,7 @@ export async function callModel<OUTPUT>(
     () => timeout.abort(new DOMException("No reply within 120 seconds.", "TimeoutError")),
     CALL_TIMEOUT_MS,
   );
+  const ran = { count: 0 };
   try {
     const result = await generateText({
       model,
@@ -219,6 +261,17 @@ export async function callModel<OUTPUT>(
       maxOutputTokens: prompt.maxOutputTokens,
       ...(prompt.providerOptions === undefined ? {} : { providerOptions: prompt.providerOptions }),
       ...(call.output === undefined ? {} : { output: Output.object({ schema: call.output }) }),
+      ...(call.tools === undefined
+        ? {}
+        : {
+            tools: toolSet(call.tools, ran),
+            // A round with a tool call runs at least one tool until the 5th, so the loop takes at
+            // most 5 rounds of calls, then one answer.
+            stopWhen: stepCountIs(TOOL_CALLS + 1),
+            // The tools stay in the request, as an AI provider needs them to read earlier calls.
+            prepareStep: () =>
+              ran.count < TOOL_CALLS ? undefined : { toolChoice: "none" as const },
+          }),
       maxRetries: 0,
       abortSignal: timeout.signal,
     });
