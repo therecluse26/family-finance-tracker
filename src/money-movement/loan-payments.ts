@@ -26,6 +26,7 @@ import {
   type ReviewChoice,
   type ReviewItem,
   type ReviewKind,
+  reviseReviewItems,
   settleReviewItems,
 } from "../review/index.ts";
 import { type AiRun, newAiRun } from "./ai-run.ts";
@@ -150,7 +151,9 @@ async function rhythmPeers(
 }
 
 type Made = { transactionId: string; loanAccountId: string; evidence: LinkEvidence };
-type Ask = { payment: DecisionRecord; loan: StoredManualLoan };
+// An Ask that no AI answered, while AI could have, carries the no-AI mark (spec 08, Redo of no-AI
+// work), so the redo sends it to the AI once when AI is back.
+type Ask = { payment: DecisionRecord; loan: StoredManualLoan; needsAi: boolean };
 
 const evidenceOf = (now: Date, signals: string[], ai?: UnclearLoanPaymentAnswer): LinkEvidence => ({
   tier: ai === undefined ? "Strong" : "Unclear",
@@ -219,10 +222,10 @@ export async function findManualLoanPayments(
   const made: Made[] = [];
   const asks: Ask[] = [];
   const refusing: { transactionId: string; loanAccountId: string }[] = [];
-  const unclear: Ask[] = [];
+  const unclear: Omit<Ask, "needsAi">[] = [];
   for (const { loan, payments: own } of candidates) {
     if (loan.closed) {
-      asks.push(...own.map((payment) => ({ payment, loan })));
+      asks.push(...own.map((payment) => ({ payment, loan, needsAi: false })));
       continue;
     }
     let paid = paidTo(loan.id);
@@ -236,7 +239,7 @@ export async function findManualLoanPayments(
         return signals.length > 1 ? [{ payment, signals }] : [];
       });
       if (confident.length === 0) {
-        asks.push(...own.map((payment) => ({ payment, loan })));
+        asks.push(...own.map((payment) => ({ payment, loan, needsAi: false })));
         continue;
       }
       for (const { payment, signals } of confident) {
@@ -301,7 +304,7 @@ export async function findManualLoanPayments(
     } else if (answer?.confidence === "high") {
       refusing.push({ transactionId: payment.id, loanAccountId: loan.id });
     } else {
-      asks.push({ payment, loan });
+      asks.push({ payment, loan, needsAi: answer === undefined });
     }
   });
   const again: string[] = [];
@@ -317,6 +320,14 @@ export async function findManualLoanPayments(
     });
   }
   await askAboutPayments(database, asks);
+  // A high "no" applies, so an item the redo sent to the AI leaves the Review list.
+  if (refusing.length > 0) {
+    await settleReviewItems(
+      database,
+      { kind: POSSIBLE_PAYMENT_KIND, subjectIds: refusing.map((link) => link.transactionId) },
+      "The AI found it is not a payment on this loan",
+    );
+  }
   if (made.length === 0) return again;
   log.info("Linked payments to Manual loans", { linked: made.length });
   const changed = [...new Set(made.map((link) => link.loanAccountId))];
@@ -339,11 +350,23 @@ const linkChoice = (loanId: string): ReviewChoice => ({
   label: "Link to this loan",
 });
 
+// An open item that the AI has now answered, below high, keeps its best answer and loses its no-AI
+// mark, so the redo never sends it again.
 async function askAboutPayments(database: Database, asks: readonly Ask[]): Promise<void> {
   if (asks.length === 0) return;
   const asked = await everAskedAbout(database, POSSIBLE_PAYMENT_KIND);
+  const answered = new Set(asks.filter((ask) => !ask.needsAi).map((ask) => ask.payment.id));
+  if (answered.size > 0) {
+    const marked = (await openReviewItemsOfKind(database, POSSIBLE_PAYMENT_KIND)).filter(
+      (item) => item.needsAi && answered.has(paymentOf(item)),
+    );
+    await reviseReviewItems(
+      database,
+      marked.map((item) => ({ id: item.id, bestAnswer: item.bestAnswer, needsAi: false })),
+    );
+  }
   let opened = 0;
-  for (const { payment, loan } of asks) {
+  for (const { payment, loan, needsAi } of asks) {
     if (asked.has(payment.id)) continue;
     asked.add(payment.id);
     await openReviewItem(database, {
@@ -353,6 +376,7 @@ async function askAboutPayments(database: Database, asks: readonly Ask[]): Promi
         ? `This may be a payment to ${loan.lender}, whose loan is Closed. It counts by the normal rules.`
         : `This may be a payment on the ${loan.lender} loan. It counts by the normal rules.`,
       bestAnswer: linkChoice(loan.id),
+      needsAi,
     });
     opened += 1;
   }

@@ -1,6 +1,19 @@
 // The db module's interface. Other modules import from here.
 export { type AlertNoteRow, listAlertNoteRows, storeAlertNoteDone } from "./ai-box.ts";
 export {
+  type AiAwayReason,
+  type AiRedoState,
+  claimAiBack,
+  claimFirstAiRunDone,
+  clearAiAway,
+  countAiRedoFailure,
+  endAiRedo,
+  listBestGuessIds,
+  listMarkedNameIds,
+  markAiAway,
+  readAiRedo,
+} from "./ai-redo.ts";
+export {
   clearAiRetry,
   listDueAiRetries,
   markAiRetryAsked,
@@ -198,6 +211,7 @@ export {
   listAccountTransactionIds,
   listDecidedAt,
   listDecisionAccounts,
+  listHandSetTypes,
   listMemberNames,
   listMerchantHistory,
   listPostedParts,
@@ -494,6 +508,7 @@ export {
   listReviewItemSubjects,
   type NewReviewItem,
   readReviewItem,
+  reviseOpenReviewItems,
   type StoredReviewItem,
 } from "./review-items.ts";
 export { scheduledTasks } from "./schema.ts";

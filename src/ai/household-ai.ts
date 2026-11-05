@@ -1,4 +1,4 @@
-import { listMemberNamesById, markAiKeyRejected } from "../db/index.ts";
+import { claimAiBack, listMemberNamesById, markAiAway, markAiKeyRejected } from "../db/index.ts";
 import { log } from "../log.ts";
 import { isBackground } from "./ai-view.ts";
 import {
@@ -97,44 +97,76 @@ export function householdAi(options: AiOptions): HouseholdAi {
     }
   }
 
-  return {
-    async generate<OUTPUT>(
-      call: AiCall<OUTPUT>,
-      { sendAnyway = false } = {},
-    ): Promise<AiReply<OUTPUT>> {
-      const { use } = call;
-      const background = isBackground(use);
-      // The use checks its own retry time, whatever started it.
-      if (background) {
-        const retryAt = await retries.waitsUntil(use, new Date());
-        if (retryAt !== undefined) return { ready: false, retryAt };
-      }
-      const found = await calls.modelFor(use, { sendAnyway });
-      if (!found.ready) return found;
-      try {
-        const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
-        const reply = await callModel(found.model, sent);
-        if (background) await retries.ended(use);
-        return { ready: true, ...reply };
-      } catch (error) {
-        // The gate closed between modelFor and the call, such as at the AI cost cap.
-        if (error instanceof AiPausedError) return { ready: false, pause: error.pause };
-        if (!(error instanceof AiCallError)) throw error;
-        const { failure, status } = error;
-        // Never the prompt or the reply: only the use and what failed.
-        logger.warn("An AI call failed", { use, failure, status: status ?? null });
-        if (failure === "key rejected") {
-          if (background) await retries.ended(use);
-          await keyRejected(found.generation);
-          return { ready: false, pause: "key rejected" };
+  // Spec 08, Redo of no-AI work: a background use that takes its no-AI path marks AI away, and the
+  // first one that works after an outage brings it back, which starts one redo. A pause ends on its
+  // own, such as when the AI cost cap resets, and the redo module checks for that. Waiting for the
+  // history is not a pause of AI: the first AI run follows it. Never fails the use.
+  async function noteBackground(reply: AiReply<unknown>): Promise<void> {
+    try {
+      if (reply.ready) {
+        if (await claimAiBack(database, new Date())) {
+          logger.info("AI came back after an outage");
+          await options.aiBack?.();
         }
-        if (!background) return { ready: false, failed: failure };
-        const retryAt = await retries.failed(use, new Date());
-        return retryAt === undefined
-          ? { ready: false, failed: failure }
-          : { ready: false, retryAt };
+      } else if ("pause" in reply) {
+        if (reply.pause !== "waits for history") await markAiAway(database, "pause", new Date());
+      } else {
+        await markAiAway(database, "outage", new Date());
       }
-    },
+    } catch (error) {
+      logger.warn("Whether AI is away could not be recorded", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+
+  async function generate<OUTPUT>(
+    call: AiCall<OUTPUT>,
+    { sendAnyway = false } = {},
+  ): Promise<AiReply<OUTPUT>> {
+    const reply = await generateOnce(call, { sendAnyway });
+    if (isBackground(call.use)) await noteBackground(reply);
+    return reply;
+  }
+
+  async function generateOnce<OUTPUT>(
+    call: AiCall<OUTPUT>,
+    { sendAnyway }: { sendAnyway: boolean },
+  ): Promise<AiReply<OUTPUT>> {
+    const { use } = call;
+    const background = isBackground(use);
+    // The use checks its own retry time, whatever started it.
+    if (background) {
+      const retryAt = await retries.waitsUntil(use, new Date());
+      if (retryAt !== undefined) return { ready: false, retryAt };
+    }
+    const found = await calls.modelFor(use, { sendAnyway });
+    if (!found.ready) return found;
+    try {
+      const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
+      const reply = await callModel(found.model, sent);
+      if (background) await retries.ended(use);
+      return { ready: true, ...reply };
+    } catch (error) {
+      // The gate closed between modelFor and the call, such as at the AI cost cap.
+      if (error instanceof AiPausedError) return { ready: false, pause: error.pause };
+      if (!(error instanceof AiCallError)) throw error;
+      const { failure, status } = error;
+      // Never the prompt or the reply: only the use and what failed.
+      logger.warn("An AI call failed", { use, failure, status: status ?? null });
+      if (failure === "key rejected") {
+        if (background) await retries.ended(use);
+        await keyRejected(found.generation);
+        return { ready: false, pause: "key rejected" };
+      }
+      if (!background) return { ready: false, failed: failure };
+      const retryAt = await retries.failed(use, new Date());
+      return retryAt === undefined ? { ready: false, failed: failure } : { ready: false, retryAt };
+    }
+  }
+
+  return {
+    generate,
     async stream(call, { sendAnyway = false, ended }) {
       const { use } = call;
       if (isBackground(use)) throw new TypeError("Only Chat streams its answer.");

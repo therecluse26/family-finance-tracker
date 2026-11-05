@@ -104,6 +104,10 @@ export type AiOptions = {
   // again: an AI provider set up, a key fixed, a price entered, or a cap raised. Budget tailoring
   // starts its waiting runs from it. Its failure never fails the save.
   afterChange?: () => Promise<void>;
+  // Runs once when a background AI call works after an outage left work on the no-AI path. The
+  // redo of no-AI work starts from it (spec 08, Redo of no-AI work). Its failure never fails the
+  // call.
+  aiBack?: () => Promise<unknown>;
 };
 
 export type AiNotices = {

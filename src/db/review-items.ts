@@ -158,3 +158,20 @@ export async function closeReviewItem(
     .returning({ id: reviewItems.id });
   return closed.length > 0;
 }
+
+// Gives each open item among these its new best answer and no-AI mark, in one write transaction,
+// such as when the AI decides an item a no-AI path decided. An item already closed stays as it was.
+export async function reviseOpenReviewItems(
+  database: Database,
+  revisions: readonly { id: string; bestAnswer: Choice; needsAi: boolean }[],
+): Promise<void> {
+  if (revisions.length === 0) return;
+  await database.transaction(async (tx) => {
+    for (const { id, bestAnswer, needsAi } of revisions) {
+      await tx
+        .update(reviewItems)
+        .set({ bestAnswer, needsAi })
+        .where(and(eq(reviewItems.id, id), isNull(reviewItems.closedAt)));
+    }
+  });
+}

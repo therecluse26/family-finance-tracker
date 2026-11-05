@@ -41,6 +41,7 @@ import {
   startNotify,
 } from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
+import { requestRedo, startRedo } from "../redo/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { householdSummary } from "../summary/index.ts";
 import {
@@ -138,7 +139,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // The Matching and Categorization steps, and the Alerts step for its advice, ask the Quick tier
     // through the one AI call path.
     const cost = aiCost({ database, timeZone });
-    const ai = householdAi({ database, secrets, cost });
+    const ai = householdAi({ database, secrets, cost, aiBack: requestRedo });
     const moneyMovement = startMoneyMovement({ database, ai });
     const categorization = startCategorization({ database, ai });
     const recurring = startRecurringCharges({ database });
@@ -151,6 +152,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     // The follow-up job's last step: the day's Insight card run, on the Writer tier.
     const insights = startInsightCards({ database, ai });
     const monthlyReview = startMonthlyReview({ database, ai });
+    // The first AI run, and the redo of no-AI work each time AI comes back.
+    const redo = startRedo({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const stopModules = () => {
@@ -158,6 +161,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       monthlyReview.stop();
       updateCheck.stop();
       cpiFetch.stop();
+      redo.stop();
       insights.stop();
       alertSending.stop();
       overspending.stop();
@@ -191,7 +195,15 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         database,
         secrets,
         plaid: plaidSettings({ database, secrets }),
-        ai: aiSettings({ database, secrets, cost, afterChange: tailoring.afterAiChange }),
+        ai: aiSettings({
+          database,
+          secrets,
+          cost,
+          afterChange: async () => {
+            await redo.afterAiChange();
+            await tailoring.afterAiChange();
+          },
+        }),
         smtp: smtpSettings({ database, secrets, address }),
         push: pushSettings({ database, secrets, available: https }),
         chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),

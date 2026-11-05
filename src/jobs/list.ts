@@ -8,6 +8,7 @@ import { CpiFetchJob } from "../benchmarks/index.ts";
 import { MonthStartJob } from "../budgets/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
 import { MonthlyReviewDueJob, MonthlyReviewJob, ON_THE_FIRST } from "../monthly-review/index.ts";
+import { AiBackJob } from "../redo/index.ts";
 import { BudgetTailoringJob } from "../tailoring/index.ts";
 import { UpdateCheckJob } from "../updates/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
@@ -16,8 +17,10 @@ import type { ScheduledTask } from "./scheduler.ts";
 export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
 export { DeliveryJob, MorningDeliveryJob } from "../notify/index.ts";
+export { RedoNoAiWorkJob } from "../redo/index.ts";
 export { TickJob } from "./sidequest.ts";
 export {
+  AiBackJob,
   AiRetryJob,
   BackupJob,
   BudgetTailoringJob,
@@ -52,6 +55,10 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // Runs each waiting Budget tailoring run once a day, such as one paused at the AI cost cap until
   // the 1st (spec 08, The AI cost cap). With no run waiting, its job makes no AI call and no write.
   { name: "budget tailoring", schedule: daily("00:20"), job: BudgetTailoringJob, quiet: true },
+  // Brings AI back once a pause of AI has ended on its own, such as at the AI cost cap until the
+  // 1st, and starts the Redo no-AI work job then (spec 08, Redo of no-AI work). A change of the AI
+  // settings checks at once. With AI not away, its job makes no AI call and no write.
+  { name: "ai back", schedule: daily("00:25"), job: AiBackJob, quiet: true },
   // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no
   // request.
   { name: "update check", schedule: daily("05:00"), job: UpdateCheckJob },

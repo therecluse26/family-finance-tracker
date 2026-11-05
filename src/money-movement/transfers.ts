@@ -403,8 +403,8 @@ export function registerUnclearPairJudge(registered: UnclearPairJudge): () => vo
 }
 
 // A Review list item that pairing asks for: an Unclear pair, or a pair picked from two equally
-// good sets.
-export type PairItem = { kind: "unclear" | "guess"; pair: TransferPair };
+// good sets. `needsAi` marks an Unclear pair that no AI answered, for the redo of no-AI work.
+export type PairItem = { kind: "unclear" | "guess"; pair: TransferPair; needsAi: boolean };
 
 export type PairingResult = {
   // Transactions whose link began or ended, which the order must decide again.
@@ -680,7 +680,7 @@ async function pairNear(
         } else if (answer?.confidence === "high") {
           rejected.add(edge);
         } else {
-          asked.push({ kind: "unclear", pair: pairOf(edge) });
+          asked.push({ kind: "unclear", pair: pairOf(edge), needsAi: answer === undefined });
         }
       }
       if (rejected.size === 0) {
@@ -696,7 +696,9 @@ async function pairNear(
     open = again;
   }
   for (const { edge, uncertain, ai } of chosen) {
-    if (uncertain && ai === undefined) items.push({ kind: "guess", pair: pairOf(edge) });
+    if (uncertain && ai === undefined) {
+      items.push({ kind: "guess", pair: pairOf(edge), needsAi: false });
+    }
   }
 
   // The app's links around these Transactions, before and after.

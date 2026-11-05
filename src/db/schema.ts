@@ -1700,3 +1700,26 @@ export const chatMessages = sqliteTable(
     ),
   ],
 );
+
+// The first AI run and the redo of no-AI work (spec 08, Runs that reuse these uses; Redo of no-AI
+// work). One row. AI is away while a background AI use takes its no-AI path, and comes back once:
+// a pause comes back when it ends, such as when the AI cost cap resets or a Member fixes a rejected
+// key, and an outage when an AI call succeeds. Each return starts one redo.
+export const aiRedo = sqliteTable(
+  "ai_redo",
+  {
+    id: integer("id").primaryKey(),
+    // When a background AI use first found AI away, since AI last came back.
+    awayAt: moment("away_at"),
+    // Why AI is away: "pause", such as the AI cost cap, a rejected key, or no AI provider; or
+    // "outage", an AI call that failed.
+    awayReason: text("away_reason", { enum: ["pause", "outage"] }),
+    // When AI came back, while the redo it starts has not finished.
+    dueAt: moment("due_at"),
+    // How often the redo failed in a row. At the cap it stops until AI is next back.
+    failures: integer("failures").notNull().default(0),
+    // When the first AI run finished, with its Insight card run.
+    firstRunDoneAt: moment("first_run_done_at"),
+  },
+  (table) => [check("ai_redo_one_row", sql`${table.id} = 1`)],
+);

@@ -5,6 +5,8 @@ import {
   type CategoryRecord,
   type CategorySource,
   type Database,
+  listBestGuessIds,
+  listMarkedNameIds,
   listMerchantHistory,
   type PartCategory,
   readCategoryFixFacts,
@@ -14,6 +16,7 @@ import {
 import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
 import { registerDecidedAgain } from "../money-movement/index.ts";
+import { registerRedoStep } from "../redo/index.ts";
 import {
   openReviewItemBatch,
   openReviewItemsOfKind,
@@ -145,13 +148,18 @@ type Waiting = {
 // that waits for the AI joins Merchant history once its answer comes. A later Transaction whose
 // step 4 needs that answer joins the same batch, so a Merchant whose answers differ never sends a
 // batch for each Transaction; once the answers come, step 4 is checked again for it, and wins over
-// the AI's answer when it gives one. Returns what the Review list holds for each
-// Transaction the run decided, and the Transactions it left.
+// the AI's answer when it gives one. With `redo`, a best guess made without AI counts as not
+// chosen, so the AI decides it (spec 08, Redo of no-AI work); a hand-set Category is never one.
+// Returns what the Review list holds for each Transaction the run decided, and the Transactions it
+// left.
 export async function chooseCategories(
   database: Database,
   ids: readonly string[],
   ai: AiStep = undefined,
+  options: { redo?: boolean } = {},
 ): Promise<CategoryRun & { reviews: Map<string, ReviewState> }> {
+  const unchosen = (part: { categorySource: string | null }) =>
+    part.categorySource === null || (options.redo === true && part.categorySource === "best guess");
   // Merchant history loads when a step first needs it. Until then, each Category chosen here waits
   // in `unloaded`, since the batch is stored only at its end.
   let history: MerchantHistory | undefined;
@@ -311,8 +319,13 @@ export async function chooseCategories(
     const asking: number[] = [];
     let historyWaits = false;
     for (const part of record.parts) {
-      if (!coveredByCascade(part) || part.categorySource !== null) continue;
-      const choice = await choosePart(part, winning, fromRest);
+      if (!coveredByCascade(part) || !unchosen(part)) continue;
+      // A best guess is the cascade's own answer, never a Category Money movement named.
+      const choice = await choosePart(
+        part.categorySource === null ? part : { ...part, category: null },
+        winning,
+        fromRest,
+      );
       if (choice === "waits") historyWaits = true;
       if (choice === "ai" || choice === "waits") asking.push(part.part);
       else picked.push([part.part, choice]);
@@ -411,8 +424,9 @@ export async function categorize(
   database: Database,
   ids: readonly string[],
   ai: AiStep = undefined,
+  options: { redo?: boolean } = {},
 ): Promise<CategoryRun> {
-  const { reviews, left, again } = await chooseCategories(database, ids, ai);
+  const { reviews, left, again } = await chooseCategories(database, ids, ai, options);
   await updateReviewList(database, reviews);
   return { left, again };
 }
@@ -465,9 +479,34 @@ function categoryReviewKind(database: Database): ReviewKind {
   };
 }
 
+// The redo of no-AI work (spec 08, Redo of no-AI work), with the Household's AI. Each marked
+// Merchant name goes to the AI cleanup once, and each best guess from step 6 to step 5, in the
+// Quick tier's batches, with every Transaction an earlier redo step decided again. A Transaction
+// the AI did not reach keeps its best guess and its mark; one with no Category, such as one decided
+// again, takes the best guess.
+function registerRedoSteps(database: Database, ai: HouseholdAi): (() => void)[] {
+  return [
+    registerRedoStep("Merchant names", async (run) => {
+      if (run.ai) await cleanMarkedNames(database, ai, await listMarkedNameIds(database));
+      return [];
+    }),
+    registerRedoStep("Categories", async (run) => {
+      if (!run.ai) {
+        await categorize(database, run.decided);
+        return [];
+      }
+      const ids = await listBestGuessIds(database, run.decided);
+      const { left } = await categorize(database, ids, ai, { redo: true });
+      if (left.length > 0) await categorize(database, left);
+      return [];
+    }),
+  ];
+}
+
 // Registers the Categorization step, the cascade's Category rule step, the two Review list kinds,
 // and the listener for Transactions Money movement decides again. With `ai`, the step cleans marked
-// Merchant names and asks the AI at step 5. The start calls it before jobs run.
+// Merchant names and asks the AI at step 5, and the redo of no-AI work gets its two steps. The
+// start calls it before jobs run.
 export function startCategorization(options: { database: Database; ai?: HouseholdAi }): {
   stop(): void;
 } {
@@ -497,6 +536,7 @@ export function startCategorization(options: { database: Database; ai?: Househol
     }),
     registerReviewKind(BEST_GUESS_KIND, categoryReviewKind(database)),
     registerReviewKind(AI_UNSURE_KIND, categoryReviewKind(database)),
+    ...(ai === undefined ? [] : registerRedoSteps(database, ai)),
   ];
   return {
     stop() {

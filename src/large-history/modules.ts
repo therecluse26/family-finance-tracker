@@ -28,6 +28,7 @@ import { startMonthlyReview } from "../monthly-review/index.ts";
 import { startNotify } from "../notify/index.ts";
 import { StubSmtp } from "../notify/testing.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
+import { startRedo } from "../redo/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { startBudgetTailoring, tailorFirstDraft } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
@@ -233,6 +234,22 @@ export const APP_MODULES: readonly AppModule[] = [
           cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
         }),
         now: HISTORY_NOW,
+      }),
+  },
+  {
+    name: "startRedo",
+    // A case runs the redo itself: no job queue runs in the bench.
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startRedo({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+        now: HISTORY_NOW,
+        startJob: async () => {},
       }),
   },
   {

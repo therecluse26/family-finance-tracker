@@ -144,6 +144,27 @@ function chunks<T>(items: readonly T[]): T[][] {
   return out;
 }
 
+// The Transactions among these IDs whose type a Member set by hand.
+export async function listHandSetTypes(
+  database: Queries,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (const chunk of chunks(ids)) {
+    const rows = await database
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(
+        and(
+          inArray(transactions.id, chunk),
+          sql`json_extract(${transactions.handSet}, '$.type') IS NOT NULL`,
+        ),
+      );
+    for (const { id } of rows) found.add(id);
+  }
+  return found;
+}
+
 // The Transactions with these IDs, in the order given. An unknown ID is left out.
 export async function readDecisionRecords(
   database: Database,

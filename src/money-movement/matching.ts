@@ -38,13 +38,16 @@ import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { Job } from "../jobs/index.ts";
 import { log } from "../log.ts";
+import { registerRedoStep } from "../redo/index.ts";
 import {
   openReviewItem,
   openReviewItemBatch,
   openReviewItems,
+  openReviewItemsOfKind,
   type ReviewChoice,
   type ReviewItem,
   registerReviewKind,
+  reviseReviewItems,
   settleReviewItems,
 } from "../review/index.ts";
 import { startLinkAi } from "./ai-links.ts";
@@ -344,17 +347,25 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
   );
   const open = new Set<string>();
   const settled = new Map<string, string[]>(Object.values(PAIR_KINDS).map((kind) => [kind, []]));
+  // An open Unclear pair item that the AI has now answered, below high, loses its no-AI mark.
+  const revised: { id: string; bestAnswer: ReviewChoice; needsAi: boolean }[] = [];
   for (const item of await openReviewItems(database)) {
     const settling = settled.get(item.kind);
     if (settling === undefined || item.subject.type !== "transactions") continue;
     const ids = item.subject.transactionIds;
     const key = `${item.kind} ${ids.join(" ")}`;
-    if (wanted.has(key)) open.add(key);
-    else if (ids.some((id) => pairing.looked.has(id))) settling.push(ids[0] ?? "");
+    const asking = wanted.get(key);
+    if (asking !== undefined) {
+      open.add(key);
+      if (item.needsAi && !asking.needsAi) {
+        revised.push({ id: item.id, bestAnswer: item.bestAnswer, needsAi: false });
+      }
+    } else if (ids.some((id) => pairing.looked.has(id))) settling.push(ids[0] ?? "");
   }
   for (const [kind, subjectIds] of settled) {
     await settleReviewItems(database, { kind, subjectIds }, "Transfer pairing changed");
   }
+  await reviseReviewItems(database, revised);
   const unclear = settled.get(UNCLEAR_PAIR_KIND) ?? [];
   for (const [key, item] of wanted) {
     if (open.has(key)) continue;
@@ -366,6 +377,7 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
       },
       decided: DECIDED[item.kind],
       bestAnswer: LINK,
+      needsAi: item.needsAi,
     });
   }
   return unclear;
@@ -758,6 +770,32 @@ export class ProvisionalResultsJob extends Job {
   }
 }
 
+// The redo of no-AI work (spec 08, Redo of no-AI work): each open Unclear Transfer pair, possible
+// Manual loan payment, and item for money from a person that a no-AI path decided goes through one
+// Matching run, which asks the AI. A link the AI makes, or a high "no" on a loan payment, settles
+// its item; any other answer keeps the item open, with the AI's best answer and no mark. A Member's
+// answer closed the item, so the AI never redoes it. Returns the Transactions the run decided
+// again, whose Categories are chosen again next.
+async function redoMarkedLinks(database: Database, ai: boolean): Promise<string[]> {
+  if (!ai) return [];
+  const marked = [
+    ...(await openReviewItemsOfKind(database, UNCLEAR_PAIR_KIND)),
+    ...(await openReviewItemsOfKind(database, POSSIBLE_PAYMENT_KIND)),
+    ...(await openReviewItemsOfKind(database, MONEY_FROM_PERSON_KIND)),
+  ].filter((item) => item.needsAi && item.subject.type === "transactions");
+  const ids = [
+    ...new Set(
+      marked.flatMap((item) =>
+        item.subject.type === "transactions" ? item.subject.transactionIds : [],
+      ),
+    ),
+  ];
+  if (ids.length === 0) return [];
+  await runMatching(database, ids);
+  log.info("The redo of no-AI work sent marked links to the AI", { items: marked.length });
+  return ids;
+}
+
 // Registers the Matching step and gives the daily task app.db. The start calls it before jobs
 // run.
 // With `ai`, the AI decides Unclear links and links Reimbursements, through the one AI call path
@@ -813,7 +851,12 @@ export function startMoneyMovement(options: { database: Database; ai?: Household
   };
   const stops = [
     registerFollowUpStep("matching", (unhandled) => runMatching(started.database, unhandled)),
-    ...(options.ai === undefined ? [] : [startLinkAi(started.database, options.ai)]),
+    ...(options.ai === undefined
+      ? []
+      : [
+          startLinkAi(started.database, options.ai),
+          registerRedoStep("Money movement", (run) => redoMarkedLinks(started.database, run.ai)),
+        ]),
     registerReviewKind(UNCLEAR_PAIR_KIND, pairKind),
     registerReviewKind(PAIR_GUESS_KIND, pairKind),
     registerReviewKind(ONE_SIDED_KIND, oneSidedKind(started.database)),

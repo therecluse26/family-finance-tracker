@@ -16,5 +16,6 @@ export {
   type ReviewKind,
   type ReviewSubject,
   registerReviewKind,
+  reviseReviewItems,
   settleReviewItems,
 } from "./review-list.ts";

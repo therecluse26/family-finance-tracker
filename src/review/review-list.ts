@@ -10,6 +10,7 @@ import {
   listReviewItemSubjects,
   type Queries,
   readReviewItem,
+  reviseOpenReviewItems,
   type StoredReviewItem,
 } from "../db/index.ts";
 import { log } from "../log.ts";
@@ -269,6 +270,17 @@ export async function settleReviewItems(
       { reason, at: new Date() },
     );
   });
+}
+
+// The AI decided open items that a no-AI path decided (spec 03, AI decisions and the no-AI path):
+// each keeps its subject and stays open, with the AI's best answer, and its no-AI mark as given.
+// One write for all of them, after the items open now.
+export function reviseReviewItems(
+  database: Database,
+  revisions: readonly { id: string; bestAnswer: ReviewChoice; needsAi: boolean }[],
+): Promise<void> {
+  if (revisions.length === 0) return Promise.resolve();
+  return oneAtATime(() => reviseOpenReviewItems(database, revisions));
 }
 
 // Whether an item of the kind was ever opened about each subject, open or closed now. A kind that

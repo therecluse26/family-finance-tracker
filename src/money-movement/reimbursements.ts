@@ -1,5 +1,6 @@
 import {
   type Database,
+  listHandSetTypes,
   listLoanLinksOf,
   listRefusedOtherLinks,
   listReimbursableSpending,
@@ -21,6 +22,7 @@ import {
   type ReviewChoice,
   type ReviewItem,
   type ReviewKind,
+  reviseReviewItems,
   settleReviewItems,
 } from "../review/index.ts";
 import type { AiRun } from "./ai-run.ts";
@@ -243,7 +245,10 @@ async function linkHighPicks(
   const moneyIds = wanted.map((each) => each.money);
   await database.transaction(async (tx) => {
     const ids = wanted.flatMap((each) => [each.money, each.spending]);
+    // A Member's decision always wins: money a Member kept as Income, such as during the pick
+    // call, stays Income.
     const busy = new Set([
+      ...(await listHandSetTypes(tx, moneyIds)),
       ...(await listTransferLinksOf(tx, ids)).flatMap((link) => [
         link.outTransactionId,
         link.inTransactionId,
@@ -283,9 +288,11 @@ const bookedAsIncome = (result: { step: string; parts: readonly { type: string }
 // open item whose Transaction is now decided another way or no longer shows. `gone` are
 // Transactions that no longer show. The open items and the Spending the money may pay back are
 // read once, and items are opened and settled in one batch each. In a Matching run, the AI may pick
-// for the new money first: money it links with high confidence opens no item. Returns the
-// Transactions to decide again: each side of a link it made, and each Transaction whose other
-// links ended with it.
+// for the new money first: money it links with high confidence opens no item. An open item that a
+// no-AI path decided goes to the AI the same way, once (spec 03, AI decisions and the no-AI path):
+// a link settles it when the money is decided again, and any other answer becomes its best answer.
+// Returns the Transactions to decide again: each side of a link it made, and each Transaction whose
+// other links ended with it.
 export async function updateMoneyFromPersonItems(
   database: Database,
   decided: readonly { transactionId: string; step: string; parts: readonly { type: string }[] }[],
@@ -294,20 +301,26 @@ export async function updateMoneyFromPersonItems(
   now = new Date(),
 ): Promise<string[]> {
   if (decided.length === 0 && gone.length === 0) return [];
-  const open = new Set(
-    (await openReviewItemsOfKind(database, MONEY_FROM_PERSON_KIND)).map(moneyOf),
+  const openItems = await openReviewItemsOfKind(database, MONEY_FROM_PERSON_KIND);
+  const open = new Set(openItems.map(moneyOf));
+  // The open items a no-AI path decided, by their money: only a Matching run asks the AI.
+  const redo = new Map(
+    run === undefined
+      ? []
+      : openItems.filter((item) => item.needsAi).map((item) => [moneyOf(item), item]),
   );
   const settled = gone.filter((id) => open.has(id));
-  const asked: string[] = [];
+  const asking = new Set<string>();
   for (const result of decided) {
     const { transactionId } = result;
     if (!bookedAsIncome(result)) {
       if (open.has(transactionId)) settled.push(transactionId);
-    } else if (!open.has(transactionId)) {
+    } else if (!open.has(transactionId) || redo.has(transactionId)) {
       open.add(transactionId);
-      asked.push(transactionId);
+      asking.add(transactionId);
     }
   }
+  const asked = [...asking];
   await settleReviewItems(
     database,
     { kind: MONEY_FROM_PERSON_KIND, subjectIds: settled },
@@ -322,14 +335,26 @@ export async function updateMoneyFromPersonItems(
       ? { linked: new Set<string>(), again: [] }
       : await linkHighPicks(database, found, picks, refused, now);
   const foundOf = new Map(found.map((each) => [each.money.id, each]));
+  const revised: { id: string; bestAnswer: ReviewChoice; needsAi: boolean }[] = [];
   const items = asked
     .filter((moneyId) => !linked.has(moneyId))
-    .map((moneyId) => ({
-      kind: MONEY_FROM_PERSON_KIND,
-      subject: { type: "transactions" as const, transactionIds: [moneyId] },
-      decided: DECIDED,
-      ...bestAnswerOf(foundOf.get(moneyId), picks.get(moneyId), refused),
-    }));
+    .flatMap((moneyId) => {
+      const answer = bestAnswerOf(foundOf.get(moneyId), picks.get(moneyId), refused);
+      const item = redo.get(moneyId);
+      if (item === undefined) {
+        return [
+          {
+            kind: MONEY_FROM_PERSON_KIND,
+            subject: { type: "transactions" as const, transactionIds: [moneyId] },
+            decided: DECIDED,
+            ...answer,
+          },
+        ];
+      }
+      if (!answer.needsAi) revised.push({ id: item.id, ...answer });
+      return [];
+    });
+  await reviseReviewItems(database, revised);
   await openReviewItemBatch(database, items);
   if (items.length > 0) {
     log.info("Money from a person went on the Review list", { opened: items.length });
