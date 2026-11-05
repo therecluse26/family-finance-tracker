@@ -6,6 +6,7 @@ import { syncConnection } from "../../bank/index.ts";
 import { MERCHANT_CLEANUP_TASK } from "../../categorization/quick-tier.ts";
 import { runFollowUp } from "../../follow-up/index.ts";
 import { householdTimeZone } from "../../household/index.ts";
+import { LOAN_TASK, PAIR_TASK, PICK_TASK } from "../../money-movement/ai-links.ts";
 import { timedCase } from "../index.ts";
 
 const NOW = () => new Date("2026-11-02T14:00:00.000Z");
@@ -20,14 +21,32 @@ const rowsOf = (messages: StubMessage[]) =>
         ? []
         : message.content.flatMap((part) => (part.text?.startsWith("{") ? [part.text] : [])),
     )
-    .map((text) => JSON.parse(text) as { row: number; description?: string });
+    .map((text) => JSON.parse(text) as { row: number; description?: string; kind?: string });
 
-const isCleanup = (messages: StubMessage[]) =>
+const holdsTask = (messages: StubMessage[], task: string) =>
   messages.some(
     (message) =>
-      typeof message.content !== "string" &&
-      message.content.some((part) => part.text === MERCHANT_CLEANUP_TASK),
+      typeof message.content !== "string" && message.content.some((part) => part.text === task),
   );
+const isCleanup = (messages: StubMessage[]) => holdsTask(messages, MERCHANT_CLEANUP_TASK);
+
+// Matching asks about Unclear Transfers, loan payments, and money from a person first (T81). The
+// test models answer each "no", or no Spending, with low confidence, so nothing links.
+const linkReply = (messages: StubMessage[]): string | undefined => {
+  const rows = rowsOf(messages);
+  if (holdsTask(messages, PICK_TASK)) {
+    const money = rows.filter((row) => row.kind === "money in");
+    return JSON.stringify({
+      answers: money.map((row) => ({ row: row.row, spendingRow: null, confidence: "low" })),
+    });
+  }
+  if (holdsTask(messages, PAIR_TASK) || holdsTask(messages, LOAN_TASK)) {
+    return JSON.stringify({
+      answers: rows.map((row) => ({ row: row.row, answer: "no", confidence: "low" })),
+    });
+  }
+  return undefined;
+};
 
 // A sync on top of the full history, with an AI provider set up: 600 new purchases at 200 new
 // Merchants the cascade cannot settle, each name marked for AI cleanup. The follow-up job sends
@@ -54,6 +73,8 @@ timedCase("Categories and Merchant names from the Quick tier", async (history, t
   expect(saved).toMatchObject({ saved: true });
   let calls = 0;
   history.ai.replyTo = (messages) => {
+    const link = linkReply(messages);
+    if (link !== undefined) return link;
     calls += 1;
     const cleanup = isCleanup(messages);
     const answers = rowsOf(messages).map((row) =>

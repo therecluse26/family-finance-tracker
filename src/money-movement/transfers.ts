@@ -13,6 +13,7 @@ import {
   type TransferPair,
 } from "../db/index.ts";
 import { log } from "../log.ts";
+import { type AiRun, newAiRun } from "./ai-run.ts";
 import { addBusinessDays, addDays, daysBetween } from "./business-days.ts";
 import { isHandSetType } from "./order.ts";
 
@@ -380,13 +381,15 @@ function nearTiesOf(edges: readonly Edge[], chosen: readonly number[]): boolean[
   });
 }
 
-// The AI's judgment of an Unclear pair (spec 03, Tiers). T81 registers it, and keeps its answers so
-// the app never asks about the same pair twice. Undefined when no AI answers.
+// The AI's judgment of Unclear pairs (spec 03, Tiers): one answer for each pair, in order, or
+// undefined for a pair no AI answered. src/money-movement/ai-links.ts registers it, and keeps its
+// answers so the app never asks about the same pair twice. It asks in batches, and records in the
+// run a use that stops or a retry that waits.
 export type UnclearPairAnswer = { answer: "yes" | "no"; confidence: "high" | "medium" | "low" };
-export type UnclearPairJudge = (pair: {
-  out: TransferCandidate;
-  into: TransferCandidate;
-}) => Promise<UnclearPairAnswer | undefined>;
+export type UnclearPairJudge = (
+  pairs: readonly { out: TransferCandidate; into: TransferCandidate }[],
+  run: AiRun,
+) => Promise<readonly (UnclearPairAnswer | undefined)[]>;
 
 let judge: UnclearPairJudge | undefined;
 
@@ -444,11 +447,13 @@ function components(edges: readonly Edge[]): Edge[][] {
 const REACH = 6;
 
 // Pairs Transfers again around these Transactions: each one, and each one near it that could pair
-// with it, directly or through others. Stores the app's links and returns what changed.
+// with it, directly or through others. Stores the app's links and returns what changed. `run` is
+// the Matching run's AI state, which the judge of Unclear pairs shares.
 export async function pairTransfers(
   database: Database,
   transactionIds: readonly string[],
   now = new Date(),
+  run: AiRun = newAiRun(),
 ): Promise<PairingResult> {
   const seeds = new Set(transactionIds);
   const touching = await listTransferLinksOf(database, transactionIds);
@@ -479,7 +484,7 @@ export async function pairTransfers(
     (a, b) => a.postedDate.localeCompare(b.postedDate) || a.id.localeCompare(b.id),
   );
   for (const near of nearGroupsOf(oldestFirst)) {
-    const part = await pairNear(database, near, now);
+    const part = await pairNear(database, near, now, run);
     for (const id of part.changed) result.changed.add(id);
     for (const id of part.looked) result.looked.add(id);
     result.items.push(...part.items);
@@ -547,6 +552,7 @@ async function pairNear(
   database: Database,
   near: readonly TransferCandidate[],
   now: Date,
+  run: AiRun,
 ): Promise<PairingResult> {
   const seeds = new Set(near.map((candidate) => candidate.id));
   const { candidates, byId, links } = await readNear(database, near);
@@ -642,11 +648,24 @@ async function pairNear(
 
   const chosen: { edge: Edge; uncertain: boolean; ai?: UnclearPairAnswer }[] = [];
   const items: PairItem[] = [];
-  for (const group of groups) {
-    let current = group.map((edge) => withEarlier(edge, earlier));
-    // When the AI rejects an Unclear pair with high confidence, pairing runs again without it.
-    for (;;) {
-      const picked = solveWithTies(current);
+  // Every set is solved, then the AI judges all of their Unclear pairs in one go. When it rejects
+  // a pair with high confidence, pairing runs again without it, in that pair's set alone.
+  let open = groups.map((group) => group.map((edge) => withEarlier(edge, earlier)));
+  while (open.length > 0) {
+    const solved = open.map((current) => ({ current, picked: solveWithTies(current) }));
+    const unclear = solved.flatMap(({ picked }) =>
+      picked.filter(({ edge }) => edge.signals.length === 0).map(({ edge }) => edge),
+    );
+    const answers =
+      judge === undefined || unclear.length === 0
+        ? []
+        : await judge(
+            unclear.map((edge) => ({ out: edge.out, into: edge.into })),
+            run,
+          );
+    const answerOf = new Map(unclear.map((edge, index) => [edge, answers[index]]));
+    const again: Edge[][] = [];
+    for (const { current, picked } of solved) {
       const rejected = new Set<Edge>();
       const settled: typeof chosen = [];
       const asked: PairItem[] = [];
@@ -655,7 +674,7 @@ async function pairNear(
           settled.push({ edge, uncertain });
           continue;
         }
-        const answer = await judge?.({ out: edge.out, into: edge.into });
+        const answer = answerOf.get(edge);
         if (answer?.confidence === "high" && answer.answer === "yes") {
           settled.push({ edge, uncertain: false, ai: answer });
         } else if (answer?.confidence === "high") {
@@ -667,13 +686,14 @@ async function pairNear(
       if (rejected.size === 0) {
         chosen.push(...settled);
         items.push(...asked);
-        break;
+        continue;
       }
       for (const edge of rejected) {
         await refuseTransferLink(database, pairOf(edge), { refusedBy: "AI", at: now });
       }
-      current = current.filter((edge) => !rejected.has(edge));
+      again.push(current.filter((edge) => !rejected.has(edge)));
     }
+    open = again;
   }
   for (const { edge, uncertain, ai } of chosen) {
     if (uncertain && ai === undefined) items.push({ kind: "guess", pair: pairOf(edge) });

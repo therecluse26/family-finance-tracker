@@ -228,10 +228,11 @@ export async function listReimbursableSpending(
 }
 
 // What each of these Transactions may never link to with a link of this kind, because someone
-// refused that link, as "<Transaction ID> <other ID>": the Spending of a Refund, or a Manual loan.
+// refused that link, as "<Transaction ID> <other ID>": the Spending of a Refund or a
+// Reimbursement, or a Manual loan.
 export async function listRefusedOtherLinks(
   database: Database,
-  kind: "Refund" | "loan",
+  kind: "Refund" | "Reimbursement" | "loan",
   transactionIds: readonly string[],
 ): Promise<Set<string>> {
   const found = new Set<string>();

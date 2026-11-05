@@ -410,9 +410,15 @@ describe("the link routes", () => {
   });
 
   it("answers 400 to the AI's pick of Spending hidden after the Review list item opened, and links nothing", async () => {
-    const unregister = registerReimbursementPicker(async () => ({
-      spendingTransactionId: id("shoes"),
-    }));
+    const unregister = registerReimbursementPicker(
+      async (money) =>
+        new Map(
+          money.map((each) => [
+            each.money.id,
+            { spendingTransactionId: id("shoes"), confidence: "medium", justAsked: true },
+          ]),
+        ),
+    );
     try {
       fake.addPages(BANK, {
         added: [

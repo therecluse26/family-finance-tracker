@@ -283,8 +283,10 @@ describe("Manual loan payments", () => {
       ["no", { answer: "no", confidence: "high" }],
     ]);
     stops.push(
-      registerUnclearLoanPaymentJudge(async ({ payment: asked }) =>
-        answers.get(asked.postedDate === "2026-09-30" ? "yes" : "no"),
+      registerUnclearLoanPaymentJudge(async (candidates) =>
+        candidates.map(({ payment: asked }) =>
+          answers.get(asked.postedDate === "2026-09-30" ? "yes" : "no"),
+        ),
       ),
     );
     await sync([unclear("ai-yes", "2026-09-30"), unclear("ai-no", "2026-10-30")]);

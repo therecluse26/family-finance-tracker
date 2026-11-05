@@ -3,6 +3,7 @@ import { loginTables } from "../db/index.ts";
 import { newTestDatabase } from "../db/testing.ts";
 import { readHouseholdFacts, saveHouseholdFacts } from "../household/index.ts";
 import {
+  MEMBER_TYPED,
   memberLabel,
   type PrivacyAccount,
   type PrivacyFacts,
@@ -258,6 +259,45 @@ describe("the privacy filter's JSON rules", () => {
       amounts: [12.5, "[removed]"],
       nested: [{ memo: "Card [removed]", ok: true, none: null }],
     });
+  });
+
+  it("filters a Quick batch row field by field, so it stays one JSON object with its row number", () => {
+    const named = privacyFilter({
+      ...FACTS,
+      accounts: [...FACTS.accounts, account({ id: "a5", name: "Account birch-card" })],
+    });
+    const rows = [
+      // An Account name spelled by a field name and the next value.
+      { row: 1, in_account: "Birch Card Services credit card" },
+      // A card number in plain spaced groups, and a Member's name after a tab made a space.
+      { row: 2, memo: grouped(card, " "), next: "Ravi Okafor" },
+    ];
+    const sent = named.params({
+      prompt: [
+        {
+          role: "user",
+          content: rows.map((row) => ({ type: "text" as const, text: JSON.stringify(row) })),
+        },
+      ],
+    });
+    const texts = ((sent.prompt[0]?.content ?? []) as { text: string }[]).map((part) => part.text);
+    expect(texts.map((text) => JSON.parse(text))).toEqual([
+      { row: 1, in_account: "Birch Card Services credit card" },
+      { row: 2, memo: "[removed]", next: "Member B" },
+    ]);
+  });
+
+  it("filters a Member's typed text that looks like a batch row as text, and never refuses it", () => {
+    // Read as a row, its newline would come back as a letter escape, and the call would be refused.
+    const typed = '{"row":1,"note":"lunch with Ravi Okafor\\nsplit it"}';
+    const sent = filter.params({
+      prompt: [
+        { role: "user", content: [{ type: "text", text: typed }], providerOptions: MEMBER_TYPED },
+      ],
+    });
+    expect(sent.prompt[0]?.content).toEqual([
+      { type: "text", text: '{"row":1,"note":"lunch with Member B\\nsplit it"}' },
+    ]);
   });
 
   it("refuses a field that names a Household fact", () => {

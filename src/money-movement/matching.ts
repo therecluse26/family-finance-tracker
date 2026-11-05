@@ -1,3 +1,4 @@
+import type { HouseholdAi } from "../ai/index.ts";
 import {
   type Database,
   type DecisionAccount,
@@ -27,7 +28,12 @@ import {
   storeLoanFields,
   type TransferPair,
 } from "../db/index.ts";
-import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
+import {
+  askForFollowUp,
+  type FollowUpStepResult,
+  followUpAgain,
+  registerFollowUpStep,
+} from "../follow-up/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { Job } from "../jobs/index.ts";
@@ -41,6 +47,8 @@ import {
   registerReviewKind,
   settleReviewItems,
 } from "../review/index.ts";
+import { startLinkAi } from "./ai-links.ts";
+import { type AiRun, newAiRun } from "./ai-run.ts";
 import {
   findManualLoanPayments,
   MISSED_PAYMENT_KIND,
@@ -215,13 +223,15 @@ async function updateOneSidedItems(
 }
 
 // Stores each result in place of the Transaction's earlier one, with the Unconnected account it
-// goes to, and keeps the one-sided Transfer items in step.
+// goes to, and keeps the one-sided Transfer items in step. With a Matching run, the AI may link new
+// money from a person as a Reimbursement: returns the Transactions to decide again for it.
 async function storeResults(
   database: Database,
   decided: readonly Decided[],
   now: Date,
   gone: readonly string[] = [],
-): Promise<void> {
+  run?: AiRun,
+): Promise<string[]> {
   await storeDecisions(
     database,
     decided.map((result) => result.stored),
@@ -238,10 +248,12 @@ async function storeResults(
     now,
   );
   await updateOneSidedItems(database, decided, gone);
-  await updateMoneyFromPersonItems(
+  const reimbursed = await updateMoneyFromPersonItems(
     database,
     decided.map((result) => result.stored),
     gone,
+    run,
+    now,
   );
   await updateUntrackedLoanItems(
     database,
@@ -249,6 +261,7 @@ async function storeResults(
     decided.map((result) => result.stored.transactionId),
     gone,
   );
+  return reimbursed;
 }
 
 // Transactions the order decided again outside the Matching step's own list: a type set by hand, a
@@ -365,17 +378,21 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
 // those a posted Transaction carries over from its pending one. A Transaction decided as a linked
 // Transfer whose link has ended since, such as when a Member linked its other side elsewhere, pairs
 // and is decided again too.
+// The AI decides Unclear links and links Reimbursements in the same run (spec 03, AI decisions and
+// the no-AI path). When an AI call failed and its retry is still to come, the step leaves the
+// Transactions whose questions wait for it, and stops the follow-up job until then.
 export async function runMatching(
   database: Database,
   unhandled: readonly string[],
   now = new Date(),
-): Promise<void> {
+): Promise<FollowUpStepResult> {
+  const run = newAiRun();
   const unlinked = await listUnlinkedTransferDecisions(database);
   const relinked = [
     ...(await endBrokenOtherLinks(database, unhandled)),
     ...(await linkManualLoanPayouts(database, unhandled, now)),
   ];
-  const pairing = await pairTransfers(database, [...unhandled, ...unlinked, ...relinked], now);
+  const pairing = await pairTransfers(database, [...unhandled, ...unlinked, ...relinked], now, run);
   const handled = new Set(unhandled);
   // The paying side of an Unclear pair counts nowhere while the pair waits, when the other side is
   // a connected loan, so it is decided again too.
@@ -399,7 +416,7 @@ export async function runMatching(
       ...result,
       stored: carryOver(result.stored, pending.get(result.stored.transactionId)),
     }));
-  await storeResults(database, withCarried(decided), now, gone);
+  const reimbursed = await storeResults(database, withCarried(decided), now, gone, run);
   // Refunds link at once, to Spending that is now decided (spec 03, Refunds), and so do the
   // payments the app finds for a Manual loan (spec 02, Finding payments). Each Refund and
   // Reimbursement on Spending that this run decided, or that a link of this run reduces, is
@@ -409,10 +426,12 @@ export async function runMatching(
   // they were stored.
   const steps = shown.map((record, index) => ({ record, step: decided[index]?.stored.step ?? "" }));
   const linked = await linkRefunds(database, steps, now);
-  const paid = await findManualLoanPayments(database, steps, now);
+  const paid = await findManualLoanPayments(database, steps, now, run);
   const reducing = await reducingIds(database, [...shown.map((record) => record.id), ...linked]);
   const reduced = (
-    await readDecisionRecords(database, [...new Set([...reducing, ...linked, ...paid])])
+    await readDecisionRecords(database, [
+      ...new Set([...reducing, ...linked, ...paid, ...reimbursed]),
+    ])
   ).filter((record) => !record.hidden);
   if (reduced.length > 0) {
     await storeResults(database, withCarried(await decideAll(database, reduced, now)), now);
@@ -433,6 +452,12 @@ export async function runMatching(
   );
   await decideLoanPaymentsAgain(database, shown, now);
   await updateLoanPaymentItems(database, records, paid, now);
+  if (run.retryAt === undefined) return undefined;
+  await followUpAgain(database, [...run.waiting]);
+  return {
+    handled: unhandled.filter((id) => !run.waiting.has(id)),
+    again: run.retryAt,
+  };
 }
 
 // A payment the Review list asks about settles once it links to a Manual loan or no longer shows.
@@ -735,7 +760,11 @@ export class ProvisionalResultsJob extends Job {
 
 // Registers the Matching step and gives the daily task app.db. The start calls it before jobs
 // run.
-export function startMoneyMovement(options: { database: Database }): { stop(): void } {
+// With `ai`, the AI decides Unclear links and links Reimbursements, through the one AI call path
+// (src/money-movement/ai-links.ts).
+export function startMoneyMovement(options: { database: Database; ai?: HouseholdAi }): {
+  stop(): void;
+} {
   if (running !== undefined) throw new Error("Money movement is already running.");
   const started = { database: options.database };
   running = started;
@@ -783,10 +812,8 @@ export function startMoneyMovement(options: { database: Database }): { stop(): v
     afterAnswer: () => askForFollowUp(),
   };
   const stops = [
-    registerFollowUpStep("matching", async (unhandled) => {
-      await runMatching(started.database, unhandled);
-      return undefined;
-    }),
+    registerFollowUpStep("matching", (unhandled) => runMatching(started.database, unhandled)),
+    ...(options.ai === undefined ? [] : [startLinkAi(started.database, options.ai)]),
     registerReviewKind(UNCLEAR_PAIR_KIND, pairKind),
     registerReviewKind(PAIR_GUESS_KIND, pairKind),
     registerReviewKind(ONE_SIDED_KIND, oneSidedKind(started.database)),

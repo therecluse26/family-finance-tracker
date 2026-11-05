@@ -7,6 +7,7 @@ export {
   POSSIBLE_PAYMENT_KIND,
   registerUnclearLoanPaymentJudge,
   type UnclearLoanPaymentAnswer,
+  type UnclearLoanPaymentCandidate,
   type UnclearLoanPaymentJudge,
   updateMissedLoanPayments,
 } from "./loan-payments.ts";
@@ -51,6 +52,8 @@ export {
 } from "./order.ts";
 export {
   MONEY_FROM_PERSON_KIND,
+  type MoneyToPick,
+  type ReimbursementPick,
   type ReimbursementPicker,
   registerReimbursementPicker,
 } from "./reimbursements.ts";

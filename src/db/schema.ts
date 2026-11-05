@@ -812,6 +812,37 @@ export const refusedLinks = sqliteTable(
   ],
 );
 
+// The AI's answer about each candidate it was asked about, so the app never asks about the same
+// candidate twice (spec 03, Tiers, Reimbursements): an Unclear Transfer pair, an Unclear payment to
+// a Manual loan, or money from a person. `otherId` is the pair's money-in side, or the Manual
+// loan's Account ID; money from a person has "". A row ends when its Transaction is deleted.
+export const aiLinkAnswers = sqliteTable(
+  "ai_link_answers",
+  {
+    kind: text("kind", { enum: ["Transfer", "loan", "Reimbursement"] }).notNull(),
+    // The pair's money-out side, the payment, or the money from a person.
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    otherId: text("other_id").notNull(),
+    // For money from a person, "yes" when the AI named a Spending, and "no" when it named none.
+    answer: text("answer", { enum: ["yes", "no"] }).notNull(),
+    confidence: text("confidence", { enum: ["high", "medium", "low"] }).notNull(),
+    // The Spending the AI named for money from a person. Null when it named none, or once that
+    // Spending is deleted.
+    spendingTransactionId: text("spending_transaction_id").references(() => transactions.id, {
+      onDelete: "set null",
+    }),
+    askedAt: moment("asked_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.kind, table.transactionId, table.otherId] }),
+    // The key leads with the kind, so a deleted Transaction's check finds its rows here.
+    index("ai_link_answers_transaction_id").on(table.transactionId),
+    index("ai_link_answers_spending_transaction_id").on(table.spendingTransactionId),
+  ],
+);
+
 // Each Transaction's type, as the order of decisions last decided it (spec 03, Order of
 // decisions). Its parts are in transaction_parts. A hidden Transaction has none.
 export const transactionDecisions = sqliteTable(

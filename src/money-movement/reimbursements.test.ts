@@ -13,6 +13,7 @@ import {
 import {
   linkByHand,
   MONEY_FROM_PERSON_KIND,
+  type MoneyToPick,
   readTransactionDecision,
   registerReimbursementPicker,
   setTransactionType,
@@ -24,6 +25,15 @@ import {
 // Money from a person and Reimbursements without AI (spec 03, Reimbursements, Link shapes, Review
 // list items), through the Matching and Categorization follow-up steps on Transactions the fake
 // adapter syncs, and the Review list.
+
+// A picker that picks this Spending for each money, with less than high confidence.
+const pickEach = (money: readonly MoneyToPick[], spendingTransactionId: string) =>
+  new Map(
+    money.map((each) => [
+      each.money.id,
+      { spendingTransactionId, confidence: "medium" as const, justAsked: true },
+    ]),
+  );
 
 const NOW = () => new Date("2026-11-20T14:00:00.000Z");
 const BANK = "fake-first-bank";
@@ -50,7 +60,7 @@ describe("Money from a person", () => {
       historyLoaded: true,
     });
     await syncConnection(connectionId, NOW);
-    await runFollowUp(NOW);
+    return runFollowUp(NOW);
   };
   const idOf = async (providerId: string) => {
     const rows = await bank.database.$client.execute({
@@ -352,9 +362,7 @@ describe("Money from a person", () => {
 
   it("shows the AI's pick as the best answer, with no mark for an AI redo", async () => {
     let dinnerId = "";
-    const unregister = registerReimbursementPicker(async () => ({
-      spendingTransactionId: dinnerId,
-    }));
+    const unregister = registerReimbursementPicker(async (money) => pickEach(money, dinnerId));
     try {
       bank.fake.addPages(BANK, {
         accounts: [fakeAccount({ id: CARD, type: "credit", subtype: "credit card", mask: "1111" })],
@@ -387,13 +395,33 @@ describe("Money from a person", () => {
     }
   });
 
+  it("opens the item for an AI redo when the picker throws, and the follow-up job runs on", async () => {
+    const unregister = registerReimbursementPicker(async () => {
+      throw new Error("The picker broke.");
+    });
+    try {
+      const run = await sync({
+        added: [
+          dinner("dinner", -6_000, "2026-09-28"),
+          moneyIn("friend", 2_000, "2026-10-02", "VENMO *MORGAN LEE"),
+        ],
+      });
+
+      expect(run).toBeUndefined();
+      expect(await itemAbout("friend")).toMatchObject({
+        bestAnswer: { value: "keep" },
+        needsAi: true,
+      });
+    } finally {
+      unregister();
+    }
+  });
+
   it.each(["replaced by re-link", "removed by provider"])(
     "refuses the AI's pick once its Spending is hidden (%s) after the item opened, and keeps the item open",
     async (reason) => {
       let dinnerId = "";
-      const unregister = registerReimbursementPicker(async () => ({
-        spendingTransactionId: dinnerId,
-      }));
+      const unregister = registerReimbursementPicker(async (money) => pickEach(money, dinnerId));
       try {
         await sync({ added: [dinner("dinner", -6_000, "2026-09-28")] });
         dinnerId = await idOf("dinner");

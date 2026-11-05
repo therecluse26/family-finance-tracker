@@ -77,7 +77,16 @@ export const APP_MODULES: readonly AppModule[] = [
   },
   {
     name: "startMoneyMovement",
-    start: ({ database }) => startMoneyMovement({ database }),
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startMoneyMovement({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+      }),
     step: {
       name: "matching",
       path: "Matching follow-up on the full history",

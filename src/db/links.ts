@@ -1,6 +1,7 @@
 import { aliasedTable, and, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { Database, Queries } from "./client.ts";
 import {
+  aiLinkAnswers,
   householdAccounts,
   loanLinks,
   refusedLinks,
@@ -615,7 +616,60 @@ export async function carryLinks(database: Queries, from: string, to: string): P
       )
       .onConflictDoNothing();
   }
+  // The app never asks the AI about the same candidate twice, on the posted record either. A pick
+  // of the pending Spending keeps its own key, so it moves in place.
+  await database
+    .update(aiLinkAnswers)
+    .set({ spendingTransactionId: to })
+    .where(eq(aiLinkAnswers.spendingTransactionId, from));
+  const answers = await database
+    .select()
+    .from(aiLinkAnswers)
+    .where(or(eq(aiLinkAnswers.transactionId, from), eq(aiLinkAnswers.otherId, from)));
+  if (answers.length > 0) {
+    const moved = (id: string) => (id === from ? to : id);
+    await database
+      .insert(aiLinkAnswers)
+      .values(
+        answers.map((row) => ({
+          ...row,
+          transactionId: moved(row.transactionId),
+          otherId: moved(row.otherId),
+        })),
+      )
+      .onConflictDoNothing();
+  }
   others.delete(from);
   others.delete(to);
   return [...others];
+}
+
+export type AiLinkAnswer = typeof aiLinkAnswers.$inferSelect;
+export type AiLinkKind = AiLinkAnswer["kind"];
+
+// The AI's stored answers of this kind about these Transactions, by "<Transaction ID> <other ID>".
+export async function readAiLinkAnswers(
+  database: Database,
+  kind: AiLinkKind,
+  transactionIds: readonly string[],
+): Promise<Map<string, AiLinkAnswer>> {
+  const found = new Map<string, AiLinkAnswer>();
+  for (const chunk of chunks([...new Set(transactionIds)])) {
+    const rows = await database
+      .select()
+      .from(aiLinkAnswers)
+      .where(and(eq(aiLinkAnswers.kind, kind), inArray(aiLinkAnswers.transactionId, chunk)));
+    for (const row of rows) found.set(`${row.transactionId} ${row.otherId}`, row);
+  }
+  return found;
+}
+
+// Stores the AI's answers. An answer already stored about the same candidate stays as it is.
+export async function storeAiLinkAnswers(
+  database: Database,
+  answers: readonly AiLinkAnswer[],
+): Promise<void> {
+  for (const chunk of chunks(answers)) {
+    await database.insert(aiLinkAnswers).values(chunk).onConflictDoNothing();
+  }
 }

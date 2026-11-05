@@ -511,15 +511,19 @@ describe("Transfer pairing", () => {
       ]);
       const asked: string[] = [];
       stops.push(
-        registerUnclearPairJudge(async ({ out }) => {
-          const providerId = (
-            await bank.database.$client.execute({
-              sql: "SELECT provider_transaction_id AS p FROM transactions WHERE id = ?",
-              args: [out.id],
-            })
-          ).rows[0]?.p;
-          asked.push(String(providerId));
-          return answers.get(String(providerId));
+        registerUnclearPairJudge(async (pairs) => {
+          const found = [];
+          for (const { out } of pairs) {
+            const providerId = (
+              await bank.database.$client.execute({
+                sql: "SELECT provider_transaction_id AS p FROM transactions WHERE id = ?",
+                args: [out.id],
+              })
+            ).rows[0]?.p;
+            asked.push(String(providerId));
+            found.push(answers.get(String(providerId)));
+          }
+          return found;
         }),
       );
 
@@ -754,7 +758,11 @@ describe("Transfer pairing", () => {
     });
 
     it("ends the AI's link when a date change takes it out of the window", async () => {
-      stops.push(registerUnclearPairJudge(async () => ({ answer: "yes", confidence: "high" })));
+      stops.push(
+        registerUnclearPairJudge(async (pairs) =>
+          pairs.map(() => ({ answer: "yes", confidence: "high" }) as const),
+        ),
+      );
       await sync({
         added: [
           txn("maple-out", CHECKING, -4_400, "2026-10-05"),

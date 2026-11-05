@@ -189,6 +189,8 @@ export {
   storeHouseholdFacts,
 } from "./household-facts.ts";
 export {
+  type AiLinkAnswer,
+  type AiLinkKind,
   type AnyLink,
   carryLinks,
   endOtherLinks,
@@ -207,6 +209,7 @@ export {
   listUnlinkedTransferDecisions,
   type NewTransferLink,
   type OtherLink,
+  readAiLinkAnswers,
   readLink,
   readTransferLink,
   refuseOtherLink,
@@ -216,6 +219,7 @@ export {
   type StoredSpendingLink,
   type StoredTransferLink,
   saveTransferLinks,
+  storeAiLinkAnswers,
   storeOtherLink,
   type TransferCandidate,
   type TransferCandidateFilter,

@@ -870,11 +870,35 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     return new PrivacyRefusal("The privacy filter cannot read this part of the request.");
   }
 
-  function prompt(messages: Prompt): Prompt {
-    return messages.map((message): Prompt[number] => filterMessage(withoutMark(message)));
+  // A Quick batch row is one JSON object with its row number first (src/ai/prompt.ts). Its field
+  // names and values are filtered one by one, as JSON data is, so a removal never takes a quote, a
+  // field name, or the next field with it, and the row stays one JSON object. Its JSON then holds
+  // no escape but \" and \\, so the AI reads the characters the filter read. Only app-built text
+  // is read this way: a Member who types something like a row gets the filter's best effort on
+  // the text, never a refusal (spec 08, Privacy filter).
+  function rowOrText(input: string): string {
+    if (!input.startsWith('{"row":')) return text(input);
+    let row: unknown;
+    try {
+      row = JSON.parse(input);
+    } catch {
+      return text(input);
+    }
+    if (row === null || typeof row !== "object" || Array.isArray(row)) return text(input);
+    const out = JSON.stringify(json(row));
+    if (out.replace(/\\[\\"]/g, "").includes("\\")) {
+      throw new PrivacyRefusal("The privacy filter wrote a row the AI would read differently.");
+    }
+    return out;
   }
 
-  function filterMessage(message: Prompt[number]): Prompt[number] {
+  function prompt(messages: Prompt): Prompt {
+    return messages.map((message): Prompt[number] =>
+      filterMessage(withoutMark(message), isMemberTyped(message)),
+    );
+  }
+
+  function filterMessage(message: Prompt[number], typed: boolean): Prompt[number] {
     switch (message.role) {
       case "system":
         return { ...message, content: text(message.content) };
@@ -883,7 +907,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
           ...message,
           content: message.content.map((part) => {
             if (part.type !== "text") throw refusePart();
-            return { ...part, text: text(part.text) };
+            return { ...part, text: typed ? text(part.text) : rowOrText(part.text) };
           }),
         };
       case "assistant":

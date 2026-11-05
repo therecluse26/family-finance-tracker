@@ -1,6 +1,7 @@
 import { paymentAppLine } from "../merchants/index.ts";
 import { toUnconnectedAccount } from "./one-sided.ts";
 import type { Decision, DecisionInput, DecisionRule } from "./order.ts";
+import { linkedTreatment } from "./refunds.ts";
 
 // Payment apps and cash, steps 5.3, 5.4, 5.5, 6.3, and 6.5 (spec 03, Payment apps, Cash). Pairing
 // has had its turn, so the money on these lines left or entered the Household: money added to a
@@ -67,8 +68,16 @@ const DEPOSIT = "TRANSFER_IN_DEPOSIT";
 // Step 6.5. Money from a person is a payment-app line, Zelle included, that does not name a Member,
 // such as `VENMO CASHOUT` or Zelle from someone outside the Household; or cash or a check paid in
 // (spec 03, Reimbursements). It is Income until the AI or a Member links it as a Reimbursement, and
-// it goes on the Review list.
-export const moneyFromPerson: DecisionRule = (txn) =>
-  isMoneyWithPerson(txn) || txn.providerCategory === DEPOSIT
-    ? { parts: [{ type: "Income", amount: txn.amount, category: null }] }
-    : undefined;
+// it goes on the Review list. A Reimbursement the AI linked reduces its Spending, down to $0, while
+// that purchase is still Spending; a Member's link is step 2's.
+export const moneyFromPerson: DecisionRule = (txn) => {
+  if (!isMoneyWithPerson(txn) && txn.providerCategory !== DEPOSIT) return undefined;
+  if (
+    txn.spendingLink?.kind === "Reimbursement" &&
+    txn.spendingLink.madeBy === "AI" &&
+    txn.spendingAllocations.has(txn.id)
+  ) {
+    return linkedTreatment(txn, "Reimbursement");
+  }
+  return { parts: [{ type: "Income", amount: txn.amount, category: null }] };
+};

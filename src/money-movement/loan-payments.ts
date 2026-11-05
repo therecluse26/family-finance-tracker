@@ -28,6 +28,7 @@ import {
   type ReviewKind,
   settleReviewItems,
 } from "../review/index.ts";
+import { type AiRun, newAiRun } from "./ai-run.ts";
 import { addDays, addMonths, daysBetween } from "./business-days.ts";
 import { closePaidOffLoans, namesLender } from "./manual-loans.ts";
 import { loanLinkedIds } from "./other-links.ts";
@@ -53,20 +54,38 @@ const RHYTHM_DAYS = { from: 25, to: 35 };
 // The amount agrees when it is within 1% of the regular payment.
 const AMOUNT_TOLERANCE = 0.01;
 
-// The AI's judgment of an Unclear payment to a Manual loan (spec 03, Tiers). T81 registers it,
-// and keeps its answers so the app never asks about the same candidate twice. Undefined when no AI
-// answers.
+// The AI's judgment of Unclear payments to Manual loans (spec 03, Tiers): one answer for each
+// candidate, in order, or undefined for one no AI answered. src/money-movement/ai-links.ts
+// registers it, and keeps its answers so the app never asks about the same candidate twice. It
+// asks in batches, and records in the run a use that stops or a retry that waits.
 export type UnclearLoanPaymentAnswer = {
   answer: "yes" | "no";
   confidence: "high" | "medium" | "low";
 };
-// It gets the clean Merchant name and no description, so no person's name reaches the AI.
-export type UnclearLoanPaymentJudge = (candidate: {
-  payment: { id: string; postedDate: string; amount: number; merchantCleanName: string | null };
+// It gets the clean Merchant name and no description. The lender is what a Member typed when
+// adding the Manual loan, so it may name a person; both go through the privacy filter, which
+// removes each Member's name.
+export type UnclearLoanPaymentCandidate = {
+  payment: {
+    id: string;
+    accountId: string;
+    postedDate: string;
+    amount: number;
+    merchantCleanName: string | null;
+  };
   loan: { id: string; lender: string; regularPayment: number | null };
   // The loan's linked payments, oldest first.
-  linked: { postedDate: string; amount: number; merchantCleanName: string | null }[];
-}) => Promise<UnclearLoanPaymentAnswer | undefined>;
+  linked: {
+    accountId: string;
+    postedDate: string;
+    amount: number;
+    merchantCleanName: string | null;
+  }[];
+};
+export type UnclearLoanPaymentJudge = (
+  candidates: readonly UnclearLoanPaymentCandidate[],
+  run: AiRun,
+) => Promise<readonly (UnclearLoanPaymentAnswer | undefined)[]>;
 
 let judge: UnclearLoanPaymentJudge | undefined;
 
@@ -153,6 +172,7 @@ export async function findManualLoanPayments(
   database: Database,
   results: readonly { record: DecisionRecord; step: string }[],
   now: Date,
+  run: AiRun = newAiRun(),
 ): Promise<string[]> {
   const payments = results
     .filter(
@@ -199,6 +219,7 @@ export async function findManualLoanPayments(
   const made: Made[] = [];
   const asks: Ask[] = [];
   const refusing: { transactionId: string; loanAccountId: string }[] = [];
+  const unclear: Ask[] = [];
   for (const { loan, payments: own } of candidates) {
     if (loan.closed) {
       asks.push(...own.map((payment) => ({ payment, loan })));
@@ -243,33 +264,46 @@ export async function findManualLoanPayments(
         });
         continue;
       }
-      const answer = await judge?.({
-        payment: {
-          id: payment.id,
-          postedDate: payment.postedDate,
-          amount: payment.amount,
-          merchantCleanName: payment.merchantCleanName,
-        },
-        loan: { id: loan.id, lender: loan.lender, regularPayment: loan.regularPayment },
-        linked: paidTo(loan.id).map(({ postedDate, amount, merchantCleanName }) => ({
-          postedDate,
-          amount,
-          merchantCleanName,
-        })),
-      });
-      if (answer?.confidence === "high" && answer.answer === "yes") {
-        made.push({
-          transactionId: payment.id,
-          loanAccountId: loan.id,
-          evidence: evidenceOf(now, [], answer),
-        });
-      } else if (answer?.confidence === "high") {
-        refusing.push({ transactionId: payment.id, loanAccountId: loan.id });
-      } else {
-        asks.push({ payment, loan });
-      }
+      unclear.push({ payment, loan });
     }
   }
+  // The AI judges every Unclear payment of the run in one go.
+  const answers =
+    judge === undefined || unclear.length === 0
+      ? []
+      : await judge(
+          unclear.map(({ payment, loan }) => ({
+            payment: {
+              id: payment.id,
+              accountId: payment.accountId,
+              postedDate: payment.postedDate,
+              amount: payment.amount,
+              merchantCleanName: payment.merchantCleanName,
+            },
+            loan: { id: loan.id, lender: loan.lender, regularPayment: loan.regularPayment },
+            linked: paidTo(loan.id).map(({ accountId, postedDate, amount, merchantCleanName }) => ({
+              accountId,
+              postedDate,
+              amount,
+              merchantCleanName,
+            })),
+          })),
+          run,
+        );
+  unclear.forEach(({ payment, loan }, index) => {
+    const answer = answers[index];
+    if (answer?.confidence === "high" && answer.answer === "yes") {
+      made.push({
+        transactionId: payment.id,
+        loanAccountId: loan.id,
+        evidence: evidenceOf(now, [], answer),
+      });
+    } else if (answer?.confidence === "high") {
+      refusing.push({ transactionId: payment.id, loanAccountId: loan.id });
+    } else {
+      asks.push({ payment, loan });
+    }
+  });
   const again: string[] = [];
   if (made.length > 0 || refusing.length > 0) {
     await database.transaction(async (tx) => {
