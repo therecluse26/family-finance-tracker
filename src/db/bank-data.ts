@@ -1,13 +1,17 @@
 import {
+  aliasedTable,
   and,
   asc,
   count,
   desc,
   eq,
+  exists,
+  gt,
   gte,
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   min,
   ne,
@@ -15,6 +19,7 @@ import {
   notInArray,
   or,
   type SQL,
+  sql,
 } from "drizzle-orm";
 import type {
   AccountSnapshot,
@@ -26,6 +31,7 @@ import type {
 import { calendarDateIn } from "../format.ts";
 import { saveDailyBalance } from "./balances.ts";
 import type { Database, Queries } from "./client.ts";
+import type { PartType } from "./decisions.ts";
 import { markTransactionsUnhandled } from "./follow-up.ts";
 import { carryLinks } from "./links.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
@@ -43,6 +49,7 @@ import {
   reviewItems,
   spendingLinks,
   systemNotices,
+  transactionParts,
   transactions,
   transferLinks,
   typedBalances,
@@ -953,6 +960,7 @@ export async function readShownTransactions(database: Database, ids: readonly st
           pending: transactions.pending,
           description: transactions.description,
           merchantName: transactions.merchantName,
+          merchantCleanName: transactions.merchantCleanName,
         })
         .from(transactions)
         .where(
@@ -966,26 +974,134 @@ export async function readShownTransactions(database: Database, ids: readonly st
   return rows;
 }
 
-export type TransactionFilter = { accountId?: string; from?: string; to?: string };
+export type TransactionFilter = {
+  accountId?: string;
+  // Posted dates, YYYY-MM-DD. Both ends are included.
+  from?: string;
+  to?: string;
+  // The Merchant's clean name.
+  merchant?: string;
+  // A Transaction shows when one of its parts has the type, the Category, and the month, YYYY-MM,
+  // each that is set. A part's month comes from the purchase date, else the posted date (spec 04,
+  // Which month a Transaction counts in). A linked Refund or Reimbursement part has its Spending's
+  // Categories and month (spec 03, Which month a link changes).
+  type?: PartType;
+  category?: string;
+  month?: string;
+};
 
-// The Transactions that are not hidden, newest first.
-export async function listTransactions(database: Database, filter: TransactionFilter = {}) {
+// One page of the list: at most `limit` Transactions, after the one with the ID `after`.
+export type TransactionPage = { limit: number; after?: string };
+
+const LISTED = {
+  id: transactions.id,
+  accountId: transactions.accountId,
+  amount: transactions.amount,
+  postedDate: transactions.postedDate,
+  authorizedDate: transactions.authorizedDate,
+  pending: transactions.pending,
+  description: transactions.description,
+  merchantName: transactions.merchantName,
+  merchantCleanName: transactions.merchantCleanName,
+};
+
+// The filter's conditions, in one statement: each part filter is one EXISTS on the Transaction's
+// own parts, with its Spending through the link of a linked part.
+function filtered(database: Queries, filter: TransactionFilter): SQL[] {
   const where: SQL[] = [isNull(transactions.hiddenReason)];
   if (filter.accountId !== undefined) where.push(eq(transactions.accountId, filter.accountId));
   if (filter.from !== undefined) where.push(gte(transactions.postedDate, filter.from));
   if (filter.to !== undefined) where.push(lte(transactions.postedDate, filter.to));
+  if (filter.merchant !== undefined) {
+    where.push(eq(transactions.merchantCleanName, filter.merchant));
+  }
+  const { type, category, month } = filter;
+  if (type === undefined && category === undefined && month === undefined) return where;
+  const spent = aliasedTable(transactions, "spent");
+  const spentPart = aliasedTable(transactionParts, "spent_part");
+  const ofPart: SQL[] = [eq(transactionParts.transactionId, transactions.id)];
+  if (type !== undefined) ofPart.push(eq(transactionParts.type, type));
+  if (category !== undefined) {
+    const spentIn = database
+      .select({ one: sql`1` })
+      .from(spentPart)
+      .where(
+        and(
+          eq(spentPart.transactionId, spent.id),
+          eq(spentPart.type, "Spending"),
+          eq(spentPart.category, category),
+        ),
+      );
+    ofPart.push(
+      or(
+        and(isNull(spent.id), eq(transactionParts.category, category)),
+        and(isNotNull(spent.id), exists(spentIn)),
+      ) as SQL,
+    );
+  }
+  if (month !== undefined) {
+    ofPart.push(
+      sql`substr(coalesce(${spent.authorizedDate}, ${spent.postedDate}, ${transactions.authorizedDate}, ${transactions.postedDate}), 1, 7) = ${month}`,
+    );
+  }
+  where.push(
+    exists(
+      database
+        .select({ one: sql`1` })
+        .from(transactionParts)
+        .leftJoin(
+          spendingLinks,
+          and(
+            eq(transactionParts.linked, true),
+            eq(spendingLinks.transactionId, transactionParts.transactionId),
+          ),
+        )
+        .leftJoin(spent, eq(spent.id, spendingLinks.spendingTransactionId))
+        .where(and(...ofPart)),
+    ),
+  );
+  return where;
+}
+
+// The Transactions that are not hidden, newest first, that pass the filter.
+export async function listTransactions(database: Database, filter: TransactionFilter = {}) {
   return database
-    .select({
-      id: transactions.id,
-      accountId: transactions.accountId,
-      amount: transactions.amount,
-      postedDate: transactions.postedDate,
-      authorizedDate: transactions.authorizedDate,
-      pending: transactions.pending,
-      description: transactions.description,
-      merchantName: transactions.merchantName,
-    })
+    .select(LISTED)
+    .from(transactions)
+    .where(and(...filtered(database, filter)))
+    .orderBy(desc(transactions.postedDate), asc(transactions.id));
+}
+
+// One page of listTransactions, and the ID to read the next page after, or null on the last page.
+// Undefined when no Transaction has the ID `after`.
+export async function listTransactionPage(
+  database: Database,
+  filter: TransactionFilter,
+  page: TransactionPage,
+) {
+  const where = filtered(database, filter);
+  if (page.after !== undefined) {
+    const [anchor] = await database
+      .select({ id: transactions.id, postedDate: transactions.postedDate })
+      .from(transactions)
+      .where(eq(transactions.id, page.after));
+    if (anchor === undefined) return undefined;
+    where.push(
+      or(
+        lt(transactions.postedDate, anchor.postedDate),
+        and(eq(transactions.postedDate, anchor.postedDate), gt(transactions.id, anchor.id)),
+      ) as SQL,
+    );
+  }
+  const rows = await database
+    .select(LISTED)
     .from(transactions)
     .where(and(...where))
-    .orderBy(desc(transactions.postedDate), asc(transactions.id));
+    .orderBy(desc(transactions.postedDate), asc(transactions.id))
+    .limit(page.limit + 1);
+  const shown = rows.slice(0, page.limit);
+  return {
+    transactions: shown,
+    next: rows.length > page.limit ? (shown.at(-1)?.id ?? null) : null,
+  };
 }

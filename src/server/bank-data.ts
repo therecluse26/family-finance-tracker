@@ -19,6 +19,7 @@ import {
   type Database,
   listAccounts,
   listConnections,
+  listTransactionPage,
   listTransactions,
   readAccount,
   reopenAccount,
@@ -32,6 +33,7 @@ import {
   switchExclude,
 } from "../money-movement/index.ts";
 import type { AccountView, BankViews, UnconnectedAccountBody } from "./bank-views.ts";
+import { transactionRows } from "./transaction-rows.ts";
 
 // A Connection that needs a Member or is Broken does not poll (spec 02, Connections).
 const polls = (health: Health) => health === "healthy" || health === "retrying";
@@ -139,8 +141,18 @@ export function bankViews(database: Database): BankViews {
       return accountView(id);
     },
 
-    transactions(query) {
-      return listTransactions(database, query);
+    // One page when the query has a limit, else every Transaction that passes the filters.
+    async transactions({ limit, after, ...filter }) {
+      if (limit === undefined) {
+        const listed = await listTransactions(database, filter);
+        return { transactions: await transactionRows(database, listed), next: null };
+      }
+      const page = await listTransactionPage(database, filter, {
+        limit,
+        ...(after === undefined ? {} : { after }),
+      });
+      if (page === undefined) return undefined;
+      return { transactions: await transactionRows(database, page.transactions), next: page.next };
     },
 
     // A synced Account has a saved balance for each day. An Unconnected account or a Manual loan

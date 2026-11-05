@@ -2,6 +2,7 @@
 // app's type check can follow it through api.ts.
 import type { AdapterActions, Provider } from "../bank/adapter.ts";
 import type { UnconnectedKind } from "../bank/unconnected-kinds.ts";
+import type { TransactionPartView, TransactionRowView } from "./money-movement-views.ts";
 
 export type AccountView = {
   id: string;
@@ -86,8 +87,29 @@ export type HistoryStatusView = {
   }[];
 };
 
-// Calendar dates are written YYYY-MM-DD.
-export type TransactionQuery = { accountId?: string; from?: string; to?: string };
+// The filters and the page of GET /api/transactions (spec 07, Transactions page). Calendar dates
+// are written YYYY-MM-DD, and a month YYYY-MM.
+export type TransactionQuery = {
+  accountId?: string;
+  // Posted dates. Both ends are included.
+  from?: string;
+  to?: string;
+  // The Merchant's clean name.
+  merchant?: string;
+  // A Transaction shows when one of its parts has the type, the Category, and the month that are
+  // set. A linked Refund or Reimbursement part has its Spending's Categories and month.
+  type?: TransactionPartView["type"];
+  category?: string;
+  month?: string;
+  // A page of at most `limit` Transactions, after the one with the ID `after`. Without a limit,
+  // every Transaction that passes the filters.
+  limit?: number;
+  after?: string;
+};
+
+// The Transactions that pass the filters, newest first, and the ID to read the next page after, or
+// null on the last page.
+export type TransactionListView = { transactions: TransactionRowView[]; next: string | null };
 
 // One day's end balance of an Account, in whole cents; money owed is negative. A day before the
 // first sync is estimated, and has no available balance.
@@ -148,7 +170,8 @@ export type BankViews = {
   reopenAccount(id: string): Promise<AccountView | undefined>;
   // A Member turns an Account's Exclude switch on or off. Undefined when no Account has the ID.
   setExcluded(id: string, excluded: boolean): Promise<AccountView | undefined>;
-  transactions(query: TransactionQuery): Promise<TransactionView[]>;
+  // Undefined when no Transaction has the ID `after`.
+  transactions(query: TransactionQuery): Promise<TransactionListView | undefined>;
   // Undefined when no Account has the ID.
   balances(accountId: string, query: BalanceQuery): Promise<BalancesView | undefined>;
   connections(): Promise<ConnectionView[]>;

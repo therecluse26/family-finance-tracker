@@ -64,6 +64,7 @@ export {
   listAccounts,
   listConnections,
   listDueConnections,
+  listTransactionPage,
   listTransactions,
   markConnectionRemoved,
   type NewAccount,
@@ -80,6 +81,7 @@ export {
   setHandSetFields,
   storeSyncPage,
   type TransactionFilter,
+  type TransactionPage,
 } from "./bank-data.ts";
 export {
   type BudgetInputs,
@@ -153,7 +155,9 @@ export {
   readDecision,
   readDecisionRecords,
   readPendingParts,
+  readShownParts,
   removeDecisions,
+  type ShownPart,
   type StoredDecision,
   type StoredPart,
   storeDecisions,

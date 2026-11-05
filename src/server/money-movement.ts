@@ -1,5 +1,5 @@
 import { isCategory } from "../categories/index.ts";
-import type { Database } from "../db/index.ts";
+import { type Database, readShownTransactions } from "../db/index.ts";
 import {
   addManualLoan,
   editManualLoan,
@@ -15,12 +15,33 @@ import {
   undoLink,
 } from "../money-movement/index.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
+import { transactionRows } from "./transaction-rows.ts";
 
 // The money-movement routes, through the money-movement module.
 export function moneyMovementRoutes(database: Database): MoneyMovementRoutes {
   return {
-    transaction(transactionId) {
-      return readTransactionDetail(database, transactionId);
+    // The Transaction and the other side of each of its links, as the Transactions page shows them,
+    // in one batch.
+    async transaction(transactionId) {
+      const detail = await readTransactionDetail(database, transactionId);
+      if (detail === undefined) return undefined;
+      const otherIds = [detail.transferLink, ...detail.otherLinks].flatMap((link) =>
+        link?.otherTransactionId == null ? [] : [link.otherTransactionId],
+      );
+      const rows = await transactionRows(
+        database,
+        await readShownTransactions(database, [transactionId, ...otherIds]),
+      );
+      const transaction = rows.find((row) => row.id === transactionId);
+      if (transaction === undefined) return undefined;
+      return {
+        transaction,
+        decision:
+          detail.decision === null ? null : { ...detail.decision, parts: transaction.parts },
+        transferLink: detail.transferLink,
+        otherLinks: detail.otherLinks,
+        matched: rows.filter((row) => row.id !== transactionId),
+      };
     },
 
     setType(transactionId, type) {

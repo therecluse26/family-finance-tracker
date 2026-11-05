@@ -17,6 +17,8 @@ import { DataSources } from "./pages/settings/DataSources.tsx";
 import { Household } from "./pages/settings/Household.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
+import { TransactionDetail } from "./pages/TransactionDetail.tsx";
+import { Transactions } from "./pages/Transactions.tsx";
 import { Shell } from "./Shell.tsx";
 
 // Every page route. Each main menu item and each Settings section has its own route. A page whose
@@ -43,6 +45,7 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
 const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/accounts": Accounts,
   "/review-list": ReviewList,
+  "/transactions": Transactions,
 };
 
 const pages: RouteObject[] = [...MAIN_MENU, ...MORE_MENU]
@@ -70,6 +73,8 @@ export const routes: RouteObject[] = [
         path: "accounts/:id",
         lazy: async () => ({ Component: (await import("./pages/Account.tsx")).Account }),
       },
+      // A Transaction's detail view, opened from the Transactions page.
+      { path: "transactions/:id", Component: TransactionDetail },
       {
         path: "settings",
         Component: Settings,

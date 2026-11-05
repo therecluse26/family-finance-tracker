@@ -164,6 +164,13 @@ describe("the money-movement routes", () => {
   });
 
   it("returns a Transaction with its type and its Transfer link's evidence", async () => {
+    const TRANSFER_PART = {
+      type: "Transfer",
+      amount: 50_000,
+      category: null,
+      linked: false,
+      categoryChosenBy: null,
+    } as const;
     const res = await browser.get(`/api/transactions/${ids.get("save-in")}`);
 
     expect(res.status).toBe(200);
@@ -177,12 +184,10 @@ describe("the money-movement routes", () => {
         pending: false,
         description: "FAKE save-in",
         merchantName: null,
+        merchant: "FAKE save-in",
+        parts: [TRANSFER_PART],
       },
-      decision: {
-        step: "3",
-        provisionalUntil: null,
-        parts: [{ type: "Transfer", amount: 50_000, category: null }],
-      },
+      decision: { step: "3", provisionalUntil: null, parts: [TRANSFER_PART] },
       transferLink: {
         id: expect.any(String),
         otherTransactionId: ids.get("save-out") ?? "",
@@ -194,6 +199,7 @@ describe("the money-movement routes", () => {
         uncertain: false,
       },
       otherLinks: [],
+      matched: [expect.objectContaining({ id: ids.get("save-out"), amount: -50_000 })],
     } satisfies TransactionDetailView);
     const rent = (await (
       await browser.get(`/api/transactions/${ids.get("rent")}`)

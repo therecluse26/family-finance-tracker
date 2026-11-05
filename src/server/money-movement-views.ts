@@ -66,25 +66,58 @@ export type OtherLinkView = {
   madeBy: "app" | "AI" | "Member";
 };
 
-// One Transaction, with its type and its links' evidence.
+// How a part's Category was chosen, as the Transactions page shows it (spec 04, Provenance): the
+// cascade step, with "AI, unsure" for an AI answer below high confidence. "Money movement" is a
+// Category that a Money movement rule names, such as Cash (spec 04, Categories that Money movement
+// names).
+export type CategoryChosenBy =
+  | "hand-set"
+  | "Category rule"
+  | "Plaid"
+  | "Merchant history"
+  | "AI"
+  | "AI, unsure"
+  | "best guess"
+  | "Money movement";
+
+// A part as the Transactions page shows it. A Refund or Reimbursement linked to a split purchase
+// shows one part for each of the purchase's parts, in proportion to their amounts (spec 04, Splits).
+export type ShownPartView = TransactionPartView & {
+  // The part of a Refund or Reimbursement that its link reduces. It has its Spending's Category.
+  linked: boolean;
+  // Null for a part with no Category of its own: a Transfer, Income, Saving, a linked part, or
+  // Spending the categorization step has not reached yet.
+  categoryChosenBy: CategoryChosenBy | null;
+};
+
+// A Transaction as a row of the Transactions page shows it (spec 07, Transactions page).
+export type TransactionRowView = {
+  id: string;
+  accountId: string;
+  // Whole cents. Money into the Account is positive.
+  amount: number;
+  postedDate: string;
+  authorizedDate: string | null;
+  pending: boolean;
+  description: string;
+  merchantName: string | null;
+  // The Merchant's clean name, or null when it has none, such as a paper check.
+  merchant: string | null;
+  // Empty before Matching has decided it.
+  parts: ShownPartView[];
+};
+
+// One Transaction, with its type, how each Category was chosen, and its links' evidence.
 export type TransactionDetailView = {
-  transaction: {
-    id: string;
-    accountId: string;
-    // Whole cents. Money into the Account is positive.
-    amount: number;
-    postedDate: string;
-    authorizedDate: string | null;
-    pending: boolean;
-    description: string;
-    merchantName: string | null;
-  };
-  // Null before Matching has decided it.
-  decision: TransactionDecisionView | null;
+  transaction: TransactionRowView;
+  // Null before Matching has decided it. Its parts are the row's.
+  decision: (Omit<TransactionDecisionView, "parts"> & { parts: ShownPartView[] }) | null;
   // Null when no Transfer link uses it.
   transferLink: TransferLinkView | null;
   // The Refund, Reimbursement, and Manual loan links that use it.
   otherLinks: OtherLinkView[];
+  // The Transaction on the other side of each link, for its evidence (spec 03, Evidence).
+  matched: TransactionRowView[];
 };
 
 // A link a Member makes by hand (spec 03, Undo and hand links).

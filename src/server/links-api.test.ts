@@ -533,7 +533,7 @@ describe("the link routes", () => {
       });
       expect(linked.status).toBe(200);
       // 9 days on $9,500 at 7.3%: $17.10 of interest; the rest goes to the Cash loan.
-      expect((await detail("lender")).decision?.parts).toEqual([
+      expect((await detail("lender")).decision?.parts).toMatchObject([
         { type: "Spending", amount: -1_710, category: "Interest and fees" },
         { type: "Transfer", amount: -38_290, category: null },
       ]);

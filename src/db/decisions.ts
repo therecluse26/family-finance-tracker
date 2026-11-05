@@ -386,33 +386,62 @@ export function inProportion(total: number, weights: readonly number[]): number[
   return shares;
 }
 
+type SpendingPart = { category: string | null; amount: number };
+
 // The Spending parts of the Spending that each linked Refund or Reimbursement reduces, by the money
-// in's ID, in part order: one statement for every link.
+// in's ID, in part order: one statement for every link, or for the links of these Transactions.
 async function readLinkedSpendingParts(
   database: Queries,
-): Promise<Map<string, { category: string | null; amount: number }[]>> {
-  const rows = await database
-    .select({
-      moneyId: spendingLinks.transactionId,
-      category: transactionParts.category,
-      amount: transactionParts.amount,
-    })
-    .from(spendingLinks)
-    .innerJoin(
-      transactionParts,
-      and(
-        eq(transactionParts.transactionId, spendingLinks.spendingTransactionId),
-        eq(transactionParts.type, "Spending"),
-      ),
-    )
-    .orderBy(asc(spendingLinks.transactionId), asc(transactionParts.part));
-  const parts = new Map<string, { category: string | null; amount: number }[]>();
+  moneyIds?: readonly string[],
+): Promise<Map<string, SpendingPart[]>> {
+  const select = () =>
+    database
+      .select({
+        moneyId: spendingLinks.transactionId,
+        category: transactionParts.category,
+        amount: transactionParts.amount,
+      })
+      .from(spendingLinks)
+      .innerJoin(
+        transactionParts,
+        and(
+          eq(transactionParts.transactionId, spendingLinks.spendingTransactionId),
+          eq(transactionParts.type, "Spending"),
+        ),
+      )
+      .orderBy(asc(spendingLinks.transactionId), asc(transactionParts.part));
+  const rows: Awaited<ReturnType<typeof select>> = [];
+  if (moneyIds === undefined) rows.push(...(await select()));
+  for (const chunk of chunks(moneyIds ?? [])) {
+    rows.push(...(await select().where(inArray(spendingLinks.transactionId, chunk))));
+  }
+  const parts = new Map<string, SpendingPart[]>();
   for (const { moneyId, ...part } of rows) {
     const found = parts.get(moneyId);
     if (found === undefined) parts.set(moneyId, [part]);
     else found.push(part);
   }
   return parts;
+}
+
+// A linked Refund or Reimbursement part, as one part for each Spending part of its Spending, such as
+// a split (spec 04, Splits): in proportion to their amounts, each with that part's Category. With
+// fewer than 2 Spending parts, it stays one part.
+function spreadLinked<Row extends SpendingPart>(
+  row: Row,
+  spending: readonly SpendingPart[],
+): Row[] {
+  if (spending.length < 2) return [row];
+  // Spending is money out, so each part's amount is negative.
+  const shares = inProportion(
+    row.amount,
+    spending.map((part) => -part.amount),
+  );
+  return spending.map((part, index) => ({
+    ...row,
+    amount: shares[index] ?? 0,
+    category: part.category,
+  }));
 }
 
 // Every part of every posted Transaction that is not hidden, with the dates its month comes from.
@@ -441,26 +470,74 @@ export async function listPostedParts(database: Database) {
     : new Map<string, LinkedSpending>();
   const spendingParts = anyLinked
     ? await readLinkedSpendingParts(database)
-    : new Map<string, { category: string | null; amount: number }[]>();
+    : new Map<string, SpendingPart[]>();
   return rows.flatMap(
     (row): ((typeof rows)[number] & { spendingTransactionId: string | null })[] => {
       const found = row.linked ? spending.get(row.transactionId) : undefined;
       if (found === undefined) return [{ ...row, spendingTransactionId: null }];
-      const parts = spendingParts.get(row.transactionId) ?? [];
-      if (parts.length < 2) return [{ ...row, ...found }];
-      // Spending is money out, so each part's amount is negative.
-      const shares = inProportion(
-        row.amount,
-        parts.map((part) => -part.amount),
-      );
-      return parts.map((part, index) => ({
-        ...row,
-        ...found,
-        amount: shares[index] ?? 0,
-        category: part.category,
-      }));
+      return spreadLinked({ ...row, ...found }, spendingParts.get(row.transactionId) ?? []);
     },
   );
+}
+
+// A part as the Transactions page shows it, with the provenance of its Category (spec 04,
+// Provenance).
+export type ShownPart = {
+  type: PartType;
+  amount: number;
+  category: string | null;
+  // The part of a Refund or Reimbursement that its link reduces. It has its Spending's Category,
+  // and no provenance of its own.
+  linked: boolean;
+  categorySource: CategorySource | null;
+  categoryConfidence: CategoryConfidence | null;
+};
+
+// The parts of each of these Transactions, in part order, by ID; a Transaction Matching has not
+// decided is left out. A linked Refund or Reimbursement part has its Spending's Category, as
+// listPostedParts gives it: one part for each Spending part, so a Refund on a split purchase shows
+// per part. While its link is gone, before Matching decides it again, it keeps its own. One
+// statement for each 500 Transactions, and two more for the links among them.
+export async function readShownParts(
+  database: Queries,
+  transactionIds: readonly string[],
+): Promise<Map<string, ShownPart[]>> {
+  const rows: (ShownPart & { transactionId: string })[] = [];
+  for (const chunk of chunks([...new Set(transactionIds)])) {
+    rows.push(
+      ...(await database
+        .select({
+          transactionId: transactionParts.transactionId,
+          type: transactionParts.type,
+          amount: transactionParts.amount,
+          category: transactionParts.category,
+          linked: transactionParts.linked,
+          categorySource: transactionParts.categorySource,
+          categoryConfidence: transactionParts.categoryConfidence,
+        })
+        .from(transactionParts)
+        .where(inArray(transactionParts.transactionId, chunk))
+        .orderBy(asc(transactionParts.transactionId), asc(transactionParts.part))),
+    );
+  }
+  const linkedIds = [...new Set(rows.filter((row) => row.linked).map((row) => row.transactionId))];
+  const spending = await readLinkedSpending(database, linkedIds);
+  const spendingParts = await readLinkedSpendingParts(database, linkedIds);
+  const shown = new Map<string, ShownPart[]>();
+  for (const { transactionId, ...part } of rows) {
+    const found = part.linked ? spending.get(transactionId) : undefined;
+    const parts =
+      found === undefined
+        ? [part]
+        : spreadLinked(
+            { ...part, category: found.category, categorySource: null, categoryConfidence: null },
+            spendingParts.get(transactionId) ?? [],
+          );
+    const listed = shown.get(transactionId);
+    if (listed === undefined) shown.set(transactionId, parts);
+    else listed.push(...parts);
+  }
+  return shown;
 }
 
 // The parts of the pending Transaction that each posted one replaces, with their Categories' provenance,

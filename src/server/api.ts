@@ -56,17 +56,47 @@ const NO_KEY = "Paste the Master key.";
 const NO_REVIEW_ITEM = "No open Review list item has this ID.";
 const MAX_CHOICE_LENGTH = 200;
 
-// The filters of GET /api/transactions: account, and a date range on the posted date.
+// The filters of GET /api/transactions (spec 07, Transactions page): Account, a date range on the
+// posted date, Merchant, Category, type, and month; and a page of at most 200. An empty filter is
+// left out. A page after a Transaction needs a limit.
+const MAX_TRANSACTION_PAGE = 200;
+const TRANSACTION_TYPES = [
+  "Spending",
+  "Income",
+  "Transfer",
+  "Saving",
+  "Refund",
+  "Reimbursement",
+] as const;
+const transactionFilters = z
+  .object({
+    account: z.string().max(100).optional(),
+    from: z.string().regex(CALENDAR_DATE).optional(),
+    to: z.string().regex(CALENDAR_DATE).optional(),
+    merchant: z.string().max(200).optional(),
+    category: z
+      .string()
+      .refine((name) => CATEGORY_NAMES.has(name))
+      .optional(),
+    type: z.enum(TRANSACTION_TYPES).optional(),
+    month: z.string().regex(MONTH).optional(),
+    limit: z
+      .string()
+      .regex(/^\d{1,3}$/)
+      .transform(Number)
+      .pipe(z.number().min(1).max(MAX_TRANSACTION_PAGE))
+      .optional(),
+    after: z.string().max(100).optional(),
+  })
+  .refine((query) => query.after === undefined || query.limit !== undefined);
+const TRANSACTION_QUERY_REFUSED = `Write dates as YYYY-MM-DD and a month as YYYY-MM, pick a Category and a type from the lists, and ask for 1 to ${MAX_TRANSACTION_PAGE} Transactions a page. A page after a Transaction needs a limit.`;
+
 function transactionQuery(query: Record<string, string>): TransactionQuery | undefined {
-  const { account, from, to } = query;
-  for (const date of [from, to]) {
-    if (date !== undefined && !CALENDAR_DATE.test(date)) return undefined;
-  }
-  return {
-    ...(account === undefined || account === "" ? {} : { accountId: account }),
-    ...(from === undefined ? {} : { from }),
-    ...(to === undefined ? {} : { to }),
-  };
+  const given = Object.fromEntries(Object.entries(query).filter(([, value]) => value !== ""));
+  const parsed = transactionFilters.safeParse(given);
+  if (!parsed.success) return undefined;
+  const { account, ...filters } = parsed.data;
+  return { ...(account === undefined ? {} : { accountId: account }), ...filters };
 }
 
 // Changing the Plaid keys is a sensitive action, so it takes a fresh TOTP or backup code.
@@ -488,12 +518,17 @@ export const api = new Hono<ServerEnv>()
     if (account === undefined) return c.json({ error: "Not found" }, 404);
     return c.json({ account });
   })
+  // The Transactions page's list (spec 07, Transactions page), newest first, with each row's parts.
+  // With a limit, one page and the ID to read the next page after.
   .get("/transactions", async (c) => {
     const query = transactionQuery(c.req.query());
-    if (query === undefined) return c.json({ error: "Write dates as YYYY-MM-DD." }, 400);
-    return c.json({ transactions: await c.var.bank.transactions(query) });
+    if (query === undefined) return c.json({ error: TRANSACTION_QUERY_REFUSED }, 400);
+    const list = await c.var.bank.transactions(query);
+    if (list === undefined) return c.json({ error: "No Transaction has the ID after." }, 400);
+    return c.json(list);
   })
-  // One Transaction, with its type and its Transfer link's evidence (spec 03, Evidence).
+  // One Transaction, with its parts and how each Category was chosen (spec 04, Provenance), and
+  // each link's evidence with the Transaction it matched (spec 03, Evidence).
   .get("/transactions/:id", async (c) => {
     const detail = await c.var.moneyMovement.transaction(c.req.param("id"));
     if (detail === undefined) return c.json({ error: "Not found" }, 404);
@@ -501,7 +536,7 @@ export const api = new Hono<ServerEnv>()
   })
   // A Member sets a Transaction's type by hand (spec 03, Transaction types). It wins over every
   // rule and survives every re-run.
-  .put("/transactions/:id/type", async (c) => {
+  .put("/transactions/:id/type", jsonOnly, async (c) => {
     const body = transactionTypeBody.safeParse(await jsonBody(c));
     if (!body.success) {
       return c.json({ error: "Pick Spending, Transfer, Income, or Saving." }, 400);
