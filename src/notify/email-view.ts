@@ -11,7 +11,7 @@ export type SmtpFields = SmtpView & {
 
 // Why a save stored nothing: changing the password, or the server or sign-in name it goes to,
 // takes a fresh TOTP or backup code; and a new server or sign-in name needs its password.
-export type SmtpRefusal = "code needed" | "password needed";
+export type SmtpRefusal = "password needed";
 
 export type SmtpSave = { saved: true; smtp: SmtpView } | { saved: false; refusal: SmtpRefusal };
 
@@ -29,7 +29,7 @@ export type TestEmail = { sent: true } | { sent: false; problem: SendProblem };
 
 export type SmtpSettings = {
   view(): Promise<SmtpView | null>;
-  save(fields: SmtpFields, options: { freshCode: boolean }): Promise<SmtpSave>;
+  save(fields: SmtpFields): Promise<SmtpSave>;
   // Sends a test email to this address, the signed-in Member's.
   sendTest(to: string): Promise<TestEmail>;
 };

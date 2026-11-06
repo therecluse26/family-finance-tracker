@@ -84,7 +84,7 @@ describe("passkeys", () => {
     return new TestBrowser(app, appUrl, client, appUrl.startsWith("https://") ? proxy : undefined);
   };
 
-  // Each TOTP code works once, so each sign-in and each fresh code takes its own step.
+  // Each TOTP code works once, so each sign-in takes its own step.
   async function signedIn(member: TestMember, appUrl = HTTPS_URL): Promise<TestBrowser> {
     later(TOTP_STEP_MS);
     const tab = browser(appUrl);
@@ -93,7 +93,8 @@ describe("passkeys", () => {
     return tab;
   }
 
-  // Settings, My login's "Add a passkey": the options, the device, then the check with a fresh code.
+  // Settings, My login's "Add a passkey": the options, the device, then the check with the
+  // Member's current password.
   async function addPasskey(
     tab: TestBrowser,
     member: TestMember,
@@ -103,10 +104,9 @@ describe("passkeys", () => {
     const options = await tab.get("/api/auth/passkey/generate-register-options");
     if (options.status !== 200) return options;
     const response = await device.create((await options.json()) as CreationOptionsJSON);
-    later(TOTP_STEP_MS);
     return tab.post("/api/auth/passkey/verify-registration", {
       response,
-      code: await member.totpCode(),
+      currentPassword: member.password,
       ...body,
     });
   }
@@ -134,7 +134,7 @@ describe("passkeys", () => {
   }
 
   // The rows a refused request must leave as they were. Sessions renew on each use, so they are
-  // compared by ID, and a fresh code claims its TOTP step.
+  // compared by ID.
   async function lasting() {
     const tables = await readEveryTable(test.database);
     return {
@@ -163,7 +163,7 @@ describe("passkeys", () => {
       device = new TestAuthenticator(HTTPS_URL);
     });
 
-    it("adds a passkey with a fresh code, tied to APP_URL's host, and lists it", async () => {
+    it("adds a passkey with the current password and no code, tied to APP_URL's host, and lists it", async () => {
       const res = await addPasskey(aliceTab, alice, device, { name: "Alice's phone" });
 
       expect(res.status).toBe(200);
@@ -206,44 +206,16 @@ describe("passkeys", () => {
       expect(session.user.id).toBe(alice.id);
     });
 
-    it("asks for a fresh code to add a passkey, and stores nothing for a wrong or missing one", async () => {
+    it("asks for the current password to add a passkey, counts a wrong one as a failed sign-in, and stores nothing", async () => {
       const before = await lasting();
-      for (const code of ["000000", "", undefined]) {
-        const options = await aliceTab.get("/api/auth/passkey/generate-register-options");
-        const response = await device.create((await options.json()) as CreationOptionsJSON);
-        const res = await aliceTab.post("/api/auth/passkey/verify-registration", {
-          response,
-          code,
-        });
-        expect(res.status, String(code)).toBe(401);
+      const wrong = `${alice.password}x`;
+      for (const currentPassword of [wrong, "", undefined, 123456, alice.password.toUpperCase()]) {
+        const res = await addPasskey(aliceTab, alice, device, { currentPassword });
+        expect(res.status, String(currentPassword)).toBe(401);
       }
+      // Past 5 failed sign-ins, even the right password is refused unchecked.
+      expect((await addPasskey(aliceTab, alice, device)).status).toBe(429);
       expect(await lasting()).toEqual(before);
-    });
-
-    it("of two adds at once with one code, stores only one passkey", async () => {
-      const otherTab = await signedIn(alice);
-      const ready = await Promise.all(
-        [aliceTab, otherTab].map(async (tab) => {
-          const options = await tab.get("/api/auth/passkey/generate-register-options");
-          return {
-            tab,
-            response: await device.create((await options.json()) as CreationOptionsJSON),
-          };
-        }),
-      );
-      later(TOTP_STEP_MS);
-      const code = await alice.totpCode();
-
-      const statuses = await Promise.all(
-        ready.map(({ tab, response }) =>
-          tab
-            .post("/api/auth/passkey/verify-registration", { response, code })
-            .then((res) => res.status),
-        ),
-      );
-
-      expect(statuses.sort()).toEqual([200, 401]);
-      expect(await passkeyRows()).toHaveLength(1);
     });
 
     it("refuses a passkey that does not verify the Member, to add or to sign in", async () => {
@@ -284,10 +256,9 @@ describe("passkeys", () => {
       const options = await aliceTab.get("/api/auth/passkey/generate-register-options");
       const json = (await options.json()) as CreationOptionsJSON;
       const response = await device.create({ ...json, rp: { id: "example.com" } });
-      later(TOTP_STEP_MS);
       const res = await aliceTab.post("/api/auth/passkey/verify-registration", {
         response,
-        code: await alice.totpCode(),
+        currentPassword: alice.password,
       });
       expect(res.status).toBe(400);
       expect(await passkeyRows()).toHaveLength(1);
@@ -339,7 +310,7 @@ describe("passkeys", () => {
         (
           await signedOut.post("/api/auth/passkey/verify-registration", {
             response,
-            code: await alice.totpCode(),
+            currentPassword: alice.password,
           })
         ).status,
       ).toBe(401);
@@ -364,11 +335,10 @@ describe("passkeys", () => {
         const response = await new TestAuthenticator(HTTPS_URL).create(
           (await options.json()) as CreationOptionsJSON,
         );
-        later(TOTP_STEP_MS);
         const add = await aliceTab.send(
           "POST",
           "/api/auth/passkey/verify-registration",
-          { response, code: await alice.totpCode() },
+          { response, currentPassword: alice.password },
           { origin },
         );
         expect(add.status, String(origin)).toBe(403);
@@ -420,11 +390,8 @@ describe("passkeys", () => {
       const bobDevice = new TestAuthenticator(HTTPS_URL);
       await addPasskey(aliceTab, alice, device);
       await addPasskey(await signedIn(bob), bob, bobDevice);
-      later(TOTP_STEP_MS);
 
-      const res = await aliceTab.post(`/api/members/${bob.id}/remove`, {
-        code: await alice.totpCode(),
-      });
+      const res = await aliceTab.post(`/api/members/${bob.id}/remove`, {});
 
       expect(res.status).toBe(200);
       expect((await passkeyRows()).map((row) => row.member_id)).toEqual([alice.id]);
@@ -436,11 +403,8 @@ describe("passkeys", () => {
       await addPasskey(aliceTab, alice, device);
       await addPasskey(await signedIn(bob), bob, bobDevice);
       expect((await passkeySignIn(bobDevice)).status).toBe(200);
-      later(TOTP_STEP_MS);
 
-      const res = await aliceTab.post(`/api/members/${bob.id}/reset-login`, {
-        code: await alice.totpCode(),
-      });
+      const res = await aliceTab.post(`/api/members/${bob.id}/reset-login`, {});
 
       expect(res.status).toBe(200);
       expect((await passkeyRows()).map((row) => row.member_id)).toEqual([alice.id]);
@@ -466,7 +430,7 @@ describe("passkeys", () => {
         await tab.get("/api/auth/passkey/generate-register-options"),
         await tab.post("/api/auth/passkey/verify-registration", {
           response,
-          code: await alice.totpCode(),
+          currentPassword: alice.password,
         }),
         await tab.get("/api/auth/passkey/list-user-passkeys"),
         await tab.post("/api/auth/passkey/delete-passkey", { id: "any" }),

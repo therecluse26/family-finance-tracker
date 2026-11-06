@@ -24,8 +24,6 @@ const anthropic = (more: Partial<AiSettingsInput> = {}): AiSettingsInput => ({
   ...more,
 });
 
-const FRESH = { freshCode: true };
-
 describe("the AI settings", () => {
   let test: TestAi;
   let stub: StubModels;
@@ -72,7 +70,7 @@ describe("the AI settings", () => {
   it("makes one call to each model with a 1-token reply on save, and shows that each worked", async () => {
     const input = anthropic();
 
-    const saved = await ai.save(input, FRESH);
+    const saved = await ai.save(input);
 
     expect(stub.calls).toEqual([
       { tier: "quick", modelId: "claude-haiku-5-5", maxOutputTokens: 1 },
@@ -105,15 +103,12 @@ describe("the AI settings", () => {
       gates,
     });
 
-    const saved = await real.save(
-      {
-        ...anthropic(),
-        provider: "openai",
-        quickModel: "gpt-6-luna",
-        writerModel: "gpt-6.1-terra",
-      },
-      FRESH,
-    );
+    const saved = await real.save({
+      ...anthropic(),
+      provider: "openai",
+      quickModel: "gpt-6-luna",
+      writerModel: "gpt-6.1-terra",
+    });
 
     expect(saved).toMatchObject({ check: { quick: "worked", writer: "worked" } });
     expect(
@@ -129,7 +124,7 @@ describe("the AI settings", () => {
 
   it("saves the key and the gateway token encrypted, each bound to its row and column", async () => {
     const input = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
-    await ai.save(input, FRESH);
+    await ai.save(input);
     const [row] = await storedRow();
     const key = String(row?.api_key);
     const token = String(row?.gateway_token);
@@ -151,57 +146,26 @@ describe("the AI settings", () => {
     expect(await ai.view()).toMatchObject({ keySet: true, gatewayTokenSet: true });
   });
 
-  it("asks for a fresh code to set or change the key, the gateway token, the AI provider, or the base URL", async () => {
-    expect(await ai.save(anthropic(), { freshCode: false })).toEqual({
-      saved: false,
-      refusal: "code needed",
-    });
-    expect(stub.calls).toEqual([]);
-    expect(await storedRow()).toEqual([]);
-
-    const first = anthropic({ baseUrl: GATEWAY });
-    await ai.save(first, FRESH);
-    const { apiKey: _key, ...kept } = first;
-
-    for (const change of [
-      { apiKey: newAiKey() },
-      { gatewayToken: newAiKey() },
-      { baseUrl: null },
-      { provider: "openrouter" as const },
-    ]) {
-      expect(await ai.save({ ...kept, ...change }, { freshCode: false })).toEqual({
-        saved: false,
-        refusal: "code needed",
-      });
-    }
-  });
-
-  it("changes the models with no code, and keeps the key", async () => {
+  it("changes the models, and keeps the key", async () => {
     const first = anthropic();
-    await ai.save(first, FRESH);
+    await ai.save(first);
     const { apiKey: _key, ...kept } = first;
 
-    const saved = await ai.save(
-      { ...kept, quickModel: "claude-haiku-5-5-other" },
-      { freshCode: false },
-    );
+    const saved = await ai.save({ ...kept, quickModel: "claude-haiku-5-5-other" });
 
     expect(saved).toMatchObject({ saved: true, ai: { quickModel: "claude-haiku-5-5-other" } });
     expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
   });
 
   it("never sends a stored key to another AI provider or base URL", async () => {
-    await ai.save(anthropic(), FRESH);
+    await ai.save(anthropic());
 
-    const moved = await ai.save(
-      {
-        provider: "anthropic",
-        baseUrl: GATEWAY,
-        quickModel: "claude-haiku-5-5",
-        writerModel: "claude-sonnet-5-5",
-      },
-      FRESH,
-    );
+    const moved = await ai.save({
+      provider: "anthropic",
+      baseUrl: GATEWAY,
+      quickModel: "claude-haiku-5-5",
+      writerModel: "claude-sonnet-5-5",
+    });
 
     expect(moved).toEqual({ saved: false, refusal: "key needed" });
     expect(stub.connections).toHaveLength(1);
@@ -209,42 +173,39 @@ describe("the AI settings", () => {
 
   it("needs a key for every AI provider but an OpenAI-compatible endpoint", async () => {
     for (const provider of ["anthropic", "openai", "openrouter"] as const) {
-      expect(await ai.save({ ...anthropic(), provider, apiKey: undefined }, FRESH)).toEqual({
+      expect(await ai.save({ ...anthropic(), provider, apiKey: undefined })).toEqual({
         saved: false,
         refusal: "key needed",
       });
     }
 
-    const saved = await ai.save(
-      {
-        provider: "openai-compatible",
-        baseUrl: "http://ollama.local:11434/v1",
-        quickModel: "llama-small",
-        writerModel: "llama-large",
-        prices: { quick: { input: 0, output: 0 }, writer: { input: 0, output: 0 } },
-      },
-      FRESH,
-    );
+    const saved = await ai.save({
+      provider: "openai-compatible",
+      baseUrl: "http://ollama.local:11434/v1",
+      quickModel: "llama-small",
+      writerModel: "llama-large",
+      prices: { quick: { input: 0, output: 0 }, writer: { input: 0, output: 0 } },
+    });
 
     expect(saved).toMatchObject({ saved: true, ai: { keySet: false } });
   });
 
   it("removes the gateway token, and drops it when the base URL leaves the gateway", async () => {
     const first = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
-    await ai.save(first, FRESH);
+    await ai.save(first);
     const { apiKey: _key, gatewayToken: _token, ...kept } = first;
 
-    expect(await ai.save({ ...kept, gatewayToken: null }, FRESH)).toMatchObject({
+    expect(await ai.save({ ...kept, gatewayToken: null })).toMatchObject({
       ai: { gatewayTokenSet: false },
     });
     expect(stub.connections.at(-1)?.gatewayToken).toBeUndefined();
   });
 
   it("keeps one AI provider at a time", async () => {
-    await ai.save(anthropic(), FRESH);
+    await ai.save(anthropic());
     const openrouter = { ...anthropic(), provider: "openrouter" as const };
 
-    await ai.save(openrouter, FRESH);
+    await ai.save(openrouter);
 
     expect(await storedRow()).toHaveLength(1);
     expect(await ai.view()).toMatchObject({ provider: "openrouter" });
@@ -253,7 +214,7 @@ describe("the AI settings", () => {
   it("saves, and shows that the AI provider rejected the key, when a call answers 401", async () => {
     stub.answers = { quick: "work", writer: "reject" };
 
-    const saved = await ai.save(anthropic(), FRESH);
+    const saved = await ai.save(anthropic());
 
     expect(saved).toMatchObject({
       saved: true,
@@ -263,14 +224,14 @@ describe("the AI settings", () => {
 
     stub.answers = { quick: "work", writer: "work" };
     const { apiKey: _key, ...kept } = anthropic();
-    expect(await ai.save(kept, FRESH)).toMatchObject({ ai: { status: { state: "on" } } });
+    expect(await ai.save(kept)).toMatchObject({ ai: { status: { state: "on" } } });
   });
 
   it("keeps the key out of every log line and answer when the AI provider's error holds it", async () => {
     const input = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
     stub.answers = { quick: "fail", writer: "throw" };
 
-    const saved = await ai.save(input, FRESH);
+    const saved = await ai.save(input);
 
     expect(saved).toMatchObject({ check: { quick: "failed", writer: "failed" } });
     expect(lines.map((line) => JSON.parse(line))).toEqual([
@@ -293,14 +254,14 @@ describe("the AI settings", () => {
     const input = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
     stub.answers = { quick: "reject", writer: "reject" };
 
-    await ai.save(input, FRESH);
+    await ai.save(input);
 
     expect(holdsSecretValue(`said ${input.apiKey}`)).toBe(true);
     expect(holdsSecretValue(`said ${input.gatewayToken}`)).toBe(true);
   });
 
   it("shows each status line", async () => {
-    await ai.save(anthropic(), FRESH);
+    await ai.save(anthropic());
     expect(await ai.view()).toMatchObject({ status: { state: "on" } });
 
     gates.historyLoaded = async () => false;
@@ -311,7 +272,7 @@ describe("the AI settings", () => {
   });
 
   it("removes the AI provider and its key, so every use takes its no-AI path", async () => {
-    await ai.save(anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() }), FRESH);
+    await ai.save(anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() }));
     expect(await chatReady()).toBe(true);
 
     await ai.remove();
@@ -325,14 +286,14 @@ describe("the AI settings", () => {
 
   it("never writes the settings back over a Remove AI provider or a save that came during its check", async () => {
     const first = anthropic();
-    await ai.save(first, FRESH);
+    await ai.save(first);
     const { apiKey: _key, ...kept } = first;
     stub.beforeAnswer = async () => {
       stub.beforeAnswer = async () => {};
       await ai.remove();
     };
 
-    const late = await ai.save({ ...kept, writerModel: "claude-sonnet-5-5-other" }, FRESH);
+    const late = await ai.save({ ...kept, writerModel: "claude-sonnet-5-5-other" });
 
     expect(late).toEqual({ saved: false, refusal: "changed" });
     expect(await ai.view()).toBeUndefined();
@@ -344,15 +305,15 @@ describe("the AI settings", () => {
     const next = anthropic({ quickModel: "claude-haiku-5-5-next" });
     stub.beforeAnswer = async () => {
       stub.beforeAnswer = async () => {};
-      expect(await ai.save(next, FRESH)).toMatchObject({ saved: true });
+      expect(await ai.save(next)).toMatchObject({ saved: true });
     };
-    expect(await ai.save(anthropic(), FRESH)).toEqual({ saved: false, refusal: "changed" });
+    expect(await ai.save(anthropic())).toEqual({ saved: false, refusal: "changed" });
     expect(await ai.view()).toMatchObject({ quickModel: "claude-haiku-5-5-next" });
   });
 
   it("takes a new key when the stored key or gateway token cannot be read", async () => {
     const first = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
-    await ai.save(first, FRESH);
+    await ai.save(first);
     // Each ciphertext now sits in the other's column, where it does not decrypt.
     await test.database.$client.execute(
       "UPDATE ai_settings SET api_key = gateway_token, gateway_token = api_key",
@@ -361,14 +322,14 @@ describe("the AI settings", () => {
     const key = newAiKey();
     const token = newAiKey();
 
-    expect(await ai.save(kept, FRESH)).toEqual({ saved: false, refusal: "key needed" });
-    expect(await ai.save({ ...kept, apiKey: key }, FRESH)).toEqual({
+    expect(await ai.save(kept)).toEqual({ saved: false, refusal: "key needed" });
+    expect(await ai.save({ ...kept, apiKey: key })).toEqual({
       saved: false,
       refusal: "token needed",
     });
     expect(stub.calls).toHaveLength(2);
 
-    const saved = await ai.save({ ...kept, apiKey: key, gatewayToken: token }, FRESH);
+    const saved = await ai.save({ ...kept, apiKey: key, gatewayToken: token });
 
     expect(saved).toMatchObject({ saved: true, check: { quick: "worked", writer: "worked" } });
     expect(stub.connections.at(-1)).toMatchObject({ apiKey: key, gatewayToken: token });
@@ -377,7 +338,7 @@ describe("the AI settings", () => {
 
   it("builds every later use's models from the saved settings", async () => {
     const input = anthropic();
-    await ai.save(input, FRESH);
+    await ai.save(input);
 
     expect(await chatReady()).toBe(true);
     expect(stub.connections.at(-1)).toEqual({

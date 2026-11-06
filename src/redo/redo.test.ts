@@ -141,17 +141,14 @@ describe("the first AI run and the redo of no-AI work", () => {
     return { ...rows.rows[0] };
   };
   const connectAi = async (afterChange?: () => Promise<void>) => {
-    const saved = await aiSettings({ ...options, afterChange }).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings({ ...options, afterChange }).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     expect(saved).toMatchObject({ saved: true });
     // The two checks on save are not uses.
     asked = [];

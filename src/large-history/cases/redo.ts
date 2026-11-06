@@ -48,17 +48,14 @@ timedCase("The first AI run on the full history", async (history, time) => {
     secrets,
     makeModels: history.ai.makeModels,
     cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
-  }).save(
-    {
-      provider: "anthropic",
-      apiKey: newAiKey(),
-      baseUrl: null,
-      quickModel: "quick-model",
-      writerModel: "writer-model",
-      prices: { quick: PRICE, writer: PRICE },
-    },
-    { freshCode: true },
-  );
+  }).save({
+    provider: "anthropic",
+    apiKey: newAiKey(),
+    baseUrl: null,
+    quickModel: "quick-model",
+    writerModel: "writer-model",
+    prices: { quick: PRICE, writer: PRICE },
+  });
   expect(saved).toMatchObject({ saved: true });
   const calls = new Map<string, number>();
   let rows = 0;

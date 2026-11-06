@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { BackupsView } from "../../../server/backups-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD, PasteField } from "../../components/Fields.tsx";
+import { BUTTON, ErrorLine, PasteField } from "../../components/Fields.tsx";
 import { lastCheckText, sendPastedKey } from "../../master-key.ts";
 
 // Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11),
@@ -11,8 +11,8 @@ import { lastCheckText, sendPastedKey } from "../../master-key.ts";
 // "Back up now" sends an empty JSON body: the route takes only JSON.
 export const backUpNow = () => api.backups.now.$post({ json: {} });
 
-// "Download my data" sends the code as JSON: the route takes only JSON.
-export const downloadMyData = (code: string) => api.export.$post({ json: { code } });
+// "Download my data" sends an empty JSON body: the route takes only JSON.
+export const downloadMyData = () => api.export.$post({ json: {} });
 
 // The file name the server gave the ZIP, or a plain one.
 export function exportFileName(res: Response): string {
@@ -167,10 +167,8 @@ function CheckMasterKey() {
   );
 }
 
-// The data export asks for a fresh code, and says before the download that the file is not
-// encrypted (spec 11, Data export).
+// The data export says before the download that the file is not encrypted (spec 11, Data export).
 export function DownloadMyData() {
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
@@ -180,9 +178,8 @@ export function DownloadMyData() {
     setBusy(true);
     setError(undefined);
     setDone(undefined);
-    downloadMyData(code.trim())
+    downloadMyData()
       .then(async (res) => {
-        setCode("");
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: unknown };
           setError(typeof body.error === "string" ? body.error : "That did not work.");
@@ -213,18 +210,7 @@ export function DownloadMyData() {
         The file is not encrypted. Anyone who has it can read your Household's money. Keep it
         somewhere safe.
       </p>
-      <label className="mt-3 block">
-        To download, enter a code from your authenticator app, or a backup code
-        <input
-          className={FIELD}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          required
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-      </label>
-      <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+      <button className={BUTTON} type="submit" disabled={busy}>
         Download my data
       </button>
       {done === undefined ? null : (

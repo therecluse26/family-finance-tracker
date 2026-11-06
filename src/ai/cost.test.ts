@@ -14,8 +14,6 @@ import { callCost, capLine } from "./usage-view.ts";
 // Counting AI cost and the AI cost cap (spec 08, Counting cost, The AI cost cap, and AI usage
 // page), on AI SDK test models with set usage and made-up keys. Months are in New York.
 
-const FRESH = { freshCode: true };
-
 const anthropic = (more: Partial<AiSettingsInput> = {}): AiSettingsInput => ({
   provider: "anthropic",
   apiKey: newAiKey(),
@@ -118,7 +116,7 @@ describe("counting AI cost", () => {
   });
 
   it("multiplies input without cache, cache reads, cache writes, and output tokens by their prices", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     const usage = { noCache: 1000, cacheRead: 2000, cacheWrite: 400, output: 300 };
 
     await call("category fix", usage);
@@ -152,10 +150,10 @@ describe("counting AI cost", () => {
 
   it("counts the check on save's two calls, even when only the models change", async () => {
     const first = anthropic();
-    await settings.save(first, FRESH);
+    await settings.save(first);
     const { apiKey: _key, ...kept } = first;
 
-    await settings.save({ ...kept, writerModel: "claude-sonnet-5-5" }, { freshCode: false });
+    await settings.save({ ...kept, writerModel: "claude-sonnet-5-5" });
 
     const page = await settings.usage();
     expect(page.byUse).toEqual([{ use: "check on save", calls: 4, costNanos: 2 * CHECK_COST }]);
@@ -168,7 +166,6 @@ describe("counting AI cost", () => {
         quickModel: "anthropic/claude-haiku-5.5",
         writerModel: "anthropic/claude-sonnet-5.5",
       }),
-      FRESH,
     );
     stub.providerMetadata = { openrouter: { usage: { cost: 0.0123 } } };
 
@@ -182,7 +179,7 @@ describe("counting AI cost", () => {
   });
 
   it("counts a streamed reply, such as Chat's", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     stub.usage = CENT_OF_OUTPUT;
     const result = streamText({ model: await modelFor("chat"), prompt: "Hello" });
     await result.consumeStream();
@@ -191,7 +188,7 @@ describe("counting AI cost", () => {
   });
 
   it("checks the gate before each streamed call, so a model handed out earlier starts no stream at the cap", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     const early = await modelFor("insight cards");
     await settings.setCostCap(0);
     const before = stub.calls.length;
@@ -201,7 +198,7 @@ describe("counting AI cost", () => {
   });
 
   it("counts a streamed call that fails or is closed before it finishes", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     const rough = Math.ceil(JSON.stringify(PROMPT).length / 4);
     stub.reply = "12345678";
 
@@ -241,7 +238,7 @@ describe("counting AI cost", () => {
     // The check on save's calls reach the 1-cent cap, so counting them raises the 100% notice.
     stub.usage = CENT_OF_OUTPUT;
 
-    const saved = await aiSettings(options).save(anthropic(), FRESH);
+    const saved = await aiSettings(options).save(anthropic());
 
     expect(saved).toMatchObject({ saved: true, check: { quick: "worked", writer: "worked" } });
     expect(await failing.pausedUntil()).toBe("2026-12-01");
@@ -253,7 +250,7 @@ describe("counting AI cost", () => {
   it("makes no call with a model that has no price, and takes a Member's prices for one", async () => {
     const custom = anthropic({ quickModel: "claude-haiku-9" });
 
-    expect(await settings.save(custom, FRESH)).toEqual({
+    expect(await settings.save(custom)).toEqual({
       saved: false,
       refusal: "price needed",
       tier: "quick",
@@ -261,7 +258,7 @@ describe("counting AI cost", () => {
     expect(stub.calls).toEqual([]);
 
     const priced = { ...custom, prices: { quick: { input: 300_000, output: 600_000 } } };
-    expect(await settings.save(priced, FRESH)).toMatchObject({
+    expect(await settings.save(priced)).toMatchObject({
       saved: true,
       ai: { prices: { quick: { source: "member", input: 300_000 }, writer: { source: "table" } } },
     });
@@ -277,7 +274,7 @@ describe("counting AI cost", () => {
 
   it("checks the AI status before every use", async () => {
     expect(await calls.modelFor("chat")).toEqual({ ready: false, pause: "no AI provider" });
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
 
     historyLoaded = false;
     expect(await calls.modelFor("chat")).toEqual({ ready: false, pause: "waits for history" });
@@ -290,7 +287,7 @@ describe("counting AI cost", () => {
   });
 
   it("sends the 80% and the 100% System notices once each, and stops background AI at the cap", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     await settings.setCostCap(1);
     const early = await modelFor("insight cards");
 
@@ -335,7 +332,7 @@ describe("counting AI cost", () => {
   });
 
   it("lets a call already running finish, so the total can pass the cap by one call", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     await settings.setCostCap(1);
     stub.beforeAnswer = async () => {
       stub.beforeAnswer = async () => {};
@@ -354,7 +351,7 @@ describe("counting AI cost", () => {
   });
 
   it("starts background AI again at once when a Member raises the cap above the month's total", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     await settings.setCostCap(1);
     await call("insight cards", { ...CENT_OF_OUTPUT, output: 1200 });
     expect(await calls.modelFor("category fix")).toMatchObject({ pause: "cost cap" });
@@ -368,7 +365,7 @@ describe("counting AI cost", () => {
   });
 
   it("starts at a $10 cap, and lists each use's total for the month", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     await call("category fix", CENT_OF_OUTPUT);
     await call("monthly review", CENT_OF_OUTPUT);
     await call("monthly review", CENT_OF_OUTPUT);
@@ -385,13 +382,12 @@ describe("counting AI cost", () => {
   });
 
   it("counts a month in the Household time zone, and keeps the total when the AI provider changes", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     // 10 PM on Nov 30 in New York is already Dec 1 in UTC.
     vi.setSystemTime(new Date("2026-12-01T03:00:00Z"));
     await call("insight cards", CENT_OF_OUTPUT);
     await settings.save(
       anthropic({ provider: "openai", quickModel: "gpt-6-luna", writerModel: "gpt-6.1-terra" }),
-      FRESH,
     );
 
     const november = await settings.usage();
@@ -405,7 +401,7 @@ describe("counting AI cost", () => {
   });
 
   it("starts background AI again on the 1st", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     await settings.setCostCap(1);
     await call("insight cards", { ...CENT_OF_OUTPUT, output: 1200 });
     expect(await cost.pausedUntil()).toBe("2026-12-01");
@@ -417,7 +413,7 @@ describe("counting AI cost", () => {
   });
 
   it("stores metadata only, never prompt text or reply text", async () => {
-    await settings.save(anthropic(), FRESH);
+    await settings.save(anthropic());
     const prompt = `Prompt ${crypto.randomUUID()}`;
     stub.reply = `Reply ${crypto.randomUUID()}`;
 

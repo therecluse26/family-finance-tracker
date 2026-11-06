@@ -10,8 +10,8 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
-// The words to show for a refused request: `wrong` for a wrong code, or the server's own message,
-// such as for too many tries or a password that is too short.
+// The words to show for a refused request: `wrong` for a wrong password or code, or the server's
+// own message, such as for too many tries or a password that is too short.
 export async function refusalText(res: Response, wrong: string): Promise<string> {
   if (res.status === 401) return wrong;
   const body = (await res.json().catch(() => ({}))) as { message?: unknown };

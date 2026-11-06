@@ -186,9 +186,7 @@ describe("the dashboard on the demo household", () => {
       steps: { banks: "done", ai: "skipped", alerts: null, "invite members": "skipped" },
       finishSetup: ["ai", "invite members"],
     });
-    expect(
-      (await browser.send("POST", "/api/invites", { code: member.backupCodes[0] })).status,
-    ).toBe(200);
+    expect((await browser.send("POST", "/api/invites", {})).status).toBe(200);
     expect((await loadDashboard()).setup.finishSetup).toEqual(["ai"]);
   });
 

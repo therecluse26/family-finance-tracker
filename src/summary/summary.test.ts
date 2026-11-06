@@ -71,17 +71,14 @@ async function connectAi(bank: TestBank, stub: StubModels) {
     cost: aiCost({ database: bank.database }),
     notices: { raise: async () => {}, end: async () => {} },
   };
-  const saved = await aiSettings(options).save(
-    {
-      provider: "anthropic",
-      apiKey: newAiKey(),
-      baseUrl: null,
-      quickModel: "quick-model",
-      writerModel: "writer-model",
-      prices: { quick: PRICE, writer: PRICE },
-    },
-    { freshCode: true },
-  );
+  const saved = await aiSettings(options).save({
+    provider: "anthropic",
+    apiKey: newAiKey(),
+    baseUrl: null,
+    quickModel: "quick-model",
+    writerModel: "writer-model",
+    prices: { quick: PRICE, writer: PRICE },
+  });
   expect(saved).toMatchObject({ saved: true });
   return householdAi(options);
 }

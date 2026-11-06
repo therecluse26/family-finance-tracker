@@ -5,7 +5,6 @@ export {
   type Auth,
   type AuthOptions,
   createAuth,
-  type FreshCode,
   MIN_PASSWORD_LENGTH,
   SESSION_SECONDS,
   type SignedInMember,

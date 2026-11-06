@@ -31,10 +31,9 @@ export type MemberRoutes = {
   makeInvite(madeBy: string): Promise<{ link: string; expiresAt: string } | "wizard not done">;
   // Cancel. False, with nothing changed, when no open link has the ID.
   cancelInvite(id: string): Promise<boolean>;
-  // Removes a Member, after the route has checked a fresh code.
+  // Removes a Member.
   remove(id: string): Promise<MemberRemovalResult>;
-  // "Reset login" on another Member, after the route has checked a fresh code and refused the
-  // Member's own login (spec 09, Login reset): the link, <APP_URL>/reset#token=…, and when it
-  // stops working.
+  // "Reset login" on another Member, after the route has refused the Member's own login (spec 09,
+  // Login reset): the link, <APP_URL>/reset#token=…, and when it stops working.
   resetLogin(id: string): Promise<{ link: string; expiresAt: string } | "no such Member">;
 };

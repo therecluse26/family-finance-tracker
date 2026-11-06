@@ -80,8 +80,7 @@ describe("the Plaid routes", () => {
     return tab;
   }
 
-  const saveKeys = async (tab: TestBrowser, keys: PlaidKeys, code?: string) =>
-    tab.post("/api/plaid/keys", { ...keys, code: code ?? (await alice.totpCode()) });
+  const saveKeys = (tab: TestBrowser, keys: PlaidKeys) => tab.post("/api/plaid/keys", keys);
 
   const settings = async (tab: TestBrowser) =>
     ((await (await tab.get("/api/plaid/settings")).json()) as { plaid: PlaidView }).plaid;
@@ -175,53 +174,22 @@ describe("the Plaid routes", () => {
     expect(lines.join("")).not.toContain(keys.secret);
   });
 
-  it("asks for a fresh TOTP code, or a backup code, each time the keys change", async () => {
+  it("sets and changes the keys with no code: TOTP is asked only at sign-in", async () => {
     await finishWizard();
     const tab = await signedIn();
     const first = newPlaidKeys();
     stub.accepted = first;
-    const code = await alice.totpCode();
-    const wrong = code.replace(/\d/g, (digit) => String((Number(digit) + 1) % 10));
 
-    expect((await tab.post("/api/plaid/keys", first)).status).toBe(400);
-    expect((await saveKeys(tab, first, wrong)).status).toBe(401);
-    expect(stub.calls).toEqual([]);
-    expect(await savedKeys()).toBeUndefined();
-
-    expect((await saveKeys(tab, first, code)).status).toBe(200);
+    expect((await saveKeys(tab, first)).status).toBe(200);
+    expect(await savedKeys()).toEqual(first);
 
     const second = newPlaidKeys();
     stub.accepted = second;
-    expect((await saveKeys(tab, second, code)).status).toBe(401);
-    expect(await savedKeys()).toEqual(first);
-    expect((await saveKeys(tab, second, alice.backupCodes[0])).status).toBe(200);
+    expect((await saveKeys(tab, second)).status).toBe(200);
     expect(await savedKeys()).toEqual(second);
   });
 
-  it("refuses every code after 5 wrong ones in 15 minutes, with 429 and no error log line", async () => {
-    await finishWizard();
-    const tab = await signedIn();
-    const keys = newPlaidKeys();
-    stub.accepted = keys;
-    const wrong = (await alice.totpCode()).replace(/\d/g, (digit) =>
-      String((Number(digit) + 1) % 10),
-    );
-
-    const statuses: number[] = [];
-    for (let i = 0; i < 5; i += 1) statuses.push((await saveKeys(tab, keys, wrong)).status);
-    const refused = await saveKeys(tab, keys);
-
-    expect(statuses).toEqual([401, 401, 401, 401, 401]);
-    expect(refused.status).toBe(429);
-    expect(await refused.json()).toEqual({
-      error: "Too many wrong codes. Wait 15 minutes, then try again.",
-    });
-    expect(stub.calls).toEqual([]);
-    expect(await savedKeys()).toBeUndefined();
-    expect(lines.filter((line) => JSON.parse(line).level === "error")).toEqual([]);
-  });
-
-  it("refuses keys that are not letters and digits, before it checks the code", async () => {
+  it("refuses keys that are not letters and digits", async () => {
     await finishWizard();
     const tab = await signedIn();
     const keys = newPlaidKeys();
@@ -237,7 +205,7 @@ describe("the Plaid routes", () => {
     const tab = await signedIn();
     const keys = newPlaidKeys();
     stub.accepted = keys;
-    const body = { ...keys, code: await alice.totpCode() };
+    const body = keys;
 
     const res = await tab.send("POST", "/api/plaid/keys", body, { "content-type": "text/plain" });
 
@@ -250,7 +218,7 @@ describe("the Plaid routes", () => {
     const tab = await signedIn();
     const keys = newPlaidKeys();
     stub.accepted = keys;
-    const body = { ...keys, code: await alice.totpCode() };
+    const body = keys;
 
     for (const origin of ["http://evil.example", `${APP_URL}.evil.example`, undefined]) {
       expect((await tab.send("POST", "/api/plaid/keys", body, { origin })).status).toBe(403);

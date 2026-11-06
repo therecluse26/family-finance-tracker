@@ -25,9 +25,7 @@ import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 // Settings → AI: the Household's one AI provider (spec 08, AI settings page). The API key and the
 // gateway token are write-only: the page shows only whether each is set.
 
-const CODE_LABEL = "A code from your authenticator app, or a backup code";
-
-// The words to show for a refused request: the server's own, such as "Wrong code.".
+// The words to show for a refused request: the server's own, such as "Enter the API key.".
 async function refusal(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   return typeof body.error === "string" ? body.error : "That did not work.";
@@ -170,7 +168,6 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
     quick: storedPriceText(ai, "quick"),
     writer: storedPriceText(ai, "writer"),
   });
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [check, setCheck] = useState<Record<AiTier, ModelCheck> | undefined>();
@@ -211,10 +208,8 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           quickModel: models.quick,
           writerModel: models.writer,
           ...(Object.keys(entered).length === 0 ? {} : { prices: entered }),
-          ...(code.trim() === "" ? {} : { code: code.trim() }),
         },
       });
-      setCode("");
       if (!res.ok) return setError(await refusal(res));
       const body = (await res.json()) as { check: Record<AiTier, ModelCheck>; ai: AiView };
       setApiKey("");
@@ -317,12 +312,6 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           ))}
         </fieldset>
       )}
-      <Field
-        label={`${CODE_LABEL}, to set or change the key, the token, the AI provider, or the base URL`}
-        autoComplete="one-time-code"
-        value={code}
-        onChange={setCode}
-      />
       {limit === undefined ? null : (
         <p className="mt-3">
           Set a monthly usage limit at the AI provider too:{" "}

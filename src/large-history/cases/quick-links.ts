@@ -35,17 +35,14 @@ timedCase("the Quick tier's link decisions on the full history", async (history,
     secrets,
     makeModels: history.ai.makeModels,
     cost: aiCost({ database }),
-  }).save(
-    {
-      provider: "anthropic",
-      apiKey: newAiKey(),
-      baseUrl: null,
-      quickModel: "quick-model",
-      writerModel: "writer-model",
-      prices: { quick: PRICE, writer: PRICE },
-    },
-    { freshCode: true },
-  );
+  }).save({
+    provider: "anthropic",
+    apiKey: newAiKey(),
+    baseUrl: null,
+    quickModel: "quick-model",
+    writerModel: "writer-model",
+    prices: { quick: PRICE, writer: PRICE },
+  });
   expect(saved).toMatchObject({ saved: true });
   const used = { picks: 0, others: 0, characters: 0 };
   history.ai.replyTo = (messages) => {

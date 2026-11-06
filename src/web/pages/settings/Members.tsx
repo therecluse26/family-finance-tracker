@@ -12,20 +12,20 @@ import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 
 // The requests the page sends, each with a JSON body, even an empty one: the routes take only JSON.
 // The routes read their body themselves, so each body goes in through a separate object.
-export function makeInviteLink(code: string) {
-  const make = { json: { code } };
+export function makeInviteLink() {
+  const make = { json: {} };
   return api.invites.$post(make);
 }
 export function cancelInviteLink(id: string) {
   const cancel = { param: { id }, json: {} };
   return api.invites[":id"].cancel.$post(cancel);
 }
-export function removeMemberWithCode(id: string, code: string) {
-  const remove = { param: { id }, json: { code } };
+export function removeMember(id: string) {
+  const remove = { param: { id }, json: {} };
   return api.members[":id"].remove.$post(remove);
 }
-export function resetLoginWithCode(id: string, code: string) {
-  const reset = { param: { id }, json: { code } };
+export function resetMemberLogin(id: string) {
+  const reset = { param: { id }, json: {} };
   return api.members[":id"]["reset-login"].$post(reset);
 }
 
@@ -40,12 +40,11 @@ function dayOf(iso: string): string {
   return dateLabel(calendarDateIn(new Date(iso), zone), calendarDateIn(new Date(), zone));
 }
 
-// One Member, with Remove, and with Reset login unless it is the Member signed in. Each asks for a
-// fresh code first.
+// One Member, with Remove, and with Reset login unless it is the Member signed in. Each asks the
+// Member to confirm first.
 export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean) => void }) {
   const { member } = props;
   const [asking, setAsking] = useState(false);
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -53,9 +52,8 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    removeMemberWithCode(member.id, code.trim())
+    removeMember(member.id)
       .then(async (res) => {
-        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         props.onRemoved(member.you);
       })
@@ -77,18 +75,7 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
               ? "Removing yourself signs you out on every device, and cancels the invite links you made. You cannot sign in again."
               : `Removing ${member.name} signs them out on every device at once, and cancels the invite links they made. Their Goals and Chat messages keep their name.`}
           </p>
-          <label className="mt-3 block">
-            To remove, enter a code from your authenticator app, or a backup code
-            <input
-              className={FIELD}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              required
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-          </label>
-          <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+          <button className={BUTTON} type="submit" disabled={busy}>
             Remove {member.you ? "me" : member.name}
           </button>
           <ErrorLine error={error} />
@@ -163,12 +150,11 @@ export function LinkToCopy(props: { made: { link: string; expiresAt: string } })
   );
 }
 
-// "Reset login" on another Member. It asks for a fresh code, then shows the reset link once, for
-// the Member to hand over.
+// "Reset login" on another Member. It asks the Member to confirm, then shows the reset link once,
+// for the Member to hand over.
 export function ResetLogin(props: { member: MemberView }) {
   const { member } = props;
   const [asking, setAsking] = useState(false);
-  const [code, setCode] = useState("");
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -177,9 +163,8 @@ export function ResetLogin(props: { member: MemberView }) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    resetLoginWithCode(member.id, code.trim())
+    resetMemberLogin(member.id)
       .then(async (res) => {
-        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         setMade(((await res.json()) as { reset: { link: string; expiresAt: string } }).reset);
         setAsking(false);
@@ -215,18 +200,7 @@ export function ResetLogin(props: { member: MemberView }) {
         TOTP, and backup codes stop working. The app makes a reset link for you to hand to them. It
         works once, for 24 hours.
       </p>
-      <label className="mt-3 block">
-        To reset, enter a code from your authenticator app, or a backup code
-        <input
-          className={FIELD}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          required
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-      </label>
-      <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+      <button className={BUTTON} type="submit" disabled={busy}>
         Reset {member.name}'s login
       </button>
       <ErrorLine error={error} />
@@ -234,10 +208,8 @@ export function ResetLogin(props: { member: MemberView }) {
   );
 }
 
-// "Make an invite link", which asks for a fresh code first, and the new link, shown once for the
-// Member to copy.
+// "Make an invite link", and the new link, shown once for the Member to copy.
 export function MakeInvite(props: { onMade: () => void }) {
-  const [code, setCode] = useState("");
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -246,9 +218,8 @@ export function MakeInvite(props: { onMade: () => void }) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    makeInviteLink(code.trim())
+    makeInviteLink()
       .then(async (res) => {
-        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         setMade(((await res.json()) as { invite: { link: string; expiresAt: string } }).invite);
         props.onMade();
@@ -265,18 +236,7 @@ export function MakeInvite(props: { onMade: () => void }) {
         once, for 7 days.
       </p>
       <form onSubmit={submit}>
-        <label className="mt-3 block">
-          To make a link, enter a code from your authenticator app, or a backup code
-          <input
-            className={FIELD}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            required
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-        </label>
-        <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+        <button className={BUTTON} type="submit" disabled={busy}>
           Make an invite link
         </button>
       </form>

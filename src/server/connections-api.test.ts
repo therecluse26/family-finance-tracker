@@ -425,19 +425,20 @@ describe("the Connection routes", () => {
       });
     });
 
-    const remove = (tab: TestBrowser, body: unknown, headers?: Record<string, string>) =>
-      tab.send("POST", `/api/connections/${connectionId}/remove`, body, headers);
+    const remove = (
+      tab: TestBrowser,
+      body: unknown,
+      headers?: Record<string, string | undefined>,
+    ) => tab.send("POST", `/api/connections/${connectionId}/remove`, body, headers);
     const removedAt = async () =>
       (await rows("SELECT removed_at FROM connections"))[0]?.removed_at ?? null;
-    const wrongCode = async () =>
-      (await alice.totpCode()).replace(/\d/g, (digit) => String((Number(digit) + 1) % 10));
 
-    it("answers 401 with no session, 403 from another origin, and 415 to a body that is not JSON, and removes nothing", async () => {
+    it("answers 401 with no session, 403 from another origin or none, and 415 to a body that is not JSON, and removes nothing", async () => {
       const stranger = new TestBrowser(app, APP_URL, "192.168.1.202");
-      expect((await remove(stranger, { code: "000000" })).status).toBe(401);
+      expect((await remove(stranger, {})).status).toBe(401);
       const tab = await signedIn();
-      const code = await alice.totpCode();
-      expect((await remove(tab, { code }, { origin: "http://evil.example" })).status).toBe(403);
+      expect((await remove(tab, {}, { origin: "http://evil.example" })).status).toBe(403);
+      expect((await remove(tab, {}, { origin: undefined })).status).toBe(403);
       expect(
         (
           await tab.send(
@@ -449,7 +450,7 @@ describe("the Connection routes", () => {
         ).status,
       ).toBe(403);
       const plain = { "content-type": "text/plain" };
-      expect((await remove(tab, { code }, plain)).status).toBe(415);
+      expect((await remove(tab, {}, plain)).status).toBe(415);
       expect(
         (
           await tab.send(
@@ -464,26 +465,21 @@ describe("the Connection routes", () => {
       expect(await removedAt()).toBeNull();
     });
 
-    it("asks for a fresh TOTP code before it calls Plaid, and refuses after 5 wrong ones", async () => {
+    it("refuses a body that is not empty before it calls Plaid, and removes nothing", async () => {
       const tab = await signedIn();
 
-      expect((await remove(tab, {})).status).toBe(400);
-      const wrong = await wrongCode();
-      const statuses: number[] = [];
-      for (let i = 0; i < 5; i += 1) statuses.push((await remove(tab, { code: wrong })).status);
-      const refused = await remove(tab, { code: await alice.totpCode() });
-
-      expect(statuses).toEqual([401, 401, 401, 401, 401]);
-      expect(refused.status).toBe(429);
+      for (const body of [{ code: "123456" }, { confirmed: true }, []]) {
+        expect((await remove(tab, body)).status).toBe(400);
+      }
       expect(plaid.requests).toEqual([]);
       expect(await removedAt()).toBeNull();
     });
 
-    it("removes the Connection with a fresh code, and answers with no token", async () => {
+    it("removes the Connection with no code, and answers with no token", async () => {
       const tab = await signedIn();
       plaid.answer("/item/remove", { body: RECORDED.itemRemove });
 
-      const res = await remove(tab, { code: await alice.totpCode() });
+      const res = await remove(tab, {});
 
       expect(res.status).toBe(200);
       const text = await res.text();
@@ -502,7 +498,7 @@ describe("the Connection routes", () => {
         body: plaidFailure("API_ERROR", "INTERNAL_SERVER_ERROR"),
       });
 
-      const res = await remove(tab, { code: await alice.totpCode() });
+      const res = await remove(tab, {});
 
       expect(res.status).toBe(502);
       expect(await removedAt()).toBeNull();
@@ -515,7 +511,7 @@ describe("the Connection routes", () => {
 
       expect((await deleteHistory({ confirmed: true })).status).toBe(409);
       plaid.answer("/item/remove", { body: RECORDED.itemRemove });
-      expect((await remove(tab, { code: await alice.totpCode() })).status).toBe(200);
+      expect((await remove(tab, {})).status).toBe(200);
       for (const body of [{}, { confirmed: false }, { confirmed: "true" }]) {
         expect((await deleteHistory(body)).status).toBe(400);
       }

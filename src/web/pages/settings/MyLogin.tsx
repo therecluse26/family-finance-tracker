@@ -13,14 +13,16 @@ import {
 import { postJson, refusalText } from "../../requests.ts";
 
 // Settings, My login: the signed-in Member changes their own password, TOTP, and backup codes
-// (spec 09, Members). Each change asks for a fresh TOTP code or backup code, through the routes
-// under /api/auth/my-login/. Over HTTPS the Member also adds and deletes passkeys; adding one asks
-// for a fresh code too.
+// (spec 09, Members), through the routes under /api/auth/my-login/. TOTP is asked only at sign-in
+// (spec 09, Sensitive actions): a password change asks for the current password, and a new TOTP
+// asks for one code from the new authenticator. Over HTTPS the Member also adds and deletes
+// passkeys; adding one asks for the current password too.
 
-const CODE_LABEL = "A code from your authenticator app, or a backup code";
-const WRONG_CODE = "Wrong code.";
+const CURRENT_PASSWORD_LABEL = "Your current password";
+const WRONG_PASSWORD = "Your current password is wrong.";
 
-function useAction() {
+// `wrong` is the words to show when the server answers 401.
+function useAction(wrong: string) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
@@ -32,7 +34,7 @@ function useAction() {
     setDone(undefined);
     try {
       const res = await request();
-      if (!res.ok) return setError(await refusalText(res, WRONG_CODE));
+      if (!res.ok) return setError(await refusalText(res, wrong));
       setDone(await onOk(res));
     } catch {
       setError("The server did not answer.");
@@ -45,17 +47,17 @@ function useAction() {
 }
 
 function ChangePassword() {
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [code, setCode] = useState("");
-  const action = useAction();
+  const action = useAction(WRONG_PASSWORD);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     void action.run(
-      () => postJson("/api/auth/my-login/change-password", { newPassword, code: code.trim() }),
+      () => postJson("/api/auth/my-login/change-password", { currentPassword, newPassword }),
       async () => {
+        setCurrentPassword("");
         setNewPassword("");
-        setCode("");
         return "Your password is changed.";
       },
     );
@@ -65,13 +67,19 @@ function ChangePassword() {
     <form className="mt-4" onSubmit={submit}>
       <h3 className="font-semibold">Password</h3>
       <TextField
+        label={CURRENT_PASSWORD_LABEL}
+        type="password"
+        autoComplete="current-password"
+        value={currentPassword}
+        onChange={setCurrentPassword}
+      />
+      <TextField
         label="New password, at least 12 characters"
         type="password"
         autoComplete="new-password"
         value={newPassword}
         onChange={setNewPassword}
       />
-      <TextField label={CODE_LABEL} autoComplete="one-time-code" value={code} onChange={setCode} />
       <button className={BUTTON} type="submit" disabled={action.busy}>
         Change password
       </button>
@@ -106,18 +114,16 @@ export function ConfirmNewTotp(props: {
 }
 
 function ChangeTotp() {
-  const [code, setCode] = useState("");
   const [totpURI, setTotpURI] = useState<string | undefined>();
   const [newCode, setNewCode] = useState("");
-  const action = useAction();
+  const action = useAction("Wrong code.");
 
   function start(event: FormEvent) {
     event.preventDefault();
     void action.run(
-      () => postJson("/api/auth/my-login/new-totp", { code: code.trim() }),
+      () => postJson("/api/auth/my-login/new-totp", {}),
       async (res) => {
         const body = (await res.json()) as { totpURI: string };
-        setCode("");
         setTotpURI(body.totpURI);
         return "Enter a code from the new TOTP to finish.";
       },
@@ -141,12 +147,6 @@ function ChangeTotp() {
       <h3 className="font-semibold">TOTP</h3>
       {totpURI === undefined ? (
         <form onSubmit={start}>
-          <TextField
-            label={CODE_LABEL}
-            autoComplete="one-time-code"
-            value={code}
-            onChange={setCode}
-          />
           <button className={BUTTON} type="submit" disabled={action.busy}>
             Set up a new TOTP
           </button>
@@ -167,17 +167,15 @@ function ChangeTotp() {
 }
 
 function ChangeBackupCodes() {
-  const [code, setCode] = useState("");
   const [codes, setCodes] = useState<string[] | undefined>();
-  const action = useAction();
+  const action = useAction("That did not work.");
 
   function submit(event: FormEvent) {
     event.preventDefault();
     void action.run(
-      () => postJson("/api/auth/my-login/new-backup-codes", { code: code.trim() }),
+      () => postJson("/api/auth/my-login/new-backup-codes", {}),
       async (res) => {
         const body = (await res.json()) as { backupCodes: string[] };
-        setCode("");
         setCodes(body.backupCodes);
         return "Your old backup codes no longer work.";
       },
@@ -187,7 +185,6 @@ function ChangeBackupCodes() {
   return (
     <form className="mt-6" onSubmit={submit}>
       <h3 className="font-semibold">Backup codes</h3>
-      <TextField label={CODE_LABEL} autoComplete="one-time-code" value={code} onChange={setCode} />
       <button className={BUTTON} type="submit" disabled={action.busy}>
         Make new backup codes
       </button>
@@ -202,8 +199,10 @@ function Passkeys() {
   const state = passkeyState();
   const [rows, setRows] = useState<PasskeyRow[] | undefined>();
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const action = useAction();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const action = useAction(
+    "Your current password is wrong, or the passkey did not check that it was you. Try again.",
+  );
 
   const load = useCallback(() => {
     listPasskeys()
@@ -229,10 +228,10 @@ function Passkeys() {
   function add(event: FormEvent) {
     event.preventDefault();
     void action.run(
-      () => addPasskey({ code: code.trim(), name: name.trim() }),
+      () => addPasskey({ currentPassword, name: name.trim() }),
       async () => {
         setName("");
-        setCode("");
+        setCurrentPassword("");
         load();
         return "Your passkey is added. It signs you in with no code.";
       },
@@ -285,10 +284,11 @@ function Passkeys() {
           optional
         />
         <TextField
-          label={CODE_LABEL}
-          autoComplete="one-time-code"
-          value={code}
-          onChange={setCode}
+          label={CURRENT_PASSWORD_LABEL}
+          type="password"
+          autoComplete="current-password"
+          value={currentPassword}
+          onChange={setCurrentPassword}
         />
         <button className={BUTTON} type="submit" disabled={action.busy}>
           Add a passkey
@@ -302,7 +302,7 @@ function Passkeys() {
 
 function SignOut() {
   const navigate = useNavigate();
-  const action = useAction();
+  const action = useAction("That did not work.");
   return (
     <button
       className="mt-6 rounded border border-gray-300 px-4 py-2 disabled:opacity-50"
