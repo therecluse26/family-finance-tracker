@@ -12,7 +12,8 @@ import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
 // The wizard's step 3 and "Check my master key", through the app's HTTP interface (spec 09, The
-// Master key; spec 12, The first-run wizard). Each test gets a new app.db and Master key.
+// Master key; spec 12, The first-run wizard). Step 3 shows the key until "I saved it", and asks for
+// no paste-back. Each test gets a new app.db and Master key.
 
 const APP_URL = "http://nas.local:8080";
 
@@ -29,7 +30,9 @@ afterAll(() => {
 
 class Browser extends TestBrowser {
   shownKey = () => this.get("/api/setup/master-key");
-  pasteBack = (masterKey: string) => this.post("/api/setup/master-key", { masterKey });
+  // Step 3's "I saved it", exactly as the wizard sends it: an empty JSON body.
+  savedIt = (headers: Record<string, string | undefined> = {}) =>
+    this.send("POST", "/api/setup/master-key", {}, headers);
   check = (masterKey: string) => this.post("/api/master-key/check", { masterKey });
   lastCheck = () => this.get("/api/master-key/check");
 
@@ -108,35 +111,80 @@ describe("the Master key", () => {
       expect(await shown(tab)).toBe(key);
     });
 
-    it("takes a paste-back with spaces, line breaks, and capitals, then never shows the key again", async () => {
+    it("takes I saved it, then never shows the key again", async () => {
       const tab = await signedIn(alice);
       const key = await shown(tab);
       expect(await tab.setupNext()).toBe("master key");
 
-      const res = await tab.pasteBack(asPasted(key));
+      const res = await tab.savedIt();
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ matches: true });
+      expect(await res.json()).toEqual({ saved: true });
       expect(await tab.setupNext()).toBe("household facts");
       const after = await tab.shownKey();
       expect(after.status).toBe(410);
       expect(await after.text()).not.toContain(key);
-      expect((await tab.pasteBack(key)).status).toBe(409);
+      // A second press, such as from another tab, changes nothing.
+      expect((await tab.savedIt()).status).toBe(200);
+      expect(await tab.setupNext()).toBe("household facts");
     });
 
-    it("refuses a wrong key, and keeps showing the Master key", async () => {
+    it("changes nothing on I saved it after step 3 or after setup, from any Member", async () => {
+      const masterKeyRow = async () =>
+        (
+          await test.database.$client.execute(
+            "SELECT status, at FROM setup_steps WHERE step = 'master key'",
+          )
+        ).rows;
+      const aliceTab = await signedIn(alice);
+      expect((await aliceTab.savedIt()).status).toBe(200);
+      const saved = await masterKeyRow();
+      expect(saved).toEqual([expect.objectContaining({ status: "done" })]);
+
+      // After step 3.
+      vi.setSystemTime(Date.now() + 60_000);
+      expect((await aliceTab.savedIt()).status).toBe(200);
+      expect(await masterKeyRow()).toEqual(saved);
+
+      // After setup, from the first Member and from another Member.
+      await markSetupStep(test.database, "household facts", "done");
+      await markSetupStep(test.database, "finish", "done");
+      vi.setSystemTime(Date.now() + 60_000);
+      for (const tab of [aliceTab, await signedIn(bob)]) {
+        const res = await tab.savedIt();
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ saved: true });
+      }
+      expect(await masterKeyRow()).toEqual(saved);
+      expect((await aliceTab.shownKey()).status).toBe(410);
+    });
+
+    it("asks for no paste-back: a body with a key is refused, and the step stays open", async () => {
       const tab = await signedIn(alice);
       const key = await shown(tab);
 
-      const res = await tab.pasteBack(newMasterKeyHex());
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ matches: false });
+      for (const body of [{ masterKey: key }, { masterKey: asPasted(key) }, { saved: true }]) {
+        const res = await tab.post("/api/setup/master-key", body);
+        expect(res.status).toBe(400);
+        expect(await res.text()).not.toContain(key);
+      }
       expect(await tab.setupNext()).toBe("master key");
       expect(await shown(tab)).toBe(key);
+      expect(
+        ((await (await tab.lastCheck()).json()) as { lastCheck: unknown }).lastCheck,
+      ).toBeNull();
     });
 
-    it("refuses every API write but the paste-back until step 3 is done", async () => {
+    it("refuses I saved it without JSON, and changes nothing", async () => {
+      const tab = await signedIn(alice);
+
+      for (const type of ["text/plain", "application/x-www-form-urlencoded", undefined]) {
+        expect((await tab.savedIt({ "content-type": type })).status).toBe(415);
+      }
+      expect(await tab.setupNext()).toBe("master key");
+    });
+
+    it("refuses every API write but I saved it until step 3 is done", async () => {
       const tab = await signedIn(alice);
 
       // A route that would store a Master-key secret, such as the Plaid keys, comes later. The
@@ -153,7 +201,7 @@ describe("the Master key", () => {
       }
       expect((await tab.get("/api/accounts")).status).toBe(200);
 
-      await tab.pasteBack(await shown(tab));
+      expect((await tab.savedIt()).status).toBe(200);
 
       expect((await tab.post("/api/plaid-keys", {})).status).toBe(404);
       expect((await tab.check(newMasterKeyHex())).status).toBe(200);
@@ -221,7 +269,7 @@ describe("the Master key", () => {
 
     for (const res of [
       await tab.shownKey(),
-      await tab.pasteBack(key),
+      await tab.savedIt(),
       await tab.check(key),
       await tab.lastCheck(),
     ]) {
@@ -237,7 +285,7 @@ describe("the Master key", () => {
 
     for (const origin of ["http://nas.local:9090", "http://evil.example", "", undefined]) {
       for (const [path, body] of [
-        ["/api/setup/master-key", { masterKey: key }],
+        ["/api/setup/master-key", {}],
         ["/api/master-key/check", { masterKey: key }],
         ["/api/notices/n1/close", {}],
         ["/api/review-list/r1/answer", { value: "yes" }],
@@ -252,10 +300,11 @@ describe("the Master key", () => {
   });
 
   it("refuses a request with no pasted key", async () => {
+    await markSetupStep(test.database, "master key", "done");
     const tab = await signedIn(alice);
 
     for (const body of [{}, { masterKey: 7 }, { masterKey: "a".repeat(1001) }]) {
-      expect((await tab.post("/api/setup/master-key", body)).status).toBe(400);
+      expect((await tab.post("/api/master-key/check", body)).status).toBe(400);
     }
   });
 
@@ -268,8 +317,9 @@ describe("the Master key", () => {
     const answers: string[] = [];
     // A body that is not JSON: a JSON parse error would quote it.
     const cookie = [...tab.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+    await markSetupStep(test.database, "master key", "done");
     const broken = await app.request(
-      `${APP_URL}/api/setup/master-key`,
+      `${APP_URL}/api/master-key/check`,
       {
         method: "POST",
         headers: {
@@ -285,11 +335,8 @@ describe("the Master key", () => {
     expect(broken.status).toBe(400);
     answers.push(await broken.text());
 
-    for (const pasted of [wrongKey, asPasted(wrongKey), asPasted(key)]) {
-      answers.push(await (await tab.pasteBack(pasted)).text());
-    }
     answers.push(await (await tab.shownKey()).text());
-    for (const pasted of [wrongKey, asPasted(key)]) {
+    for (const pasted of [wrongKey, asPasted(wrongKey), asPasted(key)]) {
       answers.push(await (await tab.check(pasted)).text());
     }
     answers.push(await (await tab.lastCheck()).text());

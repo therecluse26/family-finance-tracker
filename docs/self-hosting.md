@@ -106,21 +106,18 @@ The app is ready when `docker compose ps` shows it as `healthy`. The first start
 
 ### 5. Open the setup link
 
-Open the link from step 3 in your browser. The first-run wizard asks for 4 things and lets the rest wait:
+Open the link from step 3 in your browser. The first-run wizard has 6 steps. It asks for 4 things and lets the banks wait:
 
 | Step | Required | What you do |
 |---|---|---|
-| 1. Setup link | Yes | The code comes from the link. Without it, type the code. |
-| 2. First Member | Yes | Your name, email, and password. Scan the QR code with an authenticator app, and save the backup codes. |
-| 3. Master key | Yes | The wizard shows the Master key once. Save it in a password manager, then paste it back. |
-| 4. Household facts | Yes | The ZIP code, each person's age, and rent or own. |
-| 5. Banks | No | The Plaid keys, then each bank. |
-| 6. AI | No | The AI provider and its key. |
-| 7. Alerts | No | SMTP for Alert emails, and web push on this device. |
-| 8. Invite Members | No | Invite links for the rest of the Household. |
-| 9. Finish | | History starts loading. |
+| 1. Setup link | Yes | The code comes from the link. Without it, type the code. If you reload the page, the tab keeps the code. |
+| 2. Your login | Yes | Your name, email, and password. Scan the QR code with an authenticator app, and save the backup codes. |
+| 3. Master key | Yes | The wizard shows the Master key once. Copy it into a password manager, then press "I saved it". |
+| 4. Household | Yes | The ZIP code, each person's age, and rent or own. |
+| 5. Banks | No | The Plaid keys, then link each bank. "Skip for now" lets you link them later. |
+| 6. Finish | | History starts loading. |
 
-A skipped step stays in a "Finish setup" list on the dashboard until it is done.
+AI, email Alerts, and invites for the rest of the Household are optional extras. The Finish step lists them, and so does a "Finish setup" list on the dashboard, until each is done. Banks waits in the same list while no bank is linked.
 
 ### 6. Protect the data
 

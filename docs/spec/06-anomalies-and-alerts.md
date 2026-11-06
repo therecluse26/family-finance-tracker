@@ -170,6 +170,11 @@ A Duplicate charge and card interest or a fee are outside the cap because that m
 - Push on a device belongs to the one Member who turned it on. When another Member uses that browser, the page tells them that push on this device is on for another Member. Nothing they do there ends the first Member's push.
 - A new Member starts with both. The app skips a channel that is not set up: email without SMTP, or push with no device turned on.
 - On plain HTTP, email is the only channel ([Members, login, and security](09-members-login-security.md)).
+- **Settings, Alerts** holds the email server and push on this device:
+  - SMTP takes a host, a port, a sign-in name, a password, and a sender address.
+  - "Send a test email" sends to the signed-in Member. The "Finish setup" item for Alerts is done only after a test email goes out ([Install and first-run setup](12-install-and-first-run.md#the-first-run-wizard)).
+  - "Turn on Alerts on this device" works over HTTPS only. On plain HTTP, the push part is hidden, with the reason shown.
+  - On an iPhone, the page first explains "Add to Home Screen", because only an app on the Home Screen gets pushes.
 - [Stack and architecture](10-stack-and-architecture.md) covers web push and SMTP delivery.
 - A push shows the kind as its title and the template text as its body.
 - An email holds the template text, the AI's advice when there is any, and a link to the Alert list.

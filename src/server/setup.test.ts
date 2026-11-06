@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { newPassword, newTestAuth, type TestAuth, totpCodeFromURI } from "../auth/testing.ts";
 import { markSetupStep } from "../db/index.ts";
 import { createLogger } from "../log.ts";
+import { setupCodeRefused } from "../web/setup-gate.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
@@ -111,6 +112,8 @@ describe("the first-run wizard, steps 1 and 2", () => {
     const wrong = await tab.checkCode(wrongCode(code));
     expect(wrong.status).toBe(401);
     expect(await wrong.json()).toEqual(expect.objectContaining({ code: "WRONG_SETUP_CODE" }));
+    // The wizard forgets a kept code on this answer.
+    expect(setupCodeRefused(wrong.status)).toBe(true);
   });
 
   it("makes the first Member, signs them in, and gives 10 backup codes", async () => {
@@ -138,6 +141,7 @@ describe("the first-run wizard, steps 1 and 2", () => {
     ]) {
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual(expect.objectContaining({ code: "SETUP_DONE" }));
+      expect(setupCodeRefused(res.status)).toBe(true);
     }
     expect(await other.isSignedIn()).toBe(false);
     expect(await query("SELECT id FROM members")).toHaveLength(1);
@@ -197,6 +201,8 @@ describe("the first-run wizard, steps 1 and 2", () => {
     expect(await refused.json()).toEqual(
       expect.objectContaining({ code: "TOO_MANY_WRONG_SETUP_CODES" }),
     );
+    // The right code may still be kept: the wizard does not forget it on this answer.
+    expect(setupCodeRefused(refused.status)).toBe(false);
     expect((await owner.newTotp(code)).status).toBe(429);
 
     // After 15 minutes the code works again.

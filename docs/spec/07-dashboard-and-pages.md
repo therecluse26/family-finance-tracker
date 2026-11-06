@@ -20,7 +20,7 @@ Layout ([prototype, variant H](https://github.com/therecluse26/family-finance-tr
 - Above the boxes, the dashboard shows these lines when they apply. Each owner file defines when they appear and go:
   - a banner for each broken Connection, with **Repair** ([Accounts and bank sync](02-accounts-and-bank-sync.md));
   - "loading history for <bank>", with progress per Connection ([Accounts and bank sync](02-accounts-and-bank-sync.md));
-  - the "Finish setup" list of skipped wizard steps ([Install and first-run setup](12-install-and-first-run.md));
+  - the "Finish setup" list: Banks while the Household has no Connection, then the optional extras AI, Alerts, and Invite Members, each until it is done ([Install and first-run setup](12-install-and-first-run.md#the-first-run-wizard));
   - any other open System notice. A System notice about a past event, such as "Your history is ready", has a close button. One about a condition, such as a broken Connection, stays until the condition ends.
 
 ### 1. AI box ("This week")

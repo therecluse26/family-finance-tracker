@@ -1,4 +1,9 @@
-import type { OptionalSetupStep, SetupProgressView } from "../server/setup-views.ts";
+import {
+  type FinishSetupItem,
+  type SetupProgressView,
+  SKIPPABLE_SETUP_STEPS,
+  type SkippableSetupStep,
+} from "../server/setup-views.ts";
 import { api } from "./api.ts";
 
 // Until the first-run wizard's steps 1 to 4 are done, every page leads to the wizard (spec 12,
@@ -36,13 +41,73 @@ export function codeFromHash(hash: string): string | undefined {
   return code === undefined || code === "" ? undefined : code;
 }
 
-// After steps 1 to 4, the first Member's next visit opens the first step neither done nor skipped,
-// until they open the dashboard from step 9 (spec 12, Order and resume rules). The server answers
-// next: null to every other Member, so a Member who joined by invite never sees the wizard.
+// The setup code survives a reload until the first Member exists (spec 12, Step 1). It stays in
+// this tab's sessionStorage only, exactly as the server took it, and is checked again before use.
+const SETUP_CODE_KEY = "fft-setup-code";
+// The longest code the server takes.
+const MAX_SETUP_CODE_LENGTH = 64;
+
+type CodeStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+// This tab's sessionStorage, or undefined where the browser blocks it. The window is read through
+// globalThis, because server tests also load this file.
+function tabStorage(): CodeStorage | undefined {
+  try {
+    return (globalThis as { window?: { sessionStorage: CodeStorage } }).window?.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function savedSetupCode(storage = tabStorage()): string | undefined {
+  try {
+    const code = storage?.getItem(SETUP_CODE_KEY);
+    if (typeof code !== "string" || code === "" || code.length > MAX_SETUP_CODE_LENGTH) {
+      return undefined;
+    }
+    return code;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveSetupCode(code: string, storage = tabStorage()): void {
+  try {
+    if (code !== "" && code.length <= MAX_SETUP_CODE_LENGTH) storage?.setItem(SETUP_CODE_KEY, code);
+  } catch {
+    // Without storage, a reload asks for the code again.
+  }
+}
+
+// A refusal that means the kept code can never work: a code with the wrong form (400), a wrong code
+// (401), or a Member already made (403). After too many wrong codes (429) or a server error, the
+// code may still be right, so the page keeps it.
+export function setupCodeRefused(status: number): boolean {
+  return status === 400 || status === 401 || status === 403;
+}
+
+export function forgetSetupCode(storage = tabStorage()): void {
+  try {
+    storage?.removeItem(SETUP_CODE_KEY);
+  } catch {
+    // Nothing was kept.
+  }
+}
+
+// After steps 1 to 4, the first Member's next visit opens step 5, Banks, until it is done or
+// skipped, then step 6, until they open the dashboard from it (spec 12, Order and resume rules).
+// The server answers next: null to every other Member, so a Member who joined by invite never sees
+// the wizard.
 export async function fetchSetupProgress(): Promise<SetupProgressView | undefined> {
   const res = await api.setup.progress.$get();
   if (!res.ok) return undefined;
   return ((await res.json()) as { progress: SetupProgressView }).progress;
+}
+
+// The wizard steps the first Member skipped, as the server records them. The step bar shows each one
+// as not done, after Skip for now and after a reload alike.
+export function skippedWizardSteps(progress: SetupProgressView | undefined): SkippableSetupStep[] {
+  return SKIPPABLE_SETUP_STEPS.filter((step) => progress?.steps[step] === "skipped");
 }
 
 // Opens the wizard's next step when the server names one. True when it did.
@@ -55,10 +120,10 @@ export async function resumeWizardIfNeeded(
   return true;
 }
 
-// Where each skipped step's work is done once the wizard is over: its Settings section (spec 07,
-// Header and status lines, "Finish setup").
-export const FINISH_SETUP_LINKS: Record<OptionalSetupStep, { label: string; path: string }> = {
-  banks: { label: "Add your banks and Accounts", path: "/settings/banks" },
+// Where each "Finish setup" item's work is done: its Settings section (spec 07, Header and status
+// lines, "Finish setup").
+export const FINISH_SETUP_LINKS: Record<FinishSetupItem, { label: string; path: string }> = {
+  banks: { label: "Link your banks", path: "/settings/banks" },
   ai: { label: "Set up AI", path: "/settings/ai" },
   alerts: { label: "Set up email Alerts and send a test email", path: "/settings/alerts" },
   "invite members": { label: "Invite Members", path: "/settings/members" },

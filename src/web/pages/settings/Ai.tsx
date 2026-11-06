@@ -424,8 +424,8 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   );
 }
 
-// The AI settings page's fields. Settings, AI shows them, and so does the first-run wizard's
-// step 6 (spec 12, Step 6, AI).
+// The AI settings page's fields, which Settings, AI shows (spec 08, AI settings page). The first-run
+// wizard's Finish step links here as an optional extra.
 export function AiSettingsFields() {
   const [ai, setAi] = useState<AiView | null | undefined>();
   const [usage, setUsage] = useState<AiUsageView | undefined>();

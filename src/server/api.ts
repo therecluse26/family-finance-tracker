@@ -20,7 +20,7 @@ import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
-import { OPTIONAL_SETUP_STEPS, type SetupProgressView, type SetupRefusal } from "./setup-views.ts";
+import { type SetupProgressView, type SetupRefusal, SKIPPABLE_SETUP_STEPS } from "./setup-views.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,8 +52,6 @@ function checkAnswer(c: Context<ServerEnv>, result: MasterKeyCheckResult) {
       return c.json({ matches: false }, 200);
     case "too many tries":
       return c.json({ error: "Too many wrong keys. Wait 15 minutes, then try again." }, 429);
-    case "step done":
-      return c.json({ error: "This step is done. Use Check my master key in Settings." }, 409);
   }
 }
 
@@ -642,8 +640,8 @@ const DEVICE_REFUSALS: Record<DeviceRefusal, string> = {
     "Alerts are on for another Member in this browser. They turn them off first, in Settings, Alerts.",
 };
 
-// The wizard's steps 5 to 9 (spec 12, The first-run wizard).
-const setupStep = z.enum(OPTIONAL_SETUP_STEPS);
+// The wizard's step 5, Banks, the one step with "Skip for now" (spec 12, The first-run wizard).
+const setupStep = z.enum(SKIPPABLE_SETUP_STEPS);
 
 const SETUP_REFUSALS: Record<SetupRefusal, { status: 403 | 409; error: string }> = {
   "setup not done": { status: 409, error: "Finish the first-run wizard's steps 1 to 4 first." },
@@ -651,7 +649,7 @@ const SETUP_REFUSALS: Record<SetupRefusal, { status: 403 | 409; error: string }>
     status: 403,
     error: "Only the first Member goes through the first-run wizard.",
   },
-  "steps left": { status: 409, error: "Do or skip each step of the wizard first." },
+  "steps left": { status: 409, error: "Link a bank, or skip the Banks step for now, first." },
 };
 
 function setupAnswer(c: Context<ServerEnv>, answer: SetupProgressView | SetupRefusal) {
@@ -1195,7 +1193,8 @@ export const api = new Hono<ServerEnv>()
     if (saved.outcome === "duplicate") return duplicateBank(c, saved.coveredBy);
     return connectRefusal(c, saved);
   })
-  // The wizard's step 3 (spec 12): the Master key on each visit, until the paste-back succeeds.
+  // The wizard's step 3 (spec 12): the Master key on each visit, until the Member says they saved
+  // it.
   .get("/setup/master-key", async (c) => {
     c.header("Cache-Control", "no-store");
     const masterKey = await c.var.masterKey.shown();
@@ -1207,17 +1206,20 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ masterKey }, 200);
   })
-  .post("/setup/master-key", async (c) => {
-    const pasted = await pastedKey(c);
-    if (pasted === undefined) return c.json({ error: NO_KEY }, 400);
-    return checkAnswer(c, await c.var.masterKey.pasteBack(c.var.member.id, pasted));
+  // Step 3's "I saved it". The app asks for no paste-back: the key is never sent back to it here.
+  .post("/setup/master-key", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    await c.var.masterKey.confirmSaved();
+    return c.json({ saved: true }, 200);
   })
-  // The wizard's steps 5 to 9 (spec 12): the step it opens for the signed-in Member, and the
+  // The wizard's steps 5 and 6 (spec 12): the step it opens for the signed-in Member, and the
   // dashboard's "Finish setup" list (spec 07, Header and status lines).
   .get("/setup/progress", async (c) =>
     c.json({ progress: await c.var.setup.progress(c.var.member.id) }),
   )
-  // Skip on step 5, 6, 7, or 8.
+  // "Skip for now" on step 5, Banks.
   .post("/setup/steps/:step/skip", jsonOnly, async (c) => {
     const step = setupStep.safeParse(c.req.param("step"));
     if (!step.success) return c.json({ error: "Not found" }, 404);
@@ -1226,7 +1228,7 @@ export const api = new Hono<ServerEnv>()
     }
     return setupAnswer(c, await c.var.setup.skip(c.var.member.id, step.data));
   })
-  // Step 9's "Open the dashboard".
+  // Step 6's "Open the dashboard".
   .post("/setup/finish", jsonOnly, async (c) => {
     if (!emptyBody.safeParse(await jsonBody(c)).success) {
       return c.json({ error: "Send an empty body." }, 400);
@@ -1304,7 +1306,7 @@ export const api = new Hono<ServerEnv>()
     if (made === "wizard not done") {
       return c.json({ error: "Finish the first-run wizard first." }, 409);
     }
-    // The wizard's step 8 is done once an invite link is made.
+    // The "Finish setup" item for Invite Members is done once an invite link is made.
     await c.var.setup.done("invite members");
     c.header("Cache-Control", "no-store");
     return c.json({ invite: made }, 200);
@@ -1580,7 +1582,7 @@ export const api = new Hono<ServerEnv>()
     }
     const tested = await c.var.smtp.sendTest(c.var.member.email);
     if (tested.sent) {
-      // The wizard's step 7 is done only once a test email goes out.
+      // The "Finish setup" item for Alerts is done only once a test email goes out.
       await c.var.setup.done("alerts");
       return c.json({ sent: true }, 200);
     }
