@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { closeAccount, listTransactions, reopenAccount } from "../db/index.ts";
+import {
+  addConnection,
+  closeAccount,
+  listTransactions,
+  markConnectionRemoved,
+  reopenAccount,
+} from "../db/index.ts";
 import { fakeAccount, fakeTxn } from "./fake.ts";
 import { syncConnection } from "./index.ts";
 import { newTestBank, type TestBank } from "./testing.ts";
@@ -26,6 +32,7 @@ const CARD = fakeAccount({
 });
 
 const at = (moment: string) => () => new Date(moment);
+const T_REMOVED = "2026-10-04T08:00:00.000Z";
 
 describe("closing and carrying over Accounts", () => {
   let bank: TestBank;
@@ -111,6 +118,49 @@ describe("closing and carrying over Accounts", () => {
     expect(await cardRow()).toMatchObject({
       closed_at: "2026-10-04T08:00:00.000Z",
       closed_reason: "closed by a member",
+    });
+  });
+
+  // A Member's close is a Member's close, even of an Account already Closed as vanished.
+  it("keeps a Member's closing of a vanished Account when the provider returns it", async () => {
+    bank.fake.addPages(BANK, { accounts: [] });
+    await syncConnection(connectionId, at("2026-10-04T12:00:00.000Z"));
+    const cardId = String((await cardRow())?.id);
+
+    expect(await closeAccount(bank.database, cardId, new Date("2026-10-04T18:00:00.000Z"))).toBe(
+      true,
+    );
+    bank.fake.addPages(BANK, { accounts: [CHECKING, CARD] });
+    await syncConnection(connectionId, at("2026-10-05T12:00:00.000Z"));
+
+    // The card keeps its date and stays Closed. The checking Account, which no Member closed,
+    // opens again.
+    expect(await accountRows()).toMatchObject([
+      { provider_account_id: CHECKING.id, closed_at: null, closed_reason: null },
+      {
+        provider_account_id: CARD.id,
+        closed_at: "2026-10-04T12:00:00.000Z",
+        closed_reason: "closed by a member",
+      },
+    ]);
+    expect(await cardRow()).toMatchObject({ provider_missing: 0 });
+
+    expect(await reopenAccount(bank.database, cardId)).toBe(true);
+    expect(await cardRow()).toMatchObject({ closed_at: null, closed_reason: null });
+  });
+
+  it("keeps the reason of an Account Closed when its Connection was removed", async () => {
+    expect(await markConnectionRemoved(bank.database, connectionId, new Date(T_REMOVED))).toEqual({
+      removed: true,
+      copiesNoLongerAwaited: 0,
+    });
+    const cardId = String((await cardRow())?.id);
+
+    expect(await closeAccount(bank.database, cardId)).toBe(true);
+
+    expect(await cardRow()).toMatchObject({
+      closed_at: T_REMOVED,
+      closed_reason: "connection removed",
     });
   });
 
@@ -231,5 +281,139 @@ describe("closing and carrying over Accounts", () => {
       "2026-10-09",
       "replaced by re-link",
     ]);
+  });
+
+  describe("after an old Connection that never finished a sync", () => {
+    // The sum of the shown Transactions on an Account, and their provider IDs by posted date.
+    const shownOn = async (accountId: string) => {
+      const shown = (await listTransactions(bank.database)).filter(
+        (txn) => txn.accountId === accountId,
+      );
+      return {
+        total: shown.reduce((sum, txn) => sum + txn.amount, 0),
+        ids: (await transactionRows())
+          .filter((row) => row.account_id === accountId && row.hidden_reason === null)
+          .map((row) => row.id),
+      };
+    };
+
+    // A new Connection that replaces `old`, as Link again does.
+    const linkAgain = (bankId: string, old: string) =>
+      addConnection(bank.database, {
+        provider: "fake",
+        bankId,
+        bankName: `Fake bank ${bankId}`,
+        origin: "linked",
+        syncMinute: 7,
+        replaces: old,
+      });
+
+    it("hides all of its partial history and keeps all of the new Connection's", async () => {
+      const second = "fake-second-bank";
+      const savings = fakeAccount({ id: "acc-savings", subtype: "savings", mask: "5555" });
+      const savingsTxn = (id: string, postedDate: string, amount: number) =>
+        fakeTxn({ id, accountId: savings.id, amount, postedDate });
+      // It stores Oct 9 to 14 over two pages, then fails before the older history.
+      const old = await bank.connect(second);
+      bank.fake.addPages(
+        old,
+        { accounts: [savings], added: [savingsTxn("s14", "2026-10-14", -1_400)] },
+        {
+          added: [savingsTxn("s12", "2026-10-12", -1_200), savingsTxn("s09", "2026-10-09", -900)],
+        },
+        { added: [savingsTxn("s03", "2026-10-03", -300)], historyLoaded: true },
+      );
+      bank.fake.failAt(old, 2, "temporary");
+      await expect(syncConnection(old, at("2026-10-15T12:00:00.000Z"))).rejects.toThrow();
+      const savingsId = String(
+        (
+          await rows("SELECT id FROM household_accounts WHERE provider_account_id = 'acc-savings'")
+        )[0]?.id,
+      );
+      expect(await shownOn(savingsId)).toEqual({ total: -3_500, ids: ["s09", "s12", "s14"] });
+
+      const relinked = await linkAgain(second, old);
+      const newSavings = { ...savings, id: "n-savings" };
+      bank.fake.addPages(relinked, {
+        accounts: [newSavings],
+        added: [
+          ["n03", "2026-10-03", -300],
+          ["n09", "2026-10-09", -900],
+          ["n12", "2026-10-12", -1_200],
+          ["n14", "2026-10-14", -1_400],
+        ].map(([id, postedDate, amount]) =>
+          fakeTxn({
+            id: String(id),
+            accountId: newSavings.id,
+            amount: Number(amount),
+            postedDate: String(postedDate),
+          }),
+        ),
+        historyLoaded: true,
+      });
+      await syncConnection(relinked, at("2026-10-20T12:00:00.000Z"));
+
+      // Each day shows once, from the new Connection, and the total is the new data's.
+      expect(await shownOn(savingsId)).toEqual({
+        total: -3_800,
+        ids: ["n03", "n09", "n12", "n14"],
+      });
+      expect(
+        (await transactionRows())
+          .filter((row) => String(row.id).startsWith("s"))
+          .map((row) => [row.id, row.hidden_reason]),
+      ).toEqual([
+        ["s09", "replaced by re-link"],
+        ["s12", "replaced by re-link"],
+        ["s14", "replaced by re-link"],
+      ]);
+      expect(
+        await rows(`SELECT history_split_date FROM household_accounts WHERE id = '${savingsId}'`),
+      ).toEqual([{ history_split_date: null }]);
+    });
+
+    it("keeps the day D the Account already had from an earlier carry-over", async () => {
+      const cardId = String((await cardRow())?.id);
+      const cardTxn = (id: string, postedDate: string, account: string) =>
+        fakeTxn({ id, accountId: account, amount: -1_599, postedDate });
+      // The first Connection finished its sync on Oct 3: day D. The bank, linked again, stores a
+      // page and fails.
+      const unfinished = await linkAgain(BANK, connectionId);
+      bank.fake.addPages(
+        unfinished,
+        {
+          accounts: [
+            { ...CHECKING, id: "b-checking" },
+            { ...CARD, id: "b-card" },
+          ],
+          added: [cardTxn("b1", "2026-10-01", "b-card"), cardTxn("b5", "2026-10-05", "b-card")],
+        },
+        { historyLoaded: true },
+      );
+      bank.fake.failAt(unfinished, 1, "temporary");
+      await expect(syncConnection(unfinished, at("2026-10-06T12:00:00.000Z"))).rejects.toThrow();
+      expect(await cardRow()).toMatchObject({ history_split_date: "2026-10-03" });
+
+      // Linked again once more, with the full history.
+      const relinked = await linkAgain(BANK, unfinished);
+      bank.fake.addPages(relinked, {
+        accounts: [
+          { ...CHECKING, id: "c-checking" },
+          { ...CARD, id: "c-card" },
+        ],
+        added: [
+          cardTxn("x1", "2026-10-01", "c-card"),
+          cardTxn("x5", "2026-10-05", "c-card"),
+          cardTxn("x7", "2026-10-07", "c-card"),
+        ],
+        historyLoaded: true,
+      });
+      await syncConnection(relinked, at("2026-10-08T12:00:00.000Z"));
+
+      // The first Connection's Oct 1 stays before day D. The unfinished one's are all hidden, and
+      // the new one's from day D on show.
+      expect(await cardRow()).toMatchObject({ history_split_date: "2026-10-03" });
+      expect((await shownOn(cardId)).ids).toEqual(["c1", "x5", "x7"]);
+    });
   });
 });

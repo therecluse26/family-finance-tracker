@@ -1,6 +1,7 @@
-import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, max, type SQL, sql } from "drizzle-orm";
+import { shownDate } from "./bank-data.ts";
 import type { Database, Queries } from "./client.ts";
-import { reviewItems } from "./schema.ts";
+import { reviewItems, transactions } from "./schema.ts";
 
 // Review list items in app.db (spec 07, Review list page). The review module decides; these
 // functions store and read.
@@ -55,13 +56,29 @@ export async function listReviewItemSubjects(
     .where(eq(reviewItems.kind, kind));
 }
 
+// The newest date among an item's Transactions, each the date its row shows. A loan item has
+// none, so it runs after the others made at the same moment.
+function newestSubjectDate(database: Queries): SQL {
+  return sql`(${database
+    .select({ date: max(shownDate) })
+    .from(transactions)
+    .where(sql`${transactions.id} in (select value from json_each(${reviewItems.subjectIds}))`)})`;
+}
+
+// Newest first. Items made at the same moment, such as by one follow-up job, run by their
+// Transactions' date, newest first, then by ID, so the order is the same on every read (spec 07,
+// Review list page).
+function newestFirst(database: Queries): SQL[] {
+  return [desc(reviewItems.createdAt), desc(newestSubjectDate(database)), desc(reviewItems.id)];
+}
+
 // Every open item, newest first.
 export async function listOpenReviewItems(database: Database): Promise<StoredReviewItem[]> {
   return database
     .select()
     .from(reviewItems)
     .where(isNull(reviewItems.closedAt))
-    .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
+    .orderBy(...newestFirst(database));
 }
 
 // Every open item of one kind, newest first.
@@ -73,7 +90,7 @@ export async function listOpenReviewItemsOfKind(
     .select()
     .from(reviewItems)
     .where(and(isNull(reviewItems.closedAt), eq(reviewItems.kind, kind)))
-    .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
+    .orderBy(...newestFirst(database));
 }
 
 export async function countOpenReviewItems(database: Database): Promise<number> {

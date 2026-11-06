@@ -189,7 +189,7 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         transactions: found.transactions.map((txn) => {
           const shown = parts.get(txn.id) ?? [];
           return {
-            date: typedDate(txn.postedDate),
+            date: typedDate(txn.shownDate),
             merchant: txn.merchantCleanName,
             amount: typedAmount(txn.amount),
             category: joined(shown.map((part) => part.category)),

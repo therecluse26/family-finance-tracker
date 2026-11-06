@@ -51,6 +51,7 @@ An Account is a bank account, credit card, or loan that belongs to the Household
   - It is a Manual loan whose balance reaches $0.
   - A Member closes it by hand. Any Account may be closed this way.
 - A Member may reopen any Closed Account.
+- When a Member closes an Account that is already Closed because its provider stopped returning it, it becomes closed by the Member. It then opens again only when a Member reopens it.
 - A Closed Account drops out of balances and balance totals. Its past Transactions still count in Spending, Income, Budgets, and graphs.
 - Closing an Account sends no System notice. Its history stays.
 
@@ -277,6 +278,7 @@ The Plaid adapter declares `minSyncGapHours: 0` and all three actions: `repairIn
   - It keeps the old Transactions dated before D.
   - It keeps the new Transactions dated on or after D.
   - It hides the rest with the reason `replaced by re-link`.
+- If the old Connection never finished a sync, it has no day D. The app hides all of its Transactions on that Account with the reason `replaced by re-link`, and keeps all the new ones, so none of its partial history stays. A day D the Account already has from an earlier carry-over still holds.
 - The new Connection records the old Connection whose Accounts it carries on.
 - **Link carry-over:** a hand-made link on an old Transaction hidden as `replaced by re-link` does not end at once. It moves to that Transaction's new copy: a new Transaction on the same Account, with the same amount and the same posted date. When several fit, the app pairs them one to one, the same description first. The moved link stays a hand-made link.
   - If no copy has arrived when the new Connection's first history load ends, the link ends, and matching runs again.

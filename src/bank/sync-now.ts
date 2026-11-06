@@ -28,6 +28,7 @@ export type SyncNowResult = {
 async function refreshOnce(connectionId: string, now: Date): Promise<boolean> {
   const { database } = runningBank();
   const loaded = await loadConnection(connectionId);
+  if (loaded === undefined) return false;
   const { refresh } = loaded.adapter;
   if (!loaded.adapter.actions.refresh || refresh === undefined) return false;
   const after = new Date(now.getTime() - REFRESH_GAP_MS);
