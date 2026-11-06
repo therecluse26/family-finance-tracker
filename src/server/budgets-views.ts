@@ -33,8 +33,9 @@ export type MonthBudgetView = BudgetView & {
   // for a monthly Budget.
   shareOfYear: number | null;
   // A Bills Budget's Benchmark context (spec 05, Context for Bills Budgets), such as "Housing is
-  // 41% of Income; typical is 33%". Null for a Category with no context Benchmark, before the
-  // Household facts are recorded, and with Steady Income at $0.
+  // 41% of Income; typical is 33%", or "Housing is 41% of Income" for a Household that rents. Null
+  // for a Category with no context Benchmark, before the Household facts are recorded, and with
+  // Steady Income at $0.
   context: string | null;
 };
 

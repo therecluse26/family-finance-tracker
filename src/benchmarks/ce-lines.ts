@@ -89,8 +89,9 @@ export const BENCHMARK_ROLES: Readonly<Record<Category, BenchmarkRole>> = Object
 
 // The CE lines of one Category.
 // - "lines": the share is the sum of these lines.
-// - "by tenure": Housing takes rented dwellings for a Household that rents, and owned dwellings
-//   for one that owns (spec 05, Household facts).
+// - "by tenure": Housing takes owned dwellings for a Household that owns (spec 05, Household
+//   facts). A Household that rents has no Housing Benchmark (spec 05, Context for Bills Budgets),
+//   so no figure reads the rented dwellings line; the map keeps it as the research map gives it.
 // - "food plan and lines": B_GS, the USDA Moderate-Cost plan plus the share of these lines.
 export type CeLineChoice =
   | { readonly kind: "lines"; readonly lines: readonly CeLine[] }

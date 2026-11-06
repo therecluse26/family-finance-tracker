@@ -492,6 +492,42 @@ describe("Budget tailoring", () => {
       expect(await proposals()).toHaveLength(1);
     });
 
+    // Spec 05, Context for Bills Budgets: the CE mean for rented dwellings misleads a renter.
+    it.each(["rent", "own"] as const)(
+      "gives the AI a Housing Benchmark and its CE note only for a Household that owns (%s)",
+      async (rentOrOwn) => {
+        await saveHouseholdFacts(
+          bank.database,
+          { zipCode: ZIP_CODE, ages: AGES, rentOrOwn },
+          MEMBER,
+          NOW,
+        );
+        await draftFirstBudgets(bank.database, NOW, tailorFirstDraft);
+        // A Member's pinned Housing Budget: the fake history has no Housing Spending.
+        await sql(
+          `INSERT INTO budgets (category, amount, period, takes_effect, source, set_by, pinned, set_at)
+           VALUES ('Housing', ?, 'monthly', ?, 'Member edit', ?, 1, ?)`,
+          [$(2_000), MONTH, MEMBER, NOW.toISOString()],
+        );
+        await connectAi();
+        stub.reply = reply([]);
+
+        await runWaitingTailoring();
+
+        expect(stub.calls).toHaveLength(1);
+        const housing = promptTheModelRead(stub)
+          .split("\n")
+          .filter((line) => line.startsWith("- Housing:"));
+        expect(housing).toEqual([
+          rentOrOwn === "rent"
+            ? "- Housing: Budget 2000.00"
+            : expect.stringMatching(
+                /^- Housing: Budget 2000\.00; Benchmark \d+\.\d{2} a month\. CE leaves mortgage principal out/,
+              ),
+        ]);
+      },
+    );
+
     it("keeps each line within 50% of the current Budget too, and drops a line no figure can meet", async () => {
       await draftFirstBudgets(bank.database, NOW, tailorFirstDraft);
       const [restaurants, clothing, hobbies] = [

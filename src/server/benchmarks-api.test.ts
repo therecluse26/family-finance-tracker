@@ -102,6 +102,29 @@ describe("the Benchmark route", () => {
     }
   });
 
+  it("gives a Household that rents no Housing Benchmark, and changes no other Category", async () => {
+    await typeSteadyIncome(test.database, 600_000, memberId);
+    const facts = { zipCode: "99501", ages: [41, 39, 8, 0] };
+    await saveHouseholdFacts(test.database, { ...facts, rentOrOwn: "own" }, memberId);
+    const owned = await benchmarks();
+    await saveHouseholdFacts(test.database, { ...facts, rentOrOwn: "rent" }, memberId);
+    const rented = await benchmarks();
+
+    const housingOf = (view: BenchmarksView) =>
+      view.categories.find(({ category }) => category === "Housing");
+    expect(housingOf(owned)?.amount).toBeGreaterThan(0);
+    expect(housingOf(owned)?.share).toBeGreaterThan(0);
+    expect(housingOf(rented)).toEqual({
+      category: "Housing",
+      role: "context",
+      amount: null,
+      share: null,
+    });
+    const others = (view: BenchmarksView) =>
+      view.categories.filter(({ category }) => category !== "Housing");
+    expect(others(rented)).toEqual(others(owned));
+  });
+
   it("answers 401 with no session", async () => {
     const signedOut = new TestBrowser(app, APP_URL, "192.168.1.21");
 

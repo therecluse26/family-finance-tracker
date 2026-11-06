@@ -184,6 +184,7 @@ describe("the Benchmark for a Category", () => {
       amount: 30_000,
       share: 0.05,
       ceNote: null,
+      shareOnly: false,
     });
   });
 
@@ -207,15 +208,38 @@ describe("the Benchmark for a Category", () => {
     expect(benchmarkOf("Health", {}, snapshot)).toMatchObject({ amount: null, share: null });
   });
 
-  it("takes rented dwellings for a Household that rents and owned dwellings for one that owns", () => {
+  it("takes owned dwellings for a Household that owns, and gives one that rents no Housing Benchmark", () => {
     const snapshot = withSnapshot((changed) => {
       const lines = changed.ce.bySizeAndIncome[2]?.table.columns[1]?.lines;
       if (lines === undefined) throw new Error("No column.");
       Object.assign(lines, { "Rented dwellings": 20_000, "Owned dwellings": 30_000 });
     });
 
-    expect(benchmarkOf("Housing", { rentOrOwn: "rent" }, snapshot)?.amount).toBe(120_000);
-    expect(benchmarkOf("Housing", { rentOrOwn: "own" }, snapshot)?.amount).toBe(180_000);
+    expect(benchmarkOf("Housing", { rentOrOwn: "own" }, snapshot)).toEqual({
+      category: "Housing",
+      role: "context",
+      amount: 180_000,
+      share: 0.3,
+      ceNote: CE_NOTES.Housing,
+      shareOnly: false,
+    });
+    // The rented dwellings mean, 20% here, is never read: no amount, no share, and no CE note.
+    expect(benchmarkOf("Housing", { rentOrOwn: "rent" }, snapshot)).toEqual({
+      category: "Housing",
+      role: "context",
+      amount: null,
+      share: null,
+      ceNote: null,
+      shareOnly: true,
+    });
+  });
+
+  it("changes no other Category for a Household that rents", () => {
+    const others = (rentOrOwn: BenchmarkInputs["rentOrOwn"]) =>
+      compute({ rentOrOwn }).categories.filter(({ category }) => category !== "Housing");
+
+    expect(others("rent")).toEqual(others("own"));
+    expect(others("rent").filter(({ shareOnly }) => shareOnly)).toEqual([]);
   });
 
   it("gives Personal care only the CE personal care services", () => {
@@ -247,6 +271,7 @@ describe("the Groceries and Superstores Benchmark", () => {
         amount: 112_000,
         share: 112_000 / 600_000,
         ceNote: null,
+        shareOnly: false,
       });
     }
   });
@@ -337,7 +362,7 @@ describe("which Categories have a Benchmark", () => {
         }
       }
     });
-    const { categories } = compute({}, filled);
+    const { categories } = compute({ rentOrOwn: "own" }, filled);
 
     expect(categories.map(({ category }) => category)).toEqual(CATEGORIES.map(({ name }) => name));
     for (const [role, names] of Object.entries(ROLES)) {
@@ -356,11 +381,16 @@ describe("the CE notes", () => {
   it("stores the Housing and Car notes as text for the AI, and gives no other Category one", () => {
     expect(CE_NOTES.Housing).toContain("mortgage principal");
     expect(CE_NOTES.Car).toContain("financed car at its full price");
-    const withNote = compute().categories.filter(({ ceNote }) => ceNote !== null);
-    expect(withNote.map(({ category, ceNote }) => [category, ceNote])).toEqual([
+    const notes = (rentOrOwn: BenchmarkInputs["rentOrOwn"]) =>
+      compute({ rentOrOwn })
+        .categories.filter(({ ceNote }) => ceNote !== null)
+        .map(({ category, ceNote }) => [category, ceNote]);
+    expect(notes("own")).toEqual([
       ["Housing", CE_NOTES.Housing],
       ["Car", CE_NOTES.Car],
     ]);
+    // A Household that rents has no Housing Benchmark, so no Housing comparison needs the note.
+    expect(notes("rent")).toEqual([["Car", CE_NOTES.Car]]);
   });
 });
 
@@ -371,12 +401,28 @@ describe("the context line for a Bills Budget", () => {
     amount: 198_000,
     share: 0.33,
     ceNote: CE_NOTES.Housing ?? null,
+    shareOnly: false,
+  };
+  const housingOf = (rentOrOwn: BenchmarkInputs["rentOrOwn"]) => {
+    const found = benchmarkOf("Housing", { rentOrOwn });
+    if (found === undefined) throw new Error("No Housing Benchmark entry.");
+    return found;
   };
 
   it("compares the Budget and the Benchmark with I", () => {
     expect(benchmarkContextLine(housing, 246_000, 600_000)).toBe(
       "Housing is 41% of Income; typical is 33%",
     );
+  });
+
+  it("shows no typical figure for a Household that rents, and keeps it for one that owns", () => {
+    expect(benchmarkContextLine(housingOf("rent"), 246_000, 600_000)).toBe(
+      "Housing is 41% of Income",
+    );
+    expect(benchmarkContextLine(housingOf("own"), 246_000, 600_000)).toMatch(
+      /^Housing is 41% of Income; typical is \d+%$/,
+    );
+    expect(benchmarkContextLine(housingOf("rent"), 246_000, 0)).toBeUndefined();
   });
 
   it("is shown only for a context Benchmark, and not with I at $0", () => {
@@ -424,6 +470,22 @@ describe("the Benchmarks for the Household now", () => {
     await saveFacts();
 
     expect(await categoryBenchmarks(test.database, now, TEST)).toEqual(compute());
+  });
+
+  it("follows an edit of the facts from rent to own and back at once", async () => {
+    const housing = async () =>
+      (await categoryBenchmarks(test.database, now, TEST))?.categories.find(
+        ({ category }) => category === "Housing",
+      );
+    await saveFacts({ rentOrOwn: "rent" });
+    expect(await housing()).toMatchObject({ amount: null, share: null, shareOnly: true });
+
+    await saveFacts({ rentOrOwn: "own" });
+    expect(await housing()).toEqual(benchmarkOf("Housing", { rentOrOwn: "own" }));
+    expect((await housing())?.amount).not.toBeNull();
+
+    await saveFacts({ rentOrOwn: "rent" });
+    expect(await housing()).toMatchObject({ amount: null, share: null, shareOnly: true });
   });
 
   it("applies the Alaska rule to an Alaska ZIP code and the Hawaii rule to a Hawaii ZIP code", async () => {

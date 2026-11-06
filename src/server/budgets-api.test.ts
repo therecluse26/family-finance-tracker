@@ -156,25 +156,54 @@ describe("the Budget route", () => {
         (await budgets("2026-11")).budgets.map(({ category, context }) => [category, context]),
       );
 
-    it('shows "<Category> is X% of Income; typical is Y%" on a Bills Budget with a Benchmark only', async () => {
-      await saveHouseholdFacts(
+    const saveFacts = (rentOrOwn: "rent" | "own") =>
+      saveHouseholdFacts(
         test.database,
-        { zipCode: "10001", ages: [40, 38, 7], rentOrOwn: "rent" },
+        { zipCode: "10001", ages: [40, 38, 7], rentOrOwn },
         memberId,
         at,
       );
+    const housingShare = async () => {
       const { categories } = (await (
         await browser.get("/api/benchmarks")
       ).json()) as BenchmarksView;
-      const housing = categories.find((each) => each.category === "Housing");
-      if (housing?.share == null) throw new Error("Housing has no Benchmark");
+      return categories.find((each) => each.category === "Housing")?.share;
+    };
+
+    it('shows "<Category> is X% of Income; typical is Y%" on a Bills Budget with a Benchmark only', async () => {
+      await saveFacts("own");
+      const share = await housingShare();
+      if (share == null) throw new Error("Housing has no Benchmark");
 
       expect(await contexts()).toEqual({
-        Housing: `Housing is 41% of Income; typical is ${Math.round(housing.share * 100)}%`,
+        Housing: `Housing is 41% of Income; typical is ${Math.round(share * 100)}%`,
         "Interest and fees": null,
         Restaurants: null,
         Travel: null,
       });
+    });
+
+    it("shows no typical Housing figure to a Household that rents", async () => {
+      await saveFacts("rent");
+
+      expect(await housingShare()).toBeNull();
+      expect(await contexts()).toEqual({
+        Housing: "Housing is 41% of Income",
+        "Interest and fees": null,
+        Restaurants: null,
+        Travel: null,
+      });
+    });
+
+    it("changes the Housing line at once when the facts change from rent to own and back", async () => {
+      await saveFacts("rent");
+      expect((await contexts()).Housing).toBe("Housing is 41% of Income");
+
+      await saveFacts("own");
+      expect((await contexts()).Housing).toMatch(/^Housing is 41% of Income; typical is \d+%$/);
+
+      await saveFacts("rent");
+      expect((await contexts()).Housing).toBe("Housing is 41% of Income");
     });
 
     it("shows none before the Household facts are recorded", async () => {

@@ -66,6 +66,9 @@ export type CategoryBenchmark = {
   share: number | null;
   // The CE note the AI gets with any comparison for this Category, or null.
   ceNote: string | null;
+  // True for Housing in a Household that rents (spec 05, Context for Bills Budgets). It has no
+  // Benchmark, and its context line shows the Budget's share of Income with no typical figure.
+  shareOnly: boolean;
 };
 
 export type CategoryBenchmarks = {
@@ -176,9 +179,14 @@ export function foodPlanCost(
   );
 }
 
-function linesOf(choice: CeLineChoice, rentOrOwn: "rent" | "own"): readonly CeLine[] {
-  if (choice.kind !== "by tenure") return choice.lines;
-  return rentOrOwn === "rent" ? choice.rent : choice.own;
+// A Household that rents has no Housing Benchmark (spec 05, Context for Bills Budgets). The CE mean
+// for rented dwellings is an average over all households, owners included, so it reads far too low
+// for a renter.
+const rentedHousing = (choice: CeLineChoice | undefined, rentOrOwn: "rent" | "own") =>
+  choice?.kind === "by tenure" && rentOrOwn === "rent";
+
+function linesOf(choice: CeLineChoice): readonly CeLine[] {
+  return choice.kind === "by tenure" ? choice.own : choice.lines;
 }
 
 const toCents = (dollars: number) => Math.round(dollars * 100);
@@ -197,11 +205,12 @@ export function computeCategoryBenchmarks(
   const categories = CATEGORIES.map(({ name }): CategoryBenchmark => {
     const role = BENCHMARK_ROLES[name];
     const choice = CE_LINE_MAP[name];
+    const shareOnly = rentedHousing(choice, rentOrOwn);
     let amount: number | null = null;
     if (role === "drafts shared") {
       amount = bGs;
-    } else if (role !== "none" && choice !== undefined) {
-      const share = shareOf(column, linesOf(choice, rentOrOwn));
+    } else if (role !== "none" && choice !== undefined && !shareOnly) {
+      const share = shareOf(column, linesOf(choice));
       amount = share === null ? null : Math.round(share * income);
     }
     return {
@@ -209,7 +218,9 @@ export function computeCategoryBenchmarks(
       role,
       amount,
       share: amount === null || income <= 0 ? null : amount / income,
-      ceNote: CE_NOTES[name] ?? null,
+      // With no Benchmark there is no comparison, so the AI gets no CE note either.
+      ceNote: shareOnly ? null : (CE_NOTES[name] ?? null),
+      shareOnly,
     };
   });
   return { income, ceColumn: pick, food, categories };
@@ -241,13 +252,17 @@ export async function categoryBenchmarks(
 const percent = (part: number, whole: number) => Math.round((part / whole) * 100);
 
 // The context line a Bills Budget with a Benchmark shows (spec 05, Context for Bills Budgets):
-// "<Category> is X% of Income; typical is Y%", X = the Budget ÷ I and Y = B(c) ÷ I. Undefined for
-// any other Category, or with I at $0. The Budget is in whole cents per month.
+// "<Category> is X% of Income; typical is Y%", X = the Budget ÷ I and Y = B(c) ÷ I. Housing in a
+// Household that rents shows "Housing is X% of Income", with no typical figure. Undefined for any
+// other Category, or with I at $0. The Budget is in whole cents per month.
 export function benchmarkContextLine(
   benchmark: CategoryBenchmark,
   budget: number,
   income: number,
 ): string | undefined {
-  if (benchmark.role !== "context" || benchmark.amount === null || income <= 0) return undefined;
-  return `${benchmark.category} is ${percent(budget, income)}% of Income; typical is ${percent(benchmark.amount, income)}%`;
+  if (benchmark.role !== "context" || income <= 0) return undefined;
+  const line = `${benchmark.category} is ${percent(budget, income)}% of Income`;
+  if (benchmark.shareOnly) return line;
+  if (benchmark.amount === null) return undefined;
+  return `${line}; typical is ${percent(benchmark.amount, income)}%`;
 }
