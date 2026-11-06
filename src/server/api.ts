@@ -1561,6 +1561,47 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ check: saved.check, ai: saved.ai });
   })
+  // "Test the key" (spec 08, Test the key): one call to the saved Quick model, with the result. A
+  // rate limit or an AI error is a result, not a failed request. The key is never in an answer.
+  .post("/ai/test", async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    const test = await c.var.ai.testKey();
+    if (test.tested) return c.json({ result: test.result, ai: test.ai }, 200);
+    switch (test.refusal) {
+      case "busy":
+        return c.json({ error: "A test of the key is running. Wait for its answer." }, 409);
+      case "too soon":
+        c.header("Retry-After", String(test.waitSeconds));
+        return c.json(
+          {
+            error: `Wait ${test.waitSeconds} ${test.waitSeconds === 1 ? "second" : "seconds"}, then test the key again.`,
+          },
+          429,
+        );
+      case "key unreadable":
+        return c.json(
+          { error: "The app cannot read the saved key. Enter it again, then save." },
+          409,
+        );
+      case "token unreadable":
+        return c.json(
+          { error: "The app cannot read the saved gateway token. Enter it again, then save." },
+          409,
+        );
+      case "price needed":
+        return c.json(
+          { error: "The app has no price for the Quick model. Enter its prices, then save." },
+          409,
+        );
+      case "changed":
+        return c.json(
+          { error: "The AI settings changed during the test. Test again.", ai: test.ai },
+          409,
+        );
+    }
+  })
   .post("/ai/remove", async (c) => {
     await c.var.ai.remove();
     return c.json({ ai: null });

@@ -159,8 +159,8 @@ function ipv6Kind(words: number[]): HostKind {
   return "public";
 }
 
-// Every AI use (spec 08, Every AI use), and the check on save, which also counts toward the
-// month's cost. The db module stores the same names.
+// Every AI use (spec 08, Every AI use), and the check on save and the key test, which also count
+// toward the month's cost. The db module stores the same names.
 export const AI_USES = [
   "category fix",
   "merchant cleanup",
@@ -173,6 +173,7 @@ export const AI_USES = [
   "monthly review",
   "chat",
   "check on save",
+  "key test",
 ] as const;
 
 export type AiUse = (typeof AI_USES)[number];
@@ -189,10 +190,11 @@ export const AI_USE_LABELS: Record<AiUse, string> = {
   "monthly review": "Monthly review",
   chat: "Chat",
   "check on save": "Check on save",
+  "key test": "Key test",
 };
 
-// Spec 08, Model tiers. The check on save calls both tiers.
-export type ModelUse = Exclude<AiUse, "check on save">;
+// Spec 08, Model tiers. The check on save calls both tiers, and the key test the Quick tier.
+export type ModelUse = Exclude<AiUse, "check on save" | "key test">;
 
 export const USE_TIERS: Record<ModelUse, AiTier> = {
   "category fix": "quick",
@@ -301,6 +303,31 @@ export type AiSave =
   // A model is not in the price table, and has no prices from a Member.
   | { saved: false; refusal: "price needed"; tier: AiTier };
 
+// What "Test the key" found (spec 08, Test the key). "model unknown" is the AI provider's 404.
+// "no answer" is any other AI error, such as a network failure, no reply within 120 seconds, or a
+// server error. With "no key", no AI provider is saved, and the app made no call.
+export type KeyTestResult =
+  | "works"
+  | "key rejected"
+  | "rate limit"
+  | "model unknown"
+  | "no answer"
+  | "no key";
+
+export type KeyTest =
+  // `ai` is the AI settings after the test, whose status line it may have changed.
+  | { tested: true; result: KeyTestResult; ai: AiView | null }
+  // Another test is running.
+  | { tested: false; refusal: "busy" }
+  // The last test started less than 10 seconds ago.
+  | { tested: false; refusal: "too soon"; waitSeconds: number }
+  // The stored key or gateway token cannot be read, such as after a restore with another Master
+  // key, or the Quick model has no price. The app made no call.
+  | { tested: false; refusal: "key unreadable" | "token unreadable" | "price needed" }
+  // A save or a Remove AI provider changed the settings while the AI provider answered. The call
+  // counted, and the AI status did not change. `ai` is the AI settings as they are now.
+  | { tested: false; refusal: "changed"; ai: AiView | null };
+
 export type AiSettings = {
   // Undefined when no AI provider is set up.
   view(): Promise<AiView | undefined>;
@@ -308,6 +335,9 @@ export type AiSettings = {
   save(input: AiSettingsInput): Promise<AiSave>;
   // Deletes the AI provider and its key. Every use falls back to its no-AI path.
   remove(): Promise<void>;
+  // "Test the key": one call to the saved Quick model, with no Household data. One test runs at a
+  // time, at least 10 seconds after the last one started.
+  testKey(): Promise<KeyTest>;
   // The AI usage page. It holds no prompt text or reply text.
   usage(): Promise<AiUsageView>;
   // Sets the AI cost cap, in cents. A cap above the month's total starts background AI again.

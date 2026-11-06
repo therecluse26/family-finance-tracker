@@ -465,6 +465,8 @@ describe("an AI call", () => {
 
     it.each([
       ["rate limit", "rate limit", 429],
+      // Only Test the key names a 404 (spec 08, Test the key).
+      ["unknown model", "server error", 404],
       ["fail", "server error", 500],
     ] as const)("treats a %s answer as a %s", async (answer, failure, status) => {
       const { ai } = await connect();

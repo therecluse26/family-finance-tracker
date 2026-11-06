@@ -23,6 +23,7 @@ export {
 } from "./ai-retries.ts";
 export {
   AI_SETTINGS_ROW,
+  clearAiKeyRejected,
   markAiKeyRejected,
   readAiSettings,
   readAiSettingsVersion,

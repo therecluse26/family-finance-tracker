@@ -12,10 +12,12 @@ import {
   centsOfText,
   dataUseLine,
   enteredPrices,
+  KeyTestLine,
   priceOfText,
   saveCostCap,
   spentShare,
   statusLine,
+  testTheKey,
   todayHere,
 } from "./Ai.tsx";
 import { AiUsageReport } from "./AiUsage.tsx";
@@ -75,6 +77,40 @@ describe("Settings → AI", () => {
       "AI paused: the AI provider rejected the key",
     );
     expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("✓ AI is on");
+  });
+
+  it("offers Test the key beside Check and save, outlined, with or without an AI provider", () => {
+    for (const ai of [null, OPENAI]) {
+      const html = renderToString(<AiProviderForm ai={ai} onSaved={() => {}} />);
+      const buttons = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)];
+
+      expect(buttons.map(([, words]) => words)).toEqual(["Check and save", "Test the key"]);
+      expect(buttons[1]?.[0]).toContain('type="button"');
+      expect(buttons[1]?.[0]).toContain("border-field");
+    }
+  });
+
+  it("shows each key test result with its icon, color, and words", () => {
+    const line = (result: Parameters<typeof KeyTestLine>[0]["result"]) =>
+      renderToString(<KeyTestLine result={result} />);
+
+    expect(text(line("works"))).toBe("✓ The key works");
+    expect(line("works")).toContain("text-good");
+    expect(text(line("key rejected"))).toBe("▲ The AI provider rejected the key");
+    expect(line("key rejected")).toContain("text-critical");
+    expect(text(line("rate limit"))).toBe(
+      "◆ The AI provider is limiting calls. Wait a minute, then test again",
+    );
+    expect(line("rate limit")).toContain("text-serious");
+    expect(text(line("model unknown"))).toBe(
+      "▲ The AI provider does not know the Quick model. Check the model names",
+    );
+    expect(line("model unknown")).toContain("text-critical");
+    expect(text(line("no answer"))).toBe("◆ The AI provider did not answer. Try again later");
+    expect(line("no answer")).toContain("text-serious");
+    expect(text(line("no key"))).toBe("● No key is saved");
+    expect(line("no key")).toContain("text-muted");
+    expect(line("works")).toContain('role="status"');
   });
 
   it("takes today in the Household time zone, not in UTC", () => {
@@ -307,5 +343,45 @@ describe("Settings → AI: Save cap", () => {
       });
     }
     expect(sent).toEqual([]);
+  });
+});
+
+describe("Settings → AI: Test the key", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function server(status: number, body: unknown) {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      sent.push({ method: init.method ?? "GET", path: String(input), body: init.body });
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    return sent;
+  }
+
+  it("posts an empty body, and answers the result with the AI settings after it", async () => {
+    const sent = server(200, { result: "works", ai: OPENAI });
+
+    expect(await testTheKey()).toEqual({ result: "works", ai: OPENAI });
+    expect(sent).toEqual([{ method: "POST", path: "/api/ai/test", body: "{}" }]);
+  });
+
+  it("answers the server's words for a refusal", async () => {
+    server(429, { error: "Wait 4 seconds, then test the key again." });
+
+    expect(await testTheKey()).toEqual({ error: "Wait 4 seconds, then test the key again." });
+  });
+
+  it("answers the AI settings as they are now with a refusal because they changed", async () => {
+    const error = "The AI settings changed during the test. Test again.";
+    server(409, { error, ai: OPENAI });
+    expect(await testTheKey()).toEqual({ error, ai: OPENAI });
+
+    server(409, { error, ai: null });
+    expect(await testTheKey()).toEqual({ error, ai: null });
   });
 });

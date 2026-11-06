@@ -17,6 +17,8 @@ export {
   baseUrlProblem,
   DEFAULT_COST_CAP_CENTS,
   DEFAULT_MODELS,
+  type KeyTest,
+  type KeyTestResult,
   type ModelCheck,
   type ModelUse,
   onGateway,
