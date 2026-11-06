@@ -7,7 +7,10 @@ import type {
   ReviewTransactionView,
 } from "../../server/review-views.ts";
 import { keepAmountsWhole } from "../components/Amounts.tsx";
+import { buttonClass } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
+import { Page, PageHeading } from "../components/Page.tsx";
 import { acceptOf, answerItem, reviewListRequests } from "../review-list.ts";
 import type { ShellContext } from "../Shell.tsx";
 import { browserZone } from "./Accounts.tsx";
@@ -16,8 +19,25 @@ import { browserZone } from "./Accounts.tsx";
 // each with a one-tap answer. Each item already has a result that counts, so nothing waits for it,
 // and it sends no push and no email. After each answer the main menu's count is read again.
 
-const BUTTON = "rounded border border-gray-300 px-3 py-1";
-const ACCEPT = "rounded bg-blue-700 px-3 py-1 text-white disabled:opacity-50";
+const BUTTON = buttonClass("outlined");
+const ACCEPT = buttonClass("primary");
+// The boards' round choice behind "Not this".
+const CHOICE =
+  "inline-flex h-9 items-center rounded-full border border-field bg-white px-3 text-sm text-ink hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50";
+
+// The small label over each item: what kind of thing the app could not settle, in the owner
+// specs' words (spec 07, Review list page). A kind not named here shows no label.
+export const KIND_LABEL: Readonly<Record<string, string>> = {
+  "best guess made without AI": "Category guess",
+  "Category the AI was unsure of": "Category guess",
+  "unclear Transfer pair": "Transfer guess",
+  "Transfer pair guess": "Transfer guess",
+  "one-sided Transfer": "One-sided Transfer",
+  "money from a person": "Money from a person",
+  "untracked loan": "Untracked loan",
+  "possible Manual loan payment": "Possible loan payment",
+  "missed Manual loan payment": "Missed loan payment",
+};
 
 // "Oct 9 · Corner Bistro · −$42.50 · Everyday Checking". A Transaction's day is its purchase date
 // when it has one. Money in shows "+", since the list shows both (spec 07, Number formats).
@@ -34,9 +54,9 @@ export function transactionLine(txn: ReviewTransactionView, today: string): stri
 function Subject(props: { item: ReviewItemView; today: string }) {
   const { item } = props;
   if (item.subject.type === "loan")
-    return <p className="font-semibold">{item.loanName ?? "A loan"}</p>;
+    return <p className="mt-1 font-semibold">{item.loanName ?? "A loan"}</p>;
   return (
-    <ul>
+    <ul className="mt-1">
       {item.transactions.map((txn) => (
         <li key={txn.id} className="font-semibold">
           {keepAmountsWhole(transactionLine(txn, props.today))}
@@ -66,11 +86,22 @@ export function ReviewListItem(props: {
 }) {
   const { item, state, actions } = props;
   const accept = acceptOf(item);
+  const label = KIND_LABEL[item.kind];
+  const open = state.choices !== undefined;
+  const choicesId = `choices-${item.id}`;
   return (
-    <li className="mt-4 rounded border border-gray-200 p-3" data-kind={item.kind}>
-      <Subject item={item} today={props.today} />
-      <p className="mt-1 text-gray-700">{item.decided}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
+    <li
+      className={`flex flex-wrap items-center gap-x-5 gap-y-3 rounded-card border bg-white px-4 py-4 min-[900px]:px-5 min-[900px]:py-[18px] ${open ? "border-accent/45" : "border-line"}`}
+      data-kind={item.kind}
+    >
+      <div className="min-w-0 flex-[1_1_320px]">
+        {label === undefined ? null : (
+          <p className="text-xs font-semibold uppercase tracking-[.05em] text-muted">{label}</p>
+        )}
+        <Subject item={item} today={props.today} />
+        <p className="mt-0.5 text-small text-muted">{item.decided}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
         {accept.does === "open" ? (
           <Link className={ACCEPT} to={accept.path}>
             {accept.label}
@@ -89,29 +120,38 @@ export function ReviewListItem(props: {
           type="button"
           className={BUTTON}
           disabled={state.busy === true}
-          aria-expanded={state.choices !== undefined}
+          aria-expanded={open}
           onClick={() => actions.notThis(item)}
         >
           Not this
         </button>
       </div>
       {state.choices === undefined ? null : (
-        <ul className="mt-2 flex flex-wrap gap-2" aria-label="Other choices">
-          {state.choices.map((choice) => (
-            <li key={choice.value}>
-              <button
-                type="button"
-                className={BUTTON}
-                disabled={state.busy === true}
-                onClick={() => actions.answer(item, choice.value)}
-              >
-                {choice.label}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="basis-full border-t border-line-soft pt-3">
+          <p className="mb-2 text-small font-semibold" id={choicesId}>
+            Other choices
+          </p>
+          <ul className="flex flex-wrap gap-2" aria-labelledby={choicesId}>
+            {state.choices.map((choice) => (
+              <li key={choice.value}>
+                <button
+                  type="button"
+                  className={CHOICE}
+                  disabled={state.busy === true}
+                  onClick={() => actions.answer(item, choice.value)}
+                >
+                  {choice.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-      <ErrorLine error={state.error} />
+      {state.error === undefined ? null : (
+        <div className="-mt-3 basis-full">
+          <ErrorLine error={state.error} />
+        </div>
+      )}
     </li>
   );
 }
@@ -122,9 +162,15 @@ export function ReviewItems(props: {
   today: string;
   actions: ItemActions;
 }) {
-  if (props.items.length === 0) return <p className="mt-4">Nothing to check.</p>;
+  if (props.items.length === 0) {
+    return (
+      <Card>
+        <p className="text-muted">Nothing to check.</p>
+      </Card>
+    );
+  }
   return (
-    <ul>
+    <ul className="flex flex-col gap-3">
       {props.items.map((item) => (
         <ReviewListItem
           key={item.id}
@@ -197,12 +243,23 @@ export function ReviewList() {
   }, []);
 
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Review list</h1>
+    <Page>
+      <PageHeading title="Review list" />
       <ErrorLine error={error} />
+      {items === undefined || items.length === 0 ? null : (
+        <p className="-mt-1 text-muted">
+          {items.length === 1 ? "1 thing" : `${items.length} things`} the app could not settle
+          alone. Nothing here is urgent: each already counts as the app decided.
+        </p>
+      )}
       {items === undefined ? null : (
         <ReviewItems items={items} states={states} today={today} actions={actions} />
       )}
-    </main>
+      {items === undefined || items.length === 0 ? null : (
+        <p className="text-center text-small text-muted">
+          Every answer counts as hand-set. Accepting a Category guess also makes a Category rule.
+        </p>
+      )}
+    </Page>
   );
 }

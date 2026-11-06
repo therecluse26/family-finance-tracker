@@ -1,8 +1,11 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BEST_GUESS_KIND } from "../../categorization/index.ts";
+import { AI_UNSURE_KIND, BEST_GUESS_KIND } from "../../categorization/index.ts";
 import {
   MISSED_PAYMENT_KIND,
   MONEY_FROM_PERSON_KIND,
@@ -16,7 +19,7 @@ import type { ReviewItemView, ReviewTransactionView } from "../../server/review-
 import { MAIN_MENU } from "../menu.ts";
 import { acceptOf, answerItem, reviewListRequests, UNTRACKED_LOAN_KIND } from "../review-list.ts";
 import { routes } from "../routes.tsx";
-import { type ItemActions, ReviewItems, ReviewListItem } from "./ReviewList.tsx";
+import { type ItemActions, KIND_LABEL, ReviewItems, ReviewListItem } from "./ReviewList.tsx";
 
 // The Review list page (spec 07, Review list page), with an item of every kind the app opens.
 
@@ -135,6 +138,48 @@ const EVERY_KIND: ReviewItemView[] = [
   ),
 ];
 
+// Every kind the server registers, read from the source, so a kind added later fails the label
+// test until it has a label. The registry fills only when the server's modules start, so the test
+// reads each registerReviewKind(<NAME>_KIND, ...) call in the non-test files outside src/web, and
+// each kind constant's string. A call that passes anything but a *_KIND constant is reported, so a
+// string literal cannot slip past.
+const SRC = fileURLToPath(new URL("../../", import.meta.url));
+
+function serverSources(dir = SRC): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return path === join(SRC, "web") ? [] : serverSources(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
+function registeredKinds() {
+  const files = serverSources().map((path) => ({ path, source: readFileSync(path, "utf8") }));
+  const names: string[] = [];
+  const notConstants: string[] = [];
+  for (const { path, source } of files) {
+    for (const match of source.matchAll(/(?<!function )\bregisterReviewKind\(\s*([^,)]*)/g)) {
+      const argument = (match[1] ?? "").trim();
+      if (/^[A-Z][A-Z0-9_]*_KIND$/.test(argument)) names.push(argument);
+      else notConstants.push(`${relative(SRC, path)}: ${argument}`);
+    }
+  }
+  const values = new Map<string, string[]>();
+  for (const { source } of files) {
+    for (const match of source.matchAll(/export const ([A-Z][A-Z0-9_]*_KIND) = "([^"]*)";/g)) {
+      const [, name = "", value = ""] = match;
+      values.set(name, [...(values.get(name) ?? []), value]);
+    }
+  }
+  return {
+    calls: names.length,
+    notConstants,
+    // A name with no string, or with two different strings, cannot be checked.
+    unresolved: names.filter((name) => new Set(values.get(name)).size !== 1),
+    kinds: [...new Set(names.map((name) => values.get(name)?.[0] ?? name))].sort(),
+  };
+}
+
 const text = (html: string) =>
   html
     .replace(/<!-- -->/g, "")
@@ -225,27 +270,79 @@ describe("the Review list page", () => {
       <ReviewItems items={EVERY_KIND} states={{}} today={TODAY} actions={noActions} />,
     );
     const rows = [
-      ...html.matchAll(/<li class="mt-4[^>]*>(.*?)<\/li>(?=<li class="mt-4|<\/ul>$)/gs),
+      ...html.matchAll(
+        /<li [^>]*data-kind="[^"]*"[^>]*>(.*?)<\/li>(?=<li [^>]*data-kind=|<\/ul>$)/gs,
+      ),
     ].map((match) => text(match[1] ?? ""));
 
     expect([...html.matchAll(/data-kind="([^"]*)"/g)].map((match) => match[1])).toEqual(
       EVERY_KIND.map((each) => each.kind),
     );
     expect(rows).toEqual([
-      "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking No AI was available, so the app guessed Restaurants. Yes, Restaurants Not this",
-      "Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · +$500.00 · Everyday Checking These match as a Transfer, but nothing more ties them, so they are not linked. Yes, they are one Transfer Not this",
-      "Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · +$500.00 · Everyday Checking Two sets of Transfer pairs were equally good, so the app picked this one. Yes, they are one Transfer Not this",
-      "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking It names no account, so it counts as a Transfer. Which account is this? Keep it as a Transfer Not this",
-      "Oct 12 · Corner Bistro · +$30.00 · Everyday Checking Money from a person with no link counts as Income. Keep as Income Not this",
-      "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking Payments to Lakeside Auto count as Transfers, so their interest cannot show. Add it as a Manual loan Not this",
-      "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking This payment may belong to Lakeside Auto. Link to this loan Not this",
-      "Lakeside Auto No payment to Lakeside Auto has linked since 2026-08-15. Keep the loan open Not this",
+      "Category guess Oct 12 · Corner Bistro · −$42.50 · Everyday Checking No AI was available, so the app guessed Restaurants. Yes, Restaurants Not this",
+      "Transfer guess Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · +$500.00 · Everyday Checking These match as a Transfer, but nothing more ties them, so they are not linked. Yes, they are one Transfer Not this",
+      "Transfer guess Oct 12 · TRANSFER TO SAVINGS · −$500.00 · Everyday Checking Oct 12 · TRANSFER FROM CHECKING · +$500.00 · Everyday Checking Two sets of Transfer pairs were equally good, so the app picked this one. Yes, they are one Transfer Not this",
+      "One-sided Transfer Oct 12 · Corner Bistro · −$42.50 · Everyday Checking It names no account, so it counts as a Transfer. Which account is this? Keep it as a Transfer Not this",
+      "Money from a person Oct 12 · Corner Bistro · +$30.00 · Everyday Checking Money from a person with no link counts as Income. Keep as Income Not this",
+      "Untracked loan Oct 12 · Corner Bistro · −$42.50 · Everyday Checking Payments to Lakeside Auto count as Transfers, so their interest cannot show. Add it as a Manual loan Not this",
+      "Possible loan payment Oct 12 · Corner Bistro · −$42.50 · Everyday Checking This payment may belong to Lakeside Auto. Link to this loan Not this",
+      "Missed loan payment Lakeside Auto No payment to Lakeside Auto has linked since 2026-08-15. Keep the loan open Not this",
     ]);
     // A signed amount never breaks after its sign (spec 07, Number formats).
     expect(html).toContain(' · <span class="whitespace-nowrap">−$42.50</span> · ');
     expect(html).toContain(' · <span class="whitespace-nowrap">+$500.00</span> · ');
     // The untracked loan's best answer opens the Manual loan form, with the lender filled in.
     expect(html).toContain('href="/settings/banks?lender=Lakeside%20Auto#manual-loans"');
+  });
+
+  it("labels each kind the app opens in the owner specs' words", () => {
+    // Every kind the server registers has a label, and every label belongs to a registered kind.
+    const registered = registeredKinds();
+    expect(registered.notConstants).toEqual([]);
+    expect(registered.unresolved).toEqual([]);
+    expect(registered.calls).toBeGreaterThanOrEqual(9);
+    expect(Object.keys(KIND_LABEL).sort()).toEqual(registered.kinds);
+    // The scan reads the same strings the kind constants hold.
+    expect(Object.keys(KIND_LABEL).sort()).toEqual(
+      [
+        BEST_GUESS_KIND,
+        AI_UNSURE_KIND,
+        UNCLEAR_PAIR_KIND,
+        PAIR_GUESS_KIND,
+        ONE_SIDED_KIND,
+        MONEY_FROM_PERSON_KIND,
+        SERVER_UNTRACKED_LOAN_KIND,
+        POSSIBLE_PAYMENT_KIND,
+        MISSED_PAYMENT_KIND,
+      ].sort(),
+    );
+    // A kind with no label shows none, and the item still shows in full.
+    const html = inRouter(
+      <ReviewItems
+        items={[item("new", "a kind added later", { value: "keep", label: "Keep it" })]}
+        states={{}}
+        today={TODAY}
+        actions={noActions}
+      />,
+    );
+    expect(text(html)).toBe(
+      "Oct 12 · Corner Bistro · −$42.50 · Everyday Checking The app decided something. Keep it Not this",
+    );
+  });
+
+  it("shows the other choices under their label once Not this is open", () => {
+    const html = inRouter(
+      <ReviewListItem
+        item={EVERY_KIND[0] as ReviewItemView}
+        state={{ choices: [{ value: "Groceries", label: "Groceries" }] }}
+        today={TODAY}
+        actions={noActions}
+      />,
+    );
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toMatch(/<p [^>]*id="choices-guess"[^>]*>Other choices<\/p>/);
+    expect(html).toContain('<ul class="flex flex-wrap gap-2" aria-labelledby="choices-guess">');
+    expect(text(html)).toContain("Not this Other choices Groceries");
   });
 
   it('says "Nothing to check." with no items', () => {

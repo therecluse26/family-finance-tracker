@@ -3,14 +3,18 @@ import { Link, useSearchParams } from "react-router";
 import { CATEGORIES } from "../../categories/list.ts";
 import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
 import type { AccountView, TransactionListView } from "../../server/bank-views.ts";
-import type { TransactionRowView } from "../../server/money-movement-views.ts";
+import type { CategoryChosenBy, TransactionRowView } from "../../server/money-movement-views.ts";
 import { api } from "../api.ts";
-import { keepAmountsWhole } from "../components/Amounts.tsx";
-import { ErrorLine, FIELD } from "../components/Fields.tsx";
+import { buttonClass } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
+import { ErrorLine } from "../components/Fields.tsx";
+import { Page, PageHeading } from "../components/Page.tsx";
+import { Pill } from "../components/Pill.tsx";
 import {
   categoryOrType,
   filterQuery,
   filtersOf,
+  partsToShow,
   TRANSACTION_TYPES,
   type TransactionFilters,
   transactionPath,
@@ -22,8 +26,10 @@ import { accountLabel, browserZone } from "./Accounts.tsx";
 // one page at a time, with filters. The filters live in the page's address, so other pages open it
 // filtered. Tapping a row opens its detail view. Using this page is never required.
 
-const LINK = "text-blue-700 underline";
-const BUTTON = "mt-4 mr-2 rounded border border-gray-300 px-3 py-1";
+// The boards' compact filter field: 38 px high, 14 px text.
+const FILTER_FIELD =
+  "mt-1 block h-[38px] w-full rounded-control border border-field bg-white px-2.5 text-sm text-ink";
+const FILTER_LABEL = "block text-small font-semibold text-muted";
 
 // The Merchant's clean name, else the provider's name, else the bank's line.
 export const merchantOf = (txn: TransactionRowView) =>
@@ -63,17 +69,18 @@ export function TransactionFilterForm(props: {
   const select = (
     name: "account" | "category" | "type",
     label: string,
+    any: string,
     options: readonly { value: string; label: string }[],
   ) => (
-    <label className="block">
+    <label className={FILTER_LABEL}>
       {label}
       <select
         name={name}
-        className={FIELD}
+        className={FILTER_FIELD}
         value={draft[name] ?? ""}
         onChange={(e) => set(name)(e.target.value)}
       >
-        <option value="">Any</option>
+        <option value="">{any}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -83,12 +90,12 @@ export function TransactionFilterForm(props: {
     </label>
   );
   const field = (name: "merchant" | "from" | "to" | "month", label: string, type: string) => (
-    <label className="block">
+    <label className={FILTER_LABEL}>
       {label}
       <input
         name={name}
         type={type}
-        className={FIELD}
+        className={FILTER_FIELD}
         value={draft[name] ?? ""}
         onChange={(e) => set(name)(e.target.value)}
       />
@@ -99,31 +106,38 @@ export function TransactionFilterForm(props: {
     props.onShow();
   }
   return (
-    <form className="mt-4 grid gap-3 sm:grid-cols-3" onSubmit={submit} aria-label="Filters">
+    <form
+      className="grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-4"
+      onSubmit={submit}
+      aria-label="Filters"
+    >
       {select(
         "account",
         "Account",
+        "All Accounts",
         props.accounts.map((account) => ({ value: account.id, label: accountLabel(account) })),
       )}
       {select(
         "category",
         "Category",
+        "All Categories",
         CATEGORIES.map((category) => ({ value: category.name, label: category.name })),
       )}
       {select(
         "type",
         "Type",
+        "All types",
         TRANSACTION_TYPES.map((type) => ({ value: type, label: type })),
       )}
       {field("merchant", "Merchant", "text")}
       {field("from", "From", "date")}
       {field("to", "To", "date")}
       {field("month", "Month", "month")}
-      <div className="sm:col-span-3">
-        <button type="submit" className={BUTTON}>
+      <div className="col-span-2 flex flex-wrap items-end gap-2 sm:col-span-1">
+        <button type="submit" className={buttonClass("primary")}>
           Show
         </button>
-        <button type="button" className={BUTTON} onClick={props.onClear}>
+        <button type="button" className={buttonClass("outlined")} onClick={props.onClear}>
           Clear the filters
         </button>
       </div>
@@ -137,19 +151,137 @@ export function TransactionRows(props: {
   today: string;
 }) {
   if (props.transactions.length === 0) {
-    return <p className="mt-4">No Transactions match these filters.</p>;
+    return (
+      <Card>
+        <p className="text-muted">No Transactions match these filters.</p>
+      </Card>
+    );
   }
   return (
-    <ul className="mt-4">
-      {props.transactions.map((txn) => (
-        <li key={txn.id} className="mt-2 flex justify-between gap-x-4">
-          <Link className={LINK} to={transactionPath(txn.id)}>
-            {keepAmountsWhole(rowLine(txn, props.accounts, props.today))}
-          </Link>
-          {txn.pending ? <span className="text-sm text-gray-500">pending</span> : null}
-        </li>
-      ))}
-    </ul>
+    <div className="overflow-x-auto rounded-card border border-line bg-white">
+      <table className="w-full border-collapse text-sm">
+        <thead className="max-sm:hidden">
+          <tr>
+            <th className={TH}>Date</th>
+            <th className={TH}>Merchant</th>
+            <th className={TH}>Category or type</th>
+            <th className={TH}>Account</th>
+            <th className={`${TH} text-right`}>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.transactions.map((txn) => (
+            <TransactionRow
+              key={txn.id}
+              txn={txn}
+              account={props.accounts.get(txn.accountId) ?? "An Account"}
+              today={props.today}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// The table's head and cells, from the boards. Below 640 px a row folds into two lines: the
+// Merchant and the amount, then the date, the Category or type, and the Account.
+const TH = "border-b border-line px-3 py-2.5 text-left text-xs font-semibold text-muted";
+const TD =
+  "border-b border-line-soft px-3 py-[11px] tabular-nums sm:relative max-sm:border-0 max-sm:p-0";
+const FOLDED_FACT = `${TD} text-muted max-sm:order-3 max-sm:text-small`;
+// On a phone a dot ends each fact but the last, so a wrapped line never starts with one.
+const DOT_AFTER = "max-sm:after:px-1 max-sm:after:content-['·']";
+const AI_CHOSEN: readonly CategoryChosenBy[] = ["AI", "AI, unsure"];
+
+// One row. The whole row opens the detail view. The Merchant's link is the row's one link for the
+// keyboard and screen readers, and it names the date and amount too, so a list of links tells the
+// rows apart. From 640 px each other cell holds a copy of the link that covers that cell, out of
+// the tab order and hidden from screen readers. The links are placed against their own cell, never
+// against the row: some WebKit versions do not place against a table row. On a phone the row is
+// a flex box, so the Merchant's link covers all of it.
+function TransactionRow(props: { txn: TransactionRowView; account: string; today: string }) {
+  const { txn } = props;
+  const path = transactionPath(txn.id);
+  const parts = partsToShow(txn.parts);
+  const typeOnly = parts.every((part) => part.category === null);
+  const byAi = parts.some(
+    (part) => part.categoryChosenBy !== null && AI_CHOSEN.includes(part.categoryChosenBy),
+  );
+  const date = dateLabel(txn.authorizedDate ?? txn.postedDate, props.today);
+  const amount = dollarsAndCents(txn.amount, { signed: true });
+  return (
+    <tr className="hover:bg-page has-[a:focus-visible]:bg-selected max-sm:relative max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-y-0.5 max-sm:border-t max-sm:border-line-soft max-sm:px-4 max-sm:py-[11px] max-sm:first:border-t-0">
+      <td className={`${FOLDED_FACT} ${DOT_AFTER} whitespace-nowrap sm:text-ink`}>
+        {date}
+        <CellLink to={path} />
+      </td>
+      <td className={`${TD} max-sm:order-1 max-sm:w-[calc(100%-7.5rem)] max-sm:min-w-0`}>
+        <Link
+          className="font-medium text-ink after:absolute after:inset-0 after:content-[''] hover:text-accent hover:underline focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-accent"
+          to={path}
+        >
+          {merchantOf(txn)}
+          <span className="sr-only">{`, ${date}, ${amount}`}</span>
+        </Link>
+        {txn.pending ? (
+          <>
+            {" "}
+            <Pill>pending</Pill>
+          </>
+        ) : null}
+      </td>
+      <td className={`${FOLDED_FACT} ${DOT_AFTER} ${typeOnly ? "" : "sm:text-ink"}`}>
+        {categoryOrType(txn.parts)}
+        {byAi ? (
+          <>
+            {" "}
+            <ChosenByAiMark />
+          </>
+        ) : null}
+        <CellLink to={path} />
+      </td>
+      <td className={`${FOLDED_FACT} whitespace-nowrap`}>
+        {props.account}
+        <CellLink to={path} />
+      </td>
+      <td
+        className={`${TD} whitespace-nowrap text-right max-sm:order-2 max-sm:w-[7.5rem] ${txn.amount > 0 ? "text-good" : ""}`}
+      >
+        {amount}
+        <CellLink to={path} />
+      </td>
+    </tr>
+  );
+}
+
+// A copy of the row's link that covers its cell from 640 px. The Merchant's link is the one the
+// keyboard and screen readers reach.
+function CellLink(props: { to: string }) {
+  return (
+    <Link
+      to={props.to}
+      tabIndex={-1}
+      aria-hidden="true"
+      className="absolute inset-0 max-sm:hidden"
+    />
+  );
+}
+
+// The boards' purple AI tag beside a Category the AI chose. Screen readers hear what it means, so
+// it does not rest on a tooltip. The shared AiMark says "Written by AI", which suits AI text, not a
+// Category.
+function ChosenByAiMark() {
+  return (
+    <>
+      <span
+        aria-hidden="true"
+        className="inline-block rounded-tag bg-ai-soft px-1.5 py-px align-middle text-[10px] font-bold tracking-[.05em] text-ai"
+      >
+        AI
+      </span>
+      <span className="sr-only">(Category chosen by the AI)</span>
+    </>
   );
 }
 
@@ -218,8 +350,8 @@ export function Transactions() {
   }
 
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Transactions</h1>
+    <Page width="wide">
+      <PageHeading title="Transactions" />
       <TransactionFilterForm
         draft={draft}
         accounts={accounts}
@@ -232,10 +364,12 @@ export function Transactions() {
         <TransactionRows transactions={rows} accounts={accountLabels(accounts)} today={today} />
       )}
       {next === null ? null : (
-        <button type="button" className={BUTTON} onClick={() => void showMore()}>
-          Show more
-        </button>
+        <div className="flex justify-center">
+          <button type="button" className={buttonClass("outlined")} onClick={() => void showMore()}>
+            Show more
+          </button>
+        </div>
       )}
-    </main>
+    </Page>
   );
 }
