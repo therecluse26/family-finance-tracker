@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { calendarDateIn, dateLabel, percent } from "../../format.ts";
 import type { AccountView } from "../../server/bank-views.ts";
-import type { GoalView } from "../../server/goals-views.ts";
+import type { GoalProgressView, GoalView } from "../../server/goals-views.ts";
 import type { HouseholdFactsView } from "../../server/household-views.ts";
 import { api } from "../api.ts";
-import { ErrorLine } from "../components/Fields.tsx";
+import { browserZone } from "../browser-zone.ts";
+import { Button } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
+import { ErrorLine, FIELD } from "../components/Fields.tsx";
+import { Meter } from "../components/Meter.tsx";
+import { Page, PageHeading } from "../components/Page.tsx";
 import { UndoableProposals } from "../components/Proposal.tsx";
 import { AiMark, Estimated, Status } from "../components/Status.tsx";
 import {
@@ -23,7 +28,6 @@ import {
   saveGoal,
   WAITS_FOR_HISTORY,
 } from "../goals.ts";
-import { browserZone } from "./Accounts.tsx";
 
 // The Goals page (spec 07, Goals page): "Add a Goal", then the active Goals, each with its author,
 // words, date, progress, and the AI's reading, with "Edit the words", "Mark done" and "Mark
@@ -31,8 +35,6 @@ import { browserZone } from "./Accounts.tsx";
 // and editing its words need an AI provider, and wait until history has loaded. A save past the AI
 // cost cap asks "Send anyway?" first; a failed reading shows its error with "Try again", and
 // nothing retries by itself.
-
-const SMALL_BUTTON = "rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50";
 
 // "With no AI provider" line: Goals need one, with a link to the AI settings.
 export function NeedsAiLink() {
@@ -110,19 +112,18 @@ export function GoalWordsForm(props: { label: string; actions: GoalFormActions; 
   const id = `goal-words-${form.goalId ?? "new"}`;
   return (
     <form
-      className="mt-2"
       data-slot="goal-form"
       onSubmit={(event) => {
         event.preventDefault();
         actions.onSave(false);
       }}
     >
-      <label className="block text-sm font-medium" htmlFor={id}>
+      <label className="block text-sm font-semibold" htmlFor={id}>
         {props.label}
       </label>
       <textarea
         id={id}
-        className="mt-1 block w-full rounded border border-gray-300 p-2"
+        className={FIELD}
         maxLength={GOAL_WORDS_LENGTH}
         rows={2}
         placeholder="Such as: Spend 20% less on restaurants"
@@ -131,47 +132,105 @@ export function GoalWordsForm(props: { label: string; actions: GoalFormActions; 
         onChange={(event) => actions.onDraft(event.target.value)}
       />
       {problem === undefined ? null : (
-        <p className="mt-1 text-sm text-red-700" data-slot="goal-problem" role="alert">
+        <p className="mt-2 text-sm text-critical" data-slot="goal-problem" role="alert">
           {problem.error}
         </p>
       )}
-      <span className="mt-2 flex gap-2">
+      <span className="mt-3 flex flex-wrap gap-2">
         {problem?.sendAnyway === true ? (
-          <button
-            type="button"
-            className={SMALL_BUTTON}
-            disabled={form.busy}
-            onClick={() => actions.onSave(true)}
-          >
+          <Button type="button" disabled={form.busy} onClick={() => actions.onSave(true)}>
             Send anyway
-          </button>
+          </Button>
         ) : problem?.tryAgain === true ? (
-          <button
+          <Button
             type="button"
-            className={SMALL_BUTTON}
             disabled={form.busy}
             onClick={() => actions.onSave(form.sentAnyway === true)}
           >
             Try again
-          </button>
+          </Button>
         ) : (
-          <button type="submit" className={SMALL_BUTTON} disabled={form.busy}>
+          <Button type="submit" disabled={form.busy}>
             Save
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
-          className={SMALL_BUTTON}
-          disabled={form.busy}
-          onClick={actions.onCancel}
-        >
+        <Button type="button" variant="outlined" disabled={form.busy} onClick={actions.onCancel}>
           Cancel
-        </button>
+        </Button>
       </span>
     </form>
   );
 }
 
+// What sits beside the page heading: "Add a Goal" while a Member may write Goals, or why not.
+// With no AI provider it says Goals need one and links to the AI settings; before history has
+// loaded it says Goals wait for it. While the "Add a Goal" form is open, the form takes its place.
+export function GoalsHeadingControl(props: { answer: GoalsAnswer; writing?: GoalFormActions }) {
+  const { answer } = props;
+  if (!answer.aiProvider) return <NeedsAiLink />;
+  if (answer.waitsForHistory) {
+    return (
+      <p className="text-small text-muted" data-slot="goals-wait">
+        {WAITS_FOR_HISTORY}
+      </p>
+    );
+  }
+  const writing = props.writing;
+  if (writing === undefined || writing.form?.goalId === null) return null;
+  return (
+    <Button type="button" data-slot="add-goal" onClick={() => writing.onOpen(null, "")}>
+      <svg aria-hidden="true" className="size-3.5" viewBox="0 0 14 14">
+        <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+      Add a Goal
+    </Button>
+  );
+}
+
+// "◆ Behind · 38%", "✓ On track · 52%", or the percentage alone with no status, then "estimated"
+// when the Goal's money sits in an Unconnected account.
+function GoalProgressLine(props: { progress: GoalProgressView }) {
+  const { progress } = props;
+  const status = goalStatus(progress);
+  const shown = progress.percentage === null ? undefined : percent(progress.percentage / 100);
+  return (
+    <span
+      className="flex flex-wrap items-center gap-2 font-semibold tabular-nums"
+      data-slot="goal-status"
+    >
+      {status === undefined ? (
+        shown === undefined ? null : (
+          <span>{shown}</span>
+        )
+      ) : (
+        <Status {...status} {...(shown === undefined ? {} : { detail: shown })} />
+      )}
+      {progress.estimated ? <Estimated /> : null}
+    </span>
+  );
+}
+
+// One fact of the AI's reading, such as "Target" over "Restaurants".
+function ReadingFact(props: { label: string; ai?: boolean; children: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-semibold text-muted">
+        {props.label}
+        {props.ai === true ? (
+          <>
+            {" "}
+            <AiMark />
+          </>
+        ) : null}
+      </dt>
+      <dd className="mt-0.5 tabular-nums">{props.children}</dd>
+    </div>
+  );
+}
+
+// An active Goal's card (spec 07, Goals page): its words as the heading, its status and
+// percentage, its author and date, its progress bar and detail line, the AI's reading, and its
+// actions. A reading with no target shows no progress.
 function ActiveGoal(props: {
   goal: GoalView;
   accountNames: ReadonlyMap<string, string>;
@@ -182,51 +241,80 @@ function ActiveGoal(props: {
   writing: GoalFormActions | undefined;
 }) {
   const { goal, today, writing } = props;
+  const { progress } = goal;
   const reading = readingParts(goal.reading, props.accountNames, today);
   const form = writing?.form?.goalId === goal.id ? writing.form : undefined;
+  const behind = progress === null ? false : goalStatus(progress)?.tone === "serious";
   return (
-    <li className="mt-3 rounded border border-gray-200 p-3" data-goal={goal.id}>
-      <GoalCard goal={goal} />
-      <span className="mt-1 block text-sm text-gray-600" data-slot="goal-date">
-        {dateLabel(goal.date, today)}
-      </span>
-      <span className="mt-2 block text-sm" data-slot="goal-reading">
-        <AiMark /> Target: {reading.target} · Change: {reading.change} · Deadline:{" "}
-        {reading.deadline}
-      </span>
-      {writing !== undefined && form !== undefined ? (
-        <GoalWordsForm label="Edit the words" actions={writing} form={form} />
-      ) : null}
-      {goal.status === "active" ? (
-        <span className="mt-2 flex gap-2">
-          {writing === undefined || form !== undefined ? null : (
-            <button
+    <li data-goal={goal.id}>
+      <Card as="article">
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+          <h2 className="min-w-0 flex-[1_1_300px] text-lg font-bold">
+            <span className="wrap-anywhere" data-slot="goal-words">
+              “{goal.words}”
+            </span>
+          </h2>
+          {progress === null ? null : <GoalProgressLine progress={progress} />}
+        </div>
+        <p className="mt-1 text-small text-muted">
+          <span data-slot="goal-author">{authorOf(goal)}</span> ·{" "}
+          <span data-slot="goal-date">set {dateLabel(goal.date, today)}</span>
+        </p>
+        {progress === null ? null : (
+          <>
+            <Meter
+              share={(progress.percentage ?? 0) / 100}
+              tone={behind ? "serious" : "good"}
+              className="mt-3"
+            />
+            <p className="mt-1.5 text-small text-muted" data-slot="goal-detail">
+              {progress.detail}
+            </p>
+          </>
+        )}
+        <dl className="mt-3.5 flex flex-wrap gap-x-7 gap-y-2.5" data-slot="goal-reading">
+          <ReadingFact label="Target" ai>
+            {reading.target}
+          </ReadingFact>
+          <ReadingFact label="Change">{reading.change}</ReadingFact>
+          <ReadingFact label="Deadline">{reading.deadline}</ReadingFact>
+        </dl>
+        {writing !== undefined && form !== undefined ? (
+          <div className="mt-3.5 border-t border-line-soft pt-3.5">
+            <GoalWordsForm label="Edit the words" actions={writing} form={form} />
+          </div>
+        ) : null}
+        {goal.status === "active" ? (
+          <span className="mt-3.5 flex flex-wrap gap-2">
+            {writing === undefined || form !== undefined ? null : (
+              <Button
+                type="button"
+                variant="outlined"
+                disabled={props.busy}
+                onClick={() => writing.onOpen(goal.id, goal.words)}
+              >
+                Edit the words
+              </Button>
+            )}
+            <Button
               type="button"
-              className={SMALL_BUTTON}
+              variant="outlined"
               disabled={props.busy}
-              onClick={() => writing.onOpen(goal.id, goal.words)}
+              onClick={() => props.onMark("done")}
             >
-              Edit the words
-            </button>
-          )}
-          <button
-            type="button"
-            className={SMALL_BUTTON}
-            disabled={props.busy}
-            onClick={() => props.onMark("done")}
-          >
-            Mark done
-          </button>
-          <button
-            type="button"
-            className={SMALL_BUTTON}
-            disabled={props.busy}
-            onClick={() => props.onMark("dropped")}
-          >
-            Mark dropped
-          </button>
-        </span>
-      ) : null}
+              Mark done
+            </Button>
+            <Button
+              type="button"
+              variant="outlined"
+              disabled={props.busy}
+              onClick={() => props.onMark("dropped")}
+            >
+              Mark dropped
+            </Button>
+          </span>
+        ) : null}
+      </Card>
     </li>
   );
 }
@@ -236,18 +324,45 @@ function EndedGoal(props: { goal: GoalView; today: string }) {
   const { goal, today } = props;
   const word = goal.status === "done" ? "Done" : "Dropped";
   return (
-    <li className="mt-2" data-goal={goal.id}>
-      <span className="block text-sm text-gray-600">{authorOf(goal)}</span>
+    <li className="border-t border-line-soft py-2.5 first:border-t-0" data-goal={goal.id}>
+      <span className="block text-small text-muted">{authorOf(goal)}</span>
       <span className="block wrap-anywhere" data-slot="goal-words">
         “{goal.words}”
       </span>
-      <span className="block text-sm text-gray-600">
+      <span className="block text-small text-muted">
         {goal.endedOn === null ? word : `${word} on ${dateLabel(goal.endedOn, today)}`}
       </span>
     </li>
   );
 }
 
+// A collapsed list at the end, such as "Done (2)".
+function EndedList(props: {
+  slot: string;
+  title: string;
+  label: string;
+  goals: GoalView[];
+  today: string;
+}) {
+  return (
+    <details
+      className="group border-t border-line-soft py-4 first:border-t-0"
+      data-slot={props.slot}
+    >
+      <summary className="cursor-pointer font-semibold">
+        {props.title} ({props.goals.length})
+      </summary>
+      <ul aria-label={props.label} className="mt-2">
+        {props.goals.map((goal) => (
+          <EndedGoal key={goal.id} goal={goal} today={props.today} />
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+// The Goals under the heading: the open "Add a Goal" form, the active Goals, then the done list and
+// the dropped list. `GoalsHeadingControl` holds "Add a Goal" itself.
 export function GoalsReport(props: {
   answer: GoalsAnswer;
   accountNames: ReadonlyMap<string, string>;
@@ -266,32 +381,17 @@ export function GoalsReport(props: {
   const dropped = listed("dropped");
   return (
     <>
-      {!answer.aiProvider ? (
-        <p className="mt-2">
-          <NeedsAiLink />
-        </p>
-      ) : answer.waitsForHistory ? (
-        <p className="mt-2 text-sm text-gray-600" data-slot="goals-wait">
-          {WAITS_FOR_HISTORY}
-        </p>
-      ) : writing === undefined ? null : adding !== undefined ? (
-        <GoalWordsForm label="Add a Goal" actions={writing} form={adding} />
-      ) : (
-        <p className="mt-2">
-          <button
-            type="button"
-            className={SMALL_BUTTON}
-            data-slot="add-goal"
-            onClick={() => writing.onOpen(null, "")}
-          >
-            Add a Goal
-          </button>
-        </p>
+      {writing === undefined || adding === undefined ? null : (
+        <Card>
+          <GoalWordsForm label="Add a Goal" actions={writing} form={adding} />
+        </Card>
       )}
       {active.length === 0 ? (
-        <p className="mt-4 text-gray-600">No active Goal.</p>
+        <Card>
+          <p className="text-muted">No active Goal.</p>
+        </Card>
       ) : (
-        <ul aria-label="Active Goals">
+        <ul aria-label="Active Goals" className="flex flex-col gap-4">
           {active.map((goal) => (
             <ActiveGoal
               key={goal.id}
@@ -305,25 +405,27 @@ export function GoalsReport(props: {
           ))}
         </ul>
       )}
-      {done.length === 0 ? null : (
-        <details className="mt-6" data-slot="done-list">
-          <summary className="text-lg font-semibold">Done ({done.length})</summary>
-          <ul aria-label="Done Goals">
-            {done.map((goal) => (
-              <EndedGoal key={goal.id} goal={goal} today={today} />
-            ))}
-          </ul>
-        </details>
-      )}
-      {dropped.length === 0 ? null : (
-        <details className="mt-6" data-slot="dropped-list">
-          <summary className="text-lg font-semibold">Dropped ({dropped.length})</summary>
-          <ul aria-label="Dropped Goals">
-            {dropped.map((goal) => (
-              <EndedGoal key={goal.id} goal={goal} today={today} />
-            ))}
-          </ul>
-        </details>
+      {done.length === 0 && dropped.length === 0 ? null : (
+        <Card padding="list">
+          {done.length === 0 ? null : (
+            <EndedList
+              slot="done-list"
+              title="Done"
+              label="Done Goals"
+              goals={done}
+              today={today}
+            />
+          )}
+          {dropped.length === 0 ? null : (
+            <EndedList
+              slot="dropped-list"
+              title="Dropped"
+              label="Dropped Goals"
+              goals={dropped}
+              today={today}
+            />
+          )}
+        </Card>
       )}
     </>
   );
@@ -401,9 +503,18 @@ export function Goals() {
     onCancel: () => setForm(undefined),
   };
 
+  // The heading stays one element while the page loads, so the focus a menu choice puts on it
+  // stays there. "Add a Goal" joins it once the Goals have loaded.
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Goals</h1>
+    <Page>
+      <PageHeading title="Goals">
+        {loaded === undefined ? null : (
+          <GoalsHeadingControl answer={loaded.answer} writing={writing} />
+        )}
+      </PageHeading>
+      <p className="text-muted">
+        Write a Goal in your own words. The AI reads it into a target, a change and a deadline.
+      </p>
       <ErrorLine error={error} />
       <UndoableProposals
         key={reads}
@@ -420,6 +531,6 @@ export function Goals() {
           writing={writing}
         />
       )}
-    </main>
+    </Page>
   );
 }

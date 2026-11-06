@@ -18,6 +18,7 @@ import {
   type BudgetActions,
   BudgetRowItem,
   BudgetsReport,
+  monthSpentLine,
   type RowState,
 } from "./Budgets.tsx";
 
@@ -108,18 +109,24 @@ const noActions: BudgetActions = {
 const report = (view: BudgetsView, states: Record<string, RowState> = {}) =>
   renderToString(<BudgetsReport view={view} states={states} accept={{}} actions={noActions} />);
 
-// Each section's heading, and the words of each of its rows.
-function sectionsOf(html: string): Record<string, string[]> {
-  const sections: Record<string, string[]> = {};
+// Each section's heading, and each of its rows: its Category and its words. The group's total and
+// status sit between the heading and the rows.
+type Row = { category: string; words: string };
+function sectionsOf(html: string): Record<string, Row[]> {
+  const sections: Record<string, Row[]> = {};
   for (const [, heading = "", list = ""] of html.matchAll(
-    /<h2[^>]*>(.*?)<\/h2><ul>(.*?)<\/ul><\/section>/gs,
+    /<h2[^>]*>(.*?)<\/h2>(?:(?!<\/section>).)*?<ul>(.*?)<\/ul><\/section>/gs,
   )) {
-    sections[text(heading)] = [...list.matchAll(/<li[^>]*data-category[^>]*>(.*?)<\/li>/gs)].map(
-      (row) => text(row[1] ?? ""),
-    );
+    sections[text(heading)] = [
+      ...list.matchAll(/<li[^>]*data-category="([^"]*)"[^>]*>(.*?)<\/li>/gs),
+    ].map((row) => ({ category: row[1] ?? "", words: text(row[2] ?? "") }));
   }
   return sections;
 }
+
+// The value in a Category's Budget box.
+const boxValue = (html: string, category: string) =>
+  new RegExp(`<input id="${category}"[^>]*value="([^"]*)"`).exec(html)?.[1];
 
 // The controls in a tree, with what each does: each button by its words, and the "Follow the bill"
 // switch. The row components have no state of their own, so each is called for its tree.
@@ -193,14 +200,15 @@ describe("the Budgets page", () => {
   });
 
   it("shows every Category by Category group, with this month's Spending, its Budget, and its status", () => {
-    const sections = sectionsOf(report(VIEW));
+    const html = report(VIEW);
+    const sections = sectionsOf(html);
 
     expect(Object.keys(sections)).toEqual([
       ...CATEGORY_GROUPS.map((group) => group.name),
       "Yearly Budgets",
     ]);
     for (const group of CATEGORY_GROUPS) {
-      const shown = (sections[group.name] ?? []).map((row) => row.split(" $")[0]);
+      const shown = (sections[group.name] ?? []).map((row) => row.category);
       expect(shown, group.name).toEqual(
         group.categories.map(({ name }) => name).filter((name) => name !== "Travel"),
       );
@@ -208,25 +216,130 @@ describe("the Budgets page", () => {
     const row = (category: string) =>
       Object.values(sections)
         .flat()
-        .find((each) => each.startsWith(`${category} $`));
+        .find((each) => each.category === category)?.words;
     expect(row("Housing")).toBe(
-      "Housing $2,460 of $2,460 ✓ On track Housing is 41% of Income; typical is 33% Follow the bill Edit Budget per month Save",
+      "Housing Housing is 41% of Income; typical is 33% $2,460 spent ✓ On track Follow the bill Housing Budget per month Save",
     );
     expect(row("Interest and fees")).toBe(
-      "Interest and fees $35 of $0 ▲ Over Budget Follow the bill Edit Budget per month Save",
+      "Interest and fees $35 spent ▲ $35 over Follow the bill Interest and fees Budget per month Save",
     );
     expect(row("Restaurants")).toBe(
-      "Restaurants $210 of $300 ◆ On pace to go over Edit Budget per month Save",
+      "Restaurants $210 spent ◆ on pace for $420 Restaurants Budget per month Save",
     );
+    // Each Budget sits in its own box.
+    expect(boxValue(html, "budget-housing")).toBe("2460");
+    expect(boxValue(html, "budget-interest-and-fees")).toBe("0");
+    expect(boxValue(html, "budget-restaurants")).toBe("300");
+  });
+
+  it("gives On pace with no projection its word, and an On track Budget its word", () => {
+    const html = text(
+      report({
+        ...VIEW,
+        budgets: [{ ...restaurants, projected: null }, budget("Groceries", "Shopping")],
+      }),
+    );
+
+    expect(html).toContain("Restaurants $210 spent ◆ On pace to go over");
+    expect(html).toContain("Groceries $0 spent ✓ On track");
+  });
+
+  it("heads each Category group with its Spending of its monthly Budget, and its status", () => {
+    const group = (
+      categoryGroup: string,
+      fields: Partial<BudgetsView["groups"][number]>,
+    ): BudgetsView["groups"][number] => ({
+      categoryGroup,
+      monthly: 0,
+      yearly: 0,
+      spending: null,
+      projected: null,
+      overBudget: null,
+      onPace: null,
+      status: null,
+      ...fields,
+    });
+    const html = report({
+      ...VIEW,
+      groups: [
+        group("Bills", {
+          monthly: 261_000,
+          spending: 258_500,
+          overBudget: 1,
+          status: "Over Budget",
+        }),
+        group("Leisure", { monthly: 30_000, spending: 21_000, onPace: 1, status: "On pace" }),
+        group("Shopping", { monthly: 65_000, spending: 13_300, status: "on track" }),
+        group("Other", { monthly: 0, yearly: 480_000 }),
+      ],
+    });
+    const heading = (name: string) =>
+      text(new RegExp(`<h2[^>]*>${name}</h2>(.*?)<ul>`, "s").exec(html)?.[1] ?? "");
+
+    expect(heading("Bills")).toBe("$2,585 of $2,610 ▲ 1 over");
+    expect(heading("Leisure")).toBe("$210 of $300 ◆ 1 on pace to go over");
+    expect(heading("Shopping")).toBe("$133 of $650 ✓ on track");
+    // A group with no monthly Budget has neither.
+    expect(heading("Other")).toBe("");
+    expect(heading("Pets")).toBe("");
+    expect(
+      monthSpentLine({
+        ...VIEW,
+        groups: [group("Leisure", { monthly: 30_000, spending: 21_000 })],
+      }),
+    ).toBe("$210 of $300 spent");
+    expect(monthSpentLine({ ...VIEW, drafted: false })).toBeUndefined();
+  });
+
+  it("ticks today on each flexible Category's meter and the year's share on a yearly one, never on Bills", () => {
+    const ticks = (html: string) =>
+      Object.fromEntries(
+        [...html.matchAll(/<li[^>]*data-category="([^"]*)"[^>]*>(.*?)<\/li>/gs)].map((row) => [
+          row[1],
+          /data-slot="meter-today"/.test(row[2] ?? "")
+            ? /left:([\d.]+)%;?"[^>]*data-slot="meter-today"/.exec(row[2] ?? "")?.[1]
+            : undefined,
+        ]),
+      );
+    const withTicks = renderToString(
+      <BudgetsReport view={VIEW} states={{}} accept={{}} actions={noActions} monthGone={0.2} />,
+    );
+    const shown = ticks(withTicks);
+
+    expect(shown.Restaurants).toBe("20");
+    expect(shown.Travel).toBe("84.2");
+    expect(shown.Housing).toBeUndefined();
+    expect(shown.Utilities).toBeUndefined();
+    // A Category with no Budget has an empty meter and no tick.
+    expect(shown.Groceries).toBeUndefined();
+    expect(text(withTicks)).toContain("The black tick on each meter is today.");
+    // Without the share of the month, only the yearly Budgets have a tick.
+    expect(ticks(report(VIEW))).toMatchObject({ Restaurants: undefined, Travel: "84.2" });
+    expect(report(VIEW)).not.toContain("tick-note");
+  });
+
+  it("colors each meter by its status", () => {
+    const fill = (html: string, category: string) =>
+      new RegExp(
+        `data-category="${category}".*?class="([^"]*)"[^>]*data-slot="meter-fill"`,
+        "s",
+      ).exec(html)?.[1];
+    const html = report(VIEW);
+
+    expect(fill(html, "Interest and fees")).toContain("bg-critical");
+    expect(fill(html, "Restaurants")).toContain("bg-serious");
+    expect(fill(html, "Housing")).toContain("bg-accent");
   });
 
   it('shows "no Budget" and its Spending for a Category with no Budget', () => {
     const sections = sectionsOf(report(VIEW));
 
-    expect(sections.Shopping?.[0]).toBe("Groceries $421 no Budget");
-    expect(sections.Shopping?.[1]).toBe("Superstores $0 no Budget");
+    expect(sections.Shopping?.[0]?.words).toBe("Groceries $421 spent no Budget");
+    expect(sections.Shopping?.[1]?.words).toBe("Superstores $0 spent no Budget");
     // A yearly Category with no Budget stays in its Category group.
-    expect(sections.Other).toContain("Gifts and donations $50 no Budget");
+    expect(sections.Other?.map((row) => row.words)).toContain(
+      "Gifts and donations $50 spent no Budget",
+    );
   });
 
   it("puts the yearly Budgets in their own section at the end, with the year's Spending and the share of the year passed", () => {
@@ -234,10 +347,11 @@ describe("the Budgets page", () => {
     const sections = sectionsOf(html);
 
     expect(Object.keys(sections).at(-1)).toBe("Yearly Budgets");
-    expect(sections["Yearly Budgets"]).toEqual([
-      "Travel $1,800 of $4,800 this year ✓ On track 84% of the year has passed Edit Budget per year Save",
+    expect(sections["Yearly Budgets"]?.map((row) => row.words)).toEqual([
+      "Travel 84% of the year has passed $1,800 spent this year ✓ On track Travel Budget per year Save",
     ]);
-    expect(sections.Leisure?.some((row) => row.startsWith("Travel"))).toBe(false);
+    expect(boxValue(html, "budget-travel")).toBe("4800");
+    expect(sections.Leisure?.some((row) => row.category === "Travel")).toBe(false);
     expect(sectionsOf(report({ ...VIEW, budgets: [housing] }))["Yearly Budgets"]).toBeUndefined();
   });
 
