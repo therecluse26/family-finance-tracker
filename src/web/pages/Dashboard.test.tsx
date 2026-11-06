@@ -539,7 +539,7 @@ describe("the dashboard's status lines", () => {
 });
 
 describe('the "Finish setup" list', () => {
-  it("lists each skipped wizard step, with a link to where it is done, after the loading lines", () => {
+  it("lists each item not yet done, with a link to where it is done, after the loading lines", () => {
     const html = render(
       data({
         history: {
@@ -572,11 +572,11 @@ describe('the "Finish setup" list', () => {
     expect(lines.indexOf("Finish setup")).toBeLessThan(lines.indexOf("Your history is ready"));
   });
 
-  it("shows nothing once no skipped step is left", () => {
+  it("shows nothing once every item is done, and Banks while it waits", () => {
     expect(render(data())).not.toContain("Finish setup");
-    expect(render(data({ setup: { ...SETUP_DONE, finishSetup: ["banks"] } }))).toContain(
-      'href="/settings/banks"',
-    );
+    const banks = render(data({ setup: { ...SETUP_DONE, finishSetup: ["banks"] } }));
+    expect(banks).toContain('href="/settings/banks"');
+    expect(slotText(banks, "finish-setup")).toBe("Finish setup Link your banks");
   });
 });
 

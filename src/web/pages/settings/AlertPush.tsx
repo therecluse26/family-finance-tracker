@@ -154,6 +154,40 @@ export function DevicePush(props: { publicKey: string; initial?: DeviceState }) 
   );
 }
 
+// "Add to Home Screen" (spec 06, Recipients and channels): on an iPhone, only an app on the Home
+// Screen gets pushes, so the page explains it first. The installed app opens standalone, and needs
+// no such note.
+export function needsHomeScreen(userAgent: string, standalone: boolean): boolean {
+  return /\biPhone\b/.test(userAgent) && !standalone;
+}
+
+export const HOME_SCREEN_NOTE =
+  "On an iPhone, Alerts come only to the app on your Home Screen. In Safari, tap Share, then Add to Home Screen. Open the app from your Home Screen, sign in, and turn on Alerts there.";
+
+// Whether this browser needs the Home Screen note: an iPhone outside the installed app.
+export function homeScreenFirstHere(): boolean {
+  if (typeof window === "undefined") return false;
+  const apple = (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const standalone = apple || window.matchMedia?.("(display-mode: standalone)").matches === true;
+  return needsHomeScreen(navigator.userAgent, standalone);
+}
+
+// Push on this device: hidden in plain-HTTP mode, with the reason shown; on an iPhone, the Home
+// Screen note comes first.
+export function PushPart(props: { push: PushView; homeScreenFirst: boolean }) {
+  return (
+    <>
+      {props.push.available && props.homeScreenFirst ? (
+        <section className="mt-6">
+          <h3 className="font-semibold">Add to Home Screen</h3>
+          <p className="mt-1">{HOME_SCREEN_NOTE}</p>
+        </section>
+      ) : null}
+      <AlertPush push={props.push} />
+    </>
+  );
+}
+
 export function AlertPush(props: { push: PushView }) {
   const { push } = props;
   if (push.available) return <DevicePush publicKey={push.publicKey} />;

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { SetupProgressView } from "../server/setup-views.ts";
 import {
   codeFromHash,
+  forgetSetupCode,
   openWizardIfNeeded,
   resumeWizardIfNeeded,
   type SetupState,
+  savedSetupCode,
+  saveSetupCode,
 } from "./setup-gate.ts";
 
 // Page gating in the web app: until steps 1 to 4 are done, every page leads to the wizard.
@@ -39,7 +42,7 @@ describe("page gating", () => {
   });
 });
 
-describe("the wizard's steps 5 to 9", () => {
+describe("the wizard's steps 5 and 6", () => {
   const progress = (next: SetupProgressView["next"]): SetupProgressView => ({
     next,
     steps: { banks: "skipped", ai: null, alerts: null, "invite members": null },
@@ -58,7 +61,7 @@ describe("the wizard's steps 5 to 9", () => {
   }
 
   it("opens the wizard's next step for the first Member on the next visit", async () => {
-    expect(await resumed(progress("ai"))).toEqual(["/setup"]);
+    expect(await resumed(progress("banks"))).toEqual(["/setup"]);
     expect(await resumed(progress("finish"))).toEqual(["/setup"]);
   });
 
@@ -76,5 +79,57 @@ describe("the setup link", () => {
     expect(codeFromHash("")).toBeUndefined();
     expect(codeFromHash("#code=")).toBeUndefined();
     expect(codeFromHash("#other=1")).toBeUndefined();
+  });
+});
+
+// A tab's sessionStorage, as the browser gives it.
+class TabStorage {
+  readonly items = new Map<string, string>();
+  getItem = (key: string) => this.items.get(key) ?? null;
+  setItem = (key: string, value: string) => void this.items.set(key, value);
+  removeItem = (key: string) => void this.items.delete(key);
+}
+
+describe("the setup code across a reload", () => {
+  it("keeps the code exactly as the server took it, until it is forgotten", () => {
+    const storage = new TabStorage();
+    expect(savedSetupCode(storage)).toBeUndefined();
+
+    for (const code of ["7KQ2-M9XD-4TRF", " 7kq2m9xd4trf", "7KQ2%2dM9XD;{4TRF\t"]) {
+      saveSetupCode(code, storage);
+      expect(savedSetupCode(storage)).toBe(code);
+    }
+    forgetSetupCode(storage);
+    expect(savedSetupCode(storage)).toBeUndefined();
+    expect(storage.items.size).toBe(0);
+  });
+
+  it("keeps no code the server would refuse for its length", () => {
+    const storage = new TabStorage();
+    saveSetupCode("", storage);
+    saveSetupCode("A".repeat(65), storage);
+    expect(storage.items.size).toBe(0);
+
+    // A value written to the tab by other means is not used either.
+    storage.items.set("fft-setup-code", "A".repeat(65));
+    expect(savedSetupCode(storage)).toBeUndefined();
+  });
+
+  it("does without storage where the browser blocks it", () => {
+    const blocked = {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+      removeItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    expect(() => saveSetupCode("7KQ2-M9XD-4TRF", blocked)).not.toThrow();
+    expect(savedSetupCode(blocked)).toBeUndefined();
+    expect(() => forgetSetupCode(blocked)).not.toThrow();
+    expect(savedSetupCode(undefined)).toBeUndefined();
   });
 });

@@ -18,7 +18,7 @@ import { loadSecurity } from "./security-mode.ts";
 import type { SetupProgressView } from "./setup-views.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
-// The first-run wizard's steps 5 to 9 and the dashboard's "Finish setup" list (spec 12, The
+// The first-run wizard's steps 5 and 6 and the dashboard's "Finish setup" list (spec 12, The
 // first-run wizard; spec 07, Header and status lines), through the app's HTTP interface. Each
 // test gets a new app.db and Master key. SMTP is stubbed, the bank is the fake adapter's, and
 // every password, TOTP secret, and token is made when the test runs.
@@ -53,7 +53,7 @@ afterAll(() => {
   rmSync(webRoot, { recursive: true, force: true });
 });
 
-describe("the first-run wizard, steps 5 to 9", () => {
+describe("the first-run wizard, steps 5 and 6", () => {
   let test: TestAuth;
   let app: App;
   let stub: StubSmtp;
@@ -160,7 +160,7 @@ describe("the first-run wizard, steps 5 to 9", () => {
     test.close();
   });
 
-  it("opens no optional step until steps 1 to 4 are done, and refuses Skip and Finish", async () => {
+  it("opens no step until steps 1 to 4 are done, and refuses Skip for now and Finish", async () => {
     await markSetupStep(test.database, "master key", "done");
 
     expect(await progressOf()).toEqual({
@@ -175,44 +175,41 @@ describe("the first-run wizard, steps 5 to 9", () => {
     expect(await steps()).toEqual([{ step: "master key", status: "done" }]);
   });
 
-  it("opens step 5 for the first Member once steps 1 to 4 are done", async () => {
+  it("opens step 5, Banks, for the first Member once steps 1 to 4 are done", async () => {
     await finishRequiredSteps();
 
     expect(await progressOf()).toEqual({
       next: "banks",
       steps: NOTHING_YET,
-      finishSetup: [],
+      finishSetup: ["banks", "ai", "alerts", "invite members"],
       connections: 0,
     });
   });
 
-  it("opens the first step neither done nor skipped on the next visit", async () => {
+  it("opens Banks on the next visit until it is done or skipped, then Finish", async () => {
     await finishRequiredSteps();
-    expect((await skip("banks")).status).toBe(200);
-    // Step 8 is done before step 6 and 7: the wizard still opens step 6.
+    // The optional extras never hold the wizard up, done or not.
     expect((await makeInvite(aliceTab)).status).toBe(200);
 
     const tab = await signedIn(alice);
     expect(await progressOf(tab)).toMatchObject({
-      next: "ai",
-      steps: { banks: "skipped", ai: null, alerts: null, "invite members": "done" },
+      next: "banks",
+      steps: { banks: null, ai: null, alerts: null, "invite members": "done" },
     });
-    expect((await skip("ai", tab)).status).toBe(200);
-    expect((await progressOf(tab)).next).toBe("alerts");
-    expect((await skip("alerts", tab)).status).toBe(200);
-    expect((await progressOf(tab)).next).toBe("finish");
+    expect((await skip("banks", tab)).status).toBe(200);
+    expect(await progressOf(await signedIn(alice))).toMatchObject({
+      next: "finish",
+      steps: { banks: "skipped", ai: null, alerts: null },
+    });
   });
 
-  it("makes Banks done with an Unconnected account, or with a Connection", async () => {
+  it("makes Banks done only with a Connection, not with an Unconnected account", async () => {
     await finishRequiredSteps();
     expect((await progressOf()).steps.banks).toBeNull();
 
     expect((await addUnconnectedAccount()).status).toBe(200);
-    expect(await progressOf()).toMatchObject({ next: "ai", steps: { banks: "done" } });
+    expect(await progressOf()).toMatchObject({ next: "banks", steps: { banks: null } });
 
-    await test.database.$client.execute("DELETE FROM household_accounts");
-    await test.database.$client.execute("DELETE FROM setup_steps WHERE step = 'banks'");
-    expect((await progressOf()).steps.banks).toBeNull();
     const connectionId = await addConnection(test.database, {
       provider: "fake",
       bankId: "ins_fake_1",
@@ -220,7 +217,11 @@ describe("the first-run wizard, steps 5 to 9", () => {
       origin: "linked",
       syncMinute: 7,
     });
-    expect(await progressOf()).toMatchObject({ steps: { banks: "done" }, connections: 1 });
+    expect(await progressOf()).toMatchObject({
+      next: "finish",
+      steps: { banks: "done" },
+      connections: 1,
+    });
 
     // A done step stays done, even once its Connection is removed.
     expect(await markConnectionRemoved(test.database, connectionId, new Date())).toMatchObject({
@@ -229,13 +230,26 @@ describe("the first-run wizard, steps 5 to 9", () => {
     expect(await progressOf()).toMatchObject({ steps: { banks: "done" }, connections: 0 });
   });
 
+  it("does not count a removed Connection for Banks", async () => {
+    await finishRequiredSteps();
+    const connectionId = await addConnection(test.database, {
+      provider: "fake",
+      bankId: "ins_fake_1",
+      bankName: "First Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
+    await markConnectionRemoved(test.database, connectionId, new Date());
+
+    expect(await progressOf()).toMatchObject({ next: "banks", steps: { banks: null } });
+  });
+
   it("makes AI done once an AI provider is set", async () => {
     await finishRequiredSteps();
-    expect((await skip("banks")).status).toBe(200);
-    expect((await progressOf()).next).toBe("ai");
+    expect((await progressOf()).steps.ai).toBeNull();
 
     await addAiProvider();
-    expect(await progressOf()).toMatchObject({ next: "alerts", steps: { ai: "done" } });
+    expect(await progressOf()).toMatchObject({ next: "banks", steps: { ai: "done" } });
   });
 
   it("makes Alerts done only after a test email goes out", async () => {
@@ -260,21 +274,25 @@ describe("the first-run wizard, steps 5 to 9", () => {
     expect((await progressOf()).steps["invite members"]).toBe("done");
   });
 
-  it("lists each skipped step under Finish setup, for every Member, until each is done", async () => {
+  it("lists Banks and each extra under Finish setup, for every Member, until each is done", async () => {
     await finishRequiredSteps();
-    for (const step of ["banks", "ai", "alerts", "invite members"]) {
-      expect((await skip(step)).status).toBe(200);
-    }
+    expect((await skip("banks")).status).toBe(200);
     const bobTab = await signedIn(bob);
     const all = ["banks", "ai", "alerts", "invite members"];
     expect((await progressOf()).finishSetup).toEqual(all);
     expect((await progressOf(bobTab)).finishSetup).toEqual(all);
 
-    expect((await addUnconnectedAccount(bobTab)).status).toBe(200);
-    expect((await progressOf()).finishSetup).toEqual(["ai", "alerts", "invite members"]);
+    await addConnection(test.database, {
+      provider: "fake",
+      bankId: "ins_fake_1",
+      bankName: "First Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
+    expect((await progressOf(bobTab)).finishSetup).toEqual(["ai", "alerts", "invite members"]);
     await addAiProvider();
     expect((await progressOf()).finishSetup).toEqual(["alerts", "invite members"]);
-    // Bob's test email counts too: the step is the Household's.
+    // Bob's test email counts too: the item is the Household's.
     await saveSmtp(bobTab);
     expect((await bobTab.post("/api/smtp/test", {})).status).toBe(200);
     expect((await progressOf()).finishSetup).toEqual(["invite members"]);
@@ -285,33 +303,39 @@ describe("the first-run wizard, steps 5 to 9", () => {
     });
   });
 
-  it("keeps a done step done when Skip is pressed on it", async () => {
+  it("keeps Banks done when Skip for now is pressed on it", async () => {
     await finishRequiredSteps();
-    expect((await makeInvite(aliceTab)).status).toBe(200);
+    await addConnection(test.database, {
+      provider: "fake",
+      bankId: "ins_fake_1",
+      bankName: "First Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
 
-    const res = await skip("invite members");
+    const res = await skip("banks");
     expect(res.status).toBe(200);
-    expect(
-      ((await res.json()) as { progress: SetupProgressView }).progress.steps["invite members"],
-    ).toBe("done");
-    expect((await progressOf()).finishSetup).toEqual([]);
+    expect(((await res.json()) as { progress: SetupProgressView }).progress.steps.banks).toBe(
+      "done",
+    );
+    expect((await progressOf()).finishSetup).toEqual(["ai", "alerts", "invite members"]);
   });
 
-  it("opens Finish once each step is done or skipped, and then nothing more", async () => {
+  it("opens Finish once Banks is done or skipped, and then nothing more", async () => {
     await finishRequiredSteps();
-    expect((await skip("banks")).status).toBe(200);
     const early = await finish();
     expect(early.status).toBe(409);
-    expect(await early.json()).toEqual({ error: "Do or skip each step of the wizard first." });
+    expect(await early.json()).toEqual({
+      error: "Link a bank, or skip the Banks step for now, first.",
+    });
+    expect((await progressOf()).next).toBe("banks");
 
-    for (const step of ["ai", "alerts", "invite members"]) {
-      expect((await skip(step)).status).toBe(200);
-    }
+    expect((await skip("banks")).status).toBe(200);
     expect(await progressOf()).toMatchObject({ next: "finish", connections: 0 });
     const done = await finish();
     expect(done.status).toBe(200);
     expect(((await done.json()) as { progress: SetupProgressView }).progress.next).toBeNull();
-    // The skipped steps still wait in the "Finish setup" list.
+    // Banks and the extras still wait in the "Finish setup" list.
     expect(await progressOf()).toMatchObject({
       next: null,
       finishSetup: ["banks", "ai", "alerts", "invite members"],
@@ -341,15 +365,28 @@ describe("the first-run wizard, steps 5 to 9", () => {
     ]);
   });
 
-  it("answers 404 to a step that has no Skip", async () => {
+  it("answers 404 to a step that has no Skip for now, the optional extras included", async () => {
     await finishRequiredSteps();
-    for (const step of ["master key", "household facts", "finish", "Banks", "nope"]) {
+    for (const step of [
+      "master key",
+      "household facts",
+      "finish",
+      "ai",
+      "alerts",
+      "invite members",
+      "Banks",
+      "nope",
+    ]) {
       expect((await skip(step)).status).toBe(404);
     }
     expect((await progressOf()).next).toBe("banks");
+    expect(await steps()).toEqual([
+      { step: "household facts", status: "done" },
+      { step: "master key", status: "done" },
+    ]);
   });
 
-  it("refuses Skip and Finish without a session, from another site, and without JSON", async () => {
+  it("refuses Skip for now and Finish without a session, from another site, and without JSON", async () => {
     await finishRequiredSteps();
     const signedOut = new TestBrowser(app, APP_URL, "192.168.1.250");
     for (const send of [() => skip("banks", signedOut), () => finish(signedOut)]) {

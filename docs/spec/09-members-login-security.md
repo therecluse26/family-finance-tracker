@@ -14,7 +14,7 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
 
 ## Invites
 
-- Any Member can make an invite link, in settings or in the wizard's Invite Members step.
+- Any Member can make an invite link in settings. The wizard's Finish step and the "Finish setup" list link there.
 - The app shows the link for the Member to copy and send. The app does not email it.
 - Each invite link works once and expires after 7 days.
 - Settings list the open invite links, each with a Cancel button.
@@ -132,8 +132,8 @@ This protects a leaked backup or a copied `app.db` without the Master key. It do
   - With no Master key, the app logs that `fft setup` must run first, and exits.
   - With a Master key that cannot decrypt the stored data key, the app logs the reason and exits. It changes nothing.
   - Only `fft restore` accepts the loss of the old Master key ([Backup, restore, and data export](11-backup-restore-export.md#without-the-master-key)).
-- **Shown once.** The wizard's Master key step shows the key. The Member must paste it back before the step is done. After that, the app never shows the Master key again.
-- **"Check my master key"** in settings: any Member pastes the saved key, and the app says whether it matches. The wizard's paste-back uses the same check.
+- **Shown once.** The wizard's Master key step shows the key, with a Copy button, until the Member presses "I saved it". The app does not ask for the key back. After that, the app never shows the Master key again.
+- **"Check my master key"** in settings: any Member pastes the saved key, and the app says whether it matches.
   - The check ignores spaces, line breaks, and letter case.
   - Settings show when someone last checked.
 - The Household keeps a copy in a password manager, off the server. A backup never holds the Master key.

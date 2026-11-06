@@ -55,7 +55,7 @@ export type ServerEnv = {
     repairing: ConnectionRepairing;
     // The wizard's step 3 and "Check my master key".
     masterKey: MasterKeyRoutes;
-    // The wizard's steps 5 to 9, and the dashboard's "Finish setup" list.
+    // The wizard's steps 5 and 6, and the dashboard's "Finish setup" list.
     setup: SetupRoutes;
     // The open System notices.
     notices: NoticeRoutes;

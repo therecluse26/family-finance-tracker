@@ -168,12 +168,12 @@ const requestBodyLimit = bodyLimit({
 });
 
 // Until the wizard's step 3 is done, the API stores no Master-key secret (spec 12, Order and resume
-// rules). It refuses every write but step 3's own paste-back, so no route can store one early.
-const PASTE_BACK = "/api/setup/master-key";
+// rules). It refuses every write but step 3's own "I saved it", so no route can store one early.
+const SAVED_IT = "/api/setup/master-key";
 
 const masterKeyFirst: MiddlewareHandler<ServerEnv> = async (c, next) => {
   const write = c.req.method !== "GET" && c.req.method !== "HEAD";
-  if (write && c.req.path !== PASTE_BACK && !(await c.var.masterKey.saved())) {
+  if (write && c.req.path !== SAVED_IT && !(await c.var.masterKey.saved())) {
     return c.json({ error: "Save the Master key first: finish step 3 of setup." }, 409);
   }
   await next();

@@ -38,7 +38,7 @@ A backup is a plain file:
 | Before each migration | `migration` (safety copy) | If the safety copy fails, the app stops before it migrates and logs why. |
 | During `fft restore` | `restore` (safety copy) | A copy of the database that the restore replaces. |
 
-- Household time comes from the Household's ZIP code ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md)). Until the wizard's Household facts step sets it, the app uses UTC.
+- Household time comes from the Household's ZIP code ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md)). Until the wizard's Household step sets it, the app uses UTC.
 - **Startup check:** at start, the app runs a daily backup if the newest one is older than the most recent 3:00 AM.
 
 ## How many are kept

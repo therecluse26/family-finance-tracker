@@ -3,7 +3,7 @@ import type { Channels, ChannelsView, SmtpFields, SmtpView } from "../../../noti
 import type { PushView } from "../../../notify/push-view.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
-import { AlertPush } from "./AlertPush.tsx";
+import { homeScreenFirstHere, PushPart } from "./AlertPush.tsx";
 
 // Settings, Alerts: how Alerts and System notices reach each Member (spec 06, Recipients and
 // channels). Each Member picks their own channels, and turns push on for each device
@@ -251,10 +251,12 @@ export function AlertEmail() {
   const [channels, setChannels] = useState<ChannelsView | undefined>();
   const [smtp, setSmtp] = useState<SmtpView | null | undefined>();
   const [push, setPush] = useState<PushView | undefined>();
+  const [homeScreenFirst, setHomeScreenFirst] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
 
   useEffect(() => {
+    setHomeScreenFirst(homeScreenFirstHere());
     Promise.all([api["alert-channels"].$get(), api.smtp.settings.$get(), api.push.$get()])
       .then(async ([channelsRes, smtpRes, pushRes]) => {
         if (!channelsRes.ok || !smtpRes.ok || !pushRes.ok) {
@@ -280,7 +282,7 @@ export function AlertEmail() {
           }}
         />
       )}
-      {push === undefined ? null : <AlertPush push={push} />}
+      {push === undefined ? null : <PushPart push={push} homeScreenFirst={homeScreenFirst} />}
       {smtp === undefined ? null : (
         <SmtpForm
           smtp={smtp}

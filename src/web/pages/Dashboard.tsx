@@ -22,7 +22,7 @@ import type {
 import type { NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
 import type { ComingUpView } from "../../server/coming-up-views.ts";
-import type { OptionalSetupStep } from "../../server/setup-views.ts";
+import type { FinishSetupItem } from "../../server/setup-views.ts";
 import {
   markAlertNoteDone,
   markInsightCardDone,
@@ -122,9 +122,10 @@ function Repair(props: { banner: StatusLines["repairs"][number]; onChanged: () =
   );
 }
 
-// The "Finish setup" list: each skipped wizard step until it is done, with a link to where it is
-// done (spec 12, Order and resume rules). Every Member sees it.
-export function FinishSetupList(props: { steps: readonly OptionalSetupStep[] }) {
+// The "Finish setup" list: Banks, if the wizard's Banks step was skipped, and each optional extra
+// (AI, Alerts, Invite Members), until each is done, with a link to where it is done (spec 12, Order
+// and resume rules). Every Member sees it.
+export function FinishSetupList(props: { steps: readonly FinishSetupItem[] }) {
   if (props.steps.length === 0) return null;
   return (
     <section
