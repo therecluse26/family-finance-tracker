@@ -582,6 +582,46 @@ describe('the "Finish setup" list', () => {
   });
 });
 
+describe("the dashboard with no Connection", () => {
+  // After "Skip for now": no bank, so no history ever loads, and no Budget draft is made.
+  const skipped = () =>
+    render(
+      data({
+        connections: [],
+        budgets: { ...BUDGETS, drafted: false },
+        setup: {
+          ...SETUP_DONE,
+          steps: { ...SETUP_DONE.steps, banks: "skipped" },
+          finishSetup: ["banks"],
+          connections: 0,
+        },
+      }),
+    );
+
+  it("shows one line that links to Settings → Banks in place of the boxes", () => {
+    const html = skipped();
+
+    expect(slotText(html, "no-connection")).toBe(
+      "Link a bank to see your money here The dashboard fills in once a bank is linked and its history has loaded.",
+    );
+    expect(slotHtml(html, "no-connection")).toContain('href="/settings/banks"');
+    expect(html).not.toContain('data-slot="columns"');
+    expect(text(html)).not.toContain(BEFORE_FIRST_DRAFT);
+    expect(text(html)).not.toContain("$0");
+    // The header and the "Finish setup" list still show.
+    expect(text(html)).toMatch(/^October Day 20 of 31 · not synced yet /);
+    expect(slotText(html, "finish-setup")).toBe("Finish setup Link your banks");
+  });
+
+  it("shows the boxes once any Connection exists, even a removed one whose history is kept", () => {
+    for (const connections of [[connection()], [connection({ removed: true })]]) {
+      const html = render(data({ connections }));
+      expect(html).toContain('data-slot="columns"');
+      expect(html).not.toContain('data-slot="no-connection"');
+    }
+  });
+});
+
 describe("Retry on a stopped history job", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

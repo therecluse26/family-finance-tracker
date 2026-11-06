@@ -12,6 +12,7 @@ Layout ([prototype, variant H](https://github.com/therecluse26/family-finance-tr
 - On a screen 900 px wide or wider, the AI box is the left column. It stays in view while the right column scrolls.
 - On a narrower screen, all boxes stack in one column, and the AI box comes first.
 - The right column holds, top to bottom: Left to spend, Goals, the four number tiles, "A usual month", and "Coming up".
+- While app.db holds no Connection at all, such as after "Skip for now" in the wizard, no history can load. The dashboard then shows one line, "Link a bank to see your money here", with a link to Settings, Banks, in place of every box. The header and the status lines still show. A removed Connection counts here, because its history stays until a Member deletes it.
 
 ### Header and status lines
 

@@ -97,7 +97,7 @@ describe("Settings → Banks: linking a new bank", () => {
           <LinkBank plaid={none} connections={[]} accounts={[]} onLinked={() => {}} />,
         ),
       ),
-    ).toContain("Enter the Plaid keys to link a bank.");
+    ).toContain("To link a real bank through Plaid, save the Plaid keys above.");
     expect(
       text(
         renderToString(

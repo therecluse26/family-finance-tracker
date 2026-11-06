@@ -6,7 +6,9 @@ import {
   openWizardIfNeeded,
   resumeWizardIfNeeded,
   type SetupState,
+  savedFirstMemberDraft,
   savedSetupCode,
+  saveFirstMemberDraft,
   saveSetupCode,
   setupCodeRefused,
   skippedWizardSteps,
@@ -133,6 +135,57 @@ describe("the setup code across a reload", () => {
     expect(savedSetupCode(blocked)).toBeUndefined();
     expect(() => forgetSetupCode(blocked)).not.toThrow();
     expect(savedSetupCode(undefined)).toBeUndefined();
+  });
+});
+
+describe("step 2's Name and Email across a reload", () => {
+  it("keeps them with the setup code, and forgets them with it", () => {
+    const storage = new TabStorage();
+    expect(savedFirstMemberDraft(storage)).toEqual({ name: "", email: "" });
+
+    saveSetupCode("7KQ2-M9XD-4TRF", storage);
+    saveFirstMemberDraft({ name: "Alex", email: "alex@example.test" }, storage);
+    expect(savedFirstMemberDraft(storage)).toEqual({ name: "Alex", email: "alex@example.test" });
+
+    forgetSetupCode(storage);
+    expect(savedFirstMemberDraft(storage)).toEqual({ name: "", email: "" });
+    expect(storage.items.size).toBe(0);
+  });
+
+  it("keeps only the Name and Email, never the password", () => {
+    const storage = new TabStorage();
+    const typed = { name: "Alex", email: "alex@example.test", password: "a-long-password-1" };
+    saveFirstMemberDraft(typed, storage);
+    expect([...storage.items.values()].join("")).not.toContain("a-long-password-1");
+  });
+
+  it("uses nothing broken or too long that was written to the tab by other means", () => {
+    const storage = new TabStorage();
+    for (const kept of ["not json", "null", "[]", '{"name":7,"email":null}']) {
+      storage.items.set("fft-first-member-draft", kept);
+      expect(savedFirstMemberDraft(storage)).toEqual({ name: "", email: "" });
+    }
+    storage.items.set(
+      "fft-first-member-draft",
+      JSON.stringify({ name: "A".repeat(321), email: "a@b.test" }),
+    );
+    expect(savedFirstMemberDraft(storage)).toEqual({ name: "", email: "a@b.test" });
+  });
+
+  it("does without storage where the browser blocks it", () => {
+    const blocked = {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+      removeItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    expect(() => saveFirstMemberDraft({ name: "Alex", email: "" }, blocked)).not.toThrow();
+    expect(savedFirstMemberDraft(blocked)).toEqual({ name: "", email: "" });
   });
 });
 

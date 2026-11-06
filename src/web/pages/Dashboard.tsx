@@ -1021,6 +1021,25 @@ export function DashboardColumns(props: {
   );
 }
 
+// What the dashboard shows in place of its boxes while app.db holds no Connection, removed or not:
+// with no bank, no history ever loads, so empty boxes would only promise numbers that never come.
+export const NO_CONNECTION_YET = "Link a bank to see your money here";
+
+export function NoConnectionYet() {
+  return (
+    <section className={`mt-4 ${BOX}`} data-slot="no-connection">
+      <p>
+        <Link className="text-blue-700 underline" to="/settings/banks">
+          {NO_CONNECTION_YET}
+        </Link>
+      </p>
+      <p className="mt-1 text-gray-600">
+        The dashboard fills in once a bank is linked and its history has loaded.
+      </p>
+    </section>
+  );
+}
+
 export function DashboardReport(props: {
   data: DashboardData;
   onClose: (id: string) => void;
@@ -1048,29 +1067,33 @@ export function DashboardReport(props: {
         onChanged={props.onChanged}
         {...(props.live === undefined ? {} : { live: props.live })}
       />
-      <DashboardColumns
-        ai={
-          <AiBox
-            view={data.aiBox}
-            today={data.month.today}
-            onChanged={props.onChanged}
-            {...(props.whyOpen === undefined ? {} : { whyOpen: props.whyOpen })}
-          />
-        }
-        leftToSpend={<LeftToSpendBox left={leftToSpend(data.budgets)} month={data.month} />}
-        goals={<GoalsBox answer={data.goals} />}
-        numberTiles={<NumberTilesBox tiles={data.numberTiles} />}
-        usualMonth={
-          <UsualMonthBox
-            key={data.month.month}
-            usual={data.usualMonth}
-            budgets={data.budgets}
-            month={data.month}
-            {...(props.openGroup === undefined ? {} : { initialOpen: props.openGroup })}
-          />
-        }
-        comingUp={<ComingUpBox view={data.comingUp} month={data.month} />}
-      />
+      {data.connections.length === 0 ? (
+        <NoConnectionYet />
+      ) : (
+        <DashboardColumns
+          ai={
+            <AiBox
+              view={data.aiBox}
+              today={data.month.today}
+              onChanged={props.onChanged}
+              {...(props.whyOpen === undefined ? {} : { whyOpen: props.whyOpen })}
+            />
+          }
+          leftToSpend={<LeftToSpendBox left={leftToSpend(data.budgets)} month={data.month} />}
+          goals={<GoalsBox answer={data.goals} />}
+          numberTiles={<NumberTilesBox tiles={data.numberTiles} />}
+          usualMonth={
+            <UsualMonthBox
+              key={data.month.month}
+              usual={data.usualMonth}
+              budgets={data.budgets}
+              month={data.month}
+              {...(props.openGroup === undefined ? {} : { initialOpen: props.openGroup })}
+            />
+          }
+          comingUp={<ComingUpBox view={data.comingUp} month={data.month} />}
+        />
+      )}
     </>
   );
 }

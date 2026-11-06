@@ -383,10 +383,12 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   const [cap, setCap] = useState(String(usage.capCents / 100));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(undefined);
+    setDone(undefined);
     const capCents = centsOfText(cap);
     if (capCents === undefined || capCents > MAX_COST_CAP_CENTS) {
       return setError("Enter the AI cost cap in dollars, from $0 to $10,000.");
@@ -396,6 +398,7 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
       const res = await api.ai["cost-cap"].$put({ json: { capCents } });
       if (!res.ok) return setError(await refusal(res));
       props.onSaved(((await res.json()) as { usage: AiUsageView }).usage);
+      setDone("The AI cost cap is saved.");
     } catch {
       setError("The server did not answer.");
     } finally {
@@ -415,6 +418,7 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
         Save cap
       </button>
       <ErrorLine error={error} />
+      {done === undefined ? null : <p className="mt-3">{done}</p>}
       <p className="mt-3">
         <Link className="text-blue-700 underline" to="/settings/ai/usage">
           AI usage
