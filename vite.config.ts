@@ -13,7 +13,7 @@ type DevAppModule = Partial<typeof import("./src/server/dev-app.ts")>;
 type HonoApp = Awaited<ReturnType<NonNullable<DevAppModule["createDevApp"]>>>;
 
 // In `pnpm dev`, Vite serves the web app and hands /api and /healthz to the Hono app, which runs
-// on its own app.db in .dev/ and needs the Master key.
+// on its own app.db in .dev/. With no Master key set, it makes .dev/master.key.
 function honoDevServer(): Plugin {
   return {
     name: "hono-dev-server",
@@ -34,6 +34,13 @@ function honoDevServer(): Plugin {
           return mod.createDevApp(webRoot, env);
         });
       };
+      // The API starts with the server, so a new dev Master key and the setup link show at once.
+      server.httpServer?.once("listening", () => {
+        app ??= startDevApp();
+        app.catch((error: unknown) => {
+          server.config.logger.error(error instanceof Error ? error.message : String(error));
+        });
+      });
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split("?")[0] ?? "";
         if (path !== "/healthz" && path !== "/api" && !path.startsWith("/api/")) return next();
