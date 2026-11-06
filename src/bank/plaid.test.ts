@@ -13,6 +13,7 @@ import {
   type BankConnection,
   type BankDataAdapter,
   BankDataError,
+  CursorRejectedError,
   type PlaidKeys,
   plaidAdapter,
   syncConnection,
@@ -563,6 +564,57 @@ describe("the Plaid adapter", () => {
       expect(await rows("SELECT sync_cursor, history_loaded FROM connections")).toEqual([
         { sync_cursor: "c2", history_loaded: 1 },
       ]);
+    });
+
+    it("starts again from an empty cursor when Plaid refuses the saved one, and stores no record twice", async () => {
+      plaid.answer(
+        SYNC,
+        syncPage({ added: [anotherTxn("t1"), anotherTxn("t2")], next_cursor: "c1" }),
+      );
+      await syncConnection(connectionId);
+      plaid.answer(
+        SYNC,
+        // Nothing new from c1.
+        syncPage({ next_cursor: "c1" }),
+      );
+      await syncConnection(connectionId);
+      // As after a restore: Plaid no longer takes the saved cursor.
+      plaid.answer(
+        SYNC,
+        { status: 400, body: plaidFailure("INVALID_REQUEST", "INVALID_FIELD") },
+        syncPage({
+          added: [anotherTxn("t1"), anotherTxn("t2"), anotherTxn("t3")],
+          next_cursor: "c9",
+        }),
+        syncPage({ next_cursor: "c10" }),
+      );
+
+      const report = await syncConnection(connectionId);
+
+      expect(plaid.to(SYNC).map((page) => page.body.cursor)).toEqual([
+        undefined,
+        "c1",
+        "c1",
+        "c1",
+        undefined,
+        "c9",
+      ]);
+      expect(report.added).toBe(1);
+      expect(
+        await rows("SELECT provider_transaction_id AS id FROM transactions ORDER BY id"),
+      ).toEqual([{ id: "t1" }, { id: "t2" }, { id: "t3" }]);
+      expect(await rows("SELECT sync_cursor, health FROM connections")).toEqual([
+        { sync_cursor: "c9", health: "healthy" },
+      ]);
+    });
+
+    it("sorts a refused empty cursor as Temporary, with no restart", async () => {
+      plaid.answer(SYNC, { status: 400, body: plaidFailure("INVALID_REQUEST", "INVALID_FIELD") });
+
+      const failed = adapter.sync(connection, null);
+      await expect(failed).rejects.toMatchObject({ kind: "temporary" });
+      await expect(failed).rejects.not.toBeInstanceOf(CursorRejectedError);
+      await expect(adapter.sync(connection, "c1")).rejects.toBeInstanceOf(CursorRejectedError);
     });
 
     it("saves no cursor and stores nothing when a page fails, so the next sync starts again", async () => {

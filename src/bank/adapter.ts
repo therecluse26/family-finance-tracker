@@ -184,3 +184,14 @@ export class BankDataError extends Error {
     this.kind = kind;
   }
 }
+
+// The provider refused the saved cursor, such as one in a restored backup that it no longer
+// knows (spec 11, Restore). The sync starts again once from an empty cursor. Records are stored by
+// their stable IDs, so that makes no duplicates. A refusal of the empty cursor too is Temporary.
+export class CursorRejectedError extends BankDataError {
+  override name = "CursorRejectedError";
+
+  constructor(message = "The provider refused the saved sync cursor.") {
+    super("temporary", message);
+  }
+}

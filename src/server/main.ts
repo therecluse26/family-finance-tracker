@@ -6,6 +6,7 @@ import { scheduledTasks } from "../jobs/list.ts";
 import { log } from "../log.ts";
 import { loadMasterKey } from "../secrets/index.ts";
 import { readPort } from "./port.ts";
+import { RUNNING_LOCK_FILE } from "./running-lock.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { startApp } from "./start.ts";
 import { exitOnSignal } from "./stop.ts";
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
     webRoot,
     security,
     backupFolders: BACKUP_FOLDERS,
+    runningLock: RUNNING_LOCK_FILE,
   });
   log.info("Listening", { port: server.port });
   exitOnSignal(server);

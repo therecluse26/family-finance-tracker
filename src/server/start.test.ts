@@ -55,6 +55,7 @@ import {
 import { createLogger } from "../log.ts";
 import { type MasterKey, WrongMasterKeyError } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
+import { LockHeldError, lockText } from "./running-lock.ts";
 import { loadSecurity, type Security } from "./security-mode.ts";
 import { type RunningApp, startApp } from "./start.ts";
 
@@ -570,6 +571,54 @@ describe("starting the app", () => {
     const third = await start(shipped);
     expect(await third.database.$client.execute("SELECT id FROM system_notices")).toMatchObject({
       rows: [expect.anything()],
+    });
+  });
+
+  it("makes the VAPID keys at start over HTTPS when none are stored, as after a restore without the Master key", async () => {
+    const first = await start(shipped);
+    await markSetupStep(first.database, "master key", "done");
+    await first.database.$client.execute("DELETE FROM vapid_keys");
+    await stop(first);
+
+    const second = await start(shipped);
+
+    const rows = await second.database.$client.execute("SELECT id FROM vapid_keys");
+    expect(rows.rows).toHaveLength(1);
+  });
+
+  describe("the running lock in /data", () => {
+    const lockFile = () => join(dir, "app.lock");
+    const startLocked = () =>
+      startApp({
+        masterKey,
+        databaseUrl: url,
+        migrationsFolder: shipped,
+        jobs: { jobsDb: join(dir, "jobs.db"), jobList: TEST_JOB_LIST, tasks: [] },
+        port: 0,
+        webRoot,
+        security,
+        backupFolders: { mounted: join(dir, "backups-mount"), fallback: join(dir, "backups") },
+        runningLock: lockFile(),
+      });
+
+    it("holds the lock while the app runs, and deletes it on close", async () => {
+      const app = await startLocked();
+      expect(JSON.parse(readFileSync(lockFile(), "utf8"))).toMatchObject({
+        holder: "app",
+        pid: process.pid,
+      });
+      await app.close();
+      expect(existsSync(lockFile())).toBe(false);
+    });
+
+    it("refuses to start while fft restore holds it, before app.db opens", async () => {
+      const restore = lockText({ holder: "restore", id: "restore-1", host: "fft-run", pid: 7 });
+      writeFileSync(lockFile(), restore);
+
+      await expect(startLocked()).rejects.toThrow(LockHeldError);
+
+      expect(existsSync(path)).toBe(false);
+      expect(readFileSync(lockFile(), "utf8")).toBe(restore);
     });
   });
 

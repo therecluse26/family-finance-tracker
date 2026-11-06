@@ -43,6 +43,16 @@ export function backupNames(kind: BackupKind, at: Date) {
   return { name, copy: name.replace(/\.gz$/, ".tmp"), packed: `${name}.tmp` };
 }
 
+// The kind and time of a file name exactly as given, when it is a backup's name with a real time
+// that is not after `now`. Undefined for any other name: nothing is trimmed or decoded first.
+export function backupNameOf(name: string, now: Date): { kind: BackupKind; at: Date } | undefined {
+  const match = BACKUP_NAME.exec(name);
+  if (match === null) return undefined;
+  const at = timeOf(match[1] ?? "");
+  if (at === undefined || at.getTime() > now.getTime()) return undefined;
+  return { kind: match[2] as BackupKind, at };
+}
+
 export type BackupFile = { name: string; kind: BackupKind; at: Date; bytes: number };
 
 // The backups in the folder, newest first. A link, a folder, or any other file is left out, even

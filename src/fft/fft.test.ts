@@ -18,6 +18,7 @@ import { setupCodeOf } from "../secrets/index.ts";
 import { parseMasterKey } from "../secrets/master-key.ts";
 import { newMasterKeyHex } from "../secrets/testing.ts";
 import { runFft } from "./fft.ts";
+import { restoreParts } from "./testing.ts";
 
 // `fft setup` in each state of spec 12's table. Each test gets its own folder for the Master key
 // file and app.db.
@@ -53,6 +54,7 @@ describe("fft setup", () => {
       env: { APP_URL, FFT_MASTER_KEY_FILE: keyFile, ...env },
       databaseFile,
       migrationsFolder: SHIPPED_FOLDER,
+      ...restoreParts(dir),
       out: (text) => {
         out += text;
       },
@@ -191,6 +193,7 @@ describe("fft setup --app-url", () => {
         env: { FFT_MASTER_KEY_FILE: keyFile },
         databaseFile: join(dir, "app.db"),
         migrationsFolder: SHIPPED_FOLDER,
+        ...restoreParts(dir),
         out: (text) => {
           out += text;
         },
@@ -218,6 +221,7 @@ describe("fft", () => {
       env: {},
       databaseFile: "/nonexistent/app.db",
       migrationsFolder: SHIPPED_FOLDER,
+      ...restoreParts("/nonexistent"),
       out: () => {},
       err: (text) => {
         err += text;

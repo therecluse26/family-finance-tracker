@@ -14,12 +14,14 @@ import { log } from "../log.ts";
 import { cleanMerchant } from "../merchants/index.ts";
 import { raiseNotice } from "../notify/index.ts";
 import type { Secrets } from "../secrets/index.ts";
-import type {
-  AdapterActions,
-  BankConnection,
-  BankDataAdapter,
-  Provider,
-  TxnRecord,
+import {
+  type AdapterActions,
+  type BankConnection,
+  type BankDataAdapter,
+  CursorRejectedError,
+  type Provider,
+  type SyncResult,
+  type TxnRecord,
 } from "./adapter.ts";
 import {
   errorKind,
@@ -33,8 +35,9 @@ import {
 // Syncing one Connection (spec 02, Sync schedule and Changes to synced data). A sync asks the
 // adapter for pages from the saved cursor, stores each page's records by their stable IDs, and
 // saves the new cursor only after every record is stored. A sync that fails partway saves no
-// cursor, so the next one starts again from the same cursor and stores no record twice. A sync
-// that ends saves each Account's balance for the day (spec 02, Balances). Every sync sets the
+// cursor, so the next one starts again from the same cursor and stores no record twice. When the
+// adapter refuses the saved cursor, as after a restore, the sync starts again once from an empty
+// cursor (spec 11, Restore). A sync that ends saves each Account's balance for the day (spec 02, Balances). Every sync sets the
 // Connection's health and its next sync time (spec 02, Back-off).
 
 // A sync that returns an Account the app has not seen tracks it at once (spec 02, New accounts at a
@@ -275,8 +278,22 @@ async function pullPages(
     copiesNoLongerAwaited: false,
   };
   let cursor = stored.syncCursor;
+  let restarted = false;
   for (let pages = 0; pages < MAX_PAGES; pages += 1) {
-    const page = await adapter.sync(connection, cursor);
+    let page: SyncResult;
+    try {
+      page = await adapter.sync(connection, cursor);
+    } catch (error) {
+      // A refused saved cursor, as after a restore: the sync starts again once from an empty
+      // cursor. Records are stored by their stable IDs, so pages sent again make no duplicates.
+      if (!(error instanceof CursorRejectedError) || cursor === null || restarted) throw error;
+      log.warn("The provider refused the sync cursor; the sync starts again from the start", {
+        connectionId: connection.id,
+      });
+      restarted = true;
+      cursor = null;
+      continue;
+    }
     const counts = await storeSyncPage(
       database,
       connection.id,

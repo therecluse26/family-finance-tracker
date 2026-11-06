@@ -40,6 +40,7 @@ import {
   requestDeliveryAt,
   smtpSettings,
   startNotify,
+  vapidKeysOf,
 } from "../notify/index.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { requestRedo, startRedo } from "../redo/index.ts";
@@ -53,6 +54,7 @@ import {
   tailorFirstDraft,
 } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
+import { takeAppLock } from "./running-lock.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
 
@@ -69,6 +71,9 @@ export type StartOptions = {
   bankAdapters?: readonly BankDataAdapter[];
   // /backups and /data/backups. Tests give temporary folders.
   backupFolders: BackupFolders;
+  // The running lock file, /data/app.lock, so `fft restore` refuses to run while the app does.
+  // Tests that do not check it leave it out.
+  runningLock?: string;
 };
 
 // The open database stays open until close().
@@ -82,9 +87,35 @@ async function settleAll(promises: Promise<unknown>[]): Promise<void> {
   if (failed !== undefined) throw failed.reason;
 }
 
+// Takes the running lock before app.db opens, and holds it until close() ends (spec 11, Restore).
+export async function startApp(options: StartOptions): Promise<RunningApp> {
+  const lock =
+    options.runningLock === undefined
+      ? undefined
+      : await takeAppLock(options.runningLock, {
+          warn: (message) => log.warn(message),
+        });
+  try {
+    const app = await launchUnderLock(options);
+    return {
+      ...app,
+      close: async () => {
+        try {
+          await app.close();
+        } finally {
+          await lock?.release();
+        }
+      },
+    };
+  } catch (error) {
+    await lock?.release();
+    throw error;
+  }
+}
+
 // The startup steps, in the spec's order. Nothing listens until migrations are done and the first
 // scheduler tick has run.
-export async function startApp(options: StartOptions): Promise<RunningApp> {
+async function launchUnderLock(options: StartOptions): Promise<RunningApp> {
   const database = await openDatabase(options.databaseUrl);
   let backups: { stop(): void } | undefined;
   try {
@@ -123,6 +154,9 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
           : {}),
       },
     });
+    // Web push needs VAPID keys: the app makes them when none are stored, as after a restore
+    // without the Master key deleted them (spec 09, Encryption at rest).
+    if (https) await vapidKeysOf(database, secrets);
     const adapters = options.bankAdapters ?? [plaidAdapter({ database, secrets })];
     const bank = startBank({ database, secrets, adapters, timeZone });
     const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });

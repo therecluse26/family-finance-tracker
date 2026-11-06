@@ -111,14 +111,37 @@ function openDataKey(masterKey: MasterKey, stored: StoredDataKey): DataKey {
   return { id: stored.id, key };
 }
 
-async function makeDataKey(database: Database, masterKey: MasterKey): Promise<DataKey> {
+function newDataKey(masterKey: MasterKey): { dataKey: DataKey; stored: StoredDataKey } {
   const id = randomBytes(KEY_ID_BYTES).toString("hex");
   const bytes = randomBytes(KEY_BYTES);
   const encryptedKey = seal(masterKey.key, bytes, dataKeyPlace(id));
   const key = createSecretKey(bytes);
   bytes.fill(0);
-  await storeDataKey(database, { id, encryptedKey });
-  return { id, key };
+  return { dataKey: { id, key }, stored: { id, encryptedKey } };
+}
+
+async function makeDataKey(database: Database, masterKey: MasterKey): Promise<DataKey> {
+  const { dataKey, stored } = newDataKey(masterKey);
+  await storeDataKey(database, stored);
+  return dataKey;
+}
+
+// A new data key, encrypted with this Master key, for `fft restore` to store in place of a backup's
+// data key that the Master key cannot decrypt (spec 11, Without the Master key). Every secret the
+// old data key encrypted is lost with it.
+export function sealNewDataKey(masterKey: MasterKey): StoredDataKey {
+  return newDataKey(masterKey).stored;
+}
+
+// Whether this Master key decrypts every data key in app.db. Reads only.
+export async function decryptsDataKey(database: Database, masterKey: MasterKey): Promise<boolean> {
+  try {
+    await checkDataKey(database, masterKey);
+    return true;
+  } catch (error) {
+    if (error instanceof WrongMasterKeyError) return false;
+    throw error;
+  }
 }
 
 // Reads only. Throws WrongMasterKeyError when app.db holds a data key that this Master key cannot

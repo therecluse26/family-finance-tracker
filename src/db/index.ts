@@ -191,6 +191,7 @@ export {
   closeDatabase,
   type Database,
   openDatabase,
+  openDatabaseCopy,
   type Queries,
 } from "./client.ts";
 export {
@@ -551,6 +552,7 @@ export {
   readSpendingToReduce,
   storeAppRefundLinks,
 } from "./refunds.ts";
+export { forgetUnreadableSecrets, type RestoreLosses, readRestoreLosses } from "./restore.ts";
 export {
   addReviewItem,
   addReviewItems,

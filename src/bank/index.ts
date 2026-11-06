@@ -17,7 +17,7 @@ export type {
   SyncResult,
   TxnRecord,
 } from "./adapter.ts";
-export { BankDataError } from "./adapter.ts";
+export { BankDataError, CursorRejectedError } from "./adapter.ts";
 export {
   type AccountBalances,
   accountBalances,

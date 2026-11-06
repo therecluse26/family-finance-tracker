@@ -13,9 +13,11 @@ export {
 export {
   checkDataKey,
   type DerivedUse,
+  decryptsDataKey,
   SecretDecryptError,
   type SecretPlace,
   type Secrets,
+  sealNewDataKey,
   unlockSecrets,
   WrongMasterKeyError,
 } from "./secrets.ts";

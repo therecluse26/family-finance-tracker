@@ -42,13 +42,14 @@ async function memberExists(databaseFile: string): Promise<boolean> {
   }
 }
 
-// Writes a new Master key with mode 0600. It never replaces a file that exists.
-async function writeMasterKey(file: string): Promise<MasterKey> {
-  const { hex, masterKey } = makeMasterKey();
+// Writes a new Master key with mode 0600. It never replaces a file that exists. `fft restore` also
+// prints the key it returns, once.
+export async function writeMasterKey(file: string): Promise<{ hex: string; masterKey: MasterKey }> {
+  const made = makeMasterKey();
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  await writeFile(file, `${hex}\n`, { mode: 0o600, flag: "wx" });
+  await writeFile(file, `${made.hex}\n`, { mode: 0o600, flag: "wx" });
   await chmod(file, 0o600);
-  return masterKey;
+  return made;
 }
 
 // A warning when users other than the file's owner can read or change the Master key file.
@@ -114,7 +115,7 @@ export async function setup(args: string[], io: FftIo): Promise<number> {
   }
 
   if (found === undefined) {
-    const masterKey = await writeMasterKey(file);
+    const { masterKey } = await writeMasterKey(file);
     io.out(
       [
         `Made the Master key in ${file}.`,

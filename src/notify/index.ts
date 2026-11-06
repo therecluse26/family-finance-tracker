@@ -38,4 +38,5 @@ export {
   pushSettings,
   removeMemberDevices,
   type Vapid,
+  vapidKeysOf,
 } from "./push.ts";

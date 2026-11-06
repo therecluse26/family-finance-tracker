@@ -19,6 +19,7 @@ import {
   BankDataError,
   type BankErrorKind,
   type Cents,
+  CursorRejectedError,
   type SyncResult,
   type TxnRecord,
 } from "./adapter.ts";
@@ -60,6 +61,11 @@ const MAX_RESTARTS = 3;
 // Plaid changed the Item's data while the adapter paged through it: the run starts again from its
 // first cursor.
 const MUTATION_DURING_PAGINATION = "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION";
+
+// Plaid's answer to a /transactions/sync cursor it does not take, such as one from a restored
+// backup: a field that is not valid. The adapter asks with the saved cursor only, so the sync
+// starts again from an empty cursor (spec 11, Restore).
+const CURSOR_NOT_VALID = "INVALID_FIELD";
 
 // Every other code, every error type, an HTTP error, and a network failure is Temporary. That
 // covers the types INSTITUTION_ERROR, API_ERROR, and RATE_LIMIT_EXCEEDED. A listed code wins over
@@ -376,7 +382,14 @@ export function plaidAdapter(options: {
     // page before it, so a sync calls /accounts/get and /liabilities/get once.
     async sync(connection, cursor): Promise<SyncResult> {
       const { client, access_token } = await open(connection);
-      const run = await pullTransactions(client, access_token, cursor);
+      let run: TransactionsRun;
+      try {
+        run = await pullTransactions(client, access_token, cursor);
+      } catch (error) {
+        const refused = error instanceof PlaidCallError && error.code === CURSOR_NOT_VALID;
+        if (refused && cursor !== null) throw new CursorRejectedError(error.message);
+        throw error;
+      }
       const changes = run.added.length + run.modified.length + run.removed.length;
       const last = lastAccounts.get(connection.id);
       lastAccounts.delete(connection.id);

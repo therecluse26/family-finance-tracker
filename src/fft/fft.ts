@@ -1,6 +1,7 @@
 import { holdsSecretValue } from "../log.ts";
 import type { FftIo } from "./io.ts";
 import { resetLogin } from "./reset-login.ts";
+import { restore } from "./restore.ts";
 import { setup } from "./setup.ts";
 
 // The `fft` command (spec 12, The `fft` command). The self-hoster runs it as
@@ -15,6 +16,8 @@ const USAGE = [
   "                         service. It writes no file.",
   "  reset-login <email>    Reset the login of the Member with this email, and print the",
   "                         one-use reset link",
+  "  restore <file>         Restore a backup of app.db, while the app is stopped. A bare file",
+  "                         name means a file in the backup folder.",
   "",
 ].join("\n");
 
@@ -25,6 +28,7 @@ export async function runFft(args: string[], io: FftIo): Promise<number> {
   try {
     if (command === "setup") return await setup(rest, io);
     if (command === "reset-login") return await resetLogin(rest, io);
+    if (command === "restore") return await restore(rest, io);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     io.err(`fft ${command} failed: ${holdsSecretValue(reason) ? "[refused]" : reason}\n`);

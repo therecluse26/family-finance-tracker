@@ -19,6 +19,7 @@ import { createApp } from "../server/app.ts";
 import { loadSecurity } from "../server/security-mode.ts";
 import { type App, TestBrowser } from "../server/testing.ts";
 import { runFft } from "./fft.ts";
+import { restoreParts } from "./testing.ts";
 
 // `fft reset-login <email>` (spec 12, The `fft` command), run against the app.db of an app that is
 // running, as the self-hoster runs it beside the app. Each test gets a new app.db and Master key.
@@ -90,6 +91,7 @@ describe("fft reset-login", () => {
       },
       databaseFile: test.path,
       migrationsFolder: SHIPPED_FOLDER,
+      ...restoreParts(dir),
       out: (text) => {
         out += text;
       },

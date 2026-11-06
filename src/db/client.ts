@@ -26,6 +26,13 @@ export async function openDatabase(url: string): Promise<Database> {
   return drizzle(client, { schema });
 }
 
+// A copy of app.db that no app uses, such as a backup that `fft restore` checks and changes before
+// it puts it in place. It changes no setting, so the copy keeps its journal mode, as VACUUM INTO
+// wrote it, and leaves no write-ahead log beside it to move with it.
+export function openDatabaseCopy(path: string): Database {
+  return drizzle(createClient({ url: `file:${path}`, timeout: BUSY_TIMEOUT_MS }), { schema });
+}
+
 export function closeDatabase(database: Database): void {
   database.$client.close();
 }

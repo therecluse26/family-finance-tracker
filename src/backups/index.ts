@@ -22,6 +22,7 @@ export {
 export {
   BACKUP_KINDS,
   type BackupKind,
+  backupNameOf,
   REGULAR_KEPT,
   SAFETY_KEPT,
 } from "./files.ts";

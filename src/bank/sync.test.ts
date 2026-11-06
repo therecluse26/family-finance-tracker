@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readConnection, setHandSetFields } from "../db/index.ts";
 import { startJob, startJobs } from "../jobs/index.ts";
 import { fakeAccount, fakeTxn } from "./fake.ts";
-import { BankDataError, type SyncReport, syncConnection } from "./index.ts";
+import { BankDataError, CursorRejectedError, type SyncReport, syncConnection } from "./index.ts";
 import { newTestBank, SyncConnectionJob, TEST_BANK_JOB_LIST, type TestBank } from "./testing.ts";
 
 // Syncing a Connection through the fake adapter into Accounts and Transactions (spec 02, The
@@ -413,6 +413,74 @@ describe("syncing a fake Connection", () => {
         text: "First Fake Bank has a new Account, Rewards Card ··9876. The app tracks it now. To leave it out, turn on its Exclude switch in the Account list",
       },
     ]);
+  });
+
+  it("starts again from an empty cursor when the adapter refuses the saved one, with no duplicates", async () => {
+    bank.fake.addPages(...threePages());
+    await syncConnection(connectionId);
+    // As after a restore: the saved cursor is one the provider no longer takes.
+    bank.fake.failAt(BANK, 3, new CursorRejectedError());
+    bank.fake.addPages(BANK, {
+      added: [fakeTxn({ id: "t7", accountId: CHECKING.id, amount: -900 })],
+    });
+    bank.fake.calls.length = 0;
+
+    expect(await syncConnection(connectionId)).toEqual(report(1, 0, 0));
+
+    expect(bank.fake.calls.map((call) => call.cursor)).toEqual([
+      `${BANK}:3`,
+      null,
+      `${BANK}:1`,
+      `${BANK}:2`,
+      `${BANK}:3`,
+      `${BANK}:4`,
+    ]);
+    expect((await transactionRows()).map((row) => row.id)).toEqual([
+      "t1",
+      "t2",
+      "t3",
+      "t4",
+      "t5",
+      "t6",
+      "t7",
+    ]);
+    expect(await rows("SELECT id FROM household_accounts")).toHaveLength(2);
+    const stored = await readConnection(bank.database, connectionId);
+    expect(stored?.syncCursor).toBe(`${BANK}:4`);
+    expect(stored?.health).toBe("healthy");
+  });
+
+  it("starts again only once: a second refusal fails the sync as Temporary", async () => {
+    bank.fake.addPages(...threePages());
+    await syncConnection(connectionId);
+    bank.fake.failAt(BANK, 3, new CursorRejectedError());
+    // The provider refuses the cursor it gave on the first page after the restart too.
+    bank.fake.failAt(BANK, 1, new CursorRejectedError());
+    bank.fake.calls.length = 0;
+
+    const failed = syncConnection(connectionId);
+    await expect(failed).rejects.toBeInstanceOf(CursorRejectedError);
+    await expect(failed).rejects.toMatchObject({ kind: "temporary" });
+
+    expect(bank.fake.calls.map((call) => call.cursor)).toEqual([`${BANK}:3`, null, `${BANK}:1`]);
+    const stored = await readConnection(bank.database, connectionId);
+    expect(stored?.syncCursor).toBe(`${BANK}:3`);
+    expect(stored?.health).toBe("retrying");
+    expect(await transactionRows()).toHaveLength(6);
+  });
+
+  it("does not start again for another error, or for a refusal of an empty cursor", async () => {
+    bank.fake.addPages(...threePages());
+    bank.fake.failAt(BANK, 0, new CursorRejectedError());
+
+    await expect(syncConnection(connectionId)).rejects.toBeInstanceOf(CursorRejectedError);
+    expect(bank.fake.calls.map((call) => call.cursor)).toEqual([null]);
+
+    await syncConnection(connectionId);
+    bank.fake.failAt(BANK, 3, "temporary");
+    bank.fake.calls.length = 0;
+    await expect(syncConnection(connectionId)).rejects.toMatchObject({ kind: "temporary" });
+    expect(bank.fake.calls.map((call) => call.cursor)).toEqual([`${BANK}:3`]);
   });
 
   it("reports no change for a sync that brings nothing new", async () => {
