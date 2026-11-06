@@ -2,7 +2,8 @@ import { crc32, inflateRawSync } from "node:zlib";
 import type { TestMember } from "../auth/testing.ts";
 import type { createApp } from "./app.ts";
 
-// Test support: a browser that talks to the app through its HTTP interface, in plain-HTTP mode.
+// Test support: a browser that talks to the app through its HTTP interface, in plain-HTTP mode, or
+// in HTTPS mode through a trusted proxy.
 
 export type App = ReturnType<typeof createApp>;
 
@@ -12,11 +13,19 @@ export class TestBrowser {
   private readonly app: App;
   private readonly appUrl: URL;
   readonly client: string;
+  // In HTTPS mode, the trusted proxy's address and the headers it adds to each request.
+  private readonly proxy: { source: string; headers: Record<string, string> } | undefined;
 
-  constructor(app: App, appUrl: string, client: string) {
+  constructor(
+    app: App,
+    appUrl: string,
+    client: string,
+    proxy?: { source: string; headers: Record<string, string> },
+  ) {
     this.app = app;
     this.appUrl = new URL(appUrl);
     this.client = client;
+    this.proxy = proxy;
   }
 
   // `headers` replace the browser's own, such as an Origin from another site. A header set to
@@ -31,6 +40,7 @@ export class TestBrowser {
     const sent: Record<string, string | undefined> = {
       host: this.appUrl.host,
       origin: this.appUrl.origin,
+      ...this.proxy?.headers,
       ...(body === undefined ? {} : { "content-type": "application/json" }),
       ...(cookie === "" ? {} : { cookie }),
       ...headers,
@@ -44,7 +54,7 @@ export class TestBrowser {
         ),
         body: body === undefined ? undefined : JSON.stringify(body),
       },
-      { incoming: { socket: { remoteAddress: this.client } } },
+      { incoming: { socket: { remoteAddress: this.proxy?.source ?? this.client } } },
     );
     for (const line of res.headers.getSetCookie()) {
       const [pair = ""] = line.split(";");

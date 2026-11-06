@@ -1,4 +1,12 @@
-import { accounts, members, rateLimits, sessions, twoFactors, verifications } from "./schema.ts";
+import {
+  accounts,
+  members,
+  passkeys,
+  rateLimits,
+  sessions,
+  twoFactors,
+  verifications,
+} from "./schema.ts";
 
 // Better Auth's tables under its own model names, for its Drizzle adapter in the auth module.
 export const loginTables = {
@@ -8,4 +16,5 @@ export const loginTables = {
   verification: verifications,
   twoFactor: twoFactors,
   rateLimit: rateLimits,
+  passkey: passkeys,
 };

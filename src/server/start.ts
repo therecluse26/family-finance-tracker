@@ -34,6 +34,7 @@ import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startMonthlyReview } from "../monthly-review/index.ts";
 import {
+  askForDelivery,
   pushSettings,
   requestDelivery,
   requestDeliveryAt,
@@ -197,11 +198,17 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       // A release with a newer CE data year asks for its Benchmark redraft as it first runs.
       await redrafts.atStart();
       await jobs.tick();
+      const auth = createAuth({ database, secrets, appOrigin: options.security.appUrl.origin });
+      // A passkey works at one web address only: those made under another APP_URL host are
+      // deleted, with a System notice for each Member who lost one (spec 09, Changing APP_URL).
+      if ((await auth.removeOtherHostPasskeys(new Date())) > 0) {
+        await askForDelivery();
+      }
       const server = await startServer({
         port: options.port,
         webRoot: options.webRoot,
         security: options.security,
-        auth: createAuth({ database, secrets, appOrigin: options.security.appUrl.origin }),
+        auth,
         database,
         secrets,
         plaid: plaidSettings({ database, secrets }),

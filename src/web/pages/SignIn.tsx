@@ -1,9 +1,11 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { PASSKEYS_PLAIN_HTTP_NOTE, passkeyState, signInWithPasskey } from "../passkeys.ts";
 import { openWizardIfNeeded } from "../setup-gate.ts";
 
-// Sign-in takes the password, then a TOTP code or a backup code. Better Auth answers under
-// /api/auth/; the web app talks to it with plain requests, since only src/auth may import it.
+// Sign-in takes the password, then a TOTP code or a backup code. Over HTTPS a passkey alone signs
+// the Member in instead. Better Auth answers under /api/auth/; the web app talks to it with plain
+// requests, since only src/auth may import it.
 
 type Step = "password" | "code";
 
@@ -80,6 +82,21 @@ export function SignIn() {
     }
   }
 
+  async function signInByPasskey() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const res = await signInWithPasskey();
+      if (!res.ok) return setError("That passkey did not sign you in. Use your password instead.");
+      await navigate("/", { replace: true });
+    } catch {
+      setError("No passkey was used. Try again, or use your password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const passkeys = passkeyState();
   const field = "mt-1 block w-full rounded border border-gray-300 px-3 py-2";
   const button = "mt-4 rounded bg-blue-700 px-4 py-2 text-white disabled:opacity-50";
 
@@ -113,6 +130,19 @@ export function SignIn() {
           <button className={button} type="submit" disabled={busy}>
             Next
           </button>
+          {passkeys === "offered" ? (
+            <button
+              className="mt-4 ml-3 rounded border border-gray-300 px-4 py-2 disabled:opacity-50"
+              type="button"
+              disabled={busy}
+              onClick={() => void signInByPasskey()}
+            >
+              Sign in with a passkey
+            </button>
+          ) : null}
+          {passkeys === "plain HTTP" ? (
+            <p className="mt-4 text-gray-600">{PASSKEYS_PLAIN_HTTP_NOTE}</p>
+          ) : null}
         </form>
       ) : (
         <form className="mt-4" onSubmit={submitCode}>

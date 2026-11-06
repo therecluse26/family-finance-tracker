@@ -1,6 +1,6 @@
 import { and, eq, gt, lte, or } from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { accounts, loginResets, members, sessions, twoFactors } from "./schema.ts";
+import { accounts, loginResets, members, passkeys, sessions, twoFactors } from "./schema.ts";
 
 // Reset links in app.db (spec 09, Login reset). The auth module makes and checks each token; these
 // functions store and read only its hash, and change a Member's login rows in the same
@@ -27,7 +27,7 @@ export async function findMemberIdByEmail(
 }
 
 // Makes a reset, in one transaction: ends every session of the Member, deletes their password,
-// TOTP and backup codes, and stores the new link's hash in place of their earlier link. It also
+// TOTP, backup codes and passkeys, and stores the new link's hash in place of their earlier link. It also
 // deletes the links that have expired. False, with nothing changed, when no Member has the ID.
 export async function startLoginReset(database: Database, reset: NewLoginReset): Promise<boolean> {
   return database.transaction(async (tx) => {
@@ -39,6 +39,7 @@ export async function startLoginReset(database: Database, reset: NewLoginReset):
     await tx.delete(sessions).where(eq(sessions.userId, reset.memberId));
     await tx.delete(accounts).where(eq(accounts.userId, reset.memberId));
     await tx.delete(twoFactors).where(eq(twoFactors.userId, reset.memberId));
+    await tx.delete(passkeys).where(eq(passkeys.userId, reset.memberId));
     await tx
       .delete(loginResets)
       .where(or(eq(loginResets.memberId, reset.memberId), lte(loginResets.expiresAt, reset.at)));
@@ -83,7 +84,7 @@ export type FinishedLoginReset = {
 
 // Uses up a link and sets the Member's new password, TOTP and backup codes, in one transaction. Of
 // two requests at once with one link, only one gets true. False, with nothing changed, when the
-// link is used, replaced, or expired. Any session made since the reset ends.
+// link is used, replaced, or expired. Any session or passkey made since the reset ends.
 export async function finishLoginReset(
   database: Database,
   finish: FinishedLoginReset,
@@ -97,6 +98,7 @@ export async function finishLoginReset(
     await tx.delete(sessions).where(eq(sessions.userId, finish.memberId));
     await tx.delete(accounts).where(eq(accounts.userId, finish.memberId));
     await tx.delete(twoFactors).where(eq(twoFactors.userId, finish.memberId));
+    await tx.delete(passkeys).where(eq(passkeys.userId, finish.memberId));
     await tx.insert(accounts).values({
       id: finish.account.id,
       accountId: finish.memberId,

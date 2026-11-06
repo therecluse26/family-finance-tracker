@@ -123,6 +123,33 @@ export const twoFactors = sqliteTable("two_factors", {
   lastTotpStep: integer("last_totp_step"),
 });
 
+// A Member's passkeys (spec 09, Signing in), each a WebAuthn public key that signs the Member in
+// with no TOTP code. A passkey works at one web address only: each row keeps the APP_URL host it
+// was made under, and the start deletes every row made under another host (spec 09, Changing
+// APP_URL). Removing the Member, or a reset of their login, deletes their rows.
+export const passkeys = sqliteTable(
+  "passkeys",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: text("member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    // The credential ID the authenticator gave, which a sign-in names. No two passkeys share one.
+    credentialID: text("credential_id").notNull().unique(),
+    counter: integer("counter").notNull(),
+    deviceType: text("device_type").notNull(),
+    backedUp: integer("backed_up", { mode: "boolean" }).notNull(),
+    transports: text("transports"),
+    createdAt: moment("created_at").notNull(),
+    aaguid: text("aaguid"),
+    // The APP_URL host, without its port, when the passkey was made: its WebAuthn RP ID.
+    appHost: text("app_host").notNull(),
+  },
+  (table) => [index("passkeys_member_id").on(table.userId)],
+);
+
 // Better Auth's request counts for its own rate limits, one row for each client address and path.
 export const rateLimits = sqliteTable("rate_limits", {
   id: text("id").primaryKey(),

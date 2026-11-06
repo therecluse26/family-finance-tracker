@@ -454,6 +454,7 @@ export {
   type NewNotice,
   type StoredNotice,
 } from "./notices.ts";
+export { removePasskeysUnderOtherHosts } from "./passkeys.ts";
 export {
   type CreditCardRow,
   listCreditCards,

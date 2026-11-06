@@ -40,6 +40,7 @@ describe("the data export's allowlist", () => {
       schema.accounts,
       schema.verifications,
       schema.twoFactors,
+      schema.passkeys,
       schema.rateLimits,
       schema.signInTries,
       schema.vapidKeys,

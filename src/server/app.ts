@@ -227,6 +227,9 @@ export function createApp(
       // So does setting a new login by reset link.
       .use("/api/auth/login-reset/*", sameOriginChanges(security.appUrl.origin))
       .use("/api/auth/login-reset/*", jsonOnly)
+      // So does signing in with a passkey, and so do the passkey routes of a signed-in Member.
+      .use("/api/auth/passkey/*", sameOriginChanges(security.appUrl.origin))
+      .use("/api/auth/passkey/*", jsonOnly)
       .all("/api/auth/*", (c) => auth.handle(c.req.raw, c.var.clientAddress))
       // The wizard's progress, which every page reads, before any Member can sign in. It says only
       // which step comes next.

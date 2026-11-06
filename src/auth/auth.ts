@@ -16,6 +16,7 @@ import {
   TOTP_DIGITS,
   TOTP_PERIOD_SECONDS,
 } from "./my-login.ts";
+import { passkeyAnswer, passkeys, removeOtherHostPasskeys } from "./passkeys.ts";
 import { sealedAdapter } from "./sealed-adapter.ts";
 import { CLIENT_ADDRESS_HEADER, signInLimit } from "./sign-in-limit.ts";
 import { totpOnce } from "./totp-once.ts";
@@ -47,6 +48,13 @@ const ROUTES = new Set([
   "POST /login-reset/check",
   "POST /login-reset/new-totp",
   "POST /login-reset/finish",
+  // Passkeys, over HTTPS only. Each refuses in plain-HTTP mode.
+  "GET /passkey/generate-register-options",
+  "POST /passkey/verify-registration",
+  "GET /passkey/list-user-passkeys",
+  "POST /passkey/delete-passkey",
+  "GET /passkey/generate-authenticate-options",
+  "POST /passkey/verify-authentication",
 ]);
 
 // A TOTP code is 6 digits. A backup code is two groups of 5 letters and digits.
@@ -71,15 +79,19 @@ export type Auth = {
   // The app keeps only its hash, so this is the one time anyone sees it.
   makeInvite(madeBy: string, at: Date): Promise<{ token: string; expiresAt: Date }>;
   // The one credential-removal hook, as a Member is removed (spec 09, Members): ends every session
-  // of the Member at once, and deletes their password, TOTP, backup codes, and a TOTP secret waiting
-  // for its first code. It runs after the Member's row is deleted, whose foreign keys already took
-  // most of these, and is safe to run again. Passkeys (T97) join here.
+  // of the Member at once, and deletes their password, TOTP, backup codes, passkeys, and a TOTP
+  // secret waiting for its first code. It runs after the Member's row is deleted, whose foreign
+  // keys already took most of these, and is safe to run again.
   removeLogin(memberId: string): Promise<void>;
   // "Reset login" and `fft reset-login` (spec 09, Login reset): a new reset link's token for the
-  // Member, and when it stops working. The Member's sessions end, and their password, TOTP and
-  // backup codes are deleted, in the transaction that stores the link's hash; then the
+  // Member, and when it stops working. The Member's sessions end, and their password, TOTP, backup
+  // codes and passkeys are deleted, in the transaction that stores the link's hash; then the
   // credential-removal hook runs. Undefined, with nothing changed, when no Member has the ID.
   resetLogin(memberId: string, at: Date): Promise<{ token: string; expiresAt: Date } | undefined>;
+  // The start's check (spec 09, Changing APP_URL): deletes every passkey made under another host
+  // than APP_URL's, and adds one System notice for each Member who lost one, in one transaction.
+  // Returns how many Members lost a passkey.
+  removeOtherHostPasskeys(at: Date): Promise<number>;
 };
 
 export type FreshCode = "fresh" | "wrong" | "too many tries";
@@ -121,6 +133,7 @@ function buildBetterAuth(options: AuthOptions) {
   // The login signing secret signs session cookies and encrypts TOTP secrets and backup codes.
   const signingSecret = secrets.derive("login signing secret").toString("hex");
   const fresh = { check: async (_headers: Headers, _code: string) => false };
+  const passkey = passkeys({ appOrigin, freshCode: (headers, code) => fresh.check(headers, code) });
 
   const auth = betterAuth({
     appName: APP_NAME,
@@ -147,6 +160,9 @@ function buildBetterAuth(options: AuthOptions) {
       // Renews the session each time the Member uses the app.
       updateAge: 0,
       cookieCache: { enabled: false },
+      // Better Auth's "fresh session" age, which its passkey plugin asks of a Member who adds a
+      // passkey, is off: a fresh TOTP or backup code stands for it instead.
+      freshAge: 0,
     },
     rateLimit: { enabled: true, storage: "database" },
     advanced: {
@@ -175,6 +191,8 @@ function buildBetterAuth(options: AuthOptions) {
         // The sign-in limit counts every failed password and code instead.
         accountLockout: { enabled: false },
       }),
+      passkey.rules,
+      passkey.plugin,
     ],
   });
 
@@ -214,7 +232,10 @@ export function createAuth(options: AuthOptions): Auth {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
       const headers = withClientAddress(request.headers, clientAddress);
-      return auth.handler(new Request(request, { headers, duplex: "half" } as RequestInit));
+      const res = await auth.handler(
+        new Request(request, { headers, duplex: "half" } as RequestInit),
+      );
+      return passkeyAnswer(path, res);
     },
 
     async signedIn(request, clientAddress) {
@@ -246,6 +267,10 @@ export function createAuth(options: AuthOptions): Auth {
       await context.internalAdapter.deleteUserSessions(memberId);
       await context.internalAdapter.deleteAccounts(memberId);
       await context.adapter.deleteMany({
+        model: "passkey",
+        where: [{ field: "userId", value: memberId }],
+      });
+      await context.adapter.deleteMany({
         model: "twoFactor",
         where: [{ field: "userId", value: memberId }],
       });
@@ -257,6 +282,9 @@ export function createAuth(options: AuthOptions): Auth {
       if (reset !== undefined) await made.removeLogin(memberId);
       return reset;
     },
+
+    removeOtherHostPasskeys: (at) =>
+      removeOtherHostPasskeys(options.database, options.appOrigin, at),
   };
   instances.set(made, auth);
   return made;

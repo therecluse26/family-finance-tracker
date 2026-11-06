@@ -1,11 +1,21 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { BackupCodes, BUTTON, ErrorLine, NewTotp, TextField } from "../../components/Fields.tsx";
+import {
+  addPasskey,
+  deletePasskey,
+  listPasskeys,
+  PASSKEYS_NOT_IN_BROWSER,
+  PASSKEYS_PLAIN_HTTP_NOTE,
+  type PasskeyRow,
+  passkeyState,
+} from "../../passkeys.ts";
 import { postJson, refusalText } from "../../requests.ts";
 
 // Settings, My login: the signed-in Member changes their own password, TOTP, and backup codes
 // (spec 09, Members). Each change asks for a fresh TOTP code or backup code, through the routes
-// under /api/auth/my-login/. Passkeys come with their own ticket.
+// under /api/auth/my-login/. Over HTTPS the Member also adds and deletes passkeys; adding one asks
+// for a fresh code too.
 
 const CODE_LABEL = "A code from your authenticator app, or a backup code";
 const WRONG_CODE = "Wrong code.";
@@ -169,6 +179,108 @@ function ChangeBackupCodes() {
   );
 }
 
+function Passkeys() {
+  const state = passkeyState();
+  const [rows, setRows] = useState<PasskeyRow[] | undefined>();
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const action = useAction();
+
+  const load = useCallback(() => {
+    listPasskeys()
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, []);
+
+  useEffect(() => {
+    if (state === "offered") load();
+  }, [state, load]);
+
+  if (state !== "offered") {
+    return (
+      <section className="mt-6">
+        <h3 className="font-semibold">Passkeys</h3>
+        <p className="mt-1 text-gray-600">
+          {state === "plain HTTP" ? PASSKEYS_PLAIN_HTTP_NOTE : PASSKEYS_NOT_IN_BROWSER}
+        </p>
+      </section>
+    );
+  }
+
+  function add(event: FormEvent) {
+    event.preventDefault();
+    void action.run(
+      () => addPasskey({ code: code.trim(), name: name.trim() }),
+      async () => {
+        setName("");
+        setCode("");
+        load();
+        return "Your passkey is added. It signs you in with no code.";
+      },
+    );
+  }
+
+  function remove(id: string) {
+    void action.run(
+      () => deletePasskey(id),
+      async () => {
+        load();
+        return "The passkey is deleted.";
+      },
+    );
+  }
+
+  return (
+    <section className="mt-6">
+      <h3 className="font-semibold">Passkeys</h3>
+      <p className="mt-1 text-gray-600">
+        A passkey signs you in on its own, with no password and no code. It works only at this app's
+        address.
+      </p>
+      {rows === undefined ? null : rows.length === 0 ? (
+        <p className="mt-2">You have no passkeys.</p>
+      ) : (
+        <ul className="mt-2">
+          {rows.map((row) => (
+            <li key={row.id} className="mt-1 flex items-center gap-3">
+              <span>
+                {row.name ?? "Passkey"}, added {new Date(row.createdAt).toLocaleDateString()}
+              </span>
+              <button
+                className="rounded border border-gray-300 px-2 py-1 disabled:opacity-50"
+                type="button"
+                disabled={action.busy}
+                onClick={() => remove(row.id)}
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={add}>
+        <TextField
+          label="A name for it, such as your phone's (optional)"
+          value={name}
+          onChange={setName}
+          optional
+        />
+        <TextField
+          label={CODE_LABEL}
+          autoComplete="one-time-code"
+          value={code}
+          onChange={setCode}
+        />
+        <button className={BUTTON} type="submit" disabled={action.busy}>
+          Add a passkey
+        </button>
+      </form>
+      <ErrorLine error={action.error} />
+      {action.done === undefined ? null : <p className="mt-3">{action.done}</p>}
+    </section>
+  );
+}
+
 function SignOut() {
   const navigate = useNavigate();
   const action = useAction();
@@ -199,6 +311,7 @@ export function MyLogin() {
       <ChangePassword />
       <ChangeTotp />
       <ChangeBackupCodes />
+      <Passkeys />
       <SignOut />
     </>
   );

@@ -533,6 +533,46 @@ describe("starting the app", () => {
     expect(jobRuns).toEqual(["SlowJob"]);
   });
 
+  it("deletes at start each passkey made under another APP_URL host, with a System notice for each Member who lost one", async () => {
+    const first = await start(shipped);
+    const auth = createAuth({
+      database: first.database,
+      secrets: first.secrets,
+      appOrigin: "https://money.example.com",
+    });
+    const alice = await addMember(auth, { name: "Alice", email: "alice@example.test" });
+    const bob = await addMember(auth, { name: "Bob", email: "bob@example.test" });
+    const passkey = (id: string, memberId: string, host: string) =>
+      first.database.$client.execute({
+        sql: `INSERT INTO passkeys (id, public_key, member_id, credential_id, counter, device_type,
+          backed_up, created_at, app_host) VALUES (?, 'key', ?, ?, 0, 'singleDevice', 0, ?, ?)`,
+        args: [id, memberId, `credential-${id}`, new Date().toISOString(), host],
+      });
+    await passkey("alice-old", alice.id, "nas.example.net");
+    await passkey("alice-now", alice.id, "money.example.com");
+    await passkey("bob-now", bob.id, "money.example.com");
+    await stop(first);
+
+    const second = await start(shipped);
+
+    const rows = async (sql: string) => (await second.database.$client.execute(sql)).rows;
+    expect((await rows("SELECT id FROM passkeys ORDER BY id")).map((row) => row.id)).toEqual([
+      "alice-now",
+      "bob-now",
+    ]);
+    const notices = await rows("SELECT kind, text FROM system_notices");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ kind: "event" });
+    expect(String(notices[0]?.text)).toContain("Alice's passkeys");
+    await stop(second);
+
+    // A start under the same host finds nothing more to delete.
+    const third = await start(shipped);
+    expect(await third.database.$client.execute("SELECT id FROM system_notices")).toMatchObject({
+      rows: [expect.anything()],
+    });
+  });
+
   describe("web push in each security mode", () => {
     // The built page names the manifest, as vite-plugin-pwa writes it.
     const PAGE = '<!doctype html><link rel="manifest" href="/manifest.webmanifest">';

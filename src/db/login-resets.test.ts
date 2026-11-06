@@ -59,6 +59,21 @@ async function addLogin(id: string, n = 1): Promise<void> {
   await db
     .insert(schema.twoFactors)
     .values({ id: `two-factor-${id}`, userId: id, secret: "sealed", backupCodes: "sealed" });
+  await addPasskey(id);
+}
+
+async function addPasskey(id: string, n = 1): Promise<void> {
+  await test.database.insert(schema.passkeys).values({
+    id: `passkey-${id}-${n}`,
+    publicKey: "public key",
+    userId: id,
+    credentialID: `credential-${id}-${n}`,
+    counter: 0,
+    deviceType: "multiDevice",
+    backedUp: true,
+    createdAt: AT,
+    appHost: "money.example.com",
+  });
 }
 
 const reset = (id: string, memberId: string, at = AT) => ({
@@ -85,13 +100,16 @@ const finish = (resetId: string, memberId: string, at: Date) => ({
 const ids = (rows: unknown[] | undefined) => (rows as { id: string }[]).map((row) => row.id).sort();
 
 describe("making a reset", () => {
-  it("ends only that Member's sessions and deletes only their password, TOTP and backup codes", async () => {
+  it("ends only that Member's sessions and deletes only their password, TOTP, backup codes and passkeys", async () => {
+    await addPasskey("dana", 2);
+
     expect(await startLoginReset(test.database, reset("reset-1", "dana"))).toBe(true);
 
     const after = await readEveryTable(test.database);
     expect(ids(after.sessions)).toEqual(["session-alex-1"]);
     expect(ids(after.accounts)).toEqual(["account-alex"]);
     expect(ids(after.two_factors)).toEqual(["two-factor-alex"]);
+    expect(ids(after.passkeys)).toEqual(["passkey-alex-1"]);
     expect(after.login_resets).toMatchObject([{ id: "reset-1", member_id: "dana" }]);
   });
 
@@ -139,8 +157,9 @@ describe("finishing a reset", () => {
     await startLoginReset(test.database, reset("reset-2", "alex"));
   });
 
-  it("uses up the link and sets the new login, ends any session made since the reset, and leaves other Members' logins", async () => {
+  it("uses up the link and sets the new login, ends any session or passkey made since the reset, and leaves other Members' logins", async () => {
     await addLogin("dana", 2);
+    await addPasskey("dana", 2);
     await addLogin("alex");
 
     expect(await finishLoginReset(test.database, finish("reset-1", "dana", later(1)))).toBe(true);
@@ -158,6 +177,7 @@ describe("finishing a reset", () => {
       }),
     );
     expect(ids(after.two_factors)).toEqual(["new-two-factor-reset-1", "two-factor-alex"]);
+    expect(ids(after.passkeys)).toEqual(["passkey-alex-1"]);
     expect(after.two_factors).toContainEqual(
       expect.objectContaining({
         id: "new-two-factor-reset-1",

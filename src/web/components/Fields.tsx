@@ -21,6 +21,8 @@ export function TextField(props: {
   onChange: (value: string) => void;
   type?: string;
   autoComplete?: string;
+  // A field the form may send empty.
+  optional?: boolean;
 }) {
   return (
     <label className="mt-3 block">
@@ -29,7 +31,7 @@ export function TextField(props: {
         className={FIELD}
         type={props.type ?? "text"}
         autoComplete={props.autoComplete}
-        required
+        required={props.optional !== true}
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
       />

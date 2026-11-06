@@ -56,6 +56,17 @@ async function addDanasRows(other: string | null = null): Promise<void> {
   await db
     .insert(schema.twoFactors)
     .values({ id: "two-factor-1", userId: dana, secret: "sealed", backupCodes: "sealed" });
+  await db.insert(schema.passkeys).values({
+    id: "passkey-1",
+    publicKey: "public key",
+    userId: dana,
+    credentialID: "credential-1",
+    counter: 0,
+    deviceType: "multiDevice",
+    backedUp: true,
+    createdAt: AT,
+    appHost: "money.example.com",
+  });
   await db.insert(schema.alertChannels).values({ memberId: dana, push: true, email: true });
   const [device] = await db
     .insert(schema.pushDevices)
@@ -178,7 +189,7 @@ describe("removing a Member", () => {
     for (const key of keys) expect(key).toMatch(/: (CASCADE(, not null)?|SET NULL)$/);
   });
 
-  it("deletes the Member's login rows, devices, invite links and reset link, keeps every other row with no Member, and keeps their name on their Goals and Chat messages", async () => {
+  it("deletes the Member's login rows and passkeys, devices, invite links and reset link, keeps every other row with no Member, and keeps their name on their Goals and Chat messages", async () => {
     await addMemberRow("alex", "Alex");
     await addMemberRow("dana", "Dana");
     await addDanasRows("alex");
@@ -190,6 +201,7 @@ describe("removing a Member", () => {
       "sessions",
       "accounts",
       "two_factors",
+      "passkeys",
       "alert_channels",
       "push_devices",
       "push_sends",
