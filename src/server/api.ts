@@ -976,7 +976,10 @@ export const api = new Hono<ServerEnv>()
     const { status, ...refused } = answered;
     return c.json(refused, status);
   })
-  .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
+  // `fakeBank` is true only when the fake adapter runs, as under `pnpm dev`.
+  .get("/connections", async (c) =>
+    c.json({ connections: await c.var.bank.connections(), fakeBank: c.var.bank.fakeBank() }),
+  )
   // Progress per Connection while its history loads (spec 02, First history load).
   .get("/history-status", async (c) => c.json(await c.var.bank.historyStatus()))
   // Retry on the notice of a stopped First run or bank-added-later job (spec 08, When AI does not

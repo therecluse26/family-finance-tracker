@@ -5,6 +5,7 @@ import type { AccountView, ConnectionView } from "../../../server/bank-views.ts"
 import {
   BeforeLink,
   ConnectionItem,
+  FakeBankLink,
   ImportConnection,
   ImportPreviewList,
   LinkBank,
@@ -150,6 +151,16 @@ describe("Settings → Banks: Import Plaid Connection", () => {
     expect(shown).toContain("First Bank");
     expect(shown).toContain("Checking ··1234");
     expect(shown).toContain("Loan");
+  });
+});
+
+describe("Settings → Banks: the fake bank, under `pnpm dev` only", () => {
+  it("offers Link a fake bank only when the server says the fake adapter runs", () => {
+    const shown = text(renderToString(<FakeBankLink offered={true} onLinked={() => {}} />));
+    const none = renderToString(<FakeBankLink offered={false} onLinked={() => {}} />);
+
+    expect(shown).toContain("Link a fake bank (dev only)");
+    expect(none).toBe("");
   });
 });
 

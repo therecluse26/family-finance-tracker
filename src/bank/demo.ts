@@ -7,7 +7,7 @@ import { syncConnection } from "./sync.ts";
 // visual review use it, and `pnpm seed:demo` loads it into a dev app.db. Its banks have the shape
 // of the example institutions (spec 01, Who it serves), and it holds each case of the
 // Treatment table (spec 03). Every name, number, and amount in it is made up. It is never part of
-// the image, and no screen offers the fake provider.
+// the image. Only `pnpm dev` offers the fake provider on a screen: its fake bank button.
 //
 // The data comes from a fixed seed, so every run builds the same records.
 
@@ -932,6 +932,16 @@ export function demoRecords(): TxnRecord[] {
   return DEMO_BANKS.flatMap((demo) =>
     demo.pages.flatMap((page) => [...(page.added ?? []), ...(page.changed ?? [])]),
   );
+}
+
+// Scripts each demo bank into the fake adapter and lets it link, as `pnpm dev` does at start. Its
+// fake bank button then links them one at a time through the normal link path, and a demo bank's
+// later syncs, after a restart too, read the same script.
+export function offerDemoBanks(fake: FakeBankAdapter): void {
+  for (const demo of DEMO_BANKS) {
+    fake.addPages(demo.bankId, ...demo.pages);
+    fake.addLinkableBank(demo);
+  }
 }
 
 // Loads the demo Household into app.db through the fake adapter: one Connection for each demo

@@ -28,7 +28,7 @@ The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 
 | Command | What it does |
 |---|---|
 | `pnpm install` | Installs the packages |
-| `pnpm dev` | Runs the web app and the API at http://localhost:5173, which is also its `APP_URL` unless you set one. It keeps its own `app.db` in `.dev/`. With no Master key set, it makes `.dev/master.key` on its first start and prints the setup link until the first Member exists, so it needs no other step |
+| `pnpm dev` | Runs the web app and the API at http://localhost:5173, which is also its `APP_URL` unless you set one. It runs the same services as `pnpm start`: the bank module, the background jobs, the follow-up work, and email. It leaves out the two scheduled tasks that call outside services, the update check (GitHub) and the CPI fetch (BLS), so it makes no scheduled outside call. It keeps its own `app.db` and `jobs.db` in `.dev/`. When you save a server file, it stops these services and starts them again on the new code, once for a burst of saves; Ctrl-C stops them, then exits. With no Master key set, it makes `.dev/master.key` on its first start and prints the setup link until the first Member exists, so it needs no other step |
 | `pnpm lint` | Checks lint and formatting with Biome; `pnpm format` fixes them |
 | `pnpm typecheck` | Type-checks the server, the web app, and the tests |
 | `pnpm test` | Runs the tests with Vitest |
@@ -37,6 +37,12 @@ The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 
 | `pnpm db:generate` | Writes a migration into `drizzle/` after a change to `src/db/schema.ts`. Commit it with the change |
 | `pnpm check:licenses` | Checks every package's license against the allowlist; a package whose license field is missing, `UNLICENSED`, or `SEE LICENSE IN …` needs a record in `licenses/reviewed.json` |
 | `pnpm check:audit` | Runs `pnpm audit --prod --audit-level high` against the public registry, in a temporary folder that holds only `package.json` and `pnpm-lock.yaml`; an advisory with no fix passes only with a record in `security/audit-exceptions.json`, and any pnpm setting that ignores advisories fails the check |
+
+### Linking a bank under `pnpm dev`
+
+Settings → Banks shows a **Link a fake bank (dev only)** button under `pnpm dev`. Each press links the next bank of the made-up demo Household through the fake adapter, by the same steps as a Plaid link: the first sync, the history load, and the follow-up jobs all run. It reaches no bank and needs no Plaid keys. The built app has neither the fake adapter nor the button.
+
+To try the real Plaid Link screen locally, the owner may start `pnpm dev` with `FFT_DEV_PLAID_ENV=sandbox` and enter their own Plaid sandbox keys in Settings → Banks. Only unbuilt code reads that setting. Agents never do this: they use the fake adapter and the local fake Plaid server only.
 
 CI also scans every commit, with its file names, author, and message, and the files as they stand, for secrets with [gitleaks](https://github.com/gitleaks/gitleaks): `scripts/secret-scan.sh <gitleaks binary>` runs the scan with `.gitleaks.toml`. It refuses a `.gitleaksignore` file, and any `node_modules/`, `.pdf`, `.doc(x)`, or `.xls(x)` file in git, since gitleaks skips those.
 

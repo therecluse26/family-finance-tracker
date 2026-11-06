@@ -1,6 +1,7 @@
 import {
   accountBalances,
   adapterActions,
+  adapterRuns,
   addUnconnectedAccount,
   balanceLine,
   editUnconnectedAccount,
@@ -321,6 +322,10 @@ export function bankViews(database: Database): BankViews {
         removed: connection.removedAt !== null,
         held: connection.syncHeld,
       }));
+    },
+
+    fakeBank() {
+      return adapterRuns("fake");
     },
 
     historyStatus() {

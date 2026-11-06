@@ -409,10 +409,53 @@ export function ImportConnection(props: { plaid: PlaidView; onImported: () => vo
   );
 }
 
+// `pnpm dev` only: links the next demo bank through the fake adapter, by the normal link path, so
+// its first sync and follow-up jobs run. The server offers it only while the fake adapter runs,
+// which it never does in the built app.
+export function FakeBankLink(props: { offered: boolean; onLinked: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
+
+  async function link() {
+    setBusy(true);
+    setError(undefined);
+    setDone(undefined);
+    try {
+      // The built app's API has no dev routes, so the typed client does not name this one.
+      const res = await fetch("/api/dev/fake-bank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) return setError(await refusal(res));
+      const body = (await res.json()) as { connection: { bankName: string } };
+      setDone(`Linked ${body.connection.bankName}. Its first sync has started.`);
+      props.onLinked();
+    } catch {
+      setError("The server did not answer.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!props.offered) return null;
+  return (
+    <div className="mt-4">
+      <button className={BUTTON} type="button" onClick={link} disabled={busy}>
+        Link a fake bank (dev only)
+      </button>
+      <ErrorLine error={error} />
+      {done === undefined ? null : <p className="mt-3">{done}</p>}
+    </div>
+  );
+}
+
 // The Connections, with the ways to add one.
 export function Connections(props: { plaid: PlaidView; onChanged: () => void }) {
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [accounts, setAccounts] = useState<AccountView[]>([]);
+  const [fakeBank, setFakeBank] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const load = useCallback(() => {
@@ -420,9 +463,12 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
       .then(async ([connectionsRes, accountsRes]) => {
         if (!connectionsRes.ok) return setError(await refusal(connectionsRes));
         if (!accountsRes.ok) return setError(await refusal(accountsRes));
-        setConnections(
-          ((await connectionsRes.json()) as { connections: ConnectionView[] }).connections,
-        );
+        const listed = (await connectionsRes.json()) as {
+          connections: ConnectionView[];
+          fakeBank: boolean;
+        };
+        setConnections(listed.connections);
+        setFakeBank(listed.fakeBank);
         setAccounts(((await accountsRes.json()) as { accounts: AccountView[] }).accounts);
       })
       .catch(() => setError("The server did not answer."));
@@ -470,6 +516,7 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
         onLinked={changed}
       />
       <ImportConnection plaid={props.plaid} onImported={changed} />
+      <FakeBankLink offered={fakeBank} onLinked={load} />
     </section>
   );
 }

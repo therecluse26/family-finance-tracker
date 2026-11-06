@@ -138,7 +138,7 @@ function installableOverHttpsOnly(mode: "https" | "http"): MiddlewareHandler<Ser
   };
 }
 
-const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
+export const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sendsJson(c)) {
     return c.json({ error: "Send JSON." }, 415);
   }
@@ -194,6 +194,8 @@ export function createApp(
     chat?: Chat;
     // Adding a Goal and editing its words, with the AI's reading. Without it, no Goal is added.
     goalWriting?: GoalWriting;
+    // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
+    devRoutes?: Hono<ServerEnv>;
   } = {},
 ) {
   const bank = bankViews(database);
@@ -298,6 +300,7 @@ export function createApp(
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .route("/api", api)
+      .route("/api/dev", services.devRoutes ?? new Hono<ServerEnv>())
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
       .use(installableOverHttpsOnly(security.appUrl.mode))
       .use(serveStatic({ root: webRoot }))
