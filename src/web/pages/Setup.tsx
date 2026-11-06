@@ -8,10 +8,13 @@ import { grouped } from "../master-key.ts";
 import { postJson, refusalText } from "../requests.ts";
 import {
   codeFromHash,
+  type FirstMemberDraft,
   fetchSetupProgress,
   fetchSetupState,
   forgetSetupCode,
+  savedFirstMemberDraft,
   savedSetupCode,
+  saveFirstMemberDraft,
   saveSetupCode,
   setupCodeRefused,
   skippedWizardSteps,
@@ -114,10 +117,11 @@ function SetupLink(props: {
   );
 }
 
-// Step 2: name, email, and password, then TOTP, then the backup codes.
-function FirstMember(props: { setupCode: string; onBack: () => void; onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+// Step 2: name, email, and password, then TOTP, then the backup codes. Name and Email survive a
+// reload, with the setup code; the password does not.
+export function FirstMember(props: { setupCode: string; onBack: () => void; onDone: () => void }) {
+  const [draft, setDraft] = useState(savedFirstMemberDraft);
+  const { name, email } = draft;
   const [password, setPassword] = useState("");
   const [totpURI, setTotpURI] = useState<string | undefined>();
   const [totpCode, setTotpCode] = useState("");
@@ -135,6 +139,11 @@ function FirstMember(props: { setupCode: string; onBack: () => void; onDone: () 
     } finally {
       setBusy(false);
     }
+  }
+
+  function change(next: FirstMemberDraft) {
+    setDraft(next);
+    saveFirstMemberDraft(next);
   }
 
   function startTotp(event: FormEvent) {
@@ -209,13 +218,18 @@ function FirstMember(props: { setupCode: string; onBack: () => void; onDone: () 
     <form className="mt-4" onSubmit={startTotp}>
       <h3 className="text-lg font-semibold">Make your login</h3>
       <p className="mt-2">You are the first Member. You can invite the others later.</p>
-      <TextField label="Name" autoComplete="name" value={name} onChange={setName} />
+      <TextField
+        label="Name"
+        autoComplete="name"
+        value={name}
+        onChange={(next) => change({ name: next, email })}
+      />
       <TextField
         label="Email"
         type="email"
         autoComplete="username"
         value={email}
-        onChange={setEmail}
+        onChange={(next) => change({ name, email: next })}
       />
       <TextField
         label="Password, at least 12 characters"

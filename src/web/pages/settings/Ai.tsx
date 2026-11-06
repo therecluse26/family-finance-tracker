@@ -377,25 +377,40 @@ function RemoveAiProvider(props: { onRemoved: () => void }) {
   );
 }
 
+export const COST_CAP_SAVED = "The AI cost cap is saved.";
+
+// Saves the AI cost cap typed in dollars. Answers the new usage with the saved message, or the
+// words for a cap the app or the server refuses.
+export async function saveCostCap(
+  typed: string,
+): Promise<{ usage: AiUsageView; saved: string } | { error: string }> {
+  const capCents = centsOfText(typed);
+  if (capCents === undefined || capCents > MAX_COST_CAP_CENTS) {
+    return { error: "Enter the AI cost cap in dollars, from $0 to $10,000." };
+  }
+  const res = await api.ai["cost-cap"].$put({ json: { capCents } });
+  if (!res.ok) return { error: await refusal(res) };
+  return { usage: ((await res.json()) as { usage: AiUsageView }).usage, saved: COST_CAP_SAVED };
+}
+
 // The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap).
 export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsageView) => void }) {
   const { usage } = props;
   const [cap, setCap] = useState(String(usage.capCents / 100));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(undefined);
-    const capCents = centsOfText(cap);
-    if (capCents === undefined || capCents > MAX_COST_CAP_CENTS) {
-      return setError("Enter the AI cost cap in dollars, from $0 to $10,000.");
-    }
+    setDone(undefined);
     setBusy(true);
     try {
-      const res = await api.ai["cost-cap"].$put({ json: { capCents } });
-      if (!res.ok) return setError(await refusal(res));
-      props.onSaved(((await res.json()) as { usage: AiUsageView }).usage);
+      const answer = await saveCostCap(cap);
+      if ("error" in answer) return setError(answer.error);
+      props.onSaved(answer.usage);
+      setDone(answer.saved);
     } catch {
       setError("The server did not answer.");
     } finally {
@@ -415,6 +430,7 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
         Save cap
       </button>
       <ErrorLine error={error} />
+      {done === undefined ? null : <p className="mt-3">{done}</p>}
       <p className="mt-3">
         <Link className="text-blue-700 underline" to="/settings/ai/usage">
           AI usage

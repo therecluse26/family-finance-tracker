@@ -18,6 +18,8 @@ import { SignedOut } from "../../requests.ts";
 import {
   CONNECTIONS_UNREAD,
   type ConnectionsPage,
+  type ConnectionsPageView,
+  type ConnectionsReads,
   createConnectionsPage,
   type HistoryLoadingView,
   Refused,
@@ -441,6 +443,11 @@ export function BeforeLink(props: {
   );
 }
 
+// What shows in place of "Link a new bank" until the Plaid keys are saved. The keys are for real
+// banks only: a Connection already linked, such as the dev fake bank, works without them.
+export const PLAID_KEYS_FOR_REAL_BANKS =
+  "To link a real bank through Plaid, save the Plaid keys above.";
+
 // "Link a new bank", or, with `replaces`, "Link again" for a Broken Connection (spec 02, Repair).
 // Link again follows the same steps, with the Item count and its confirmation, and spends a new
 // Item. The new Connection replaces the Broken one, and its Accounts carry on the old ones.
@@ -518,9 +525,7 @@ export function LinkBank(props: {
     setError(undefined);
   };
 
-  if (!props.plaid.secretSet) {
-    return <p className="mt-4">Enter the Plaid keys to link a bank.</p>;
-  }
+  if (!props.plaid.secretSet) return <p className="mt-4">{PLAID_KEYS_FOR_REAL_BANKS}</p>;
   return (
     <div className="mt-4">
       <button
@@ -819,20 +824,55 @@ export function FakeBankLink(props: {
   );
 }
 
-// A refused read of the Connection list, the Accounts, or the history progress, with the server's
-// words.
-async function readJson<T>(res: Response): Promise<T> {
+// A read's answer. A refusal throws Refused with the server's words, and a 401 throws SignedOut.
+export async function readJson<T>(res: Response): Promise<T> {
   if (res.status === 401) throw new SignedOut();
   if (!res.ok) throw new Refused(await refusal(res));
   return (await res.json()) as T;
 }
 
-const CONNECTIONS_READS = {
+// The Connection list, the Accounts, and the history progress, as Settings → Banks and the
+// wizard's step 5 read them.
+export const CONNECTIONS_READS: ConnectionsReads = {
   connections: async () =>
     readJson<{ connections: ConnectionView[]; fakeBank: boolean }>(await api.connections.$get()),
   accounts: async () => readJson<{ accounts: AccountView[] }>(await api.accounts.$get()),
   history: async () => readJson<HistoryStatusView>(await api["history-status"].$get()),
 };
+
+// "Link a new bank", then `children`, then the fake bank under `pnpm dev`, each with what the page
+// last read, so the Link panel follows a new Connection's first sync until its Accounts arrive.
+// Settings → Banks and the wizard's step 5 both show them; `onLinked` must start the page's poll.
+export function NewBankLinks(props: {
+  plaid: PlaidView;
+  view: ConnectionsPageView;
+  onLinked: () => void;
+  children?: ReactNode;
+}) {
+  const { connections, accounts, loading, poll, fakeBank } = props.view;
+  return (
+    <>
+      <LinkBank
+        plaid={props.plaid}
+        // A removed Connection covers no bank, so Link lists only the others.
+        connections={connections.filter((connection) => !connection.removed)}
+        accounts={accounts}
+        onLinked={props.onLinked}
+        loading={loading}
+        poll={poll}
+      />
+      {props.children}
+      <FakeBankLink
+        offered={fakeBank}
+        onLinked={props.onLinked}
+        connections={connections}
+        accounts={accounts}
+        loading={loading}
+        poll={poll}
+      />
+    </>
+  );
+}
 
 // The Connections, with the ways to add one. While a first sync or history load runs, the page
 // reads the list again by itself (SYNC_POLL), so a new bank's Accounts show with no reload. An
@@ -841,7 +881,7 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
   const navigate = useNavigate();
   const [view, setView] = useState(CONNECTIONS_UNREAD);
   const [page, setPage] = useState<ConnectionsPage | undefined>();
-  const { connections, accounts, loading, fakeBank, error, poll } = view;
+  const { connections, accounts, loading, error, poll } = view;
 
   useEffect(() => {
     const opened = createConnectionsPage(CONNECTIONS_READS, setView, () =>
@@ -895,23 +935,9 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
         ))}
       </ul>
       <ErrorLine error={error} />
-      <LinkBank
-        plaid={props.plaid}
-        connections={connected}
-        accounts={accounts}
-        onLinked={linked}
-        loading={loading}
-        poll={poll}
-      />
-      <ImportConnection plaid={props.plaid} onImported={linked} />
-      <FakeBankLink
-        offered={fakeBank}
-        onLinked={() => page?.linked()}
-        connections={connections}
-        accounts={accounts}
-        loading={loading}
-        poll={poll}
-      />
+      <NewBankLinks plaid={props.plaid} view={view} onLinked={linked}>
+        <ImportConnection plaid={props.plaid} onImported={linked} />
+      </NewBankLinks>
     </section>
   );
 }

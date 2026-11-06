@@ -160,7 +160,10 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 - After the server accepts the code, the page keeps it in the browser tab's session storage, exactly as the server accepted it. A reload then goes on to step 2 without the code from the terminal. The page checks the kept code with the server again before it uses it.
 - The page deletes the kept code when the first Member exists, and when the server refuses the code itself: a wrong code, a code with the wrong form, or a code sent after the first Member exists. The page keeps the code after "too many wrong codes" and after a server error, because the code can still be right. Closing the tab also deletes it.
 
-**Step 2, Your login:** the step makes the first Member and signs them in. It shows the backup codes once. From then on, the setup code no longer works. Login rules are in [Members, login, and security](09-members-login-security.md#signing-in).
+**Step 2, Your login:**
+
+- The step makes the first Member and signs them in. It shows the backup codes once. From then on, the setup code no longer works. Login rules are in [Members, login, and security](09-members-login-security.md#signing-in).
+- The page keeps the Name and Email typed so far in the tab's session storage with the setup code, so a reload does not empty them. It deletes them whenever it deletes the kept code. It never keeps the password.
 
 **Step 3, Master key:**
 
@@ -174,7 +177,7 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 
 - The step takes the Plaid keys, then offers Plaid Link for each bank. Under `pnpm dev`, it also offers the fake bank.
 - The step is done only when app.db holds a Connection. The server decides this. Until then, Continue is off.
-- "Skip for now" lets a self-hoster go on without a Connection, such as before Plaid approves the Trial plan. The Banks item then waits in the "Finish setup" list.
+- "Skip for now" lets a self-hoster go on without a Connection, such as before Plaid approves the Trial plan. The Banks item then waits in the "Finish setup" list. Until a Connection exists, the dashboard shows "Link a bank to see your money here" in place of its boxes ([Dashboard and pages](07-dashboard-and-pages.md#the-dashboard)).
 - Unconnected accounts, Manual loans, and Import Plaid Connection are not in the wizard. They are in Settings, Banks. They do not make the Banks step done.
 - Every rule for these is in [Accounts and bank sync](02-accounts-and-bank-sync.md).
 - The step offers no sandbox dry run, because sandbox data would mix with real data.

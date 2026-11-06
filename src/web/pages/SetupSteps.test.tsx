@@ -1,17 +1,24 @@
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlaidView } from "../../bank/plaid-view.ts";
 import type { AccountView, ConnectionView } from "../../server/bank-views.ts";
 import type { SetupProgressView } from "../../server/setup-views.ts";
+import { SignedOut } from "../requests.ts";
 import { skippedWizardSteps } from "../setup-gate.ts";
 import {
+  BANKS_STEP_UNREAD,
   BanksButtons,
+  type BanksStepReads,
+  type BanksStepState,
   BanksStepView,
   confirmMasterKeySaved,
   DoneStepView,
   FinishStepView,
   finishLines,
   finishWizard,
+  linkedBanks,
+  openBanksStep,
   STEP_LABELS,
   Stepper,
   skipBanks,
@@ -19,6 +26,8 @@ import {
   stepBefore,
   WIZARD_STEPS,
 } from "./SetupSteps.tsx";
+import { NewBankLinks } from "./settings/Connections.tsx";
+import { CONNECTIONS_UNREAD, Refused, SYNC_POLL } from "./settings/connections-page.ts";
 
 // The first-run wizard's frame and its steps 5 and 6, as the browser first paints them (spec 12,
 // The first-run wizard). What makes each step done is checked through the app's HTTP interface, in
@@ -150,9 +159,7 @@ describe("step 5, Banks", () => {
       renderToString(
         <BanksStepView
           plaid={plaid}
-          connections={connections}
-          accounts={[ACCOUNT]}
-          fakeBank={fakeBank}
+          view={{ ...CONNECTIONS_UNREAD, connections, accounts: [ACCOUNT], fakeBank }}
           onPlaidSaved={() => {}}
           onLinked={() => {}}
         />,
@@ -163,12 +170,32 @@ describe("step 5, Banks", () => {
     const before = view(NO_KEYS, false);
     expect(before).toContain("Plaid keys");
     expect(before).toContain("Test and save the keys");
-    expect(before).toContain("Enter the Plaid keys to link a bank.");
+    expect(before).toContain("To link a real bank through Plaid, save the Plaid keys above.");
     expect(before).not.toContain("Link a new bank");
 
     const after = view(KEYS_SAVED, false);
     expect(after).toContain("The secret is set.");
     expect(after).toContain("Link a new bank");
+    expect(after).not.toContain("save the Plaid keys");
+  });
+
+  it("says the keys are for real banks only, not that nothing works without them", () => {
+    // A fake bank is linked, and no Plaid keys are saved.
+    const linked = view(NO_KEYS, true, [CONNECTION]);
+
+    expect(linked).toContain("First Fake Bank");
+    expect(linked).toContain("To link a real bank through Plaid, save the Plaid keys above.");
+    expect(linked).not.toMatch(/save the keys first|Enter the Plaid keys to link a bank/i);
+  });
+
+  it("does not list a removed Connection, nor count it as a bank linked", () => {
+    const removed = { ...CONNECTION, removed: true };
+
+    expect(view(KEYS_SAVED, false, [removed])).toContain("No bank is connected yet.");
+    expect(linkedBanks({ ...CONNECTIONS_UNREAD, connections: [removed] })).toEqual([]);
+    expect(linkedBanks({ ...CONNECTIONS_UNREAD, connections: [removed, CONNECTION] })).toEqual([
+      CONNECTION,
+    ]);
   });
 
   it("offers the fake bank only under pnpm dev", () => {
@@ -221,6 +248,256 @@ describe("step 5, Banks", () => {
     expect(text(buttons(true, "Link a bank first, or press Skip for now."))).toBe(
       "Back Skip for now Continue to Finish Link a bank first, or press Skip for now.",
     );
+  });
+});
+
+// A fake server for step 5's reads: each read answers what `server` holds when it is asked, unless
+// a test holds the next Connection list read back with `holdNext`.
+function fakeBanksServer() {
+  const server = {
+    connections: [] as ConnectionView[],
+    accounts: [] as AccountView[],
+    plaid: NO_KEYS,
+    failure: undefined as Error | undefined,
+  };
+  const held: (() => void)[] = [];
+  let holding = 0;
+  // The Plaid settings reads held back, each answering what it read when it was asked.
+  const heldPlaid: (() => void)[] = [];
+  let holdingPlaid = 0;
+  const reads = {
+    connections: vi.fn(async () => {
+      if (server.failure !== undefined) throw server.failure;
+      const answer = { connections: server.connections, fakeBank: true };
+      if (holding === 0) return answer;
+      holding -= 1;
+      return new Promise<typeof answer>((resolve) => held.push(() => resolve(answer)));
+    }),
+    accounts: vi.fn(async () => ({ accounts: server.accounts })),
+    history: vi.fn(async () => ({ waitEnded: false, aiMayRun: false, loading: [] })),
+    plaid: vi.fn(async () => {
+      if (server.failure !== undefined) throw server.failure;
+      const answer = { plaid: server.plaid };
+      if (holdingPlaid === 0) return answer;
+      holdingPlaid -= 1;
+      return new Promise<typeof answer>((resolve) => heldPlaid.push(() => resolve(answer)));
+    }),
+  } satisfies BanksStepReads;
+  const states: BanksStepState[] = [];
+  const signedOut = vi.fn();
+  const step = openBanksStep(reads, (state) => states.push(state), signedOut);
+  return {
+    server,
+    reads,
+    step,
+    signedOut,
+    states,
+    last: () => states.at(-1) ?? BANKS_STEP_UNREAD,
+    holdNext: () => {
+      holding += 1;
+    },
+    release: () => held.shift()?.(),
+    holdNextPlaid: () => {
+      holdingPlaid += 1;
+    },
+    releasePlaid: () => heldPlaid.shift()?.(),
+  };
+}
+
+describe("step 5, Banks: a new bank's first sync, with no reload", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows the new Connection at once, reads again until its Accounts arrive, then stops", async () => {
+    vi.useFakeTimers();
+    const { server, reads, step, last } = fakeBanksServer();
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual(NO_KEYS);
+    expect(last().page.poll).toBe("ended");
+    expect(reads.connections).toHaveBeenCalledTimes(1);
+
+    // "Link a fake bank": the server made the Connection, and its first sync runs.
+    server.connections = [CONNECTION];
+    step.linked();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().page.connections).toEqual([CONNECTION]);
+    expect(last().page.accounts).toEqual([]);
+    expect(last().page.poll).toBe("polling");
+    // A Plaid link spends an Item, so the count is read again.
+    expect(reads.plaid).toHaveBeenCalledTimes(2);
+
+    // The first sync stores the Accounts: the next read shows them, with no reload.
+    const synced = { ...CONNECTION, lastSyncedAt: "2026-11-06T14:00:00.000Z" };
+    server.connections = [synced];
+    server.accounts = [ACCOUNT];
+    await vi.advanceTimersByTimeAsync(SYNC_POLL.everyMs);
+    expect(last().page.accounts).toEqual([ACCOUNT]);
+    const shown = text(
+      renderToString(
+        <BanksStepView
+          plaid={NO_KEYS}
+          view={last().page}
+          onPlaidSaved={() => {}}
+          onLinked={() => {}}
+        />,
+      ),
+    );
+    expect(shown).toContain("First Fake Bank Checking ··1234");
+
+    // History loaded: the step stops reading.
+    server.connections = [{ ...synced, historyLoaded: true }];
+    await vi.advanceTimersByTimeAsync(SYNC_POLL.everyMs);
+    expect(last().page.poll).toBe("ended");
+    const readsAtEnd = reads.connections.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads.connections).toHaveBeenCalledTimes(readsAtEnd);
+  });
+
+  it("gives up at the cap, and starts a fresh count when the next bank is linked", async () => {
+    vi.useFakeTimers();
+    const { server, reads, step, last } = fakeBanksServer();
+    server.connections = [CONNECTION];
+    step.load();
+    await vi.advanceTimersByTimeAsync(SYNC_POLL.everyMs * SYNC_POLL.maxReads);
+    expect(last().page.poll).toBe("gave up");
+    expect(reads.connections).toHaveBeenCalledTimes(1 + SYNC_POLL.maxReads);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads.connections).toHaveBeenCalledTimes(1 + SYNC_POLL.maxReads);
+
+    server.connections = [CONNECTION, { ...CONNECTION, id: "c2" }];
+    step.linked();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().page.poll).toBe("polling");
+    await vi.advanceTimersByTimeAsync(SYNC_POLL.everyMs);
+    expect(reads.connections).toHaveBeenCalledTimes(3 + SYNC_POLL.maxReads);
+  });
+
+  it("stops for good when the step leaves, and shows no answer that lands after", async () => {
+    vi.useFakeTimers();
+    const { server, reads, step, states, holdNext, release } = fakeBanksServer();
+    server.connections = [CONNECTION];
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    holdNext();
+    await vi.advanceTimersByTimeAsync(SYNC_POLL.everyMs);
+    expect(reads.connections).toHaveBeenCalledTimes(2);
+    const shown = states.length;
+
+    step.stop();
+    release();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads.connections).toHaveBeenCalledTimes(2);
+    expect(states).toHaveLength(shown);
+  });
+
+  it("stops reading and sends the Member to sign-in once when the session ends mid-poll", async () => {
+    vi.useFakeTimers();
+    const { server, reads, step, signedOut } = fakeBanksServer();
+    server.connections = [CONNECTION];
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+
+    server.failure = new SignedOut();
+    step.linked();
+    await vi.advanceTimersByTimeAsync(SYNC_POLL.everyMs * 3);
+    expect(signedOut).toHaveBeenCalledTimes(1);
+    const after = reads.connections.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads.connections).toHaveBeenCalledTimes(after);
+  });
+
+  it("shows the server's words when the Plaid keys do not load, and keeps a saved count", async () => {
+    vi.useFakeTimers();
+    const { server, step, last, signedOut } = fakeBanksServer();
+    server.failure = new Refused("Sign in again.");
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().error).toBe("Sign in again.");
+    expect(signedOut).not.toHaveBeenCalled();
+
+    server.failure = undefined;
+    step.plaidSaved(KEYS_SAVED);
+    expect(last().plaid).toEqual(KEYS_SAVED);
+    expect(last().error).toBeUndefined();
+  });
+});
+
+describe("step 5, Banks: the Plaid keys read", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends the Member to sign-in once, and reads nothing more, when it finds the session ended", async () => {
+    vi.useFakeTimers();
+    const { server, reads, step, signedOut } = fakeBanksServer();
+    server.connections = [CONNECTION];
+    // Only the Plaid read answers 401; the Connection list still answers.
+    reads.plaid.mockImplementationOnce(async () => {
+      throw new SignedOut();
+    });
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signedOut).toHaveBeenCalledTimes(1);
+
+    const after = reads.connections.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads.connections).toHaveBeenCalledTimes(after);
+    expect(signedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("never lets an older answer replace a newer one or the keys just saved", async () => {
+    vi.useFakeTimers();
+    const { server, step, last, holdNextPlaid, releasePlaid } = fakeBanksServer();
+    // The first read is held back, and answers NO_KEYS after a link's read answered.
+    holdNextPlaid();
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    server.plaid = { ...KEYS_SAVED, itemsUsed: 1 };
+    step.linked();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual({ ...KEYS_SAVED, itemsUsed: 1 });
+    releasePlaid();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual({ ...KEYS_SAVED, itemsUsed: 1 });
+
+    // A read asked before the keys were saved answers after: the saved keys stay.
+    server.plaid = NO_KEYS;
+    holdNextPlaid();
+    step.linked();
+    await vi.advanceTimersByTimeAsync(0);
+    step.plaidSaved(KEYS_SAVED);
+    releasePlaid();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual(KEYS_SAVED);
+  });
+});
+
+// Every element of `type` in a component's answer, at any depth. Components that use no hooks are
+// called directly, so a test reads what each child is handed.
+function elementsOf<P>(node: ReactNode, type: (props: P) => ReactNode): ReactElement<P>[] {
+  if (Array.isArray(node)) return node.flatMap((child: ReactNode) => elementsOf(child, type));
+  if (!isValidElement<{ children?: ReactNode }>(node)) return [];
+  const own = node.type === type ? [node as unknown as ReactElement<P>] : [];
+  return [...own, ...elementsOf(node.props.children, type)];
+}
+
+describe("step 5, Banks: what its Link panels are handed", () => {
+  it("hands Settings → Banks' Link panels the view the step's poll read, and its link handler", () => {
+    const view = {
+      ...CONNECTIONS_UNREAD,
+      connections: [CONNECTION],
+      accounts: [ACCOUNT],
+      fakeBank: true,
+      poll: "polling" as const,
+    };
+    const onLinked = () => {};
+    const answer = BanksStepView({ plaid: KEYS_SAVED, view, onPlaidSaved: () => {}, onLinked });
+
+    const [links, ...more] = elementsOf(answer, NewBankLinks);
+    expect(more).toEqual([]);
+    expect(links?.props).toEqual({ plaid: KEYS_SAVED, view, onLinked });
   });
 });
 

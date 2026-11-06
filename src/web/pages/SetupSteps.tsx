@@ -1,12 +1,27 @@
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import type { PlaidView } from "../../bank/plaid-view.ts";
-import type { AccountView, ConnectionView } from "../../server/bank-views.ts";
+import type { ConnectionView } from "../../server/bank-views.ts";
 import type { SetupExtra, SetupProgressView } from "../../server/setup-views.ts";
 import { api } from "../api.ts";
 import { BUTTON, ErrorLine } from "../components/Fields.tsx";
+import { answerOrder } from "../polling.ts";
+import { SignedOut } from "../requests.ts";
 import { FINISH_SETUP_LINKS } from "../setup-gate.ts";
 import { PlaidKeysForm } from "./settings/Banks.tsx";
-import { ConnectionList, FakeBankLink, LinkBank } from "./settings/Connections.tsx";
+import {
+  CONNECTIONS_READS,
+  ConnectionList,
+  NewBankLinks,
+  readJson,
+} from "./settings/Connections.tsx";
+import {
+  CONNECTIONS_UNREAD,
+  type ConnectionsPageView,
+  type ConnectionsReads,
+  createConnectionsPage,
+  Refused,
+} from "./settings/connections-page.ts";
 
 // The first-run wizard's frame and its steps 5 and 6 (spec 12, The first-run wizard). The wizard
 // has 6 steps, each with "Step N of 6" and Back. Step 5, Banks, is done once app.db holds a
@@ -157,35 +172,28 @@ export function BanksButtons(props: {
 
 // Step 5's screen: the Plaid keys, then the banks linked so far and the ways to link one: Plaid
 // Link, and under `pnpm dev` the fake bank. Unconnected accounts, Manual loans, and Import Plaid
-// Connection wait in Settings, Banks.
+// Connection wait in Settings, Banks. The Link panel is Settings → Banks' own (NewBankLinks), fed
+// the same page view, so it follows a new Connection's first sync until its Accounts arrive.
 export function BanksStepView(props: {
   plaid: PlaidView;
-  connections: ConnectionView[];
-  accounts: AccountView[];
-  fakeBank: boolean;
+  view: ConnectionsPageView;
   onPlaidSaved: (plaid: PlaidView) => void;
   onLinked: () => void;
 }) {
   return (
     <>
       <p className="mt-4">
-        The app reads your Transactions through Plaid. First save your Plaid keys, then link each
-        bank.
+        The app reads your Transactions from your banks through Plaid. Save your Plaid keys before
+        you link a real bank.
       </p>
       <PlaidKeysForm plaid={props.plaid} onSaved={props.onPlaidSaved} />
       <section className="mt-6">
         <h3 className="font-semibold">Link your banks</h3>
         <p className="mt-2 text-gray-600">
-          Save the keys first. Then link each bank once, and pick every Account at that bank.
+          Link each bank once, and pick every Account at that bank.
         </p>
-        <ConnectionList connections={props.connections} accounts={props.accounts} />
-        <LinkBank
-          plaid={props.plaid}
-          connections={props.connections}
-          accounts={props.accounts}
-          onLinked={props.onLinked}
-        />
-        <FakeBankLink offered={props.fakeBank} onLinked={props.onLinked} />
+        <ConnectionList connections={linkedBanks(props.view)} accounts={props.view.accounts} />
+        <NewBankLinks plaid={props.plaid} view={props.view} onLinked={props.onLinked} />
       </section>
       <p className="mt-4 text-gray-600">
         For a bank Plaid cannot reach, or a loan the banks do not show, use Settings, Banks after
@@ -195,46 +203,124 @@ export function BanksStepView(props: {
   );
 }
 
-// The words to show for a refused request: the server's own.
-async function refusal(res: Response): Promise<string> {
-  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
-  return typeof body.error === "string" ? body.error : "That did not work.";
+// The banks step 5 lists. A removed Connection covers no bank, so the step lists only the others.
+export function linkedBanks(view: ConnectionsPageView): ConnectionView[] {
+  return view.connections.filter((connection) => !connection.removed);
 }
 
-// Step 5, Banks. `onProgress` gets the server's answer, which names the step to open next.
+// Step 5's reads: Settings → Banks' three, and the Plaid keys and Item count. Each throws Refused
+// for a refusal, and SignedOut for a 401.
+export type BanksStepReads = ConnectionsReads & { plaid(): Promise<{ plaid: PlaidView }> };
+
+export type BanksStepState = {
+  // Unread until the first read answers.
+  plaid: PlaidView | undefined;
+  page: ConnectionsPageView;
+  // Why the Plaid keys did not load.
+  error: string | undefined;
+};
+
+export const BANKS_STEP_UNREAD: BanksStepState = {
+  plaid: undefined,
+  page: CONNECTIONS_UNREAD,
+  error: undefined,
+};
+
+export type BanksStepPage = {
+  load(): void;
+  // A bank was linked: as in Settings → Banks, a fresh poll starts and reads until its Accounts
+  // arrive. A Plaid link spends an Item, so the Plaid count is read again too.
+  linked(): void;
+  plaidSaved(plaid: PlaidView): void;
+  // The step left: no read starts, and no answer shows.
+  stop(): void;
+};
+
+// Step 5's reads, on Settings → Banks' page model (createConnectionsPage), so the wizard polls
+// exactly as Settings → Banks does: with its cap, never after the step leaves, and not after a 401,
+// which calls `signedOut` once.
+export function openBanksStep(
+  reads: BanksStepReads,
+  show: (state: BanksStepState) => void,
+  signedOut: () => void,
+): BanksStepPage {
+  let state = BANKS_STEP_UNREAD;
+  let stopped = false;
+  const plaidOrder = answerOrder();
+
+  const set = (change: Partial<BanksStepState>) => {
+    if (stopped) return;
+    state = { ...state, ...change };
+    show(state);
+  };
+  function stop() {
+    stopped = true;
+    page.stop();
+  }
+  function leave() {
+    if (stopped) return;
+    stop();
+    signedOut();
+  }
+  const page = createConnectionsPage(reads, (view) => set({ page: view }), leave);
+
+  const readPlaid = () => {
+    const newest = plaidOrder.begin();
+    reads
+      .plaid()
+      .then(({ plaid }) => {
+        if (newest()) set({ plaid, error: undefined });
+      })
+      .catch((failure: unknown) => {
+        if (failure instanceof SignedOut) return leave();
+        set({ error: failure instanceof Refused ? failure.message : "The server did not answer." });
+      });
+  };
+
+  return {
+    load() {
+      readPlaid();
+      page.load();
+    },
+    linked() {
+      page.linked();
+      readPlaid();
+    },
+    plaidSaved(plaid) {
+      if (plaidOrder.begin()()) set({ plaid, error: undefined });
+    },
+    stop,
+  };
+}
+
+const BANKS_STEP_READS: BanksStepReads = {
+  ...CONNECTIONS_READS,
+  plaid: async () => readJson<{ plaid: PlaidView }>(await api.plaid.settings.$get()),
+};
+
+// Step 5, Banks. `onProgress` gets the server's answer, which names the step to open next. An ended
+// session sends the Member to sign-in.
 export function BanksStep(props: {
   onBack: () => void;
   onProgress: (progress: SetupProgressView) => void;
 }) {
   const { onProgress } = props;
-  const [plaid, setPlaid] = useState<PlaidView | undefined>();
-  const [connections, setConnections] = useState<ConnectionView[]>([]);
-  const [accounts, setAccounts] = useState<AccountView[]>([]);
-  const [fakeBank, setFakeBank] = useState(false);
+  const navigate = useNavigate();
+  const [state, setState] = useState(BANKS_STEP_UNREAD);
+  const [step, setStep] = useState<BanksStepPage | undefined>();
   const [busy, setBusy] = useState(false);
   const [notDone, setNotDone] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const { plaid, page } = state;
 
-  const load = useCallback(() => {
-    Promise.all([api.plaid.settings.$get(), api.connections.$get(), api.accounts.$get()])
-      .then(async ([plaidRes, connectionsRes, accountsRes]) => {
-        for (const res of [plaidRes, connectionsRes, accountsRes]) {
-          if (!res.ok) return setError(await refusal(res));
-        }
-        setPlaid(((await plaidRes.json()) as { plaid: PlaidView }).plaid);
-        const listed = (await connectionsRes.json()) as {
-          connections: ConnectionView[];
-          fakeBank: boolean;
-        };
-        // A removed Connection covers no bank, so the step lists only the others.
-        setConnections(listed.connections.filter((connection) => !connection.removed));
-        setFakeBank(listed.fakeBank);
-        setAccounts(((await accountsRes.json()) as { accounts: AccountView[] }).accounts);
-      })
-      .catch(() => setError("The server did not answer."));
-  }, []);
-
-  useEffect(load, [load]);
+  useEffect(() => {
+    const opened = openBanksStep(BANKS_STEP_READS, setState, () =>
+      navigate("/sign-in", { replace: true }),
+    );
+    setStep(opened);
+    opened.load();
+    return opened.stop;
+  }, [navigate]);
 
   async function run(work: () => Promise<Response>) {
     setBusy(true);
@@ -263,20 +349,18 @@ export function BanksStep(props: {
       {plaid === undefined ? null : (
         <BanksStepView
           plaid={plaid}
-          connections={connections}
-          accounts={accounts}
-          fakeBank={fakeBank}
-          onPlaidSaved={setPlaid}
-          onLinked={load}
+          view={page}
+          onPlaidSaved={(saved) => step?.plaidSaved(saved)}
+          onLinked={() => step?.linked()}
         />
       )}
       {/* Continue asks the server whether Banks is done. Skip for now marks it skipped, unless it
           is done. */}
       <BanksButtons
         busy={busy}
-        linked={connections.length > 0}
+        linked={linkedBanks(page).length > 0}
         notDone={notDone}
-        error={error}
+        error={error ?? state.error ?? page.error}
         onBack={props.onBack}
         onSkip={() => void run(skipBanks)}
         onContinue={() => void run(() => api.setup.progress.$get())}

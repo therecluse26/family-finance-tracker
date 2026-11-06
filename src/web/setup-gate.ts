@@ -86,11 +86,48 @@ export function setupCodeRefused(status: number): boolean {
   return status === 400 || status === 401 || status === 403;
 }
 
+// Forgets the setup code, and step 2's Name and Email kept with it.
 export function forgetSetupCode(storage = tabStorage()): void {
   try {
     storage?.removeItem(SETUP_CODE_KEY);
+    storage?.removeItem(FIRST_MEMBER_DRAFT_KEY);
   } catch {
     // Nothing was kept.
+  }
+}
+
+// Step 2's Name and Email survive a reload too (spec 12, Step 2). They stay in this tab's
+// sessionStorage with the setup code, and go when it goes. The password is never kept.
+const FIRST_MEMBER_DRAFT_KEY = "fft-first-member-draft";
+// The longest Name or Email kept.
+const MAX_DRAFT_FIELD_LENGTH = 320;
+
+export type FirstMemberDraft = { name: string; email: string };
+
+const NO_DRAFT: FirstMemberDraft = { name: "", email: "" };
+
+// A kept field, or "" when it is missing or not a short string.
+function draftField(value: unknown): string {
+  return typeof value === "string" && value.length <= MAX_DRAFT_FIELD_LENGTH ? value : "";
+}
+
+export function savedFirstMemberDraft(storage = tabStorage()): FirstMemberDraft {
+  try {
+    const kept = storage?.getItem(FIRST_MEMBER_DRAFT_KEY);
+    if (typeof kept !== "string") return NO_DRAFT;
+    const draft = JSON.parse(kept) as { name?: unknown; email?: unknown } | null;
+    return { name: draftField(draft?.name), email: draftField(draft?.email) };
+  } catch {
+    return NO_DRAFT;
+  }
+}
+
+export function saveFirstMemberDraft(draft: FirstMemberDraft, storage = tabStorage()): void {
+  try {
+    const kept = { name: draftField(draft.name), email: draftField(draft.email) };
+    storage?.setItem(FIRST_MEMBER_DRAFT_KEY, JSON.stringify(kept));
+  } catch {
+    // Without storage, a reload empties the fields.
   }
 }
 
