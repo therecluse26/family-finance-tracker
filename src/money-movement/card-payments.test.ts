@@ -303,7 +303,7 @@ describe("card payments and card rewards", () => {
     it("stays tracked on day 90, and is a card the app does not track from day 91", async () => {
       expect(
         await markConnectionRemoved(bank.database, await connectionOf("fake-chase"), REMOVED),
-      ).toBe(true);
+      ).toMatchObject({ removed: true });
       await syncMore(
         "fake-ally",
         {
@@ -412,7 +412,7 @@ describe("card payments and card rewards", () => {
 
       expect(
         await markConnectionRemoved(bank.database, await connectionOf("fake-chase"), REMOVED),
-      ).toBe(true);
+      ).toMatchObject({ removed: true });
       await runMatching(bank.database, ids, NOW());
 
       expect(await links()).toEqual(linked);

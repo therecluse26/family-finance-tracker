@@ -220,7 +220,9 @@ describe("the first history load", () => {
     await syncAt(removed, at(MINUTE));
     expect(await aiMayRun(bank.database, at(2 * MINUTE))).toBe(false);
 
-    expect(await markConnectionRemoved(bank.database, removed, at(3 * MINUTE))).toBe(true);
+    expect(await markConnectionRemoved(bank.database, removed, at(3 * MINUTE))).toMatchObject({
+      removed: true,
+    });
 
     expect(await aiMayRun(bank.database, at(3 * MINUTE))).toBe(true);
     const status = await historyStatus(bank.database, at(3 * MINUTE));
@@ -262,7 +264,9 @@ describe("the first history load", () => {
     await syncAt(kept, at(MINUTE));
     await syncAt(deleted, at(MINUTE));
     for (const id of [kept, empty, deleted]) {
-      expect(await markConnectionRemoved(bank.database, id, at(HOUR))).toBe(true);
+      expect(await markConnectionRemoved(bank.database, id, at(HOUR))).toMatchObject({
+        removed: true,
+      });
     }
 
     expect(await deleteRemovedConnection(bank.database, deleted, at(2 * HOUR))).toEqual({

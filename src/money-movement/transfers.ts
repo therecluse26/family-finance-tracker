@@ -1,6 +1,7 @@
 import { munkres } from "munkres";
 import {
   type Database,
+  listAwaitingCopies,
   listLinkedOtherwise,
   listRefusedTransferLinks,
   listTransferCandidates,
@@ -468,10 +469,20 @@ export async function pairTransfers(
   // A link ends when a side no longer shows, or it fails a hard filter; a Member's
   // link skips the window (spec 03, Undo and hand links). A side on an excluded Account still
   // counts. Otherwise a link the AI or a Member made stays, and its sides stay out of pairing.
+  // A Member's link whose hidden sides a re-link replaced waits for their new copies (spec 02, Link
+  // carry-over).
+  const missing = (link: (typeof touching)[number]) =>
+    [link.outTransactionId, link.inTransactionId].filter((id) => !byId.has(id));
+  const awaiting = await listAwaitingCopies(
+    database,
+    touching.filter((link) => link.madeBy === "Member").flatMap(missing),
+  );
   const ended = touching.filter((link) => {
     const out = byId.get(link.outTransactionId);
     const into = byId.get(link.inTransactionId);
-    if (out === undefined || into === undefined) return true;
+    if (out === undefined || into === undefined) {
+      return !missing(link).every((id) => awaiting.has(id));
+    }
     return link.madeBy === "Member" ? !passesHandFilters(out, into) : !passesHardFilters(out, into);
   });
   await saveTransferLinks(database, { remove: ended.map((link) => link.id), update: [], add: [] });

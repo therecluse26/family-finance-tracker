@@ -8,7 +8,7 @@ import { timedCase } from "../index.ts";
 timedCase("deleting a removed Connection's history", async (history, time) => {
   // Removing a Connection asks for a code and the provider; this case times only Delete history.
   const harbor = history.connectionIds.get("fake-lh-harbor") ?? "";
-  expect(await markConnectionRemoved(history.database, harbor)).toBe(true);
+  expect(await markConnectionRemoved(history.database, harbor)).toMatchObject({ removed: true });
 
   const deleted = (await time.request("POST /api/connections/:id/delete-history", () =>
     history.browser.post(`/api/connections/${harbor}/delete-history`, { confirmed: true }),

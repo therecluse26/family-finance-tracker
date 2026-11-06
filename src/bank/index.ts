@@ -43,6 +43,7 @@ export {
   type UpdateModeFinish,
   type UpdateModeStart,
 } from "./connect-view.ts";
+export { type CopiesWaitOutcome, endLongCopyWaits } from "./copies-wait.ts";
 export {
   endHistoryWait,
   FIRST_RUN_STEPS,

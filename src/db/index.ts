@@ -109,6 +109,7 @@ export {
   markConnectionRemoved,
   type NewAccount,
   type PageCounts,
+  type RemovedConnection,
   readAccount,
   readConnection,
   readShownTransactions,
@@ -332,6 +333,16 @@ export {
   type NewInvite,
   type OpenInvite,
 } from "./invites.ts";
+export {
+  type CarryOverTransaction,
+  claimCopyWaitEndTries,
+  endCopyWaits,
+  type LinkMove,
+  listAwaitingCopies,
+  listHandLinkedOld,
+  listPossibleCopies,
+  moveHandLinks,
+} from "./link-carry-over.ts";
 export {
   type AiLinkAnswer,
   type AiLinkKind,

@@ -33,11 +33,13 @@ import { saveDailyBalance } from "./balances.ts";
 import type { Database, Queries } from "./client.ts";
 import type { PartType } from "./decisions.ts";
 import { markTransactionsUnhandled } from "./follow-up.ts";
+import { listHandLinkedOldOf } from "./link-carry-over.ts";
 import { carryLinks } from "./links.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
 import {
   alerts,
   alertTransactions,
+  connectionCarryOvers,
   connections,
   dailyBalances,
   followUpMarks,
@@ -62,6 +64,9 @@ import {
 // functions store and read.
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+// SQLite takes at most 32,766 values in one statement.
+const IDS_PER_STATEMENT = 500;
 
 export type StoredConnection = typeof connections.$inferSelect;
 
@@ -96,6 +101,9 @@ export async function addConnection(
     await tx.insert(connections).values({ id, ...fields, credential, syncMinute, createdAt: at });
     // N counts every Plaid Connection the app created or imported (spec 02, The 10 lifetime Items).
     if (connection.provider === "plaid") await countPlaidItem(tx);
+    // Any hand-made links the replaced Connection's Accounts held for copies stop waiting. A
+    // follow-up job after the new Connection's sync ends them, or, once it carries those Accounts
+    // over, they wait for its own copies.
     if (replaces !== undefined) await removeConnection(tx, replaces, at);
     if (endsConditions.length > 0) {
       await tx
@@ -287,7 +295,9 @@ async function carriedAccount(
 // Moves an old Account onto this Connection under its new provider ID. It keeps its ID, hand-set
 // fields, and history, and is open again. When its Transactions came from another Connection,
 // history splits at day D, the old Connection's last successful sync: the old Transactions dated
-// on or after D are hidden now, and the new ones dated before D as they arrive.
+// on or after D are hidden now, and the new ones dated before D as they arrive. The same write
+// records the old Connection on this one, and makes the hidden ones unhandled, so Matching ends
+// their app-made links and moves their hand-made ones to the new copies (spec 02, Link carry-over).
 async function carryOver(
   tx: Transaction,
   connection: StoredConnection,
@@ -305,7 +315,7 @@ async function carryOver(
       .where(eq(connections.id, old.connectionId));
     // An old Connection that never finished a sync splits at the day of the carry-over.
     historySplitDate = calendarDateIn(oldConnection?.lastSyncedAt ?? at, timeZone);
-    await tx
+    const hidden = await tx
       .update(transactions)
       .set({ hiddenReason: "replaced by re-link", hiddenAt: at })
       .where(
@@ -315,7 +325,19 @@ async function carryOver(
           gte(transactions.postedDate, historySplitDate),
           isNull(transactions.hiddenReason),
         ),
-      );
+      )
+      .returning({ id: transactions.id });
+    for (let start = 0; start < hidden.length; start += IDS_PER_STATEMENT) {
+      const chunk = hidden.slice(start, start + IDS_PER_STATEMENT).map((row) => row.id);
+      await tx.delete(followUpMarks).where(inArray(followUpMarks.transactionId, chunk));
+    }
+    await tx
+      .insert(connectionCarryOvers)
+      .values({ connectionId: connection.id, oldConnectionId: old.connectionId, createdAt: at })
+      .onConflictDoUpdate({
+        target: connectionCarryOvers.connectionId,
+        set: { oldConnectionId: old.connectionId },
+      });
   }
   await tx
     .update(householdAccounts)
@@ -555,14 +577,21 @@ export async function storeSyncPage(
   });
 }
 
-// What finishSync stored about the history load: whether it has loaded, and whether this sync
-// loaded the history of a bank added later, whose hooks are now due.
-export type FinishedSync = { historyLoaded: boolean; laterHooksDue: boolean };
+// What finishSync stored about the history load: whether it has loaded, whether this sync loaded
+// the history of a bank added later, whose hooks are now due, and how many old Transactions'
+// hand-made links stopped waiting for a new copy, which the follow-up job now ends.
+export type FinishedSync = {
+  historyLoaded: boolean;
+  laterHooksDue: boolean;
+  copiesNoLongerAwaited: number;
+};
 
 // Ends a sync that stored every record, in one transaction: saves each returned Account's balance
 // for the day, closes each Account the provider stopped returning, then saves the cursor. A history
 // that has loaded stays loaded. When it loads for a Connection made after the wait for the first
-// history load ended, the bank-added-later hooks become due, in the same transaction.
+// history load ended, the bank-added-later hooks become due, in the same transaction. When it
+// loads, each old Transaction on the Connection's Accounts whose hand-made links still wait for a
+// copy becomes unhandled, once, so Matching ends those links (spec 02, Link carry-over).
 export async function finishSync(
   database: Database,
   connectionId: string,
@@ -639,7 +668,10 @@ export async function finishSync(
         ...(laterHooksDue ? { laterHooksStartedAt: done.at, laterHooksRestarts: 0 } : {}),
       })
       .where(eq(connections.id, connectionId));
-    return { historyLoaded, laterHooksDue };
+    const awaited =
+      historyLoaded && !loadedBefore ? await listHandLinkedOldOf(tx, connectionId) : [];
+    await markTransactionsUnhandled(tx, awaited);
+    return { historyLoaded, laterHooksDue, copiesNoLongerAwaited: awaited.length };
   });
 }
 
@@ -740,30 +772,38 @@ export async function reopenAccount(database: Database, id: string): Promise<boo
   return true;
 }
 
+// What removing a Connection did: whether it removed it, and how many old Transactions' hand-made
+// links stopped waiting for a new copy, which a follow-up job now ends.
+export type RemovedConnection = { removed: boolean; copiesNoLongerAwaited: number };
+
 // Removes a Connection (spec 02, Removing a Connection), in one transaction: it deletes the
 // credential, stops the syncs, and closes the open Accounts with the reason "connection removed".
 // Their history stays. N does not fall: it counts each Plaid Connection once, when it was added.
-// Returns false when no Connection has the ID, or it was already removed.
+// A removed Connection never loads its history, so each old Transaction on its Accounts whose
+// hand-made links waited for a copy becomes unhandled, and Matching ends those links (spec 02, Link
+// carry-over). `removed` is false when no Connection has the ID, or it was already removed.
 export async function markConnectionRemoved(
   database: Database,
   id: string,
   at = new Date(),
-): Promise<boolean> {
+): Promise<RemovedConnection> {
   return database.transaction((tx) => removeConnection(tx, id, at));
 }
 
-async function removeConnection(tx: Transaction, id: string, at: Date): Promise<boolean> {
+async function removeConnection(tx: Transaction, id: string, at: Date): Promise<RemovedConnection> {
   const removed = await tx
     .update(connections)
     .set({ credential: null, removedAt: at, nextSyncAt: null, syncHeld: false })
     .where(and(eq(connections.id, id), isNull(connections.removedAt)))
     .returning({ id: connections.id });
-  if (removed.length === 0) return false;
+  if (removed.length === 0) return { removed: false, copiesNoLongerAwaited: 0 };
   await tx
     .update(householdAccounts)
     .set({ closedAt: at, closedReason: "connection removed" })
     .where(and(eq(householdAccounts.connectionId, id), isNull(householdAccounts.closedAt)));
-  return true;
+  const awaited = await listHandLinkedOldOf(tx, id);
+  await markTransactionsUnhandled(tx, awaited);
+  return { removed: true, copiesNoLongerAwaited: awaited.length };
 }
 
 // What Delete history removed.

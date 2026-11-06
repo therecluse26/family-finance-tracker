@@ -652,6 +652,27 @@ export const connections = sqliteTable(
   (table) => [index("connections_bank_id").on(table.bankId)],
 );
 
+// The old Connection whose Accounts a new Connection carries on, after Link again or a new link of
+// a removed bank (spec 02, Carrying Accounts over). It is written in the same transaction that
+// carries an Account over. The row goes with the new Connection, and its pointer empties when the
+// old Connection's row goes. It is its own table, since drizzle-kit leaves ON DELETE out of the
+// REFERENCES of a column it adds to a SQLite table.
+export const connectionCarryOvers = sqliteTable("connection_carry_overs", {
+  connectionId: text("connection_id")
+    .primaryKey()
+    .references(() => connections.id, { onDelete: "cascade" }),
+  oldConnectionId: text("old_connection_id").references(() => connections.id, {
+    onDelete: "set null",
+  }),
+  createdAt: moment("created_at").notNull(),
+  // The wait of hand-made links for new copies ends COPIES_WAIT_CAP_DAYS after `created_at`, if the
+  // first history load has not ended it (spec 02, Link carry-over). The sync schedule's job counts
+  // each try to end it here, and the first try ends the wait. A try that makes the waiting old
+  // Transactions unhandled records the time, so it happens once.
+  copiesWaitEndTries: integer("copies_wait_end_tries").notNull().default(0),
+  copiesWaitEndedAt: moment("copies_wait_ended_at"),
+});
+
 // The wait for the first history load (spec 02, First history load). It has at most one row,
 // whose ID is 1. With no row, the wait has not ended.
 export const historyWait = sqliteTable(

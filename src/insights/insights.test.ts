@@ -384,7 +384,9 @@ describe("Insight cards", () => {
     });
     expect(await cardRows()).toHaveLength(4);
 
-    expect(await markConnectionRemoved(bank.database, connectionId, new Date())).toBe(true);
+    expect(await markConnectionRemoved(bank.database, connectionId, new Date())).toMatchObject({
+      removed: true,
+    });
     expect(await deleteRemovedConnection(bank.database, connectionId, new Date())).toBeDefined();
 
     expect(await cardRows()).toEqual([]);

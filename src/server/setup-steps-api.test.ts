@@ -222,7 +222,9 @@ describe("the first-run wizard, steps 5 to 9", () => {
     expect(await progressOf()).toMatchObject({ steps: { banks: "done" }, connections: 1 });
 
     // A done step stays done, even once its Connection is removed.
-    expect(await markConnectionRemoved(test.database, connectionId, new Date())).toBe(true);
+    expect(await markConnectionRemoved(test.database, connectionId, new Date())).toMatchObject({
+      removed: true,
+    });
     expect(await progressOf()).toMatchObject({ steps: { banks: "done" }, connections: 0 });
   });
 

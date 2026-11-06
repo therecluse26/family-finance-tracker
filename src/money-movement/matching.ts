@@ -52,6 +52,7 @@ import {
 } from "../review/index.ts";
 import { startLinkAi } from "./ai-links.ts";
 import { type AiRun, newAiRun } from "./ai-run.ts";
+import { carryHandLinksOver } from "./link-carry-over.ts";
 import {
   findManualLoanPayments,
   MISSED_PAYMENT_KIND,
@@ -385,9 +386,10 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
   return unclear;
 }
 
-// The Matching step: pairs Transfers around each added or changed Transaction, then runs the order
-// again for it and for each Transaction whose link began or ended. A hand-set type wins at step 1,
-// so the rules never change it. A hidden Transaction loses its result, as it no longer counts.
+// The Matching step: first moves the hand-made links of Transactions a re-link replaced to their
+// new copies, then pairs Transfers around each added or changed Transaction, then runs the order
+// again for it and for each Transaction whose link began, moved, or ended. A hand-set type wins at
+// step 1, so the rules never change it. A hidden Transaction loses its result, as it no longer counts.
 // Each new result clears the Categories, so the categorization step chooses them again, except
 // those a posted Transaction carries over from its pending one. A Transaction decided as a linked
 // Transfer whose link has ended since, such as when a Member linked its other side elsewhere, pairs
@@ -403,6 +405,7 @@ export async function runMatching(
   const run = newAiRun();
   const unlinked = await listUnlinkedTransferDecisions(database);
   const relinked = [
+    ...(await carryHandLinksOver(database, unhandled)),
     ...(await endBrokenOtherLinks(database, unhandled)),
     ...(await linkManualLoanPayouts(database, unhandled, now)),
   ];

@@ -931,14 +931,18 @@ describe("the Quick tier's link decisions", () => {
       const maple = connections.get("maple") ?? "";
 
       // The picked Spending goes first: the answer stays, with no pick.
-      expect(await markConnectionRemoved(bank.database, birch, NOW())).toBe(true);
+      expect(await markConnectionRemoved(bank.database, birch, NOW())).toMatchObject({
+        removed: true,
+      });
       expect(await deleteRemovedConnection(bank.database, birch, NOW())).toBeDefined();
       const left = await bank.database.$client.execute(
         "SELECT spending_transaction_id AS picked FROM ai_link_answers",
       );
       expect(left.rows).toEqual([expect.objectContaining({ picked: null })]);
       // Then the money.
-      expect(await markConnectionRemoved(bank.database, maple, NOW())).toBe(true);
+      expect(await markConnectionRemoved(bank.database, maple, NOW())).toMatchObject({
+        removed: true,
+      });
       expect(await deleteRemovedConnection(bank.database, maple, NOW())).toBeDefined();
       expect(await answerRows()).toEqual([]);
     });

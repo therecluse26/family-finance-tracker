@@ -627,7 +627,9 @@ describe("the Quick tier in the categorization step", () => {
         ).rows.map((row) => row.description);
       expect(await kept()).toEqual(["BEST BUY CO", "CHIPOTLE AUSTIN TX"]);
 
-      expect(await markConnectionRemoved(bank.database, connectionId, NOW())).toBe(true);
+      expect(await markConnectionRemoved(bank.database, connectionId, NOW())).toMatchObject({
+        removed: true,
+      });
       expect(await deleteRemovedConnection(bank.database, connectionId, NOW())).toBeDefined();
 
       expect(await kept()).toEqual(["BEST BUY CO"]);

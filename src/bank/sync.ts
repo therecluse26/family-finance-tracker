@@ -137,6 +137,10 @@ export type SyncReport = {
   changedTransactions: boolean;
   // True when this sync loaded the history of a bank added later, so its hooks became due.
   laterHooksDue: boolean;
+  // True when this sync ended the first history load of a Connection whose old Transactions still
+  // had hand-made links waiting for a new copy, so the follow-up job ends them (spec 02, Link
+  // carry-over).
+  copiesNoLongerAwaited: boolean;
 };
 
 // The sync running for each Connection, so one Connection runs one sync at a time.
@@ -146,6 +150,9 @@ export type SyncOptions = {
   // Called after each page is stored, with what it did to the Transactions. A sync that fails
   // later keeps the pages it stored, so a caller can act on them, such as starting a follow-up job.
   onPageStored?: (counts: PageCounts) => void;
+  // Called once the sync has stored everything, as soon as that commits, with what it stored about
+  // the history load. A failure to record the sync's success comes after it.
+  onFinished?: (finished: FinishedSync) => void;
   // Called once the sync has stored everything and recorded its success, with its report.
   onSynced?: (report: SyncReport) => void;
 };
@@ -179,6 +186,7 @@ const NOTHING_SYNCED: SyncReport = {
   removed: 0,
   changedTransactions: false,
   laterHooksDue: false,
+  copiesNoLongerAwaited: false,
 };
 
 export type LoadedConnection = {
@@ -264,6 +272,7 @@ async function pullPages(
     removed: 0,
     changedTransactions: false,
     laterHooksDue: false,
+    copiesNoLongerAwaited: false,
   };
   let cursor = stored.syncCursor;
   for (let pages = 0; pages < MAX_PAGES; pages += 1) {
@@ -289,8 +298,10 @@ async function pullPages(
         day: calendarDateIn(at, zone),
         at,
       });
+      options.onFinished?.(finished);
       report.changedTransactions = report.added + report.changed + report.removed > 0;
       report.laterHooksDue = finished.laterHooksDue;
+      report.copiesNoLongerAwaited = finished.copiesNoLongerAwaited > 0;
       return { report, finished };
     }
     cursor = page.nextCursor;

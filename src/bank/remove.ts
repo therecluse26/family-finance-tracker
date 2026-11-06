@@ -10,7 +10,9 @@ import { oneAtATimeFor, runningBank } from "./sync.ts";
 //
 // Remove asks the provider to end the Connection, such as Plaid's /item/remove, then deletes the
 // credential and closes the Accounts in one database transaction. Their history stays, and N does
-// not fall. When the provider's call fails:
+// not fall. Hand-made links that waited for the Connection's copies stop waiting in the same
+// transaction, and a follow-up job ends them (spec 02, Link carry-over). When the provider's call
+// fails:
 // - a Gone error, such as ITEM_NOT_FOUND or INVALID_ACCESS_TOKEN, means the provider already ended
 //   it, so the removal goes on;
 // - any other error changes nothing. The credential stays, so the Member can try again, and the
@@ -54,9 +56,11 @@ export function connectionRemoving(): ConnectionRemoving {
             log.info("The provider had already ended a Connection", { connectionId });
           }
         }
-        await markConnectionRemoved(database, connectionId);
+        const { copiesNoLongerAwaited } = await markConnectionRemoved(database, connectionId);
         await endConditions(connectionId);
-        log.info("Removed a Connection", { connectionId });
+        log.info("Removed a Connection", { connectionId, copiesNoLongerAwaited });
+        // Hand-made links that waited for this Connection's copies end in the follow-up job.
+        if (copiesNoLongerAwaited > 0) await askForFollowUp();
         return { outcome: "removed" };
       });
     },

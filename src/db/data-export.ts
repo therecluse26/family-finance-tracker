@@ -81,6 +81,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
       "laterHooksRestarts",
     ],
   ),
+  exported(schema.connectionCarryOvers, "every column"),
   exported(
     schema.householdAccounts,
     [

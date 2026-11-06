@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { startCategorization } from "../categorization/index.ts";
 import {
   addConnection,
   PLAID_SETTINGS_ROW,
@@ -7,7 +8,9 @@ import {
   storeItemsUsed,
   storePlaidKeys,
 } from "../db/index.ts";
+import { runFollowUp } from "../follow-up/index.ts";
 import { holdsSecretValue } from "../log.ts";
+import { linkByHand, startMoneyMovement, totalsByMonth } from "../money-movement/index.ts";
 import {
   FakePlaid,
   newAccessToken,
@@ -723,6 +726,200 @@ describe("linking a new bank through Plaid", () => {
         { id: "old-before-d", hidden_reason: null },
         { id: "old-on-d", hidden_reason: "replaced by re-link" },
       ]);
+      // The new Connection records the Broken one it carries the Account on from.
+      expect(
+        await rows("SELECT connection_id, old_connection_id FROM connection_carry_overs"),
+      ).toEqual([{ connection_id: connectionId, old_connection_id: broken }]);
+    });
+
+    // Link carry-over (spec 02): a hand Refund on the Transaction dated D, money in on 2026-10-05
+    // against the purchase on 2026-10-01, through the follow-up job.
+    describe("with a hand-made link on a Transaction dated D", () => {
+      let stops: (() => void)[];
+
+      beforeEach(async () => {
+        stops = [
+          startMoneyMovement({ database: bank.database }).stop,
+          startCategorization({ database: bank.database }).stop,
+        ];
+        await bank.database.$client.execute(
+          `INSERT INTO members (id, name, email, created_at, updated_at)
+           VALUES ('member-1', 'Jamie', 'jamie@example.com', '2026-10-01T00:00:00.000Z',
+             '2026-10-01T00:00:00.000Z')`,
+        );
+      });
+
+      afterEach(() => {
+        for (const stop of stops.reverse()) stop();
+      });
+
+      const NOW = on("2026-10-09");
+      const idOf = async (providerId: string) =>
+        String(
+          (
+            await rows(
+              `SELECT id FROM transactions WHERE provider_transaction_id = '${providerId}'`,
+            )
+          )[0]?.id,
+        );
+      const refunds = () =>
+        rows(
+          `SELECT l.id, m.provider_transaction_id AS money, s.provider_transaction_id AS spending,
+             l.made_by, l.member_id
+           FROM spending_links l
+           JOIN transactions m ON m.id = l.transaction_id
+           JOIN transactions s ON s.id = l.spending_transaction_id`,
+        );
+      const october = async () =>
+        (await totalsByMonth(bank.database)).find((totals) => totals.month === "2026-10");
+
+      // The Broken Connection, whose Transaction on day D is a $4 Refund of the $10 purchase.
+      async function linkedBrokenConnection() {
+        plaid.answer(
+          SYNC,
+          {
+            body: plaidSyncPage("old-1", [
+              plaidTransaction({
+                transaction_id: "old-before-d",
+                account_id: "old-checking",
+                date: "2026-10-01",
+              }),
+              plaidTransaction({
+                transaction_id: "old-on-d",
+                account_id: "old-checking",
+                date: "2026-10-05",
+                amount: -4,
+              }),
+            ]),
+          },
+          { body: plaidSyncPage("old-1") },
+        );
+        const broken = await brokenConnectionWith();
+        await runFollowUp(NOW);
+        const made = await linkByHand(
+          bank.database,
+          {
+            kind: "Refund",
+            transactionId: await idOf("old-on-d"),
+            spendingTransactionId: await idOf("old-before-d"),
+          },
+          "member-1",
+          NOW(),
+        );
+        expect(made).toMatchObject({ outcome: "linked" });
+        await runFollowUp(NOW);
+        return { broken, linkId: made.outcome === "linked" ? made.linkId : "" };
+      }
+
+      // brokenConnection() answers its own first sync; this one takes the answer set above.
+      async function brokenConnectionWith(): Promise<string> {
+        const accessToken = newAccessToken();
+        const id = await addConnection(bank.database, {
+          provider: "plaid",
+          bankId: "ins_fake",
+          bankName: "Fake Plaid Bank",
+          origin: "linked",
+          sealCredential: (rowId) =>
+            bank.secrets.encrypt(accessToken, { rowId, column: "connections.credential" }),
+        });
+        plaid.answer(ACCOUNTS_GET, {
+          body: { accounts: [plaidAccount({ account_id: "old-checking", mask: "0000" })] },
+        });
+        await syncConnection(id, on("2026-10-05"));
+        plaid.answer(SYNC, { status: 400, body: plaidFailure("ITEM_ERROR", "ITEM_NOT_FOUND") });
+        await expect(syncConnection(id, on("2026-10-07"))).rejects.toThrow("ITEM_NOT_FOUND");
+        return id;
+      }
+
+      // The new Item's first sync: its copy of the Refund on day D, and a purchase after it.
+      async function syncNewItem(connectionId: string) {
+        plaid.answer(
+          SYNC,
+          {
+            body: plaidSyncPage("new-1", [
+              plaidTransaction({
+                transaction_id: "new-on-d",
+                account_id: "new-checking",
+                date: "2026-10-05",
+                amount: -4,
+              }),
+            ]),
+          },
+          { body: plaidSyncPage("new-1") },
+        );
+        plaid.answer(ACCOUNTS_GET, {
+          body: { accounts: [plaidAccount({ account_id: "new-checking", mask: "0000" })] },
+        });
+        await syncConnection(connectionId, NOW);
+        await runFollowUp(NOW);
+      }
+
+      it("moves the link to the new copy on Link again, and keeps the totals", async () => {
+        const { broken, linkId } = await linkedBrokenConnection();
+        const before = await october();
+        expect(before).toMatchObject({ spending: 600 });
+        exchangeAnswers();
+        plaid.answer(ITEM_GET, {
+          body: { ...RECORDED.itemGet, item: { ...RECORDED.itemGet.item, item_id: newItemId() } },
+        });
+
+        const outcome = await linking.finishLink(
+          result({ bankId: "ins_fake", bankName: "Fake Plaid Bank", accounts: [CHECKING_0000] }),
+          { replaces: broken },
+        );
+        const connectionId = outcome.outcome === "linked" ? outcome.connectionId : "";
+        await syncNewItem(connectionId);
+
+        expect(await refunds()).toEqual([
+          {
+            id: linkId,
+            money: "new-on-d",
+            spending: "old-before-d",
+            made_by: "Member",
+            member_id: "member-1",
+          },
+        ]);
+        expect(await october()).toEqual(before);
+        expect(await rows("SELECT old_connection_id FROM connection_carry_overs")).toEqual([
+          { old_connection_id: broken },
+        ]);
+      });
+
+      // K10: the browser names the Broken Connection's bank; Plaid's /item/get names another.
+      it("moves nothing when Plaid names another bank than the browser did", async () => {
+        const { broken, linkId } = await linkedBrokenConnection();
+        exchangeAnswers();
+        plaid.answer(ITEM_GET, {
+          body: {
+            ...RECORDED.itemGet,
+            item: {
+              ...RECORDED.itemGet.item,
+              item_id: newItemId(),
+              institution_id: "ins_other",
+              institution_name: "Other Bank",
+            },
+          },
+        });
+
+        const outcome = await linking.finishLink(
+          result({ bankId: "ins_fake", bankName: "Fake Plaid Bank", accounts: [CHECKING_0000] }),
+          { replaces: broken },
+        );
+        expect(outcome).toMatchObject({ outcome: "added other bank" });
+        const connectionId = "connectionId" in outcome ? outcome.connectionId : "";
+        await syncNewItem(connectionId);
+
+        expect(await rows("SELECT * FROM connection_carry_overs")).toEqual([]);
+        expect(await refunds()).toEqual([
+          {
+            id: linkId,
+            money: "old-on-d",
+            spending: "old-before-d",
+            made_by: "Member",
+            member_id: "member-1",
+          },
+        ]);
+      });
     });
   });
 

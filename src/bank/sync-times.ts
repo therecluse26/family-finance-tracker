@@ -43,6 +43,16 @@ export const LOST_HISTORY_JOB_MS = HOUR_MS;
 export const HISTORY_JOB_ATTEMPTS = 3;
 export const HISTORY_JOB_RESTARTS = 2;
 
+// After Link again or a new link of a removed bank, hand-made links on replaced Transactions wait
+// for new copies at most this many days after the carry-over, when the new Connection's first
+// history load has not ended by then (spec 02, Link carry-over). The owner sets this number.
+export const COPIES_WAIT_CAP_DAYS = 7;
+export const COPIES_WAIT_CAP_MS = COPIES_WAIT_CAP_DAYS * 24 * HOUR_MS;
+
+// The sync schedule's job tries this many times to make the old Transactions of an ended wait
+// unhandled. Then it stops.
+export const COPIES_WAIT_END_TRIES = 5;
+
 // Sync now asks a Connection's provider to Refresh at most this often (spec 02, Sync now).
 export const REFRESH_GAP_MS = HOUR_MS;
 

@@ -913,7 +913,9 @@ describe("the Habit counts", () => {
     expect(before).toContain("Corner Bistro");
     expect((await readHouseholdSummary(bank.database))?.text).toContain("Corner Bistro");
 
-    expect(await markConnectionRemoved(bank.database, connectionId, NOVEMBER_5)).toBe(true);
+    expect(await markConnectionRemoved(bank.database, connectionId, NOVEMBER_5)).toMatchObject({
+      removed: true,
+    });
     expect(await deleteRemovedConnection(bank.database, connectionId, NOVEMBER_5)).toBeDefined();
 
     expect(await readHouseholdSummary(bank.database)).toBeUndefined();

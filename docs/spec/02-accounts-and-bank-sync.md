@@ -280,6 +280,7 @@ The Plaid adapter declares `minSyncGapHours: 0` and all three actions: `repairIn
 - The new Connection records the old Connection whose Accounts it carries on.
 - **Link carry-over:** a hand-made link on an old Transaction hidden as `replaced by re-link` does not end at once. It moves to that Transaction's new copy: a new Transaction on the same Account, with the same amount and the same posted date. When several fit, the app pairs them one to one, the same description first. The moved link stays a hand-made link.
   - If no copy has arrived when the new Connection's first history load ends, the link ends, and matching runs again.
+  - The wait also ends, the same way, when the new Connection is removed before that load ends, or 7 days after the carry-over if the load still has not ended, for example while the Connection stays Broken.
   - An app-made link on a replaced Transaction ends, and matching runs again on the new Transactions.
 
 ### A lost Master key

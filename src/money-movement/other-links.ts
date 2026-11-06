@@ -2,6 +2,7 @@ import {
   type Database,
   endOtherLinks,
   type LinkMaker,
+  listAwaitingCopies,
   listLoanLinkedTransactions,
   listLoanLinksOf,
   listSpendingLinksOf,
@@ -28,7 +29,8 @@ export async function loanLinkedIds(
 // Ends the Refund, Reimbursement, and loan links of these Transactions that no longer pass their
 // hard filters:
 // - a Refund or Reimbursement is money in, its Spending is money out, both show, and the Spending
-//   posted first;
+//   posted first; a hand-made link's side that waits for its new copy after a re-link counts as
+//   shown;
 // - a Refund the app linked is on its purchase's Account, from the same Merchant, at most 120 days
 //   after it;
 // - a loan's payment or payout shows, and moves money.
@@ -49,14 +51,22 @@ export async function endBrokenOtherLinks(
       ])
     ).map((record) => [record.id, record]),
   );
+  // A hand-made link on a Transaction a re-link replaced waits for its new copy (spec 02, Link
+  // carry-over), so that side counts as shown until then.
+  const awaiting = await listAwaitingCopies(
+    database,
+    [...records.values()].filter((record) => record.hidden).map((record) => record.id),
+  );
+  const gone = (record: { id: string; hidden: boolean }, madeBy: LinkMaker) =>
+    record.hidden && !(madeBy === "Member" && awaiting.has(record.id));
   const endedSpending = spending.filter((link) => {
     const money = records.get(link.transactionId);
     const spent = records.get(link.spendingTransactionId);
     return (
       money === undefined ||
       spent === undefined ||
-      money.hidden ||
-      spent.hidden ||
+      gone(money, link.madeBy) ||
+      gone(spent, link.madeBy) ||
       money.amount <= 0 ||
       spent.amount >= 0 ||
       purchaseDate(spent) > money.postedDate ||
@@ -65,7 +75,7 @@ export async function endBrokenOtherLinks(
   });
   const endedLoans = loans.filter((link) => {
     const record = records.get(link.transactionId);
-    return record === undefined || record.hidden || record.amount === 0;
+    return record === undefined || gone(record, link.madeBy) || record.amount === 0;
   });
   await endOtherLinks(database, {
     spending: endedSpending.map((link) => link.id),

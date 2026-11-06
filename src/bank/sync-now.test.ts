@@ -78,7 +78,9 @@ describe("Sync now", () => {
       syncHeld: true,
     });
     const removed = await bank.connect("fake-removed", "Removed Bank");
-    expect(await markConnectionRemoved(bank.database, removed, T0)).toBe(true);
+    expect(await markConnectionRemoved(bank.database, removed, T0)).toMatchObject({
+      removed: true,
+    });
 
     const results = await press(T0);
 
