@@ -37,8 +37,21 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
   - A session lasts 30 days and renews each time the Member uses the app.
   - Session cookies are `HttpOnly` and `SameSite=Lax`. In HTTPS mode they are also `Secure`.
   - Changing one's own password or TOTP, or getting new backup codes, ends that Member's other sessions and their sign-ins that wait for a code, at once. The session that made the change stays.
+- **Signed-in devices:** Settings, My login lists the signed-in Member's own sessions that have not expired. This device comes first, then the others, newest first. Each row shows:
+  - A short browser and system name, such as "Firefox on Linux" or "Safari on iPhone". The app reads it from the user agent that the browser sent at sign-in. It knows the common browsers (Chrome, Edge, Firefox, Safari, Opera, Samsung Internet) and systems (Windows, macOS, Linux, ChromeOS, Android, iPhone, iPad). A part it cannot tell is left out: "Firefox", or "Unknown browser on Linux". When it can tell neither part, the row says "Unknown browser".
+  - When that device signed in, in the Household time zone, such as "Signed in Nov 6, 9:30 AM".
+  - "this device" on the session that shows the page.
+  - The page gets only these. It never gets the IP address, the user agent, the session token, or another Member's sessions.
+- **Sign out on a device:**
+  - "Sign out" on another device's row ends that one session at once. That device gets no more data and must sign in again.
+  - "Sign out" on this device's row signs this device out, as the "Sign out" button does.
+  - "Sign out everywhere else" ends every other session of the Member, and their sign-ins that wait for a code, at once. This device stays signed in.
+  - Neither asks for a code or the password ([Sensitive actions](#signing-in)).
+  - A Member can end only their own sessions. When the session is not one of the Member's own open sessions, the app changes nothing and says "That device is already signed out." It gives the same answer for another Member's session, an expired session, an ended session, and an ID that no session has, so the answer does not show that a session exists.
+  - Without a session, the request gets 401 and the sign-in page. A request from another site, or with no `Origin`, gets 403. A body that is not JSON gets 415. Each changes nothing.
+  - **Risk:** a stolen session can sign out the Member's other devices, the Member's own included. It cannot take over the login: a password change and a new passkey ask for the current password, and a new TOTP asks for a code from the new authenticator app. The Member signs in again and changes their password, which ends the thief's session. A stolen session could already end the other sessions by getting new backup codes, so this adds no new power.
 - **Failed sign-ins:** the app allows 5 failed sign-ins per 15 minutes, per Member and per IP address. The app refuses further tries in that window without checking them. An IPv6 address counts with every address in its /64 network.
-- **Sensitive actions:** the app asks for TOTP, a backup code, or a passkey only at sign-in. No action after sign-in asks for a code again. This includes a data export, an invite link, removing a Connection, resetting or removing a Member, and changing the Plaid keys, an AI key, or the SMTP settings.
+- **Sensitive actions:** the app asks for TOTP, a backup code, or a passkey only at sign-in. No action after sign-in asks for a code again. This includes a data export, an invite link, removing a Connection, resetting or removing a Member, signing out a device, and changing the Plaid keys, an AI key, or the SMTP settings.
   - A code again after sign-in added work for each Member and gave no real protection to a self-hosted app.
   - Changing one's own password asks for the current password. Adding a passkey asks for it too. Then a stolen session cannot take over the login. A wrong current password counts as a failed sign-in. When a Member adds a passkey, a passkey that does not check the Member (by a PIN or a fingerprint) also counts as a failed sign-in. Other refusals, such as a name that is too long or plain-HTTP mode, do not count.
   - Getting a new TOTP asks for one code from the new authenticator app. That code proves the new setup. Getting new backup codes asks for nothing more.

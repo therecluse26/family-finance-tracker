@@ -267,7 +267,7 @@ Settings has one section per area. Each owner file holds the rules.
 |---|---|---|
 | Household | Household facts (ZIP code, ages, rent or own) | [05](05-budgets-benchmarks-goals.md) |
 | Members | Members, invite links, removing a Member, resetting a login | [09](09-members-login-security.md) |
-| My login | Password, TOTP, backup codes, passkeys | [09](09-members-login-security.md) |
+| My login | Password, TOTP, backup codes, passkeys, signed-in devices | [09](09-members-login-security.md) |
 | Banks | Plaid keys, Connections, Repair, Remove, "Import Plaid Connection", "at least N of 10 used", Unconnected accounts, Manual loans | [02](02-accounts-and-bank-sync.md) |
 | Categories | Category rules, with Delete | [04](04-categorization.md) |
 | Alerts | Weekly cap, my channels, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
