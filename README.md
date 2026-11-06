@@ -28,7 +28,7 @@ The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 
 | Command | What it does |
 |---|---|
 | `pnpm install` | Installs the packages |
-| `pnpm dev` | Runs the web app and the API at http://localhost:5173, which is also its `APP_URL` unless you set one. It runs the same services as `pnpm start`: the bank module, the background jobs, the follow-up work, and email. It keeps its own `app.db` and `jobs.db` in `.dev/`. When you save a server file, it stops these services and starts them again on the new code; Ctrl-C stops them, then exits. With no Master key set, it makes `.dev/master.key` on its first start and prints the setup link until the first Member exists, so it needs no other step |
+| `pnpm dev` | Runs the web app and the API at http://localhost:5173, which is also its `APP_URL` unless you set one. It runs the same services as `pnpm start`: the bank module, the background jobs, the follow-up work, and email. It leaves out the two scheduled tasks that call outside services, the update check (GitHub) and the CPI fetch (BLS), so it makes no scheduled outside call. It keeps its own `app.db` and `jobs.db` in `.dev/`. When you save a server file, it stops these services and starts them again on the new code, once for a burst of saves; Ctrl-C stops them, then exits. With no Master key set, it makes `.dev/master.key` on its first start and prints the setup link until the first Member exists, so it needs no other step |
 | `pnpm lint` | Checks lint and formatting with Biome; `pnpm format` fixes them |
 | `pnpm typecheck` | Type-checks the server, the web app, and the tests |
 | `pnpm test` | Runs the tests with Vitest |

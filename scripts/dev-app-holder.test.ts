@@ -114,4 +114,51 @@ describe("the dev app holder", () => {
     expect((await holder.current())?.id).toBe(3);
     expect(started).toHaveLength(3);
   });
+
+  it("makes one restart for a burst of saves, such as a format of 40 files", async () => {
+    const { started, start } = counting();
+    let restarts = 0;
+    const holder = devAppHolder(start, { debounceMs: 20, onRestart: () => (restarts += 1) });
+    await holder.current();
+
+    const burst: Promise<void>[] = [];
+    for (let file = 0; file < 40; file += 1) {
+      burst.push(holder.restartSoon());
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await Promise.all(burst);
+
+    expect(restarts).toBe(1);
+    expect(started).toHaveLength(2);
+    expect(started[0]?.closed).toBe(true);
+    expect((await holder.current())?.id).toBe(2);
+  });
+
+  it("restarts again for a save after the burst's restart began", async () => {
+    const { started, start } = counting();
+    const holder = devAppHolder(start, { debounceMs: 20 });
+    await holder.current();
+
+    await holder.restartSoon();
+    await holder.restartSoon();
+
+    expect(started).toHaveLength(3);
+    expect((await holder.current())?.id).toBe(3);
+  });
+
+  it("drops a waiting restart when Vite closes", async () => {
+    const { started, start } = counting();
+    let restarts = 0;
+    const holder = devAppHolder(start, { debounceMs: 20, onRestart: () => (restarts += 1) });
+    await holder.current();
+
+    const waiting = holder.restartSoon();
+    await holder.shutdown();
+    await waiting;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(restarts).toBe(0);
+    expect(started).toHaveLength(1);
+    expect(await holder.current()).toBeUndefined();
+  });
 });

@@ -52,6 +52,8 @@ function devEnv(): DevEnv {
 // stops its jobs and closes app.db.
 function honoDevServer(): Plugin {
   let holder: DevAppHolder<DevApp> | undefined;
+  // The files saved since the last restart began.
+  const changed = new Set<string>();
   return {
     name: "hono-dev-server",
     apply: "serve",
@@ -65,15 +67,16 @@ function honoDevServer(): Plugin {
       await holder?.shutdown();
     },
     // A file the dev app runs has modules in Vite's SSR graph. Vite drops them now, so the next
-    // job would import new, empty copies: the dev app starts again on them.
+    // job would import new, empty copies: the dev app starts again on them, once for a burst.
     hotUpdate({ file, modules }) {
       if (this.environment.name !== "ssr" || modules.length === 0 || !holder) return;
-      const logger = this.environment.logger;
+      const firstOfBurst = changed.size === 0;
+      changed.add(relative(repoRoot, file));
       const running = holder;
-      logger.info(`Restarting the dev app: ${relative(repoRoot, file)} changed.`, {
-        timestamp: true,
-      });
-      void running.restart().then(() =>
+      const restarted = running.restartSoon();
+      if (!firstOfBurst) return;
+      const logger = this.environment.logger;
+      void restarted.then(() =>
         running.current().catch((error: unknown) => {
           logger.error(
             `The dev app could not start again: ${error instanceof Error ? error.message : String(error)} Save a fix to try again.`,
@@ -82,11 +85,22 @@ function honoDevServer(): Plugin {
       );
     },
     configureServer(server) {
-      const started = devAppHolder(() =>
-        server.ssrLoadModule(devApp).then((mod: DevAppModule) => {
-          if (!mod.createDevApp) throw new Error("dev-app.ts has no createDevApp export.");
-          return mod.createDevApp(webRoot, devEnv());
-        }),
+      const started = devAppHolder(
+        () =>
+          server.ssrLoadModule(devApp).then((mod: DevAppModule) => {
+            if (!mod.createDevApp) throw new Error("dev-app.ts has no createDevApp export.");
+            return mod.createDevApp(webRoot, devEnv());
+          }),
+        {
+          onRestart: () => {
+            const files = [...changed];
+            changed.clear();
+            const more = files.length > 1 ? ` and ${files.length - 1} more` : "";
+            server.config.logger.info(`Restarting the dev app: ${files[0]}${more} changed.`, {
+              timestamp: true,
+            });
+          },
+        },
       );
       holder = started;
       // Vite closes on SIGTERM, but not on Ctrl-C. Without this, Node would exit at once and leave

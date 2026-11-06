@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { offerDemoBanks } from "../bank/demo.ts";
 import { FakeBankAdapter } from "../bank/fake.ts";
+import { CpiFetchJob } from "../benchmarks/index.ts";
 import {
   applyMigrations,
   closeDatabase,
@@ -21,6 +22,7 @@ import {
   setupCodeOf,
   WrongMasterKeyError,
 } from "../secrets/index.ts";
+import { UpdateCheckJob } from "../updates/index.ts";
 import { createApp } from "./app.ts";
 import { devRoutes } from "./dev-routes.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -119,14 +121,20 @@ export async function showSetupLink(
   process.stdout.write(`\nOpen this setup link to make the first Member:\n  ${link}\n\n`);
 }
 
+// `pnpm start`'s scheduled tasks, less the two that call outside services on their own: the update
+// check (GitHub) and the CPI fetch (BLS). `pnpm dev` makes no scheduled outside call.
+export const devScheduledTasks = scheduledTasks.filter(
+  (task) => task.job !== UpdateCheckJob && task.job !== CpiFetchJob,
+);
+
 // The services `pnpm start` runs, with the same start-up steps: the bank module, the job runner and
 // its schedule, the follow-up work, and email. Dev adds the fake adapter beside Plaid's, with each
 // demo bank scripted, and its fake bank route. close() stops them, as Vite closes or before a
-// restart. Tests pass their own folder, and no scheduled tasks, so nothing calls out.
+// restart. Tests pass their own folder, and no scheduled tasks.
 export async function createDevApp(
   webRoot: string,
   env: DevEnv,
-  { folder = DEV_FOLDER, tasks = scheduledTasks } = {},
+  { folder = DEV_FOLDER, tasks = devScheduledTasks } = {},
 ) {
   const security = await loadSecurity(env);
   const opened = await openDevDatabase(env, folder);
@@ -148,9 +156,16 @@ export async function createDevApp(
     extraBankAdapters: [fake],
     backupFolders: { mounted: backups, fallback: backups },
   });
-  const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
-    ...services.routes,
-    devRoutes: devRoutes(services.database),
-  });
-  return { app, close: () => services.close() };
+  // A throw here, such as from a route that an edit broke, must not leave the services running:
+  // the next restart could not start them again.
+  try {
+    const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
+      ...services.routes,
+      devRoutes: devRoutes(services.database),
+    });
+    return { app, close: () => services.close() };
+  } catch (error) {
+    await services.close();
+    throw error;
+  }
 }

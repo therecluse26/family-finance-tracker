@@ -16,12 +16,15 @@ import { createAuth } from "../auth/index.ts";
 import { addMember } from "../auth/testing.ts";
 import { DEMO_BANKS } from "../bank/demo.ts";
 import { closeDatabase, markSetupStep, openDatabase } from "../db/index.ts";
+import { scheduledTasks } from "../jobs/list.ts";
 import { createLogger, log } from "../log.ts";
 import { setupCodeOf, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKeyHex } from "../secrets/testing.ts";
+import * as appModule from "./app.ts";
 import {
   createDevApp,
   DevStartError,
+  devScheduledTasks,
   openDevDatabase,
   showSetupLink,
   withDevMasterKey,
@@ -340,5 +343,39 @@ describe("the dev app", () => {
     await tab.signIn(member);
 
     expect((await tab.post("/api/dev/fake-bank", {})).status).toBe(200);
+  });
+
+  it("closes its services when building the app fails, so the next start, after a fix, works", async () => {
+    const member = await firstMember();
+    const createApp = vi.spyOn(appModule, "createApp").mockImplementationOnce(() => {
+      throw new TypeError("A route that an edit broke.");
+    });
+
+    await expect(start()).rejects.toThrow("A route that an edit broke.");
+    expect(createApp).toHaveBeenCalledTimes(1);
+
+    const fixed = await start();
+    const tab = new TestBrowser(fixed.app, APP_URL, "192.168.1.3");
+    await tab.signIn(member);
+    expect((await tab.get("/api/connections")).status).toBe(200);
+  });
+});
+
+// `pnpm dev` makes no scheduled outside call: it runs `pnpm start`'s scheduled tasks, less the
+// update check (GitHub) and the CPI fetch (BLS).
+describe("the dev app's scheduled tasks", () => {
+  it("leave out the update check and the CPI fetch, and keep every other task", () => {
+    const names = devScheduledTasks.map((task) => task.name);
+
+    expect(names).not.toContain("update check");
+    expect(names).not.toContain("cpi fetch");
+    expect(names).toEqual(
+      scheduledTasks
+        .map((task) => task.name)
+        .filter((name) => name !== "update check" && name !== "cpi fetch"),
+    );
+    expect(scheduledTasks.map((task) => task.name)).toEqual(
+      expect.arrayContaining(["update check", "cpi fetch"]),
+    );
   });
 });
