@@ -16,6 +16,7 @@ import {
   benchmarkSnapshot,
   type CeTable,
   type FoodPlan,
+  type ThriftyPlan,
 } from "./snapshot.ts";
 
 // Each Category's Benchmark (spec 05, The Benchmark for a Category, and The Groceries and
@@ -24,9 +25,10 @@ import {
 // CPI aging. Groceries and Superstores share B_GS, which adds the USDA Moderate-Cost food plan for
 // the Household's people, priced at the CPI food at home now.
 
-// The column every CE table keeps beside its income columns. It is no income column, so the pick
-// skips it.
-const ALL_CONSUMER_UNITS = "All consumer units";
+// The column every CE table keeps beside its income columns: "All consumer units" in the table by
+// income, and "Total one person" to "Total five or more people" in the size tables. It is no income
+// column, so the pick skips it.
+const ALL_UNITS_COLUMN = /^(?:All consumer units|Total\b)/i;
 
 // The largest size × income table: five or more people.
 const LARGEST_CE_SIZE = 5;
@@ -83,9 +85,9 @@ export type CategoryBenchmarks = {
 type CeColumn = CeTable["columns"][number];
 
 const incomeColumns = (table: CeTable) =>
-  table.columns.filter(({ label }) => label !== ALL_CONSUMER_UNITS);
+  table.columns.filter(({ label }) => !ALL_UNITS_COLUMN.test(label));
 
-// Step 1: the income column whose mean income after taxes is nearest the Household's yearly
+// Step 1: the income column whose mean income before taxes is nearest the Household's yearly
 // Income, I × 12, in the size × income table for its size. With no column for the size, the
 // one-year income table.
 function pickCeColumn(
@@ -100,8 +102,8 @@ function pickCeColumn(
   const columns = sized.length > 0 ? sized : incomeColumns(snapshot.ce.byIncome);
   let nearest: CeColumn | undefined;
   for (const column of columns) {
-    const distance = Math.abs(column.incomeAfterTaxes - yearlyIncome);
-    if (nearest === undefined || distance < Math.abs(nearest.incomeAfterTaxes - yearlyIncome)) {
+    const distance = Math.abs(column.incomeBeforeTaxes - yearlyIncome);
+    if (nearest === undefined || distance < Math.abs(nearest.incomeBeforeTaxes - yearlyIncome)) {
       nearest = column;
     }
   }
@@ -148,16 +150,17 @@ function sizeFactor(snapshot: BenchmarkSnapshot, people: number): number {
   return 1 + (adjustment?.percent ?? 0) / 100;
 }
 
-// The Alaska and Hawaii food rule: that state's Thrifty cost ÷ the US Thrifty cost, for the
-// Household's people. The plans may be from different months, so each cost is first divided by the
-// CPI food at home in its own plan's month, which prices both at one month.
+// The Alaska and Hawaii food rule: that state's Thrifty cost ÷ the US Thrifty cost, for USDA's
+// reference family, the only family USDA prices the state plans for. The plans may be from
+// different months, so each cost is first divided by the CPI food at home in its own plan's month,
+// which prices both at one month.
 const STATE_THRIFTY = { AK: "alaska", HI: "hawaii" } as const;
 
-function stateFactor(snapshot: BenchmarkSnapshot, state: string, ages: readonly number[]): number {
+function stateFactor(snapshot: BenchmarkSnapshot, state: string): number {
   const area = state === "AK" || state === "HI" ? STATE_THRIFTY[state] : undefined;
   if (area === undefined) return 1;
   const { us, [area]: statePlan } = snapshot.food.thrifty;
-  const atOneMonth = (plan: FoodPlan) => peopleCost(plan, ages) / plan.pricedAt.value;
+  const atOneMonth = (plan: ThriftyPlan) => plan.family.monthly / plan.pricedAt.value;
   return atOneMonth(statePlan) / atOneMonth(us);
 }
 
@@ -175,7 +178,7 @@ export function foodPlanCost(
     peopleCost(moderate, ages) *
     sizeFactor(snapshot, ages.length) *
     (foodAtHomeNow / moderate.pricedAt.value) *
-    stateFactor(snapshot, state, ages)
+    stateFactor(snapshot, state)
   );
 }
 

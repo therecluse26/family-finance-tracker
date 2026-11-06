@@ -470,9 +470,13 @@ describe("Budget tailoring", () => {
           goal_amount: null,
         },
       ]);
-      // Clothing moves to 150% of the formula's figure; Bills never appear.
+      // Clothing moves to 150% of the formula's figure, in whole dollars; Bills never appear.
       expect(await proposalLines()).toEqual([
-        { category: "Clothing", amount: (clothing * 3) / 2, reason: "New school clothes." },
+        {
+          category: "Clothing",
+          amount: Math.floor((clothing * 3) / 200) * 100,
+          reason: "New school clothes.",
+        },
         {
           category: "Restaurants",
           amount: Math.round((restaurants * 0.8) / 100) * 100,

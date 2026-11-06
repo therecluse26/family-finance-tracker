@@ -55,11 +55,10 @@ describe("the Benchmark snapshot", () => {
     }
   });
 
-  it("has the housekeeping supplies and personal care products lines for B_GS", () => {
-    expect(B_GS_CE_LINES).toEqual(["Housekeeping supplies", "Personal care products"]);
+  it("has the housekeeping supplies line for B_GS", () => {
+    expect(B_GS_CE_LINES).toEqual(["Housekeeping supplies"]);
     for (const column of everyColumn(benchmarkSnapshot())) {
       expect(column.lines["Housekeeping supplies"]).toEqual(expect.any(Number));
-      expect(column.lines["Personal care products"]).toEqual(expect.any(Number));
     }
   });
 
@@ -163,11 +162,15 @@ describe("the Category-to-CE-line map", () => {
     expect(CE_LINE_MAP.Superstores).toEqual(CE_LINE_MAP.Groceries);
   });
 
-  it("gives Personal care only the services, since the products sit in B_GS", () => {
+  it("gives Personal care the joined personal care products and services row", () => {
     expect(CE_LINE_MAP["Personal care"]).toEqual({
       kind: "lines",
-      lines: ["Personal care services"],
+      lines: ["Personal care products and services"],
     });
+  });
+
+  it("gives Gas the gasoline and other fuels row", () => {
+    expect(CE_LINE_MAP.Gas).toEqual({ kind: "lines", lines: ["Gasoline and other fuels"] });
   });
 
   it("takes rented dwellings for a renter's Housing and owned dwellings for an owner's", () => {

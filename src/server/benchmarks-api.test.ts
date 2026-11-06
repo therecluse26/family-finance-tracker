@@ -59,9 +59,9 @@ describe("the Benchmark route", () => {
   const benchmarks = async () =>
     (await (await browser.get("/api/benchmarks")).json()) as BenchmarksView;
 
-  it("has no Benchmark until the wizard records the Household facts, and carries the sample label", async () => {
+  it("has no Benchmark until the wizard records the Household facts, and no sample label on the real snapshot", async () => {
     expect(await benchmarks()).toEqual({
-      notice: "Sample numbers, not real data",
+      notice: null,
       steadyIncome: null,
       ceColumn: null,
       categories: [],
@@ -78,7 +78,7 @@ describe("the Benchmark route", () => {
     const view = await benchmarks();
     const computed = await categoryBenchmarks(test.database);
 
-    expect(view.notice).toBe("Sample numbers, not real data");
+    expect(view.notice).toBeNull();
     expect(view.steadyIncome).toBe(600_000);
     expect(view.ceColumn).toEqual(computed?.ceColumn);
     expect(view.categories.map(({ category, role }) => [category, role])).toEqual(

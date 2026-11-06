@@ -4,6 +4,7 @@ import { newTestDatabase, readEveryTable, type TestDatabase } from "../db/testin
 import { startNotify } from "../notify/index.ts";
 import {
   BLS_API,
+  benchmarkSnapshot,
   CPI_FETCH_CAP,
   CPI_STOPPED,
   CpiFetchJob,
@@ -359,17 +360,17 @@ describe("the newest CPI value", () => {
   };
 
   it("is the shipped value until a fetch brings a newer one", async () => {
+    const { ce, food } = benchmarkSnapshot();
+
     expect(await cpiNow(test.database, "CUUR0000SAF11")).toEqual({
-      series: "CUUR0000SAF11",
+      ...food.moderate.pricedAt,
       period: "2026-09",
-      value: 335,
       source: "shipped",
     });
     // The newest shipped all-items value averages the CE year 2025, which ends in December.
     expect(await cpiNow(test.database, "CUUR0000SA0")).toEqual({
-      series: "CUUR0000SA0",
+      ...ce.byIncome.pricedAt,
       period: "2025",
-      value: 330.5,
       source: "shipped",
     });
   });

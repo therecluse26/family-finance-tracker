@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BENCHMARK_SNAPSHOT_DATA } from "../src/benchmarks/snapshot.data.ts";
-import { benchmarkSnapshot } from "../src/benchmarks/snapshot.ts";
+import { type BenchmarkSnapshot, benchmarkSnapshot } from "../src/benchmarks/snapshot.ts";
 import { ZIP_TABLE_DATA } from "../src/household/zip-table.data.ts";
 import {
   buildBenchmarkSnapshot,
@@ -14,6 +14,7 @@ import {
   parseCeTable,
   parseCpi,
   parseFoodPlan,
+  parseThriftyFamily,
   releaseProblem,
   renderDataSources,
   SOURCE_FILES,
@@ -47,7 +48,7 @@ function ceSheet(value: number, drop: string[] = []): string[][] {
     "Housekeeping supplies",
     "Household furnishings and equipment",
     "Apparel and services",
-    "Gasoline, other fuels, and motor oil",
+    "Gasoline and other fuels",
     "Maintenance and repairs",
     "Vehicle rental, leases, licenses, and other charges",
     "Vehicle insurance",
@@ -61,8 +62,7 @@ function ceSheet(value: number, drop: string[] = []): string[][] {
     "Pets",
     "Toys, hobbies, and playground equipment",
     "Other entertainment supplies, equipment, and services",
-    "Personal care products",
-    "Personal care services",
+    "Personal care products and services",
     "Reading",
     "Education",
     "Life and other personal insurance",
@@ -71,9 +71,10 @@ function ceSheet(value: number, drop: string[] = []): string[][] {
     [TITLE],
     ["Item", "All", "Less than", "$100,000"],
     ["", "consumer units", "$100,000", "and more"],
-    ["Income after taxes"],
+    ["Income before taxes"],
     ["Mean", "70,000", "40000", "b/"],
     ["SE", "700", "400", "900"],
+    ["RSE", "1.00", "1.00", "1.00"],
     ["Average annual expenditures"],
     ["Mean", "60000", "45000", "90000"],
     ...lines.flatMap((line) => [[line], ["Mean", String(value), String(value), String(value)]]),
@@ -81,7 +82,7 @@ function ceSheet(value: number, drop: string[] = []): string[][] {
 }
 
 describe("the CE table parser", () => {
-  it("reads each column's income after taxes, total, and CE lines by their labels", () => {
+  it("reads each column's income before taxes, total, and CE lines by their labels", () => {
     const table = parseCeTable(ceSheet(10), "ce.xlsx");
 
     expect(table.title).toBe(TITLE);
@@ -90,11 +91,12 @@ describe("the CE table parser", () => {
       "All consumer units",
       "Less than $100,000",
     ]);
-    expect(table.columns[0]).toMatchObject({ incomeAfterTaxes: 70000, totalSpending: 60000 });
-    expect(table.columns[0]?.lines["Personal care products"]).toBe(10);
+    expect(table.columns[0]).toMatchObject({ incomeBeforeTaxes: 70000, totalSpending: 60000 });
+    expect(table.columns[0]?.lines["Personal care products and services"]).toBe(10);
+    expect(table.columns[0]?.lines["Gasoline and other fuels"]).toBe(10);
   });
 
-  it("leaves out a column whose income after taxes BLS suppresses", () => {
+  it("leaves out a column whose income before taxes BLS suppresses", () => {
     const table = parseCeTable(ceSheet(10), "ce.xlsx");
 
     expect(table.columns.map(({ label }) => label)).not.toContain("$100,000 and more");
@@ -118,10 +120,10 @@ describe("the CE table parser", () => {
   });
 
   it("fails naming every row it cannot find", () => {
-    const sheet = ceSheet(10, ["Housekeeping supplies", "Personal care products"]);
+    const sheet = ceSheet(10, ["Housekeeping supplies", "Personal care products and services"]);
 
     expect(() => parseCeTable(sheet, "ce-size-2-by-income.xlsx")).toThrow(
-      'ce-size-2-by-income.xlsx: it has no figures for these rows: "Housekeeping supplies", "Personal care products".',
+      'ce-size-2-by-income.xlsx: it has no figures for these rows: "Housekeeping supplies", "Personal care products and services".',
     );
   });
 
@@ -142,6 +144,43 @@ describe("the CE table parser", () => {
 
     expect(() => parseCeTable(sheet, "ce.xlsx")).toThrow(
       'ce.xlsx: it has more than one "Pets" row, with different figures.',
+    );
+  });
+
+  it("reads a size table's figures from its label rows, by income before taxes, with income after taxes suppressed", () => {
+    // The 2023-2024 size tables: no "Mean" rows, and "b/" for income after taxes, which BLS
+    // stopped publishing in 2024.
+    const sheet = ceSheet(10).flatMap((row, at, rows) => {
+      if (row[0] === "Mean") return [];
+      const mean = rows[at + 1]?.[0] === "Mean" ? rows[at + 1]?.slice(1) : undefined;
+      const figures = row.length === 1 && mean !== undefined ? [...row, ...mean] : row;
+      return row[0] === "Income before taxes"
+        ? [figures, ["Income after taxes", "b/", "b/", "b/"]]
+        : [figures];
+    });
+
+    const table = parseCeTable(sheet, "ce-size-2-by-income.xlsx");
+    expect(table.columns.map(({ label, incomeBeforeTaxes }) => [label, incomeBeforeTaxes])).toEqual(
+      [
+        ["All consumer units", 70000],
+        ["Less than $100,000", 40000],
+      ],
+    );
+    expect(table.columns[1]?.totalSpending).toBe(45000);
+    expect(table.columns[1]?.lines["Personal care products and services"]).toBe(10);
+  });
+
+  it("fails on a table with the CE rows from before 2025", () => {
+    const sheet = ceSheet(10).flatMap((row) => {
+      if (row[0] === "Gasoline and other fuels") return [["Gasoline, other fuels, and motor oil"]];
+      if (row[0] === "Personal care products and services") {
+        return [["Personal care products"], ["Mean", "4", "4", "4"], ["Personal care services"]];
+      }
+      return [row];
+    });
+
+    expect(() => parseCeTable(sheet, "ce.xlsx")).toThrow(
+      'ce.xlsx: it has no figures for these rows: "Gasoline and other fuels", "Personal care products and services".',
     );
   });
 });
@@ -307,6 +346,60 @@ describe("the USDA food plan parser", () => {
     );
   });
 
+  it("goes by the costs' area when a file's text names both states", () => {
+    const bothStates = `${README} USDA publishes Thrifty costs for Alaska and Hawaii in their own files.`;
+    const hawaii = foodSheets(
+      [["Hawaii", "Individual", "Child", "1+ years", "2026", "9", "Thrifty", "Monthly", "1"]],
+      bothStates,
+    );
+    const check = (state: "Alaska" | "Hawaii") =>
+      checkFoodPlanState(hawaii, parseFoodPlan(hawaii, "f.xlsx", "Thrifty"), "f.xlsx", state);
+
+    expect(() => check("Hawaii")).not.toThrow();
+    expect(() => check("Alaska")).toThrow(
+      'f.xlsx: it is not the Alaska food plan: its costs are for "Hawaii".',
+    );
+  });
+
+  it("reads a Thrifty plan's latest monthly cost for the reference family", () => {
+    const family = (month: string, frequency: string, cost: string) => [
+      "Alaska",
+      "Family",
+      "Couple and children",
+      "20-50 years and children 6-8 and 9-11 years",
+      "2026",
+      month,
+      "Thrifty",
+      frequency,
+      cost,
+    ];
+    const sheets = foodSheets([
+      family("August", "Monthly", "1290.0"),
+      family("September", "Weekly", "300.0"),
+      family("September", "Monthly", "1296.9"),
+    ]);
+
+    expect(parseThriftyFamily(sheets, "a.xlsx")).toEqual({
+      plan: "Thrifty",
+      area: "Alaska",
+      month: "2026-09",
+      family: {
+        group: "Couple and children",
+        age: "20-50 years and children 6-8 and 9-11 years",
+        monthly: 1296.9,
+      },
+    });
+    expect(() => parseThriftyFamily(foodSheets(OTHER_AGES), "b.xlsx")).toThrow(
+      "b.xlsx: it has no monthly Thrifty cost for a couple and children.",
+    );
+    expect(() =>
+      parseThriftyFamily(
+        foodSheets([family("September", "Monthly", "1"), family("September", "Monthly", "2")]),
+        "c.xlsx",
+      ),
+    ).toThrow("c.xlsx: it has more than one 2026-09 Thrifty cost for a couple and children.");
+  });
+
   it("fails when the latest month covers more than one area", () => {
     const sheets = foodSheets([
       [
@@ -384,16 +477,30 @@ describe("the CPI parser", () => {
 });
 
 describe("the snapshot build", () => {
-  it("builds the shipped snapshot from the source files", () => {
+  it("builds a snapshot from the fixture files, with the shape of the shipped one", () => {
     const built = buildBenchmarkSnapshot(readFixture, ZIP_TABLE_DATA.sources, true);
+    const shape = (snapshot: BenchmarkSnapshot) => ({
+      sizes: snapshot.ce.bySizeAndIncome.map(({ size }) => size),
+      lines: Object.keys(snapshot.ce.byIncome.columns[0]?.lines ?? {}),
+      sources: snapshot.sources.map(({ agency, table }) => `${agency}: ${table}`),
+    });
 
-    expect(built).toEqual(BENCHMARK_SNAPSHOT_DATA);
+    expect(shape(built)).toEqual(shape(BENCHMARK_SNAPSHOT_DATA));
+    // The last column's total Spending is suppressed, so the build leaves it out.
+    expect(built.ce.byIncome.columns.map(({ label }) => label)).toEqual([
+      "All consumer units",
+      "Less than $40,000",
+      "$40,000 to $99,999",
+      "$100,000 to $199,999",
+    ]);
+    expect(built.ce.bySizeAndIncome[1]?.table.columns[0]?.label).toBe("Total two people");
   });
 
   it("prices each CE table at the mean CPI over its years, and each food plan at its month", () => {
     const { ce, food } = buildBenchmarkSnapshot(readFixture, [], true);
-    // The fixture CPI for all items is 300 + 12 × (year - 2023) + month.
-    const mean2025 = 300 + 24 + 6.5;
+    // The fixture CPI for all items is 300 + 12 × (year - 2023) + month. BLS published no value
+    // for October 2025, so 2025 is the mean of the other 11 months.
+    const mean2025 = Math.round((300 + 24 + (78 - 10) / 11) * 1000) / 1000;
 
     expect(ce.byIncome.pricedAt).toEqual({
       series: "CUUR0000SA0",
@@ -419,6 +526,27 @@ describe("the snapshot build", () => {
     );
   });
 
+  it.each(["2025-03", "2024-10"])(
+    "accepts only October 2025 as a missing CPI month: %s also missing fails",
+    (month) => {
+      const [year, period] = [month.slice(0, 4), `M${month.slice(5)}`];
+      const read = (key: keyof typeof SOURCE_FILES) => {
+        if (key !== "cpiAllItems") return readFixture(key);
+        const answer = JSON.parse(new TextDecoder().decode(readFixture(key)));
+        const [series] = answer.Results.series;
+        series.data = series.data.filter(
+          (point: { year: string; period: string }) =>
+            point.year !== year || point.period !== period,
+        );
+        return new TextEncoder().encode(JSON.stringify(answer));
+      };
+
+      expect(() => buildBenchmarkSnapshot(read, [], true)).toThrow(
+        `cpi-all-items.json: it has no CUUR0000SA0 value for ${month}.`,
+      );
+    },
+  );
+
   it("marks a snapshot from the real files as no sample", () => {
     expect(buildBenchmarkSnapshot(readFixture, [], false).sample).toBe(false);
   });
@@ -443,6 +571,27 @@ describe("the snapshot build", () => {
 
     expect(() => buildBenchmarkSnapshot(read, [], false)).toThrow(
       "usda-thrifty-alaska.xlsx: it is not the Alaska food plan",
+    );
+  });
+
+  it("prices the Alaska and Hawaii plans for the US Thrifty plan's reference family only", () => {
+    const { thrifty } = buildBenchmarkSnapshot(readFixture, [], false).food;
+    expect(
+      [thrifty.us, thrifty.alaska, thrifty.hawaii].map(({ family }) => family.monthly),
+    ).toEqual([1111, 1444.3, 1777.6]);
+
+    const otherFamily = (key: keyof typeof SOURCE_FILES) => {
+      if (key !== "thriftyHawaii") return readFixture(key);
+      const sheets = readXlsx(readFixture(key));
+      return makeXlsx(
+        [...sheets].map(([name, rows]) => ({
+          name,
+          rows: rows.map((row) => row.map((cell) => cell.replace("9-11 years", "12-13 years"))),
+        })),
+      );
+    };
+    expect(() => buildBenchmarkSnapshot(otherFamily, [], false)).toThrow(
+      'usda-thrifty-hawaii.xlsx: its family, "Couple and children, 20-50 years and children 6-8 and 12-13 years", is not the US Thrifty plan\'s, "Couple and children, 20-50 years and children 6-8 and 9-11 years".',
     );
   });
 });

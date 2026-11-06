@@ -70,7 +70,7 @@ describe("the Settings, About routes", () => {
       sourceCode: "https://github.com/therecluse26/family-finance-tracker/tree/v1.0.0",
       thirdPartyNotices: "/third-party-notices.txt",
       updateCheck: { on: true, checkedAt: null, update: null, lastFailure: null },
-      dataSources: { cpiFetchedAt: null, benchmarkNotice: "Sample numbers, not real data" },
+      dataSources: { cpiFetchedAt: null, benchmarkNotice: null },
     });
   });
 

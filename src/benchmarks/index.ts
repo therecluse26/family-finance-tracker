@@ -47,4 +47,5 @@ export {
   type CeTable,
   type FoodPlan,
   SAMPLE_NOTICE,
+  type ThriftyPlan,
 } from "./snapshot.ts";

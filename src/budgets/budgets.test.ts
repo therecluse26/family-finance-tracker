@@ -1213,7 +1213,7 @@ describe("Budget drafts", () => {
 
     const { budgets, groups } = await budgetsForMonth(bank.database, "2026-11");
     // Groceries and Superstores: A_flex $750 × 1.10 is below B_GS, so T = $825 and r = 2/3.
-    // Clothing: $10 × 1.10. Restaurants: B = $272 is below A_flex $450 × 1.10. Entertainment:
+    // Clothing: $10 × 1.10. Restaurants: B = $296 is below A_flex $450 × 1.10. Entertainment:
     // A_flex $20 × 1.10 passes K = $20. Gifts and donations: $800 × 1.10. Miscellaneous: none in
     // the window.
     expect(budgets.map(({ category, amount, period }) => [category, amount / 100, period])).toEqual(
@@ -1224,7 +1224,7 @@ describe("Budget drafts", () => {
         ["Groceries", 550, "monthly"],
         ["Superstores", 275, "monthly"],
         ["Clothing", 11, "monthly"],
-        ["Restaurants", 272, "monthly"],
+        ["Restaurants", 296, "monthly"],
         ["Entertainment", 22, "monthly"],
         ["Gifts and donations", 880, "yearly"],
       ],
@@ -1240,7 +1240,7 @@ describe("Budget drafts", () => {
       ["Shopping", 836, 0],
       ["Transportation", 0, 0],
       ["Health and care", 0, 0],
-      ["Leisure", 294, 0],
+      ["Leisure", 318, 0],
       ["Other", 0, 880],
     ]);
   });
