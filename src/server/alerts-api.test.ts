@@ -300,7 +300,7 @@ describe("the Alert list route", () => {
       expect([await rows("chat_alert_threads"), await rows("chat_threads")]).toEqual([0, 2]);
       const kept = await test.database.$client.execute({
         sql: "SELECT title FROM chat_threads WHERE id = ?",
-        args: [asked.threadId],
+        args: [asked?.threadId ?? ""],
       });
       expect(kept.rows[0]?.title).toBe("About: 2 Duplicate charges");
     });

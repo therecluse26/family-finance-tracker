@@ -309,6 +309,8 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
     const thread = { title: alertThreadTitle(listed.note.title), note: listed.note };
     const link = { alertId: listed.alertId, memberId: member.id };
     const stored = await storeAlertThread(database, thread, link, now());
+    // The Alert went since it was read, such as by Delete history.
+    if (stored === undefined) return { refused: "no alert" };
     if (stored.started) log.info("A Member started a Chat thread", { note: "Alert" });
     return stored;
   }

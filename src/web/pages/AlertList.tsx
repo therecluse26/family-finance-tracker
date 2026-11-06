@@ -169,15 +169,18 @@ export function AlertRows(props: {
             data-kind={alert.kind}
           >
             {merged ? (
-              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2.5">
-                <div className="min-w-0 flex-[1_1_320px]">
-                  <p className="font-semibold">
-                    <KindIcon kind={alert.kind} />
-                    {alert.heading}
-                  </p>
-                  {meta}
+              <div className="mb-3">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+                  <div className="min-w-0 flex-[1_1_320px]">
+                    <p className="font-semibold">
+                      <KindIcon kind={alert.kind} />
+                      {alert.heading}
+                    </p>
+                    {meta}
+                  </div>
+                  <AskAiButton ask={ask} />
                 </div>
-                <AskAiButton ask={ask} />
+                {/* Under the heading and its button, never beside them. */}
                 <ErrorLine error={ask.state.error} />
               </div>
             ) : null}

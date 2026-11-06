@@ -458,7 +458,7 @@ function ThreadHeader(props: { title: string; children?: ReactNode }) {
   );
 }
 
-function AttachedNote(props: { note: { kind: string; title: string; lines: string[] } }) {
+export function AttachedNote(props: { note: { kind: string; title: string; lines: string[] } }) {
   return (
     <div
       className={`mb-[18px] rounded-[10px] border border-line ${FAINT} px-3.5 py-3 text-sm wrap-anywhere`}
@@ -467,8 +467,9 @@ function AttachedNote(props: { note: { kind: string; title: string; lines: strin
       <p className="font-semibold">
         {props.note.kind}: {props.note.title}
       </p>
-      {props.note.lines.map((line) => (
-        <p key={line} className="mt-0.5 text-ink-soft">
+      {props.note.lines.map((line, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a stored note never changes, and two of its lines may match.
+        <p key={index} className="mt-0.5 text-ink-soft">
           {line}
         </p>
       ))}

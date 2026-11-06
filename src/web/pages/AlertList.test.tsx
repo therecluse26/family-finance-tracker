@@ -203,7 +203,10 @@ describe("the Alert list page", () => {
       <AlertRows
         alerts={ALERTS}
         states={{}}
-        asks={{ held: { error: "Set up an AI provider in Settings, AI, to use Chat." } }}
+        asks={{
+          held: { error: "Set up an AI provider in Settings, AI, to use Chat." },
+          merged: { error: "Chat is paused." },
+        }}
         today={TODAY}
         zone={ZONE}
         onNotAProblem={() => {}}
@@ -214,6 +217,11 @@ describe("the Alert list page", () => {
     expect(html.match(/>Ask the AI<\/button>/g)).toHaveLength(ALERTS.length);
     expect(text(html)).toContain(
       "Nov 2 · Large purchase · held back (weekly cap) Ask the AI Not a problem Set up an AI provider in Settings, AI, to use Chat.",
+    );
+    // A merged Alert's words go under its heading's row, not beside the button in it.
+    expect(text(html)).toContain("Nov 4 · Over Budget · sent Ask the AI Chat is paused. Groceries");
+    expect(html).toContain(
+      '>Ask the AI</button></div><p class="mt-3 text-critical" role="alert">Chat is paused.</p></div>',
     );
 
     expect(await askAiAbout("merged")).toEqual({ threadId: "thread-1" });
