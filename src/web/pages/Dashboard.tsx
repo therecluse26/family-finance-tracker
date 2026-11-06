@@ -1079,8 +1079,8 @@ export function AiBox(props: {
             <h3 className="text-small font-bold">
               <GroupStatus name={group.name} count={group.notes.length} />
             </h3>
-            {/* A Proposal keeps its own box until its card is restyled (U3); the margin parts it
-                from the lines of the notes around it. */}
+            {/* A Proposal draws its own faint box; the margin parts it from the lines of the notes
+                around it. */}
             <ul
               aria-label={group.name}
               className="mt-2 flex flex-col [&>[data-slot=proposal]]:my-2"
