@@ -36,9 +36,11 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
 - **Sessions:**
   - A session lasts 30 days and renews each time the Member uses the app.
   - Session cookies are `HttpOnly` and `SameSite=Lax`. In HTTPS mode they are also `Secure`.
-- **Failed sign-ins:** the app allows 5 failed sign-ins per 15 minutes, per Member and per IP address. The app refuses further tries in that window without checking them.
+  - Changing one's own password or TOTP, or getting new backup codes, ends that Member's other sessions and their sign-ins that wait for a code, at once. The session that made the change stays.
+- **Failed sign-ins:** the app allows 5 failed sign-ins per 15 minutes, per Member and per IP address. The app refuses further tries in that window without checking them. An IPv6 address counts with every address in its /64 network.
 - **Sensitive actions** ask for a TOTP code or a backup code again, each time:
   - a data export;
+  - making an invite link;
   - removing a Connection;
   - resetting another Member's login;
   - removing a Member;
@@ -61,7 +63,7 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
 
 | `APP_URL` starts with | The app accepts | Features |
 |---|---|---|
-| `https://` | Only requests from a trusted proxy that marks them as HTTPS (`X-Forwarded-Proto: https`). It refuses every other request. This fails closed. | Every feature. |
+| `https://` | Only requests from a trusted proxy that marks them as HTTPS (`X-Forwarded-Proto: https`), whose `Host` matches the host and port of `APP_URL`. It refuses every other request. This fails closed. | Every feature. |
 | `http://` | Only requests whose `Host` matches the host and port of `APP_URL`. The `APP_URL` host must be local (below). | Password plus TOTP. Alerts go by email only. Passkeys, the install prompt, and web push are hidden, with a note that explains why. |
 
 - **Local hosts.** In plain-HTTP mode, the `APP_URL` host must be one of these:
@@ -72,7 +74,7 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
   - `APP_URL` is missing;
   - `APP_URL` has a scheme other than `https://` or `http://`;
   - `APP_URL` is `http://` and its host is not local.
-- In plain-HTTP mode, a request with any other `Host` gets a page that names the `APP_URL` address. That page holds no sign-in form. So a Member who enters a public address is refused before they send a password.
+- In both modes, a request with any other `Host` gets a page that names the `APP_URL` address, with status 421. That page holds no sign-in form. So a Member who enters another address is refused before they send a password.
 - **Trusted proxies.** The app reads forwarded headers (`X-Forwarded-For`, `X-Forwarded-Proto`) only from the sources in `TRUSTED_PROXIES`.
   - `TRUSTED_PROXIES` is a comma-separated list of IP addresses, CIDR ranges, and Compose service names.
   - `*` trusts every source. Only platform services use it, because their proxy is the only way in.

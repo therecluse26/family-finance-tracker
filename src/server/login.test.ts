@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { betterAuthOf } from "../auth/auth.ts";
 import {
   addMember,
   newTestAuth,
@@ -543,6 +544,20 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       expect((await tab.password(bob)).status).toBe(200);
     });
 
+    it("counts every IPv6 address in one /64 network as one address", async () => {
+      const members = [alice, bob];
+      for (let i = 0; i < 5; i += 1) {
+        later(BURST_WINDOW_MS);
+        const member = members[i % 2] ?? alice;
+        const tab = browser(`2001:db8:1:2::${i + 1}`);
+        expect((await tab.password(member, `wrong password ${i}`)).status).toBe(401);
+      }
+
+      later(BURST_WINDOW_MS);
+      await tooManyFailed(await browser("2001:db8:1:2:ffff:ffff:ffff:fff6").password(bob));
+      expect((await browser("2001:db8:1:3::6").password(bob)).status).toBe(200);
+    });
+
     it("uses the client address from the security check, not a header the client sent", async () => {
       const tab = browser("198.51.100.4");
       for (let i = 0; i < 5; i += 1) {
@@ -896,6 +911,67 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       expect(lines.join("")).not.toContain(new URL(totpURI).searchParams.get("secret"));
     });
 
+    it.each(["password", "TOTP", "backup codes"] as const)(
+      "a change of %s ends the Member's other sessions and waiting sign-ins at once, and keeps this one",
+      async (change) => {
+        const thief = browser();
+        await thief.signIn(alice);
+        const bobTab = browser();
+        await bobTab.signIn(bob);
+        const waiting = browser();
+        expect((await waiting.password(alice)).status).toBe(200);
+        const bobWaiting = browser();
+        expect((await bobWaiting.password(bob)).status).toBe(200);
+        later(TOTP_STEP_MS);
+        const tab = browser();
+        await tab.signIn(alice);
+        later(TOTP_STEP_MS);
+        // A row of another kind that holds the Member's ID, which is not a waiting sign-in.
+        const { internalAdapter } = await betterAuthOf(test.auth).$context;
+        await internalAdapter.createVerificationValue({
+          identifier: "another-kind-of-row",
+          value: alice.id,
+          expiresAt: new Date(Date.now() + DAY_MS),
+        });
+
+        let codeNow = () => alice.totpCode();
+        if (change === "password") {
+          const res = await changePassword(tab, "another new password", await alice.totpCode());
+          expect(res.status).toBe(200);
+        } else if (change === "backup codes") {
+          const res = await tab.post("/api/auth/my-login/new-backup-codes", {
+            code: await alice.totpCode(),
+          });
+          expect(res.status).toBe(200);
+        } else {
+          const started = await tab.post("/api/auth/my-login/new-totp", {
+            code: await alice.totpCode(),
+          });
+          const { totpURI } = (await started.json()) as { totpURI: string };
+          later(TOTP_STEP_MS);
+          const res = await tab.post("/api/auth/my-login/confirm-totp", {
+            code: await totpCodeFromURI(totpURI),
+          });
+          expect(res.status).toBe(200);
+          codeNow = () => totpCodeFromURI(totpURI);
+        }
+
+        expect(await thief.isSignedIn()).toBe(false);
+        expect(await tab.isSignedIn()).toBe(true);
+        expect(await bobTab.isSignedIn()).toBe(true);
+        later(TOTP_STEP_MS);
+        expect((await waiting.totp(await codeNow())).status).toBe(401);
+        expect(await waiting.isSignedIn()).toBe(false);
+        // Another Member's sign-in that waits for its code goes on.
+        expect((await bobWaiting.totp(await bob.totpCode())).status).toBe(200);
+        expect(
+          await query("SELECT value FROM verifications WHERE identifier = ?", [
+            "another-kind-of-row",
+          ]),
+        ).toEqual([expect.objectContaining({ value: alice.id })]);
+      },
+    );
+
     it("keep the old TOTP until the new one is confirmed", async () => {
       const tab = browser();
       await tab.signIn(alice);
@@ -962,6 +1038,45 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
         expect(text).not.toContain(value);
       }
       expect(text).not.toContain(new URL(totpURI).searchParams.get("secret"));
+    });
+
+    it("writes a refused request through the logger, with its status and code only, and nothing to stderr", async () => {
+      const stderr: unknown[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk) => stderr.push(chunk) > 0);
+      for (const level of ["error", "warn", "log", "info"] as const) {
+        vi.spyOn(console, level).mockImplementation((...args) => stderr.push(args));
+      }
+      const tab = browser();
+      await tab.signIn(alice);
+      try {
+        // A Content-Type the client wrote, which Better Auth's message repeats.
+        await browser().send(
+          "POST",
+          "/api/auth/sign-in/email",
+          { email: bob.email, password: bob.password },
+          { "content-type": "text/plain;probe=echoed" },
+        );
+        // A session cookie with no Origin.
+        await tab.send("POST", "/api/auth/sign-out", {}, { origin: "" });
+        // The 6th wrong password for a Member.
+        for (let i = 0; i < 6; i++) await browser().password(bob, `${bob.password}x`);
+      } finally {
+        vi.restoreAllMocks();
+      }
+
+      expect(stderr).toEqual([]);
+      const refusals = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === "Better Auth refused a request");
+      expect(refusals.map((line) => line.code)).toEqual([
+        "UNSUPPORTED_MEDIA_TYPE",
+        expect.stringMatching(/ORIGIN/),
+        "TOO_MANY_FAILED_SIGN_INS",
+      ]);
+      for (const line of refusals) {
+        expect(Object.keys(line).sort()).toEqual(["code", "level", "msg", "status", "time"]);
+      }
+      expect(lines.join("")).not.toContain("probe=echoed");
     });
   });
 });

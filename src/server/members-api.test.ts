@@ -105,9 +105,16 @@ describe("Settings, Members", () => {
     vi.useRealTimers();
   });
 
-  // The exact requests the page sends: each with a JSON body, even an empty one.
-  const makeInvite = (tab = aliceTab, headers: Record<string, string | undefined> = {}) =>
-    tab.send("POST", "/api/invites", {}, headers);
+  // The exact requests the page sends: each with a JSON body, even an empty one. Making a link
+  // takes a fresh code from the Member signed in on the tab, in its own TOTP step.
+  async function makeInvite(
+    tab = aliceTab,
+    headers: Record<string, string | undefined> = {},
+    member = alice,
+  ) {
+    later(TOTP_STEP_MS);
+    return tab.send("POST", "/api/invites", { code: await member.totpCode() }, headers);
+  }
   const cancel = (id: string, tab = aliceTab, headers: Record<string, string | undefined> = {}) =>
     tab.send("POST", `/api/invites/${id}/cancel`, {}, headers);
   const remove = (
@@ -119,8 +126,9 @@ describe("Settings, Members", () => {
 
   async function newLink(
     tab = aliceTab,
+    member = alice,
   ): Promise<{ link: string; token: string; expiresAt: string }> {
-    const res = await makeInvite(tab);
+    const res = await makeInvite(tab, {}, member);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const { invite } = (await res.json()) as { invite: { link: string; expiresAt: string } };
@@ -182,13 +190,13 @@ describe("Settings, Members", () => {
 
       expect(made.link).toMatch(LINK);
       expect(made.expiresAt).toBe(
-        new Date(NOW.getTime() + 2 * TOTP_STEP_MS + 7 * DAY_MS).toISOString(),
+        new Date(NOW.getTime() + 3 * TOTP_STEP_MS + 7 * DAY_MS).toISOString(),
       );
       expect((await settings()).invites).toEqual([
         {
           id: expect.any(String),
           madeBy: "Alice",
-          createdAt: new Date(NOW.getTime() + 2 * TOTP_STEP_MS).toISOString(),
+          createdAt: new Date(NOW.getTime() + 3 * TOTP_STEP_MS).toISOString(),
           expiresAt: made.expiresAt,
         },
       ]);
@@ -415,6 +423,23 @@ describe("Settings, Members", () => {
       expect((await stranger.post("/api/auth/invite/check", { token })).status).toBe(200);
     });
 
+    it("counts every IPv6 address in one /64 network as one address for wrong tokens", async () => {
+      const { token } = await newLink();
+      const from = (address: string) => new TestBrowser(app, APP_URL, address);
+      for (let i = 0; i < 5; i++) {
+        const res = await from(`2001:db8:5:6::${i + 1}`).post("/api/auth/invite/check", {
+          token: `wrong-${i}`,
+        });
+        expect(res.status).toBe(403);
+      }
+
+      const sixth = from("2001:db8:5:6:ffff::6");
+      expect((await sixth.post("/api/auth/invite/check", { token })).status).toBe(429);
+      expect((await from("2001:db8:5:7::1").post("/api/auth/invite/check", { token })).status).toBe(
+        200,
+      );
+    });
+
     it("answers the join routes only from the app's own pages and only with JSON, changing nothing", async () => {
       const { token } = await newLink();
       const tab = browser();
@@ -446,6 +471,35 @@ describe("Settings, Members", () => {
       expect((await settings()).invites).toHaveLength(1);
     });
 
+    it("asks for a fresh code: no code, a wrong code, and too many tries each make no link", async () => {
+      const before = await lasting();
+      const wrong = (await alice.totpCode()).replace(/\d/g, (d) => String((Number(d) + 1) % 10));
+
+      for (const body of [{}, { code: "" }, { code: 123456 }]) {
+        expect((await aliceTab.send("POST", "/api/invites", body)).status).toBe(400);
+      }
+      const answers = [];
+      for (let i = 0; i < 6; i++) {
+        answers.push((await aliceTab.send("POST", "/api/invites", { code: wrong })).status);
+      }
+      expect(answers).toEqual([401, 401, 401, 401, 401, 429]);
+      // Past the limit, even the right code is refused unchecked.
+      expect((await makeInvite()).status).toBe(429);
+
+      expect(await lasting()).toEqual(before);
+      expect((await readEveryTable(test.database)).setup_steps).not.toContainEqual(
+        expect.objectContaining({ step: "invite members" }),
+      );
+    });
+
+    it("takes a backup code in place of a TOTP code, once", async () => {
+      const [backupCode = ""] = alice.backupCodes;
+
+      expect((await aliceTab.post("/api/invites", { code: backupCode })).status).toBe(200);
+      expect((await aliceTab.post("/api/invites", { code: backupCode })).status).toBe(401);
+      expect((await settings()).invites).toHaveLength(1);
+    });
+
     it("refuses to make a link until the first-run wizard's required steps are done", async () => {
       const fresh = await newTestAuth(APP_URL);
       try {
@@ -461,8 +515,9 @@ describe("Settings, Members", () => {
         const tab = new TestBrowser(early, APP_URL, "192.168.2.1");
         later(TOTP_STEP_MS);
         await tab.signIn(first);
+        later(TOTP_STEP_MS);
 
-        const res = await tab.post("/api/invites", {});
+        const res = await tab.post("/api/invites", { code: await first.totpCode() });
 
         expect(res.status).toBe(409);
         expect((await readEveryTable(fresh.database)).invites).toEqual([]);
@@ -594,9 +649,10 @@ describe("Settings, Members", () => {
     });
 
     it("cancels the invite links they made, and leaves the other Members' links open", async () => {
-      const bobs = await newLink(bobTab);
+      const bobs = await newLink(bobTab, bob);
       later(MINUTE_MS);
       const alices = await newLink();
+      later(TOTP_STEP_MS);
 
       expect((await remove(bob.id, await alice.totpCode())).status).toBe(200);
 

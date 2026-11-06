@@ -7,6 +7,7 @@ import {
   removeSignInTries,
   removeSignInTriesUpTo,
 } from "../db/index.ts";
+import { limitAddress } from "../server/ip-address.ts";
 
 // Spec 09, Failed sign-ins: 5 failed sign-ins per 15 minutes, per Member and per IP address.
 export const FAILED_SIGN_INS_ALLOWED = 5;
@@ -15,6 +16,13 @@ export const FAILED_SIGN_IN_WINDOW_MS = 15 * 60 * 1000;
 // The request header that carries the security check's client address to Better Auth. The auth
 // module sets it from c.var.clientAddress on every request it hands Better Auth.
 export const CLIENT_ADDRESS_HEADER = "x-fft-client-address";
+
+// The address that every per-address limit of the auth module counts a try by: the client
+// address, with an IPv6 address grouped by its /64 network. Undefined with no client address.
+export function limitedAddress(ctx: { headers?: Headers; request?: Request }): string | undefined {
+  const address = (ctx.request?.headers ?? ctx.headers)?.get(CLIENT_ADDRESS_HEADER);
+  return address ? limitAddress(address) : undefined;
+}
 
 // The routes that check a password or a code. A code check for a sensitive action goes through
 // the same two code routes, so it counts too.
@@ -51,7 +59,7 @@ async function memberKey(ctx: HookContext): Promise<string | undefined> {
 }
 
 function ipKey(ctx: HookContext): string | undefined {
-  const address = (ctx.request?.headers ?? ctx.headers)?.get(CLIENT_ADDRESS_HEADER);
+  const address = limitedAddress(ctx);
   return address ? `ip:${address}` : undefined;
 }
 

@@ -1,5 +1,6 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { type Context, type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import type { AiSettings } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
@@ -41,6 +42,7 @@ import { pictureRoutes } from "./pictures.ts";
 import { proposalRoutes } from "./proposals.ts";
 import { recurringRoutes } from "./recurring.ts";
 import { reviewRoutes } from "./review.ts";
+import { safetyHeaders } from "./safety-headers.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
 import { readSetupState, setupRoutes } from "./setup.ts";
 import { topMerchantRoutes } from "./top-merchants.ts";
@@ -156,6 +158,16 @@ function sameOriginChanges(appOrigin: string): MiddlewareHandler<ServerEnv> {
     await next();
   };
 }
+// The largest body a route takes: a 20,000-character Chat message or Goal's words, which in a
+// script of 3-byte characters is 60,000 bytes of JSON, with room for what useChat sends with it.
+// No route takes a file.
+export const MAX_REQUEST_BODY_BYTES = 128 * 1024;
+
+const requestBodyLimit = bodyLimit({
+  maxSize: MAX_REQUEST_BODY_BYTES,
+  onError: (c) => c.json({ error: "The request is too large." }, 413),
+});
+
 // Until the wizard's step 3 is done, the API stores no Master-key secret (spec 12, Order and resume
 // rules). It refuses every write but step 3's own paste-back, so no route can store one early.
 const PASTE_BACK = "/api/setup/master-key";
@@ -215,10 +227,17 @@ export function createApp(
   const members = memberRoutes(database, auth, security.appUrl);
   return (
     new Hono<ServerEnv>()
+      .use(safetyHeaders)
       .use(thrownValuesAsErrors)
       // The only route before the security check: it answers any source and any Host.
       .get("/healthz", (c) => c.json({ status: "ok" }))
       .use(securityCheck(security))
+      // Before any route reads a body, Better Auth's included.
+      .use("/api/*", requestBodyLimit)
+      // The first-run wizard's setup code and first Member answer only the app's own pages, and
+      // only JSON, so a page on another site cannot spend the setup code's tries.
+      .use("/api/auth/first-member/*", sameOriginChanges(security.appUrl.origin))
+      .use("/api/auth/first-member/*", jsonOnly)
       // Joining by invite link needs no session, so Better Auth's own check, which lets a request
       // with no cookie and no Origin through, is not enough: these routes answer only the app's
       // own pages, and only JSON.

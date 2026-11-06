@@ -217,6 +217,18 @@ describe("the first-run wizard, steps 1 and 2", () => {
     );
   });
 
+  it("counts every IPv6 address in one /64 network as one address", async () => {
+    for (let i = 0; i < 6; i += 1)
+      await browser(`2001:db8:7:8::${i + 1}`).checkCode(wrongCode(code));
+
+    const keys = await query("SELECT key, count(*) AS tries FROM sign_in_tries GROUP BY key");
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "setup-code-ip:2001:db8:7:8::/64", tries: 6 }),
+      ]),
+    );
+  });
+
   it("counts a right code as no try", async () => {
     const tab = browser();
     for (let i = 0; i < 4; i += 1) await tab.checkCode(wrongCode(code));
@@ -224,6 +236,53 @@ describe("the first-run wizard, steps 1 and 2", () => {
 
     expect((await tab.checkCode(wrongCode(code))).status).toBe(401);
     expect((await tab.checkCode(code)).status).toBe(429);
+  });
+
+  describe("a request from another site, or not as JSON", () => {
+    const ROUTES = [
+      ["check-code", { setupCode: "WRONG-CODE" }],
+      ["new-totp", { setupCode: "WRONG-CODE", email: "alice@example.com" }],
+      ["create", { setupCode: "WRONG-CODE", name: "A", email: "a@example.com", totpCode: "1" }],
+    ] as const;
+
+    const tries = async () => (await query("SELECT count(*) AS n FROM sign_in_tries"))[0]?.n;
+
+    it.each(ROUTES)(
+      "refuses %s with a cross-site or a missing Origin, and counts no try",
+      async (route, body) => {
+        const tab = browser();
+        for (const origin of ["https://evil.example", undefined, "null"]) {
+          const res = await tab.send("POST", `/api/auth/first-member/${route}`, body, { origin });
+          expect(res.status).toBe(403);
+        }
+
+        expect(await tries()).toBe(0);
+      },
+    );
+
+    it.each(ROUTES)("refuses %s sent as a form with 415, and counts no try", async (route) => {
+      const tab = browser();
+      const res = await tab.send("POST", `/api/auth/first-member/${route}`, undefined, {
+        "content-type": "application/x-www-form-urlencoded",
+      });
+
+      expect(res.status).toBe(415);
+      expect(await tries()).toBe(0);
+    });
+
+    it("still takes the right code from the app's own page afterwards", async () => {
+      const tab = browser();
+      await tab.send(
+        "POST",
+        "/api/auth/first-member/check-code",
+        { setupCode: code },
+        {
+          origin: "https://evil.example",
+        },
+      );
+
+      expect((await tab.checkCode(code)).status).toBe(200);
+    });
   });
 
   it("never writes the setup code to its log", async () => {

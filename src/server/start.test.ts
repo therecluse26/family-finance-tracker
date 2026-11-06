@@ -58,6 +58,7 @@ import { newMasterKey } from "../secrets/testing.ts";
 import { LockHeldError, lockText } from "./running-lock.ts";
 import { loadSecurity, type Security } from "./security-mode.ts";
 import { type RunningApp, startApp } from "./start.ts";
+import { fetchWithHost } from "./testing.ts";
 
 // The app's own migrations, which come before the fixtures in every test folder.
 const APP = appMigrations().length;
@@ -635,16 +636,19 @@ describe("starting the app", () => {
       const proxy: Record<string, string> = https ? { "x-forwarded-proto": "https" } : {};
       let cookie = "";
       const send = async (path: string, body?: unknown) => {
-        const res = await fetch(`http://127.0.0.1:${app.port}${path}`, {
-          method: body === undefined ? "GET" : "POST",
-          headers: {
-            ...proxy,
-            origin,
-            cookie,
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
+        const res = await fetchWithHost(new URL(origin).host)(
+          `http://127.0.0.1:${app.port}${path}`,
+          {
+            method: body === undefined ? "GET" : "POST",
+            headers: {
+              ...proxy,
+              origin,
+              cookie,
+              ...(body === undefined ? {} : { "content-type": "application/json" }),
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
           },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        });
+        );
         const set = res.headers.getSetCookie().map((line) => line.split(";")[0]);
         if (set.length > 0) cookie = set.join("; ");
         return res;

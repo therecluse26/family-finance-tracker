@@ -24,6 +24,7 @@ const REFUSAL_HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
 };
 
 // The Fetch Request constructor refuses these methods, so the check cannot rebuild the request.
@@ -115,13 +116,16 @@ function marksHttps(forwardedProto: string | undefined): boolean {
   return forwardedProto.split(",").every((hop) => hop.trim().toLowerCase() === "https");
 }
 
-// Host must name APP_URL's host and port. So must an absolute request target, which HTTP
-// puts ahead of Host.
+// Host must name APP_URL's host and port, in both modes. So must an absolute request target,
+// which HTTP puts ahead of Host. In HTTPS mode the proxy passes on the Host the browser sent, so
+// a request that reaches the app's port past the proxy under another name, such as from a page
+// that rebound a name to it, is refused even with forged forwarded headers.
 function isSentToAppUrl(appUrl: AppUrl, host: string | undefined, target: URL): boolean {
-  const lowerHost = host?.toLowerCase();
   const hasPort = /:\d+$/.test(appUrl.host);
-  const hostMatches = lowerHost === appUrl.host || (!hasPort && lowerHost === `${appUrl.host}:80`);
-  return hostMatches && target.host === appUrl.host;
+  const defaultPort = appUrl.mode === "https" ? 443 : 80;
+  const named = (name: string | undefined) =>
+    name === appUrl.host || (!hasPort && name === `${appUrl.host}:${defaultPort}`);
+  return named(host?.toLowerCase()) && named(target.host);
 }
 
 type Checked = { clientAddress: string } | { refusal: Refusal; error?: string };
@@ -130,7 +134,7 @@ function check({ appUrl, proxies }: Security, c: Context<ServerEnv>): Checked {
   const target = new URL(c.req.url);
   // Only an absolute request target can hold a name and password. No request to the app needs one.
   if (target.username !== "" || target.password !== "") return { refusal: "unclear-request" };
-  if (appUrl.mode === "http" && !isSentToAppUrl(appUrl, c.req.header("host"), target)) {
+  if (!isSentToAppUrl(appUrl, c.req.header("host"), target)) {
     return { refusal: "wrong-host" };
   }
   const source = socketAddress(c);
@@ -246,8 +250,10 @@ function refuse(c: Context<ServerEnv>, refusal: Refusal, appUrl: AppUrl) {
       return c.html(
         page(
           "Open the app at its own address",
-          html`<p>This app answers only at <a href="${appUrl.address("/")}">${appUrl.origin}</a>.</p>
-      <p>It uses plain HTTP, so it asks for a password only at that local address.</p>`,
+          appUrl.mode === "http"
+            ? html`<p>This app answers only at <a href="${appUrl.address("/")}">${appUrl.origin}</a>.</p>
+      <p>It uses plain HTTP, so it asks for a password only at that local address.</p>`
+            : html`<p>This app answers only at <a href="${appUrl.address("/")}">${appUrl.origin}</a>.</p>`,
         ),
         421,
       );

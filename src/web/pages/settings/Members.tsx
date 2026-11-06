@@ -12,7 +12,10 @@ import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 
 // The requests the page sends, each with a JSON body, even an empty one: the routes take only JSON.
 // The routes read their body themselves, so each body goes in through a separate object.
-export const makeInviteLink = () => api.invites.$post({ json: {} });
+export function makeInviteLink(code: string) {
+  const make = { json: { code } };
+  return api.invites.$post(make);
+}
 export function cancelInviteLink(id: string) {
   const cancel = { param: { id }, json: {} };
   return api.invites[":id"].cancel.$post(cancel);
@@ -231,17 +234,21 @@ export function ResetLogin(props: { member: MemberView }) {
   );
 }
 
-// "Make an invite link", and the new link, shown once for the Member to copy.
+// "Make an invite link", which asks for a fresh code first, and the new link, shown once for the
+// Member to copy.
 export function MakeInvite(props: { onMade: () => void }) {
+  const [code, setCode] = useState("");
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  function make() {
+  function submit(event: FormEvent) {
+    event.preventDefault();
     setBusy(true);
     setError(undefined);
-    makeInviteLink()
+    makeInviteLink(code.trim())
       .then(async (res) => {
+        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         setMade(((await res.json()) as { invite: { link: string; expiresAt: string } }).invite);
         props.onMade();
@@ -257,9 +264,22 @@ export function MakeInvite(props: { onMade: () => void }) {
         The app makes a link for you to copy and send by hand. It sends no email. The link works
         once, for 7 days.
       </p>
-      <button className={BUTTON} type="button" onClick={make} disabled={busy}>
-        Make an invite link
-      </button>
+      <form onSubmit={submit}>
+        <label className="mt-3 block">
+          To make a link, enter a code from your authenticator app, or a backup code
+          <input
+            className={FIELD}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            required
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        </label>
+        <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+          Make an invite link
+        </button>
+      </form>
       {made === undefined ? null : <LinkToCopy key={made.link} made={made} />}
       <ErrorLine error={error} />
     </div>

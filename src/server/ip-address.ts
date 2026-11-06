@@ -92,3 +92,13 @@ export function coversEveryAddress(ranges: readonly IpRange[], family: 4 | 6): b
   }
   return covered === 1n << BigInt(width);
 }
+
+// The address a per-address limit counts by: an IPv4 address as it is, and an IPv6 address by
+// its /64 network, since one home or one rented server gets a whole /64 and could use a new
+// address for each try. Text that is not an address stays as it is.
+export function limitAddress(text: string): string {
+  const parsed = parseIp(text);
+  if (parsed === undefined) return text;
+  if (parsed.family === 4) return formatIp(parsed);
+  return `${formatIp({ family: 6, bits: (parsed.bits >> 64n) << 64n })}/64`;
+}

@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { coversEveryAddress, formatIp, inIpRange, parseIp, parseIpRange } from "./ip-address.ts";
+import {
+  coversEveryAddress,
+  formatIp,
+  inIpRange,
+  limitAddress,
+  parseIp,
+  parseIpRange,
+} from "./ip-address.ts";
+
+describe("limitAddress", () => {
+  it("groups the IPv6 addresses of one /64 network, in any spelling", () => {
+    const grouped = [
+      "2001:db8:1:2::1",
+      "2001:db8:1:2::6",
+      "2001:DB8:1:2:ffff:ffff:ffff:ffff",
+      "2001:0db8:0001:0002:0000:0000:0000:0003",
+    ].map(limitAddress);
+
+    expect(new Set(grouped)).toEqual(new Set(["2001:db8:1:2::/64"]));
+    expect(limitAddress("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
+  });
+
+  it("keeps an IPv4 address, and an IPv4-mapped one, as one address", () => {
+    expect(limitAddress("203.0.113.7")).toBe("203.0.113.7");
+    expect(limitAddress("::ffff:203.0.113.7")).toBe("203.0.113.7");
+    expect(limitAddress("203.0.113.8")).toBe("203.0.113.8");
+  });
+});
 
 const spelled = (text: string) => {
   const address = parseIp(text);

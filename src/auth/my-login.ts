@@ -12,6 +12,7 @@ import * as z from "zod";
 import { claimTotpStep, type Database } from "../db/index.ts";
 import { registerSecretValue } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
+import type { HookContext } from "./sign-in-limit.ts";
 import { TOTP_DIGITS, TOTP_PERIOD_SECONDS, totpStepOf } from "./totp-once.ts";
 
 export { TOTP_DIGITS, TOTP_PERIOD_SECONDS };
@@ -80,6 +81,36 @@ export async function storedTwoFactor(
 
 // The pending TOTP secret of a Member who changes their TOTP.
 export const newTotpIdentifier = (memberId: string) => `new-totp-${memberId}`;
+
+// Better Auth's two-factor plugin keeps a sign-in that waits for its code as a verification
+// whose identifier starts with this and whose value is the Member's ID, with a count of its tries
+// beside it.
+const WAITING_SIGN_IN = "2fa-";
+const waitingSignInTries = (identifier: string) => `2fa-attempts-${identifier}`;
+
+// After a change to a Member's password, TOTP, or backup codes (spec 09, Sessions): ends their
+// other sessions and their sign-ins that wait for a code, at once, so a thief who held either is
+// out. The session that made the change stays.
+async function endOtherSignIns(
+  context: HookContext["context"],
+  memberId: string,
+  keptToken: string,
+): Promise<void> {
+  const sessions = await context.internalAdapter.listSessions(memberId);
+  const others = sessions.map((one) => one.token).filter((token) => token !== keptToken);
+  if (others.length > 0) await context.internalAdapter.deleteSessions(others);
+  const waiting = await context.adapter.findMany<{ identifier: string }>({
+    model: "verification",
+    where: [
+      { field: "identifier", operator: "starts_with", value: WAITING_SIGN_IN },
+      { field: "value", value: memberId },
+    ],
+  });
+  for (const { identifier } of waiting) {
+    await context.internalAdapter.deleteVerificationByIdentifier(identifier);
+    await context.internalAdapter.deleteVerificationByIdentifier(waitingSignInTries(identifier));
+  }
+}
 
 // The house rules for Better Auth's sign-in routes, and the routes that let a signed-in Member
 // change their own password, TOTP, and backup codes. Each change asks for a fresh code.
@@ -160,7 +191,9 @@ export function myLogin(options: {
           }
           if (!(await freshCode(ctx.headers ?? new Headers(), code))) throw wrongCode();
           const hash = await ctx.context.password.hash(newPassword);
-          await ctx.context.internalAdapter.updatePassword(ctx.context.session.user.id, hash);
+          const { user, session } = ctx.context.session;
+          await ctx.context.internalAdapter.updatePassword(user.id, hash);
+          await endOtherSignIns(ctx.context, user.id, session.token);
           return ctx.json({ status: true });
         },
       ),
@@ -215,6 +248,7 @@ export function myLogin(options: {
             where: [{ field: "userId", value: memberId }],
             update: await storedTwoFactor(ctx.context.secretConfig, { secret }),
           });
+          await endOtherSignIns(ctx.context, memberId, ctx.context.session.session.token);
           return ctx.json({ status: true });
         },
       ),
@@ -225,11 +259,13 @@ export function myLogin(options: {
         async (ctx) => {
           if (!(await freshCode(ctx.headers ?? new Headers(), ctx.body.code))) throw wrongCode();
           const backupCodes = newBackupCodes();
+          const { user, session } = ctx.context.session;
           await ctx.context.adapter.update({
             model: "twoFactor",
-            where: [{ field: "userId", value: ctx.context.session.user.id }],
+            where: [{ field: "userId", value: user.id }],
             update: await storedTwoFactor(ctx.context.secretConfig, { backupCodes }),
           });
+          await endOtherSignIns(ctx.context, user.id, session.token);
           ctx.setHeader("Cache-Control", "no-store");
           return ctx.json({ backupCodes });
         },

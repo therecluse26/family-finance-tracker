@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import { crc32, inflateRawSync } from "node:zlib";
 import type { TestMember } from "../auth/testing.ts";
 import type { createApp } from "./app.ts";
@@ -136,4 +137,37 @@ export function readZip(archive: Uint8Array): Map<string, Uint8Array> {
     at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
   }
   return files;
+}
+
+// A fetch for a running server that sends `host` as the Host header, as a proxy in front of the
+// app does with the APP_URL host. Node's own fetch always sends the host of the URL it is given.
+export function fetchWithHost(host: string): typeof fetch {
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const body = request.body ? Buffer.from(await request.arrayBuffer()) : undefined;
+    return new Promise<Response>((resolve, reject) => {
+      const sent = httpRequest(
+        request.url,
+        { method: request.method, headers: { ...Object.fromEntries(request.headers), host } },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("error", reject);
+          res.on("end", () => {
+            const headers = new Headers();
+            for (const [name, value] of Object.entries(res.headers)) {
+              for (const one of Array.isArray(value) ? value : [value ?? ""]) {
+                headers.append(name, one);
+              }
+            }
+            const status = res.statusCode ?? 500;
+            const empty = [204, 304].includes(status) || request.method === "HEAD";
+            resolve(new Response(empty ? null : Buffer.concat(chunks), { status, headers }));
+          });
+        },
+      );
+      sent.on("error", reject);
+      sent.end(body);
+    });
+  };
 }

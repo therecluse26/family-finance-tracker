@@ -182,20 +182,58 @@ describe("HTTPS mode", () => {
     expect((await send(app, { source: "172.18.0.5", headers: HTTPS })).status).toBe(403);
   });
 
-  it.each(["money.example.com", "evil.example", "127.0.0.1:3000", ""])(
-    "does not check Host (%j) when a trusted proxy sends the request",
+  it.each(["money.example.com", "MONEY.EXAMPLE.COM", "money.example.com:443"])(
+    "accepts Host %j from a trusted proxy",
     async (host) => {
       const app = echoApp(await security("https://money.example.com", "172.18.0.2"));
-      const res = await send(app, {
-        host,
-        url: "http://money.example.com/",
-        source: "172.18.0.2",
-        headers: HTTPS,
-      });
+      const res = await send(app, { host, source: "172.18.0.2", headers: HTTPS });
 
       expect(res.status).toBe(200);
     },
   );
+
+  it.each([
+    "evil.example",
+    "127.0.0.1:3000",
+    "",
+    "money.example.com:3000",
+    "money.example.com:80",
+    "money.example.com.evil.example",
+  ])("refuses Host %j with 421, even from a trusted proxy", async (host) => {
+    const app = echoApp(await security("https://money.example.com", "172.18.0.2"));
+    const res = await send(app, {
+      host,
+      url: "http://money.example.com/",
+      source: "172.18.0.2",
+      headers: HTTPS,
+    });
+
+    expect(res.status).toBe(421);
+  });
+
+  it("refuses a request that reaches the app's port past the proxy with forged forwarded headers", async () => {
+    // As with Tailscale Serve, where TRUSTED_PROXIES is the Docker gateway that every host process
+    // also comes from.
+    const app = echoApp(await security("https://money.example.com", "172.18.0.1"));
+    const res = await send(app, {
+      host: "attacker.example:3000",
+      source: "172.18.0.1",
+      headers: { ...HTTPS, "x-forwarded-for": "203.0.113.9" },
+    });
+
+    expect(res.status).toBe(421);
+    const page = await res.text();
+    expect(page).toContain('<a href="https://money.example.com/">https://money.example.com</a>');
+    expect(page).not.toContain("plain HTTP");
+  });
+
+  it("with TRUSTED_PROXIES=*: accepts the platform's request, which keeps the browser's Host", async () => {
+    const app = echoApp(await security("https://money.example.com", "*"));
+    const sent = { source: "10.0.0.2", headers: { ...HTTPS, "x-forwarded-for": "203.0.113.7" } };
+
+    expect((await send(app, sent)).status).toBe(200);
+    expect((await send(app, { ...sent, host: "app-1234.platform.example" })).status).toBe(421);
+  });
 
   it.each(["127.0.0.1", "::1", "172.17.0.1", "192.168.1.20", "203.0.113.9"])(
     "with an empty TRUSTED_PROXIES, refuses a request from %s",
@@ -706,11 +744,11 @@ describe("what a route sees after the check", () => {
     },
   );
 
-  it("in HTTPS mode: APP_URL's scheme and host, whatever Host the client sent", async () => {
+  it("in HTTPS mode: APP_URL's scheme and host, in whatever form the Host named it", async () => {
     const app = seenApp(await security("https://money.example.com", "10.0.0.2"));
     const res = await send(app, {
-      host: "evil.example",
-      url: "http://evil.example/api/thing?next=%2Fsettings",
+      host: "Money.Example.Com:443",
+      url: "http://money.example.com:443/api/thing?next=%2Fsettings",
       source: "10.0.0.2",
       headers: HTTPS,
     });
@@ -758,7 +796,7 @@ describe("what a route sees after the check", () => {
         port,
         [
           "POST /api/auth/sign-in?x=1 HTTP/1.1",
-          "Host: evil.example",
+          "Host: Money.Example.Com:443",
           ...Object.entries(spoofed).map(([name, value]) => `${name}: ${value}`),
           "Content-Type: application/json",
           "Content-Length: 13",
@@ -791,8 +829,8 @@ describe("what a route sees after the check", () => {
     try {
       const spoofed = { ...SPOOFED, "x-forwarded-for": "6.6.6.6, 203.0.113.7" };
       const res = await rawRequest(port, [
-        "GET http://evil.example/api/thing?x=1 HTTP/1.1",
-        "Host: evil.example",
+        "GET http://Money.Example.Com:443/api/thing?x=1 HTTP/1.1",
+        "Host: Money.Example.Com:443",
         // Names in the case a client chose, and one header twice.
         ...Object.entries(spoofed).map(([name, value]) => `${name.toUpperCase()}: ${value}`),
         "X-Real-IP: 6.6.6.13",
@@ -824,7 +862,7 @@ describe("what a route sees after the check", () => {
         expect(names.filter((name) => name === "host")).toEqual(["host"]);
       }
       expect(seen.rawHeaders).toEqual(expect.arrayContaining(["User-Agent", "probe-agent/1.0"]));
-      expect(JSON.stringify(seen)).not.toMatch(/6\.6\.6\.|evil\.example|probe-1/);
+      expect(JSON.stringify(seen)).not.toMatch(/6\.6\.6\.|Money\.Example|:443|probe-1/);
     } finally {
       await new Promise((done) => running.close(done));
     }

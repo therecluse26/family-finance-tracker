@@ -76,6 +76,12 @@ describe("the first-run wizard, steps 5 to 9", () => {
     return tab;
   }
 
+  // Making an invite link takes a fresh code, in its own TOTP step.
+  async function makeInvite(member: TestMember, tab: TestBrowser): Promise<Response> {
+    later(TOTP_STEP_MS);
+    return tab.post("/api/invites", { code: await member.totpCode() });
+  }
+
   async function finishRequiredSteps(): Promise<void> {
     await markSetupStep(test.database, "master key", "done");
     await markSetupStep(test.database, "household facts", "done");
@@ -189,7 +195,7 @@ describe("the first-run wizard, steps 5 to 9", () => {
     await finishRequiredSteps();
     expect((await skip("banks")).status).toBe(200);
     // Step 8 is done before step 6 and 7: the wizard still opens step 6.
-    expect((await aliceTab.post("/api/invites", {})).status).toBe(200);
+    expect((await makeInvite(alice, aliceTab)).status).toBe(200);
 
     const tab = await signedIn(alice);
     expect(await progressOf(tab)).toMatchObject({
@@ -254,7 +260,7 @@ describe("the first-run wizard, steps 5 to 9", () => {
 
   it("makes Invite Members done once an invite link is made", async () => {
     await finishRequiredSteps();
-    expect((await aliceTab.post("/api/invites", {})).status).toBe(200);
+    expect((await makeInvite(alice, aliceTab)).status).toBe(200);
 
     expect((await progressOf()).steps["invite members"]).toBe("done");
   });
@@ -277,7 +283,7 @@ describe("the first-run wizard, steps 5 to 9", () => {
     await saveSmtp(bob, bobTab);
     expect((await bobTab.post("/api/smtp/test", {})).status).toBe(200);
     expect((await progressOf()).finishSetup).toEqual(["invite members"]);
-    expect((await bobTab.post("/api/invites", {})).status).toBe(200);
+    expect((await makeInvite(bob, bobTab)).status).toBe(200);
     expect(await progressOf()).toMatchObject({
       finishSetup: [],
       steps: { banks: "done", ai: "done", alerts: "done", "invite members": "done" },
@@ -286,7 +292,7 @@ describe("the first-run wizard, steps 5 to 9", () => {
 
   it("keeps a done step done when Skip is pressed on it", async () => {
     await finishRequiredSteps();
-    expect((await aliceTab.post("/api/invites", {})).status).toBe(200);
+    expect((await makeInvite(alice, aliceTab)).status).toBe(200);
 
     const res = await skip("invite members");
     expect(res.status).toBe(200);

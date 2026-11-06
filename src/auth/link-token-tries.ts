@@ -6,7 +6,7 @@ import {
   removeSignInTries,
   removeSignInTriesUpTo,
 } from "../db/index.ts";
-import { CLIENT_ADDRESS_HEADER } from "./sign-in-limit.ts";
+import { limitedAddress } from "./sign-in-limit.ts";
 
 // The wrong-token limit of one-use links, such as invite and reset links (spec 09): 5 wrong tokens
 // per 15 minutes per IP address, as for failed sign-ins. Past that, every token is refused without
@@ -32,7 +32,7 @@ export async function tryLinkToken<T>(
     notOpen: () => APIError;
   },
 ): Promise<T> {
-  const address = (ctx.request?.headers ?? ctx.headers)?.get(CLIENT_ADDRESS_HEADER) ?? "";
+  const address = limitedAddress(ctx) ?? "";
   const now = new Date();
   const since = new Date(now.getTime() - WRONG_LINK_TOKEN_WINDOW_MS);
   await removeSignInTriesUpTo(database, since);

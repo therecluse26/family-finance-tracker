@@ -9,6 +9,7 @@ import { createLogger } from "../log.ts";
 import type { Api } from "./api.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
+import { fetchWithHost } from "./testing.ts";
 
 const INDEX_HTML = "<!doctype html><title>Family Finance Tracker</title>";
 const ASSET_JS = "console.log('asset');";
@@ -18,6 +19,9 @@ const APP_URL = "https://money.example.com";
 
 // The tests stand where a trusted proxy would, on loopback, and mark each request as HTTPS.
 const THROUGH_PROXY = { "x-forwarded-proto": "https" };
+
+// A fetch with the APP_URL host as its Host header, as the proxy sends it.
+const fetchAtAppUrl = fetchWithHost(new URL(APP_URL).host);
 
 // The name and value of each cookie a response sets.
 const cookiesFrom = (res: Response) => res.headers.getSetCookie().map((line) => line.split(";")[0]);
@@ -31,7 +35,7 @@ describe("the server", () => {
   let signedIn: Record<string, string>;
 
   const get = (path: string, init: RequestInit = {}) =>
-    fetch(`${base}${path}`, { ...init, headers: { ...THROUGH_PROXY, ...init.headers } });
+    fetchAtAppUrl(`${base}${path}`, { ...init, headers: { ...THROUGH_PROXY, ...init.headers } });
 
   beforeAll(async () => {
     webRoot = mkdtempSync(join(tmpdir(), "fft-web-"));
@@ -66,7 +70,7 @@ describe("the server", () => {
   async function signIn(): Promise<Record<string, string>> {
     const member = await addMember(login.auth, { name: "Alice", email: "alice@example.com" });
     const post = (path: string, body: unknown, cookie = "") =>
-      fetch(`${base}/api/auth${path}`, {
+      fetchAtAppUrl(`${base}/api/auth${path}`, {
         method: "POST",
         headers: { ...THROUGH_PROXY, origin: APP_URL, "content-type": "application/json", cookie },
         body: JSON.stringify(body),
@@ -92,14 +96,14 @@ describe("the server", () => {
   });
 
   it("answers the typed client with 401 without a session", async () => {
-    const client = hc<Api>(`${base}/api`, { headers: THROUGH_PROXY });
+    const client = hc<Api>(`${base}/api`, { headers: THROUGH_PROXY, fetch: fetchAtAppUrl });
     const res = await client.ping.$get();
 
     expect(res.status).toBe(401);
   });
 
   it("answers the sample route through the typed client", async () => {
-    const client = hc<Api>(`${base}/api`, { headers: signedIn });
+    const client = hc<Api>(`${base}/api`, { headers: signedIn, fetch: fetchAtAppUrl });
     const res = await client.ping.$get();
     const body = await res.json();
 
@@ -109,7 +113,7 @@ describe("the server", () => {
   });
 
   it("gives the web app the security mode through the typed client", async () => {
-    const client = hc<Api>(`${base}/api`, { headers: signedIn });
+    const client = hc<Api>(`${base}/api`, { headers: signedIn, fetch: fetchAtAppUrl });
     const res = await client["security-mode"].$get();
     const body = await res.json();
 
@@ -158,7 +162,7 @@ describe("the server", () => {
   });
 
   it("refuses a request that does not come through the proxy as HTTPS", async () => {
-    const res = await fetch(`${base}/`);
+    const res = await fetchAtAppUrl(`${base}/`);
 
     expect(res.status).toBe(403);
   });

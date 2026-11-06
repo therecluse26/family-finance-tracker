@@ -128,6 +128,26 @@ function loggerFor(logger: Logger) {
   };
 }
 
+// Better Auth writes each refused request's message to stderr, outside the logger, and a message
+// can repeat a value the client sent, such as its Content-Type. This writes one line through the
+// logger instead, with the status and code only.
+function apiErrorsFor(logger: Logger) {
+  return (error: unknown) => {
+    if (isAPIError(error)) {
+      const fields = { status: error.status, code: error.body?.code };
+      if (error.statusCode >= 500) logger.error("Better Auth failed a request", fields);
+      else logger.warn("Better Auth refused a request", fields);
+      return;
+    }
+    try {
+      logger.error("Better Auth failed a request", { error });
+    } catch {
+      // Only in tests and development, where the logger throws on a secret instead of refusing it.
+      logger.error("Better Auth failed a request, and its error held a secret");
+    }
+  };
+}
+
 function buildBetterAuth(options: AuthOptions) {
   const { database, secrets, appOrigin } = options;
   // The login signing secret signs session cookies and encrypts TOTP secrets and backup codes.
@@ -176,6 +196,7 @@ function buildBetterAuth(options: AuthOptions) {
     },
     telemetry: { enabled: false },
     logger: loggerFor(options.logger ?? log),
+    onAPIError: { onError: apiErrorsFor(options.logger ?? log) },
     plugins: [
       myLogin({ database, secrets, freshCode: (headers, code) => fresh.check(headers, code) }),
       firstMember({ database, secrets }),

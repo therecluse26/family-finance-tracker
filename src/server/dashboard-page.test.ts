@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
+import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { seedDemoHousehold } from "../bank/demo.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
@@ -69,6 +69,7 @@ afterAll(() => {
 describe("the dashboard on the demo household", () => {
   let test: TestAuth;
   let browser: TestBrowser;
+  let member: TestMember;
   let app: ReturnType<typeof createApp>;
   let fake: FakeBankAdapter;
   let stops: (() => void)[] = [];
@@ -92,7 +93,7 @@ describe("the dashboard on the demo household", () => {
       startMoneyMovement({ database: test.database }).stop,
       startCategorization({ database: test.database }).stop,
     ];
-    const member = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
+    member = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
     await markSetupStep(test.database, "master key", "done");
     await saveHouseholdFacts(
       test.database,
@@ -185,7 +186,9 @@ describe("the dashboard on the demo household", () => {
       steps: { banks: "done", ai: "skipped", alerts: null, "invite members": "skipped" },
       finishSetup: ["ai", "invite members"],
     });
-    expect((await browser.send("POST", "/api/invites", {})).status).toBe(200);
+    expect(
+      (await browser.send("POST", "/api/invites", { code: member.backupCodes[0] })).status,
+    ).toBe(200);
     expect((await loadDashboard()).setup.finishSetup).toEqual(["ai"]);
   });
 

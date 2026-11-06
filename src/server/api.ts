@@ -1318,11 +1318,17 @@ export const api = new Hono<ServerEnv>()
   })
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
-  // "Make an invite link": any Member. The answer holds the link once; the app keeps its hash.
+  // "Make an invite link": any Member, with a fresh TOTP or backup code, since a new login outlives
+  // a change to the maker's own (spec 09, Sensitive actions). The answer holds the link once; the
+  // app keeps its hash.
   .post("/invites", jsonOnly, async (c) => {
-    if (!emptyBody.safeParse(await jsonBody(c)).success) {
-      return c.json({ error: "Send an empty body." }, 400);
+    const body = codeBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    const fresh = await c.var.checkFreshCode(body.data.code);
+    if (fresh === "too many tries") {
+      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
     }
+    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const made = await c.var.members.makeInvite(c.var.member.id);
     if (made === "wizard not done") {
       return c.json({ error: "Finish the first-run wizard first." }, 409);

@@ -13,7 +13,7 @@ import {
 } from "../db/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { newBackupCodes, newTotpSecret, storedTwoFactor, totpURI } from "./my-login.ts";
-import { CLIENT_ADDRESS_HEADER } from "./sign-in-limit.ts";
+import { limitedAddress } from "./sign-in-limit.ts";
 import { totpStepOf } from "./totp-once.ts";
 
 // The first-run wizard's steps 1 and 2 (spec 12, The first-run wizard): the setup code, then the
@@ -62,7 +62,7 @@ export function firstMember(options: { database: Database; secrets: Secrets }): 
         message: "Setup is done, so the setup code no longer works. Sign in instead.",
       });
     }
-    const address = (ctx.request?.headers ?? ctx.headers)?.get(CLIENT_ADDRESS_HEADER);
+    const address = limitedAddress(ctx);
     const keys = address ? [APP_KEY, ipKey(address)] : [APP_KEY];
     const now = new Date();
     const since = new Date(now.getTime() - WRONG_SETUP_CODE_WINDOW_MS);
