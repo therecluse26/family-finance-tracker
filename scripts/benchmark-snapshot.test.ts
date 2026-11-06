@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { benchmarkSnapshot } from "../src/benchmarks/snapshot.ts";
 import { ZIP_TABLE_DATA } from "../src/household/zip-table.data.ts";
 import {
   buildBenchmarkSnapshot,
+  checkFoodPlanState,
   checkSizeAdjustment,
   parseCeTable,
   parseCpi,
@@ -159,6 +160,28 @@ const FOOD_HEADER = [
   "cost",
 ];
 
+// A monthly US average Thrifty cost for an individual, in September 2026.
+function september(group: string, age: string, cost: string): string[] {
+  return [
+    "U.S. average",
+    "Individual",
+    group,
+    age,
+    "2026",
+    "September",
+    "Thrifty",
+    "Monthly",
+    cost,
+  ];
+}
+
+// With the 1-year, 19-50 male, and 71+ female groups, these cover every age for both sexes.
+const OTHER_AGES = [
+  september("Child", "2-18 years", "200.0"),
+  september("Male", "51+ years", "290.0"),
+  september("Female", "19-70 years", "260.0"),
+];
+
 function foodSheets(rows: string[][], readMe = README) {
   return readXlsx(
     makeXlsx([
@@ -227,6 +250,7 @@ describe("the USDA food plan parser", () => {
         "Monthly",
         "999.9",
       ],
+      ...OTHER_AGES,
     ]);
 
     expect(parseFoodPlan(sheets, "t.xlsx", "Thrifty")).toEqual({
@@ -237,8 +261,50 @@ describe("the USDA food plan parser", () => {
         { age: "19-50 years", fromAge: 19, toAge: 50, sex: "male", monthly: 310.5 },
         { age: "71+ years", fromAge: 71, toAge: null, sex: "female", monthly: 250 },
         { age: "1 year", fromAge: 1, toAge: 1, sex: null, monthly: 150 },
+        { age: "2-18 years", fromAge: 2, toAge: 18, sex: null, monthly: 200 },
+        { age: "51+ years", fromAge: 51, toAge: null, sex: "male", monthly: 290 },
+        { age: "19-70 years", fromAge: 19, toAge: 70, sex: "female", monthly: 260 },
       ],
     });
+  });
+
+  it.each([
+    ["a gap between two groups", "Child", "2-18 years", "a male aged 2"],
+    ["no open group at the end", "Male", "51+ years", "a male aged 51"],
+    ["a group for one sex only", "Female", "19-70 years", "a female aged 19"],
+  ])("fails when the age groups leave an age out: %s", (_, group, age, who) => {
+    const sheets = foodSheets([
+      september("Male", "19-50 years", "310.5"),
+      september("Female", "71+ years", "250.0"),
+      september("Child", "1 year", "150.0"),
+      ...OTHER_AGES.filter((row) => row[2] !== group || row[3] !== age),
+    ]);
+
+    expect(() => parseFoodPlan(sheets, "t.xlsx", "Thrifty")).toThrow(
+      `t.xlsx: its 2026-09 costs have no age group for ${who}.`,
+    );
+  });
+
+  it("fails when the Alaska and Hawaii files are swapped", () => {
+    const plan = (area: string) =>
+      foodSheets([
+        [area, "Individual", "Child", "1+ years", "2026", "9", "Thrifty", "Monthly", "1"],
+      ]);
+    const alaska = plan("Alaska");
+    const hawaii = plan("Hawaii");
+    const check = (sheets: typeof alaska, state: "Alaska" | "Hawaii") =>
+      checkFoodPlanState(sheets, parseFoodPlan(sheets, "f.xlsx", "Thrifty"), "f.xlsx", state);
+
+    expect(() => check(alaska, "Alaska")).not.toThrow();
+    expect(() => check(hawaii, "Hawaii")).not.toThrow();
+    expect(() => check(hawaii, "Alaska")).toThrow(
+      'f.xlsx: it is not the Alaska food plan: its costs are for "Hawaii". Check that the Alaska and Hawaii files are not swapped.',
+    );
+    expect(() => check(alaska, "Hawaii")).toThrow("f.xlsx: it is not the Hawaii food plan");
+    // A file that names neither state, such as a US average file saved under the Alaska name.
+    expect(() => check(foodSheets([september("Child", "1+ years", "1")]), "Alaska")).toThrow(
+      "f.xlsx: it is not the Alaska food plan",
+    );
   });
 
   it("fails when the latest month covers more than one area", () => {
@@ -356,7 +422,34 @@ describe("the snapshot build", () => {
   it("marks a snapshot from the real files as no sample", () => {
     expect(buildBenchmarkSnapshot(readFixture, [], false).sample).toBe(false);
   });
+
+  it.each(["ceSize3", "thriftyAlaska"] as const)(
+    "fails naming %s when its download is an error page, not an .xlsx",
+    (key) => {
+      const read = (wanted: keyof typeof SOURCE_FILES) =>
+        wanted === key ? new TextEncoder().encode(ACCESS_DENIED) : readFixture(wanted);
+
+      expect(() => buildBenchmarkSnapshot(read, [], false)).toThrow(
+        `${SOURCE_FILES[key].file}: it is not a real .xlsx or .zip file. The download may be an error page, such as "Access Denied"`,
+      );
+    },
+  );
+
+  it("fails when the Alaska and Hawaii files are saved under each other's names", () => {
+    const read = (key: keyof typeof SOURCE_FILES) =>
+      readFixture(
+        key === "thriftyAlaska" ? "thriftyHawaii" : key === "thriftyHawaii" ? "thriftyAlaska" : key,
+      );
+
+    expect(() => buildBenchmarkSnapshot(read, [], false)).toThrow(
+      "usda-thrifty-alaska.xlsx: it is not the Alaska food plan",
+    );
+  });
 });
+
+// What a .gov site may send in place of a file to a download it refuses.
+const ACCESS_DENIED =
+  "<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY>You don't have permission to access this file.</BODY></HTML>";
 
 describe("the release check", () => {
   it("fails on a sample snapshot and passes one built from the real files", () => {
@@ -373,8 +466,18 @@ describe("the release check", () => {
       cwd: ROOT,
       encoding: "utf8",
     });
+    const problem = releaseProblem(benchmarkSnapshot());
 
-    expect(run.status).toBe(benchmarkSnapshot().sample ? 1 : 0);
+    // The check's own words, so a check that crashes, or passes everything, fails this test.
+    expect({ status: run.status, stdout: run.stdout, stderr: run.stderr }).toEqual(
+      problem === undefined
+        ? {
+            status: 0,
+            stdout: "The Benchmark snapshot was built from the real source files.\n",
+            stderr: "",
+          }
+        : { status: 1, stdout: "", stderr: `${problem}\n` },
+    );
   });
 });
 
@@ -391,6 +494,30 @@ describe("the release script", () => {
       for (const { file } of Object.values(SOURCE_FILES)) expect(run.stderr).toContain(file);
       expect(run.stderr).toContain("census-zcta-county-<YYYY-MM-DD>.txt");
       expect(run.stderr).toContain("c_<DDmmYY>.zip");
+    } finally {
+      rmSync(folder, { recursive: true });
+    }
+  });
+
+  it("fails naming the NWS county file when its download is an error page, and writes nothing", () => {
+    const folder = mkdtempSync(join(tmpdir(), "benchmark-sources-"));
+    const shipped = readFileSync(join(ROOT, "src/household/zip-table.data.ts"), "utf8");
+    try {
+      for (const [key, { file }] of Object.entries(SOURCE_FILES)) {
+        writeFileSync(join(folder, file), readFixture(key as keyof typeof SOURCE_FILES));
+      }
+      writeFileSync(join(folder, "census-zcta-county-2021-12-09.txt"), "GEOID_ZCTA5_20|\n");
+      writeFileSync(join(folder, "c_01ja26.zip"), ACCESS_DENIED);
+      const run = spawnSync("node", ["scripts/build-benchmark-snapshot.ts", folder], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+
+      expect(run.status).toBe(1);
+      expect(run.stderr).toBe(
+        'c_01ja26.zip: it is not a real .xlsx or .zip file. The download may be an error page, such as "Access Denied": download it again in a browser.\n',
+      );
+      expect(readFileSync(join(ROOT, "src/household/zip-table.data.ts"), "utf8")).toBe(shipped);
     } finally {
       rmSync(folder, { recursive: true });
     }

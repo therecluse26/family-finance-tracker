@@ -1,6 +1,6 @@
 {
   "name": "family-finance-tracker",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "description": "A self-hosted, read-only tracker for one Household's personal finances.",
   "license": "AGPL-3.0-or-later",

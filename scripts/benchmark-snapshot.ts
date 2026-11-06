@@ -298,7 +298,46 @@ export function parseFoodPlan(
     seen.add(key);
     return { age, ...range, sex, monthly };
   });
+  for (const sex of ["male", "female"] as const) {
+    const age = uncoveredAge(costs, sex);
+    if (age !== undefined) fail(`its ${month} costs have no age group for a ${sex} aged ${age}.`);
+  }
   return { plan, area, month, costs };
+}
+
+// The first age from 1 up that no cost covers for a person of this sex, counting the costs USDA
+// gives for both sexes, or undefined when the age groups run with no gap from 1 to an open group,
+// such as "71+ years". The app prices a child under 1 at the 1-year cost.
+function uncoveredAge(
+  costs: readonly { fromAge: number; toAge: number | null; sex: "male" | "female" | null }[],
+  sex: "male" | "female",
+): number | undefined {
+  const groups = costs.filter((cost) => cost.sex === null || cost.sex === sex);
+  let age = 1;
+  for (;;) {
+    const group = groups.find(({ fromAge, toAge }) => fromAge <= age && age <= (toAge ?? age));
+    if (group === undefined) return age;
+    if (group.toAge === null) return undefined;
+    age = group.toAge + 1;
+  }
+}
+
+// Fails unless an Alaska or Hawaii food plan file is for that state: the workbook names the state,
+// and its costs' area does not name the other state. So two files saved under each other's names
+// fail the build.
+export function checkFoodPlanState(
+  sheets: ReadonlyMap<string, Sheet>,
+  plan: Pick<FoodPlan, "area">,
+  file: string,
+  state: "Alaska" | "Hawaii",
+): void {
+  const other = state === "Alaska" ? "Hawaii" : "Alaska";
+  const names = (text: string, place: string) => new RegExp(`\\b${place}\\b`, "i").test(text);
+  if (!names([...sheets.values()].flat(2).join(" "), state) || names(plan.area, other)) {
+    throw new Error(
+      `${file}: it is not the ${state} food plan: its costs are for "${plan.area}". Check that the Alaska and Hawaii files are not swapped.`,
+    );
+  }
 }
 
 // ---- CPI
@@ -373,8 +412,18 @@ export function buildBenchmarkSnapshot(
   sample: boolean,
 ): BenchmarkSnapshot {
   const text = (key: SourceKey) => new TextDecoder().decode(read(key));
+  // A source file's sheets. A file that is not a real .xlsx, such as an error page saved in place
+  // of the download, fails naming the file.
+  const workbook = (key: SourceKey): Map<string, Sheet> => {
+    try {
+      return readXlsx(read(key));
+    } catch (error) {
+      const problem = error instanceof Error ? error.message : String(error);
+      throw new Error(`${SOURCE_FILES[key].file}: ${problem}`);
+    }
+  };
   const firstSheet = (key: SourceKey): Sheet => {
-    const [sheet] = readXlsx(read(key)).values();
+    const [sheet] = workbook(key).values();
     if (sheet === undefined) throw new Error(`${SOURCE_FILES[key].file}: it has no sheet.`);
     return sheet;
   };
@@ -394,9 +443,13 @@ export function buildBenchmarkSnapshot(
     };
   };
   const foodPlan = (key: SourceKey, plan: FoodPlan["plan"]): FoodPlan => {
-    const sheets = readXlsx(read(key));
+    const sheets = workbook(key);
     if (key === "moderate") checkSizeAdjustment(sheets, SOURCE_FILES[key].file);
     const parsed = parseFoodPlan(sheets, SOURCE_FILES[key].file, plan);
+    if (key === "thriftyAlaska")
+      checkFoodPlanState(sheets, parsed, SOURCE_FILES[key].file, "Alaska");
+    if (key === "thriftyHawaii")
+      checkFoodPlanState(sheets, parsed, SOURCE_FILES[key].file, "Hawaii");
     return {
       ...parsed,
       pricedAt: cpiForMonth(foodAtHome, parsed.month, SOURCE_FILES.cpiFoodAtHome.file),

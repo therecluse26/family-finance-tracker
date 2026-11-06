@@ -34,6 +34,33 @@ import {
 // `node scripts/build-benchmark-snapshot.ts --sample` reads the made-up fixture files in
 // scripts/fixtures/benchmarks/ instead, marks the snapshot as a sample, and keeps the ZIP table.
 // The release must not ship a sample: scripts/check-benchmark-snapshot.ts fails on one.
+//
+// The source files it expects in the folder, each saved under the name on the left. Download each
+// by hand, in a browser; docs/data-sources.md has the same list with links.
+// - ce-income-before-taxes.xlsx: BLS, Consumer Expenditure Survey. https://www.bls.gov/cex/tables.htm,
+//   "Calendar year tables", "Income before taxes": the means, shares, and standard errors table
+//   (XLSX) for the newest year, such as cu-income-before-taxes-2025.xlsx.
+// - ce-size-1-by-income.xlsx to ce-size-5-by-income.xlsx: BLS, Consumer Expenditure Survey. The
+//   same page, "Cross-tabulated tables", "Size of consumer unit by income before taxes": one XLSX
+//   for each size, from one person (1) to five or more persons (5).
+// - usda-moderate-cost.xlsx: USDA, Food and Nutrition Service.
+//   https://www.fns.usda.gov/research/cnpp/usda-food-plans/cost-food-monthly-reports: the newest
+//   Moderate-Cost plan XLSX, such as usda-moderatecostplan-sept2007-sept2026.xlsx.
+// - usda-thrifty-us.xlsx: USDA, the same page: the newest Thrifty plan XLSX, such as
+//   usda-thriftyplan-june2021-sept2026.xlsx.
+// - usda-thrifty-alaska.xlsx: USDA, the same page: the newest Alaska XLSX, such as
+//   usda-alaska-june2023-sept2026.xlsx.
+// - usda-thrifty-hawaii.xlsx: USDA, the same page: the newest Hawaii XLSX, such as
+//   usda-hawaii-june2023-sept2026.xlsx.
+// - cpi-all-items.json: BLS, Consumer Price Index. The page
+//   https://api.bls.gov/publicAPI/v1/timeseries/data/CUUR0000SA0?startyear=<first CE year>&endyear=<this year>,
+//   saved as it is. The first CE year is the first year of the size tables, such as 2023.
+// - cpi-food-at-home.json: BLS, Consumer Price Index. The same, for the series CUUR0000SAF11.
+// - census-zcta-county-<YYYY-MM-DD>.txt: U.S. Census Bureau.
+//   https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/: tab20_zcta520_county20_natl.txt,
+//   with the "Last modified" date that page gives it in the name.
+// - c_<DDmmYY>.zip: National Weather Service. https://www.weather.gov/gis/Counties: the county
+//   shapefile in effect today, under its own name, such as c_16ap26.zip.
 
 const root = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 const SNAPSHOT_OUT = root("src/benchmarks/snapshot.data.ts");
@@ -84,8 +111,13 @@ if (!sample) {
   } catch {
     fail(`The folder ${folder} holds no NWS county file in effect today.`);
   }
-  const archive = new Uint8Array(readFileSync(join(folder, county.file)));
-  const nwsRows = parseDbf(readZipEntry(archive, (name) => name.toLowerCase().endsWith(".dbf")));
+  let nwsRows: Record<string, string>[];
+  try {
+    const archive = new Uint8Array(readFileSync(join(folder, county.file)));
+    nwsRows = parseDbf(readZipEntry(archive, (name) => name.toLowerCase().endsWith(".dbf")));
+  } catch (error) {
+    fail(`${county.file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   zipSources = [
     {
       agency: "U.S. Census Bureau",
@@ -100,7 +132,12 @@ if (!sample) {
       dataDate: county.date,
     },
   ];
-  const table = buildZipTable(readFileSync(join(folder, censusName), "utf8"), nwsRows, zipSources);
+  let table: ReturnType<typeof buildZipTable>;
+  try {
+    table = buildZipTable(readFileSync(join(folder, censusName), "utf8"), nwsRows, zipSources);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   writeFormatted(ZIP_OUT, [
     "// Built by scripts/build-benchmark-snapshot.ts from US federal public-domain data. Do not edit by hand.",
     'import type { ZipTableData } from "./zip-table.ts";',

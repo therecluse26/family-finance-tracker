@@ -188,6 +188,8 @@ Small items left open after the T107 notes triage, for after the first release (
 - N216 (S, polish) The wizard's Finish step says history "can take a few hours"; no spec gives that figure. In: SetupSteps.tsx.
 - N217 (S, polish) The iPhone "Add to Home Screen" note also shows on Chrome and Firefox for iPhone but says "In Safari, tap Share", and names only Alerts though System notices also come by push. In: SetupSteps.tsx.
 - N270 (S, polish) A failed Household time-zone read hides a Settings page's times until the next page load, with no retry and no message. In: src/web/household-zone.ts.
+- N280 (S, polish) No test covers the area half of the Alaska/Hawaii swap check (a Hawaii workbook whose text names both states). In: scripts/benchmark-snapshot.ts.
+- N281 (S, polish) No test pins the 128 MiB `MAX_ZIP_ENTRY_BYTES` default. In: scripts/zip-table.ts.
 
 ## Backups, export, jobs and start-up
 
@@ -206,6 +208,8 @@ Small items left open after the T107 notes triage, for after the first release (
 - N274 (S, polish) The backup folder code follows a `/data/backups` that is itself a link; fix the "follows no link" wording or skip a linked folder. In: src/backups/folder.ts.
 - N275 (S, security) Add `cap_drop` for the root `docker-init` process. In: compose.yaml.
 - N276 (S, polish) Platforms without Compose can still miss a stop in the first half second. In: src/server/main.ts.
+- N282 (S, flaky test) The install drill can fail if the 30-second TOTP step rolls over mid-step. In: scripts/quick-start-test.sh.
+- N283 (S, security) The drill containers keep normal outbound network; an internal-only Compose network would guarantee no request leaves. In: scripts/quick-start-test.sh.
 
 ## Specs
 
