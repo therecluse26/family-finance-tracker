@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
@@ -135,6 +138,48 @@ const EVERY_KIND: ReviewItemView[] = [
   ),
 ];
 
+// Every kind the server registers, read from the source, so a kind added later fails the label
+// test until it has a label. The registry fills only when the server's modules start, so the test
+// reads each registerReviewKind(<NAME>_KIND, ...) call in the non-test files outside src/web, and
+// each kind constant's string. A call that passes anything but a *_KIND constant is reported, so a
+// string literal cannot slip past.
+const SRC = fileURLToPath(new URL("../../", import.meta.url));
+
+function serverSources(dir = SRC): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return path === join(SRC, "web") ? [] : serverSources(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
+function registeredKinds() {
+  const files = serverSources().map((path) => ({ path, source: readFileSync(path, "utf8") }));
+  const names: string[] = [];
+  const notConstants: string[] = [];
+  for (const { path, source } of files) {
+    for (const match of source.matchAll(/(?<!function )\bregisterReviewKind\(\s*([^,)]*)/g)) {
+      const argument = (match[1] ?? "").trim();
+      if (/^[A-Z][A-Z0-9_]*_KIND$/.test(argument)) names.push(argument);
+      else notConstants.push(`${relative(SRC, path)}: ${argument}`);
+    }
+  }
+  const values = new Map<string, string[]>();
+  for (const { source } of files) {
+    for (const match of source.matchAll(/export const ([A-Z][A-Z0-9_]*_KIND) = "([^"]*)";/g)) {
+      const [, name = "", value = ""] = match;
+      values.set(name, [...(values.get(name) ?? []), value]);
+    }
+  }
+  return {
+    calls: names.length,
+    notConstants,
+    // A name with no string, or with two different strings, cannot be checked.
+    unresolved: names.filter((name) => new Set(values.get(name)).size !== 1),
+    kinds: [...new Set(names.map((name) => values.get(name)?.[0] ?? name))].sort(),
+  };
+}
+
 const text = (html: string) =>
   html
     .replace(/<!-- -->/g, "")
@@ -251,6 +296,13 @@ describe("the Review list page", () => {
   });
 
   it("labels each kind the app opens in the owner specs' words", () => {
+    // Every kind the server registers has a label, and every label belongs to a registered kind.
+    const registered = registeredKinds();
+    expect(registered.notConstants).toEqual([]);
+    expect(registered.unresolved).toEqual([]);
+    expect(registered.calls).toBeGreaterThanOrEqual(9);
+    expect(Object.keys(KIND_LABEL).sort()).toEqual(registered.kinds);
+    // The scan reads the same strings the kind constants hold.
     expect(Object.keys(KIND_LABEL).sort()).toEqual(
       [
         BEST_GUESS_KIND,

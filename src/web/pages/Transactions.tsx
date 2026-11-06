@@ -187,31 +187,42 @@ export function TransactionRows(props: {
 // The table's head and cells, from the boards. Below 640 px a row folds into two lines: the
 // Merchant and the amount, then the date, the Category or type, and the Account.
 const TH = "border-b border-line px-3 py-2.5 text-left text-xs font-semibold text-muted";
-const TD = "border-b border-line-soft px-3 py-[11px] tabular-nums max-sm:border-0 max-sm:p-0";
+const TD =
+  "border-b border-line-soft px-3 py-[11px] tabular-nums sm:relative max-sm:border-0 max-sm:p-0";
 const FOLDED_FACT = `${TD} text-muted max-sm:order-3 max-sm:text-small`;
 // On a phone a dot ends each fact but the last, so a wrapped line never starts with one.
 const DOT_AFTER = "max-sm:after:px-1 max-sm:after:content-['·']";
 const AI_CHOSEN: readonly CategoryChosenBy[] = ["AI", "AI, unsure"];
 
-// One row. The whole row opens the detail view: the Merchant's link covers it.
+// One row. The whole row opens the detail view. The Merchant's link is the row's one link for the
+// keyboard and screen readers, and it names the date and amount too, so a list of links tells the
+// rows apart. From 640 px each other cell holds a copy of the link that covers that cell, out of
+// the tab order and hidden from screen readers. The links are placed against their own cell, never
+// against the row: some WebKit versions do not place against a table row. On a phone the row is
+// a flex box, so the Merchant's link covers all of it.
 function TransactionRow(props: { txn: TransactionRowView; account: string; today: string }) {
   const { txn } = props;
+  const path = transactionPath(txn.id);
   const parts = partsToShow(txn.parts);
   const typeOnly = parts.every((part) => part.category === null);
   const byAi = parts.some(
     (part) => part.categoryChosenBy !== null && AI_CHOSEN.includes(part.categoryChosenBy),
   );
+  const date = dateLabel(txn.authorizedDate ?? txn.postedDate, props.today);
+  const amount = dollarsAndCents(txn.amount, { signed: true });
   return (
-    <tr className="relative hover:bg-page max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-y-0.5 max-sm:border-t max-sm:border-line-soft max-sm:px-4 max-sm:py-[11px] max-sm:first:border-t-0">
+    <tr className="hover:bg-page has-[a:focus-visible]:bg-selected max-sm:relative max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-y-0.5 max-sm:border-t max-sm:border-line-soft max-sm:px-4 max-sm:py-[11px] max-sm:first:border-t-0">
       <td className={`${FOLDED_FACT} ${DOT_AFTER} whitespace-nowrap sm:text-ink`}>
-        {dateLabel(txn.authorizedDate ?? txn.postedDate, props.today)}
+        {date}
+        <CellLink to={path} />
       </td>
       <td className={`${TD} max-sm:order-1 max-sm:w-[calc(100%-7.5rem)] max-sm:min-w-0`}>
         <Link
           className="font-medium text-ink after:absolute after:inset-0 after:content-[''] hover:text-accent hover:underline focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-accent"
-          to={transactionPath(txn.id)}
+          to={path}
         >
           {merchantOf(txn)}
+          <span className="sr-only">{`, ${date}, ${amount}`}</span>
         </Link>
         {txn.pending ? (
           <>
@@ -228,27 +239,49 @@ function TransactionRow(props: { txn: TransactionRowView; account: string; today
             <ChosenByAiMark />
           </>
         ) : null}
+        <CellLink to={path} />
       </td>
-      <td className={`${FOLDED_FACT} whitespace-nowrap`}>{props.account}</td>
+      <td className={`${FOLDED_FACT} whitespace-nowrap`}>
+        {props.account}
+        <CellLink to={path} />
+      </td>
       <td
         className={`${TD} whitespace-nowrap text-right max-sm:order-2 max-sm:w-[7.5rem] ${txn.amount > 0 ? "text-good" : ""}`}
       >
-        {dollarsAndCents(txn.amount, { signed: true })}
+        {amount}
+        <CellLink to={path} />
       </td>
     </tr>
   );
 }
 
-// The boards' purple AI tag beside a Category the AI chose. The shared AiMark says "Written by
-// AI", which suits AI text, not a Category.
+// A copy of the row's link that covers its cell from 640 px. The Merchant's link is the one the
+// keyboard and screen readers reach.
+function CellLink(props: { to: string }) {
+  return (
+    <Link
+      to={props.to}
+      tabIndex={-1}
+      aria-hidden="true"
+      className="absolute inset-0 max-sm:hidden"
+    />
+  );
+}
+
+// The boards' purple AI tag beside a Category the AI chose. Screen readers hear what it means, so
+// it does not rest on a tooltip. The shared AiMark says "Written by AI", which suits AI text, not a
+// Category.
 function ChosenByAiMark() {
   return (
-    <span
-      className="inline-block rounded-tag bg-ai-soft px-1.5 py-px align-middle text-[10px] font-bold tracking-[.05em] text-ai"
-      title="Category chosen by the AI"
-    >
-      AI
-    </span>
+    <>
+      <span
+        aria-hidden="true"
+        className="inline-block rounded-tag bg-ai-soft px-1.5 py-px align-middle text-[10px] font-bold tracking-[.05em] text-ai"
+      >
+        AI
+      </span>
+      <span className="sr-only">(Category chosen by the AI)</span>
+    </>
   );
 }
 
