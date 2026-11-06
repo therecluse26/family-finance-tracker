@@ -3,7 +3,10 @@ import { useNavigate } from "react-router";
 import { calendarDateIn, dateLabel } from "../../../format.ts";
 import type { InviteView, MemberView } from "../../../server/members-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
+import { BOX, BUTTONS, HINT, Lead, ROW, SettingCard, TabHeading } from "./settings-ui.tsx";
 
 // Settings, Members (spec 09, Members; Invites; Login reset): every Member, "Make an invite link",
 // the open invite links with Cancel, Remove on each Member, and "Reset login" on every other
@@ -62,28 +65,32 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
   }
 
   return (
-    <li className="mt-3 rounded border border-gray-300 p-3">
-      <p>
-        <span className="font-medium">{member.name}</span>
-        {member.you ? " (you)" : ""}
-      </p>
-      <p className="text-sm text-gray-600">{member.email}</p>
+    <li className={ROW}>
+      <div className="min-w-0 flex-[1_1_220px]">
+        <p>
+          <span className="font-semibold">{member.name}</span>
+          {member.you ? " (you)" : ""}
+        </p>
+        <p className="mt-0.5 text-small break-words text-muted">{member.email}</p>
+      </div>
       {asking ? (
-        <form onSubmit={submit}>
-          <p className="mt-2">
+        <form className="w-full" onSubmit={submit}>
+          <p>
             {member.you
               ? "Removing yourself signs you out on every device, and cancels the invite links you made. You cannot sign in again."
               : `Removing ${member.name} signs them out on every device at once, and cancels the invite links they made. Their Goals and Chat messages keep their name.`}
           </p>
-          <button className={BUTTON} type="submit" disabled={busy}>
-            Remove {member.you ? "me" : member.name}
-          </button>
+          <div className={BUTTONS}>
+            <Button type="submit" disabled={busy}>
+              Remove {member.you ? "me" : member.name}
+            </Button>
+          </div>
           <ErrorLine error={error} />
         </form>
       ) : (
-        <button className={BUTTON} type="button" onClick={() => setAsking(true)}>
+        <Button type="button" variant="outlined" size="small" onClick={() => setAsking(true)}>
           Remove
-        </button>
+        </Button>
       )}
       {member.you ? null : <ResetLogin member={member} />}
     </li>
@@ -106,14 +113,16 @@ export function InviteLine(props: { invite: InviteView; onCancelled: () => void 
   }
 
   return (
-    <li className="mt-3 rounded border border-gray-300 p-3">
-      <p>
+    <li className={ROW}>
+      <p className="min-w-0 flex-[1_1_220px]">
         Made {dayOf(invite.createdAt)} by {invite.madeBy}. Works until {dayOf(invite.expiresAt)}.
       </p>
-      <button className={BUTTON} type="button" onClick={cancel}>
+      <Button type="button" variant="outlined" size="small" onClick={cancel}>
         Cancel
-      </button>
-      <ErrorLine error={error} />
+      </Button>
+      <div className="w-full empty:hidden">
+        <ErrorLine error={error} />
+      </div>
     </li>
   );
 }
@@ -133,18 +142,20 @@ export function LinkToCopy(props: { made: { link: string; expiresAt: string } })
   }
 
   return (
-    <div className="mt-3 rounded border border-gray-300 p-3">
-      <p>Copy this link now. The app shows it only this once.</p>
-      <input className={`${FIELD} font-mono`} readOnly value={made.link} />
-      <button className={BUTTON} type="button" onClick={copy}>
-        Copy the link
-      </button>
-      {copied ? (
-        <p className="mt-2 text-green-700" role="status">
-          Copied.
-        </p>
-      ) : null}
-      <p className="mt-2">It works until {dayOf(made.expiresAt)}.</p>
+    <div className="mt-3 w-full rounded-control border border-line bg-page p-3.5">
+      <p className="font-semibold">Copy this link now. The app shows it only this once.</p>
+      <input className={`${BOX} font-mono text-sm`} readOnly value={made.link} />
+      <div className={BUTTONS}>
+        <Button type="button" onClick={copy}>
+          Copy the link
+        </Button>
+        {copied ? (
+          <p className="text-small" role="status">
+            <StatusText tone="good">Copied.</StatusText>
+          </p>
+        ) : null}
+      </div>
+      <p className={HINT}>It works until {dayOf(made.expiresAt)}.</p>
       <ErrorLine error={error} />
     </div>
   );
@@ -176,7 +187,7 @@ export function ResetLogin(props: { member: MemberView }) {
   if (made !== undefined) {
     return (
       <>
-        <p className="mt-2">
+        <p className="w-full">
           {member.name} is signed out on every device. Their old password, TOTP, and backup codes no
           longer work. Give them this reset link to set a new login. It works once.
         </p>
@@ -187,22 +198,24 @@ export function ResetLogin(props: { member: MemberView }) {
 
   if (!asking) {
     return (
-      <button className={BUTTON} type="button" onClick={() => setAsking(true)}>
+      <Button type="button" variant="outlined" size="small" onClick={() => setAsking(true)}>
         Reset login
-      </button>
+      </Button>
     );
   }
 
   return (
-    <form onSubmit={submit}>
-      <p className="mt-2">
+    <form className="w-full" onSubmit={submit}>
+      <p>
         Resetting {member.name}'s login signs them out on every device at once, and their password,
         TOTP, and backup codes stop working. The app makes a reset link for you to hand to them. It
         works once, for 24 hours.
       </p>
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Reset {member.name}'s login
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Reset {member.name}'s login
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
@@ -229,20 +242,19 @@ export function MakeInvite(props: { onMade: () => void }) {
   }
 
   return (
-    <div className="mt-4">
-      <h3 className="font-semibold">Invite a Member</h3>
-      <p className="mt-2">
+    <SettingCard id="invite-a-member" title="Invite a Member">
+      <Lead>
         The app makes a link for you to copy and send by hand. It sends no email. The link works
         once, for 7 days.
-      </p>
-      <form onSubmit={submit}>
-        <button className={BUTTON} type="submit" disabled={busy}>
+      </Lead>
+      <form className={BUTTONS} onSubmit={submit}>
+        <Button type="submit" variant="outlined" disabled={busy}>
           Make an invite link
-        </button>
+        </Button>
       </form>
       {made === undefined ? null : <LinkToCopy key={made.link} made={made} />}
       <ErrorLine error={error} />
-    </div>
+    </SettingCard>
   );
 }
 
@@ -254,25 +266,28 @@ export function MembersLists(props: {
 }) {
   return (
     <>
-      <ul>
-        {props.members.map((member) => (
-          <MemberLine key={member.id} member={member} onRemoved={props.onRemoved} />
-        ))}
-      </ul>
-      {props.members.length === 1 ? (
-        <p className="mt-2 text-gray-600">The app cannot remove the last Member.</p>
-      ) : null}
-      <MakeInvite onMade={props.onChange} />
-      <h3 className="mt-4 font-semibold">Open invite links</h3>
-      {props.invites.length === 0 ? (
-        <p className="mt-2">No open invite links.</p>
-      ) : (
-        <ul>
-          {props.invites.map((invite) => (
-            <InviteLine key={invite.id} invite={invite} onCancelled={props.onChange} />
+      <SettingCard id="members" title="Members">
+        <ul className="mt-2.5">
+          {props.members.map((member) => (
+            <MemberLine key={member.id} member={member} onRemoved={props.onRemoved} />
           ))}
         </ul>
-      )}
+        {props.members.length === 1 ? (
+          <p className={HINT}>The app cannot remove the last Member.</p>
+        ) : null}
+      </SettingCard>
+      <MakeInvite onMade={props.onChange} />
+      <SettingCard id="open-invite-links" title="Open invite links">
+        {props.invites.length === 0 ? (
+          <p className="mt-1.5 text-muted">No open invite links.</p>
+        ) : (
+          <ul className="mt-2.5">
+            {props.invites.map((invite) => (
+              <InviteLine key={invite.id} invite={invite} onCancelled={props.onChange} />
+            ))}
+          </ul>
+        )}
+      </SettingCard>
     </>
   );
 }
@@ -296,7 +311,7 @@ export function Members() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">Members</h2>
+      <TabHeading>Members</TabHeading>
       {view === undefined ? null : (
         <MembersLists
           members={view.members}

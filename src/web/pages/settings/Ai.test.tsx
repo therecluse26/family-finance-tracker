@@ -72,7 +72,7 @@ describe("Settings → AI", () => {
     expect(statusLine({ state: "key rejected" }, today)).toBe(
       "AI paused: the AI provider rejected the key",
     );
-    expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("AI is on");
+    expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("✓ AI is on");
   });
 
   it("takes today in the Household time zone, not in UTC", () => {

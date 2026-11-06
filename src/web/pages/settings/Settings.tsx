@@ -1,35 +1,31 @@
 import { NavLink, Outlet } from "react-router";
+import { Page, PageHeading } from "../../components/Page.tsx";
 import { SETTINGS_SECTIONS } from "../../menu.ts";
+import { TabHeading } from "./settings-ui.tsx";
 
-// Settings: one section per area (spec 07, Settings overview).
+// Settings: one section per area (spec 07, Settings overview), as a row of tabs under the heading.
 export function Settings() {
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Settings</h1>
-      <div className="mt-4 min-[900px]:grid min-[900px]:grid-cols-[12rem_1fr] min-[900px]:gap-6">
-        <nav aria-label="Settings sections">
-          <ul className="flex flex-wrap gap-1 min-[900px]:flex-col">
-            {SETTINGS_SECTIONS.map((section) => (
-              <li key={section.path}>
-                <NavLink
-                  to={section.path}
-                  className={({ isActive }) =>
-                    `block rounded px-3 py-2 ${
-                      isActive ? "bg-blue-50 font-semibold text-blue-800" : "hover:bg-gray-100"
-                    }`
-                  }
-                >
-                  {section.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <section className="mt-4 min-w-0 min-[900px]:mt-0">
-          <Outlet />
-        </section>
+    <Page>
+      <PageHeading title="Settings" />
+      <nav aria-label="Settings sections" className="-mt-0.5 border-b border-line">
+        <ul className="flex flex-wrap gap-x-1">
+          {SETTINGS_SECTIONS.map((section) => (
+            <li key={section.path}>
+              <NavLink
+                to={section.path}
+                className="-mb-px block border-b-2 border-transparent px-3 py-2.5 text-sm text-ink-soft hover:text-ink aria-[current=page]:border-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
+              >
+                {section.label}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <div className="mt-1 flex min-w-0 flex-col gap-4">
+        <Outlet />
       </div>
-    </main>
+    </Page>
   );
 }
 
@@ -37,13 +33,13 @@ export function Settings() {
 export function SettingsPlaceholder(props: { title: string }) {
   return (
     <>
-      <h2 className="text-xl font-semibold">{props.title}</h2>
-      <p className="mt-2 text-gray-600">This section is not built yet.</p>
+      <TabHeading>{props.title}</TabHeading>
+      <p className="text-muted">This section is not built yet.</p>
     </>
   );
 }
 
 // Settings before a section is chosen.
 export function SettingsIndex() {
-  return <p className="text-gray-600">Choose a section.</p>;
+  return <p className="text-muted">Choose a section.</p>;
 }

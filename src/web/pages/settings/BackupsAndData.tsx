@@ -2,8 +2,20 @@ import { type FormEvent, useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { BackupsView } from "../../../server/backups-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, PasteField } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { lastCheckText, sendPastedKey } from "../../master-key.ts";
+import {
+  BUTTONS,
+  DoneLine,
+  HINT,
+  LABEL,
+  Lead,
+  SettingCard,
+  TabHeading,
+  TEXTAREA,
+} from "./settings-ui.tsx";
 
 // Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11),
 // "Check my master key" (spec 09, The Master key), and "Download my data" (spec 11, Data export).
@@ -40,18 +52,20 @@ export function BackupLines(props: { backups: BackupsView; now?: Date }) {
   const count = backups.files === 1 ? "1 file" : `${backups.files} files`;
   return (
     <>
-      <p className="mt-2">
-        Backups go to <code>{backups.folder}</code>. The app keeps the newest 7 backups and 3 safety
-        copies, and uploads nothing.
+      <p className="mt-3">
+        Backups go to <code className="font-mono text-sm break-all">{backups.folder}</code>. The app
+        keeps the newest 7 backups and 3 safety copies, and uploads nothing.
       </p>
       {backups.readable ? (
-        <p className="mt-2">
+        <p className="mt-1.5">
           {backups.lastBackupAt === null
             ? "No backup yet."
             : `Last backup: ${momentLabel(backups.lastBackupAt, now)}. ${count}, ${sizeLabel(backups.bytes)} in all.`}
         </p>
       ) : (
-        <p className="mt-2 text-red-700">The app cannot read the backup folder.</p>
+        <p className="mt-1.5">
+          <StatusText tone="critical">The app cannot read the backup folder.</StatusText>
+        </p>
       )}
     </>
   );
@@ -88,20 +102,17 @@ function Backups() {
   }
 
   return (
-    <section className="mt-4">
-      <h3 className="font-semibold">Backups</h3>
-      <p className="mt-2">The app backs up its data every day at 3:00 AM, Household time.</p>
+    <SettingCard id="backups" title="Backups">
+      <Lead>The app backs up its data every day at 3:00 AM, Household time.</Lead>
       {backups === undefined ? null : <BackupLines backups={backups} />}
-      <button className={BUTTON} type="button" disabled={busy} onClick={backUp}>
-        Back up now
-      </button>
-      {done === undefined ? null : (
-        <p className="mt-3 text-green-700" role="status">
-          {done}
-        </p>
-      )}
+      <div className={BUTTONS}>
+        <Button type="button" variant="outlined" disabled={busy} onClick={backUp}>
+          Back up now
+        </Button>
+      </div>
+      <DoneLine done={done} />
       <ErrorLine error={error} />
-    </section>
+    </SettingCard>
   );
 }
 
@@ -144,26 +155,37 @@ function CheckMasterKey() {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <h3 className="font-semibold">Check my master key</h3>
-      <p className="mt-2">
-        Paste the Master key you saved, and the app says whether it matches. The app never shows the
-        Master key.
+    <SettingCard id="check-my-master-key" title="Check my master key">
+      <form onSubmit={submit}>
+        <Lead>
+          Paste the Master key you saved, and the app says whether it matches. The app never shows
+          the Master key.
+        </Lead>
+        {lastCheck === undefined ? null : <p className={HINT}>{lastCheckText(lastCheck)}</p>}
+        <label className={LABEL}>
+          Master key
+          <textarea
+            className={TEXTAREA}
+            rows={3}
+            autoComplete="off"
+            spellCheck={false}
+            required
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+          />
+        </label>
+        <div className={BUTTONS}>
+          <Button type="submit" disabled={busy}>
+            Check my master key
+          </Button>
+        </div>
+        <DoneLine done={done} />
+        <ErrorLine error={error} />
+      </form>
+      <p className="mt-3 text-small text-muted">
+        No code is needed. You signed in with one already.
       </p>
-      {lastCheck === undefined ? null : (
-        <p className="mt-2 text-gray-600">{lastCheckText(lastCheck)}</p>
-      )}
-      <PasteField label="Master key" value={pasted} onChange={setPasted} />
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Check my master key
-      </button>
-      {done === undefined ? null : (
-        <p className="mt-3 text-green-700" role="status">
-          {done}
-        </p>
-      )}
-      <ErrorLine error={error} />
-    </form>
+    </SettingCard>
   );
 }
 
@@ -200,33 +222,35 @@ export function DownloadMyData() {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <h3 className="font-semibold">Download my data</h3>
-      <p className="mt-2">
-        One ZIP file: your Transactions, Accounts, Budgets, Goals, and Category rules as CSV files,
-        and all the app's data in data.json. It holds no keys, passwords, or codes.
-      </p>
-      <p className="mt-2 font-medium">
-        The file is not encrypted. Anyone who has it can read your Household's money. Keep it
-        somewhere safe.
-      </p>
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Download my data
-      </button>
-      {done === undefined ? null : (
-        <p className="mt-3 text-green-700" role="status">
-          {done}
+    <SettingCard id="download-my-data" title="Download my data">
+      <form onSubmit={submit}>
+        <Lead>
+          One ZIP file: your Transactions, Accounts, Budgets, Goals, and Category rules as CSV
+          files, and all the app's data in data.json. It holds no keys, passwords, or codes.
+        </Lead>
+        <p className="mt-3 font-semibold">
+          The file is not encrypted. Anyone who has it can read your Household's money. Keep it
+          somewhere safe.
         </p>
-      )}
-      <ErrorLine error={error} />
-    </form>
+        <div className={BUTTONS}>
+          <Button type="submit" variant="outlined" disabled={busy}>
+            Download my data
+          </Button>
+        </div>
+        <DoneLine done={done} />
+        <ErrorLine error={error} />
+      </form>
+      <p className="mt-3 text-small text-muted">
+        No code is needed. You signed in with one already.
+      </p>
+    </SettingCard>
   );
 }
 
 export function BackupsAndData() {
   return (
     <>
-      <h2 className="text-xl font-semibold">Backups and data</h2>
+      <TabHeading>Backups and data</TabHeading>
       <Backups />
       <CheckMasterKey />
       <DownloadMyData />

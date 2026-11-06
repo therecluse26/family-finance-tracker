@@ -1,6 +1,8 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { BackupCodes, BUTTON, ErrorLine, NewTotp, TextField } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { BackupCodes, ErrorLine, NewTotp } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import {
   addPasskey,
   deletePasskey,
@@ -11,6 +13,16 @@ import {
   passkeyState,
 } from "../../passkeys.ts";
 import { postJson, refusalText } from "../../requests.ts";
+import {
+  BUTTONS,
+  DoneLine,
+  Field,
+  HINT,
+  Lead,
+  ROW,
+  SettingCard,
+  TabHeading,
+} from "./settings-ui.tsx";
 
 // Settings, My login: the signed-in Member changes their own password, TOTP, and backup codes
 // (spec 09, Members), through the routes under /api/auth/my-login/. TOTP is asked only at sign-in
@@ -18,7 +30,7 @@ import { postJson, refusalText } from "../../requests.ts";
 // asks for one code from the new authenticator. Over HTTPS the Member also adds and deletes
 // passkeys; adding one asks for the current password too.
 
-const CURRENT_PASSWORD_LABEL = "Your current password";
+const CURRENT_PASSWORD_LABEL = "Current password";
 const WRONG_PASSWORD = "Your current password is wrong.";
 
 // `wrong` is the words to show when the server answers 401, and `byCode` the words for a refusal
@@ -65,28 +77,37 @@ function ChangePassword() {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <h3 className="font-semibold">Password</h3>
-      <TextField
-        label={CURRENT_PASSWORD_LABEL}
-        type="password"
-        autoComplete="current-password"
-        value={currentPassword}
-        onChange={setCurrentPassword}
-      />
-      <TextField
-        label="New password, at least 12 characters"
-        type="password"
-        autoComplete="new-password"
-        value={newPassword}
-        onChange={setNewPassword}
-      />
-      <button className={BUTTON} type="submit" disabled={action.busy}>
-        Change password
-      </button>
-      <ErrorLine error={action.error} />
-      {action.done === undefined ? null : <p className="mt-3">{action.done}</p>}
-    </form>
+    <SettingCard id="change-password" title="Change password">
+      <form onSubmit={submit}>
+        <Field
+          label={CURRENT_PASSWORD_LABEL}
+          type="password"
+          autoComplete="current-password"
+          value={currentPassword}
+          onChange={setCurrentPassword}
+          required
+        />
+        <Field
+          label="New password"
+          type="password"
+          autoComplete="new-password"
+          value={newPassword}
+          onChange={setNewPassword}
+          required
+        />
+        <p className={HINT}>At least 12 characters.</p>
+        <div className={BUTTONS}>
+          <Button type="submit" disabled={action.busy}>
+            Change password
+          </Button>
+        </div>
+        <ErrorLine error={action.error} />
+        <DoneLine done={action.done} />
+      </form>
+      <p className="mt-3 text-small text-muted">
+        No code is needed. Your current password proves it is you.
+      </p>
+    </SettingCard>
   );
 }
 
@@ -101,15 +122,18 @@ export function ConfirmNewTotp(props: {
   return (
     <form onSubmit={props.onSubmit}>
       <NewTotp totpURI={props.totpURI} />
-      <TextField
+      <Field
         label="The 6-digit code the new TOTP shows"
         autoComplete="one-time-code"
         value={props.code}
         onChange={props.onCodeChange}
+        required
       />
-      <button className={BUTTON} type="submit" disabled={props.busy}>
-        Use the new TOTP
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={props.busy}>
+          Use the new TOTP
+        </Button>
+      </div>
     </form>
   );
 }
@@ -144,13 +168,23 @@ function ChangeTotp() {
   }
 
   return (
-    <div className="mt-6">
-      <h3 className="font-semibold">TOTP</h3>
+    <SettingCard
+      id="authenticator-app"
+      title="Authenticator app"
+      // Every Member signs in with TOTP (spec 09), so it is always on.
+      status={<StatusText tone="good">On</StatusText>}
+    >
+      <Lead>Sign-in asks for a code from this app.</Lead>
       {totpURI === undefined ? (
         <form onSubmit={start}>
-          <button className={BUTTON} type="submit" disabled={action.busy}>
-            Set up a new TOTP
-          </button>
+          <div className={BUTTONS}>
+            <Button type="submit" variant="outlined" disabled={action.busy}>
+              Set up a new TOTP
+            </Button>
+          </div>
+          <p className="mt-2 text-small text-muted">
+            You scan a new QR code, then type one code from the new app to finish.
+          </p>
         </form>
       ) : (
         <ConfirmNewTotp
@@ -162,8 +196,8 @@ function ChangeTotp() {
         />
       )}
       <ErrorLine error={action.error} />
-      {action.done === undefined ? null : <p className="mt-3">{action.done}</p>}
-    </div>
+      <DoneLine done={action.done} />
+    </SettingCard>
   );
 }
 
@@ -184,15 +218,19 @@ function ChangeBackupCodes() {
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
-      <h3 className="font-semibold">Backup codes</h3>
-      <button className={BUTTON} type="submit" disabled={action.busy}>
-        Make new backup codes
-      </button>
-      <ErrorLine error={action.error} />
-      {action.done === undefined ? null : <p className="mt-3">{action.done}</p>}
-      {codes === undefined ? null : <BackupCodes codes={codes} />}
-    </form>
+    <SettingCard id="backup-codes" title="Backup codes">
+      <Lead>Use one at sign-in if you lose your phone. Each code works once.</Lead>
+      <form onSubmit={submit}>
+        <div className={BUTTONS}>
+          <Button type="submit" variant="outlined" disabled={action.busy}>
+            Make new backup codes
+          </Button>
+        </div>
+        <ErrorLine error={action.error} />
+        <DoneLine done={action.done} />
+        {codes === undefined ? null : <BackupCodes codes={codes} />}
+      </form>
+    </SettingCard>
   );
 }
 
@@ -218,12 +256,9 @@ function Passkeys() {
 
   if (state !== "offered") {
     return (
-      <section className="mt-6">
-        <h3 className="font-semibold">Passkeys</h3>
-        <p className="mt-1 text-gray-600">
-          {state === "plain HTTP" ? PASSKEYS_PLAIN_HTTP_NOTE : PASSKEYS_NOT_IN_BROWSER}
-        </p>
-      </section>
+      <SettingCard id="passkeys" title="Passkeys">
+        <Lead>{state === "plain HTTP" ? PASSKEYS_PLAIN_HTTP_NOTE : PASSKEYS_NOT_IN_BROWSER}</Lead>
+      </SettingCard>
     );
   }
 
@@ -251,54 +286,59 @@ function Passkeys() {
   }
 
   return (
-    <section className="mt-6">
-      <h3 className="font-semibold">Passkeys</h3>
-      <p className="mt-1 text-gray-600">
+    <SettingCard id="passkeys" title="Passkeys">
+      <Lead>
         A passkey signs you in on its own, with no password and no code. It works only at this app's
         address.
-      </p>
+      </Lead>
       {rows === undefined ? null : rows.length === 0 ? (
-        <p className="mt-2">You have no passkeys.</p>
+        <p className="mt-3">You have no passkeys.</p>
       ) : (
-        <ul className="mt-2">
+        <ul className="mt-2.5">
           {rows.map((row) => (
-            <li key={row.id} className="mt-1 flex items-center gap-3">
-              <span>
-                {row.name ?? "Passkey"}, added {new Date(row.createdAt).toLocaleDateString()}
-              </span>
-              <button
-                className="rounded border border-gray-300 px-2 py-1 disabled:opacity-50"
+            <li key={row.id} className={ROW}>
+              <div className="min-w-0 flex-[1_1_220px]">
+                <p className="font-semibold">{row.name ?? "Passkey"}</p>
+                <p className="mt-0.5 text-small text-muted">
+                  Added {new Date(row.createdAt).toLocaleDateString()}
+                </p>
+              </div>
+              <Button
                 type="button"
+                variant="outlined"
+                size="small"
                 disabled={action.busy}
                 onClick={() => remove(row.id)}
               >
                 Delete
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       )}
-      <form onSubmit={add}>
-        <TextField
+      <form className="mt-1" onSubmit={add}>
+        <Field
           label="A name for it, such as your phone's (optional)"
           value={name}
           onChange={setName}
-          optional
         />
-        <TextField
+        <Field
           label={CURRENT_PASSWORD_LABEL}
           type="password"
           autoComplete="current-password"
           value={currentPassword}
           onChange={setCurrentPassword}
+          required
         />
-        <button className={BUTTON} type="submit" disabled={action.busy}>
-          Add a passkey
-        </button>
+        <div className={BUTTONS}>
+          <Button type="submit" variant="outlined" disabled={action.busy}>
+            Add a passkey
+          </Button>
+        </div>
       </form>
       <ErrorLine error={action.error} />
-      {action.done === undefined ? null : <p className="mt-3">{action.done}</p>}
-    </section>
+      <DoneLine done={action.done} />
+    </SettingCard>
   );
 }
 
@@ -306,29 +346,31 @@ function SignOut() {
   const navigate = useNavigate();
   const action = useAction("That did not work.");
   return (
-    <button
-      className="mt-6 rounded border border-gray-300 px-4 py-2 disabled:opacity-50"
-      type="button"
-      disabled={action.busy}
-      onClick={() =>
-        void action.run(
-          () => postJson("/api/auth/sign-out", {}),
-          async () => {
-            await navigate("/sign-in", { replace: true });
-            return "";
-          },
-        )
-      }
-    >
-      Sign out
-    </button>
+    <div>
+      <Button
+        type="button"
+        variant="outlined"
+        disabled={action.busy}
+        onClick={() =>
+          void action.run(
+            () => postJson("/api/auth/sign-out", {}),
+            async () => {
+              await navigate("/sign-in", { replace: true });
+              return "";
+            },
+          )
+        }
+      >
+        Sign out
+      </Button>
+    </div>
   );
 }
 
 export function MyLogin() {
   return (
     <>
-      <h2 className="text-xl font-semibold">My login</h2>
+      <TabHeading>My login</TabHeading>
       <ChangePassword />
       <ChangeTotp />
       <ChangeBackupCodes />

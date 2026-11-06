@@ -447,7 +447,7 @@ describe("Settings → Banks: a new bank's first sync, with no reload", () => {
         />,
       ),
     );
-    expect(row).toContain("Harbor Savings BankLoading history");
+    expect(row).toContain("Harbor Savings Bank● Loading history");
     expect(row).toContain("312 Transactions so far, back to Aug 2025. Updates by itself.");
     expect(row).toContain("Harbor Checking ··2290$1,902.45");
   });
