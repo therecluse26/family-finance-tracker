@@ -569,7 +569,8 @@ describe('the "Finish setup" list', () => {
       expect(lines).toContain(`href="${path}"`);
     }
     // In its slot: after the history loading lines, before the other System notices.
-    expect(lines.indexOf("Loading history")).toBeLessThan(lines.indexOf("Finish setup"));
+    expect(lines.indexOf("Your history is loading")).toBeGreaterThanOrEqual(0);
+    expect(lines.indexOf("Your history is loading")).toBeLessThan(lines.indexOf("Finish setup"));
     expect(lines.indexOf("Finish setup")).toBeLessThan(lines.indexOf("Your history is ready"));
   });
 
