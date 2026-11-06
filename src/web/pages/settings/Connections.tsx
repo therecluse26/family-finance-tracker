@@ -1,4 +1,5 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import type { LinkedAccount } from "../../../bank/adapter.ts";
 import { CONFIRM_ITEMS_FROM } from "../../../bank/connect-view.ts";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
@@ -12,7 +13,15 @@ import {
 import type { AccountView, ConnectionView, HistoryStatusView } from "../../../server/bank-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
-import { type PollPlan, type PollState, usePolling } from "../../polling.ts";
+import type { PollState } from "../../polling.ts";
+import { SignedOut } from "../../requests.ts";
+import {
+  CONNECTIONS_UNREAD,
+  type ConnectionsPage,
+  createConnectionsPage,
+  type HistoryLoadingView,
+  Refused,
+} from "./connections-page.ts";
 
 // Settings → Banks: the Connections, and "Link a new bank" through Plaid Link (spec 02, Linking a
 // new bank and The 10 lifetime Items). The browser never sees an access token: it hands Link's
@@ -78,9 +87,8 @@ const PLAID_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const MESSAGE_LIMIT = 200;
 
 // What to tell the Member when Link closes: undefined when the Member closed it (Link then gives no
-// error), or the plain
-// words for Plaid's code, else Plaid's own message for the Member as plain text, else a general
-// line. Nothing else from the error is shown.
+// error), or the plain words for Plaid's code, else Plaid's own message for the Member as plain
+// text, else a general line. Nothing else from the error is shown.
 export function linkExitProblem(exit: PlaidLinkExit): LinkExitProblem | undefined {
   if (exit === null || typeof exit !== "object") return undefined;
   const code =
@@ -88,18 +96,39 @@ export function linkExitProblem(exit: PlaidLinkExit): LinkExitProblem | undefine
       ? exit.error_code
       : null;
   const message =
-    typeof exit.display_message === "string"
-      ? exit.display_message
-          // Control characters become spaces, then runs of space become one.
-          .replace(/\p{Cc}/gu, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, MESSAGE_LIMIT)
-      : "";
+    typeof exit.display_message === "string" ? plainMessage(exit.display_message) : "";
   const words =
     (code === null ? undefined : EXIT_WORDS[code]) ??
     (message === "" ? "Plaid closed before the bank was linked." : message);
   return { words, code };
+}
+
+// Plaid's message as one line of plain text. Control characters become spaces, and runs of space
+// become one. Format characters go, so a right-to-left override cannot turn the app's own words
+// after it around, and nothing hides in a zero-width one. The two joiners stay: an emoji such as a
+// family is joined by one, and they reorder nothing. A long message is cut at MESSAGE_LIMIT code
+// points, between two graphemes, so the cut never splits an emoji or a letter from its marks.
+function plainMessage(text: string): string {
+  const line = text
+    .toWellFormed()
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/(?![\u200C\u200D])\p{Cf}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  let cut = "";
+  let points = 0;
+  for (const { segment } of new Intl.Segmenter("en", { granularity: "grapheme" }).segment(line)) {
+    const size = Array.from(segment).length;
+    if (points + size > MESSAGE_LIMIT) {
+      // One grapheme longer than the limit, such as a letter with hundreds of marks, is cut by
+      // code points.
+      if (cut === "") cut = Array.from(segment).slice(0, MESSAGE_LIMIT).join("");
+      break;
+    }
+    cut += segment;
+    points += size;
+  }
+  return cut.trim();
 }
 
 let loading: Promise<PlaidLink> | undefined;
@@ -187,30 +216,6 @@ function AccountLine(props: { account: AccountView }) {
       )}
     </li>
   );
-}
-
-// One Connection's history load progress, from GET /api/history-status.
-export type HistoryLoadingView = HistoryStatusView["loading"][number];
-
-// Settings → Banks reads the Connection list again every 3 seconds while a Connection's first
-// sync or history load runs, for at most 10 minutes. Each read is GET /api/connections alone; the
-// Accounts and the history progress are read again only once a sync has finished.
-export const SYNC_POLL: PollPlan = { everyMs: 3_000, maxReads: 200 };
-
-// Whether a Connection's first sync or history load still runs, so the page keeps reading. One that
-// needs a Member, is Broken, removed, or held stops: it waits on a Member.
-export function syncRunning(connection: ConnectionView): boolean {
-  if (connection.removed || connection.held) return false;
-  if (connection.health !== "healthy" && connection.health !== "retrying") return false;
-  return connection.lastSyncedAt === null || !connection.historyLoaded;
-}
-
-// What changes when a sync finishes or a Connection changes state. The page reads the Accounts and
-// the history progress again only when this changes.
-export function syncKey(connections: readonly ConnectionView[]): string {
-  return connections
-    .map((c) => [c.id, c.lastSyncedAt, c.historyLoaded, c.health, c.removed, c.held].join("|"))
-    .join("\n");
 }
 
 const count = (n: number) => n.toLocaleString("en-US");
@@ -816,76 +821,47 @@ export function FakeBankLink(props: {
 
 // A refused read of the Connection list, the Accounts, or the history progress, with the server's
 // words.
-class Refused extends Error {}
-
 async function readJson<T>(res: Response): Promise<T> {
+  if (res.status === 401) throw new SignedOut();
   if (!res.ok) throw new Refused(await refusal(res));
   return (await res.json()) as T;
 }
 
+const CONNECTIONS_READS = {
+  connections: async () =>
+    readJson<{ connections: ConnectionView[]; fakeBank: boolean }>(await api.connections.$get()),
+  accounts: async () => readJson<{ accounts: AccountView[] }>(await api.accounts.$get()),
+  history: async () => readJson<HistoryStatusView>(await api["history-status"].$get()),
+};
+
 // The Connections, with the ways to add one. While a first sync or history load runs, the page
-// reads the list again by itself (SYNC_POLL), so a new bank's Accounts show with no reload.
+// reads the list again by itself (SYNC_POLL), so a new bank's Accounts show with no reload. An
+// ended session sends the Member to sign-in.
 export function Connections(props: { plaid: PlaidView; onChanged: () => void }) {
-  const [connections, setConnections] = useState<ConnectionView[]>([]);
-  const [accounts, setAccounts] = useState<AccountView[]>([]);
-  const [loading, setLoading] = useState<HistoryLoadingView[]>([]);
-  const [fakeBank, setFakeBank] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  // Each bank linked starts a fresh count of reads.
-  const [round, setRound] = useState(0);
-  // The syncKey of the list whose Accounts and history progress were last read.
-  const detailsOf = useRef<string | undefined>(undefined);
+  const navigate = useNavigate();
+  const [view, setView] = useState(CONNECTIONS_UNREAD);
+  const [page, setPage] = useState<ConnectionsPage | undefined>();
+  const { connections, accounts, loading, fakeBank, error, poll } = view;
 
-  // Reads the Connection list. The Accounts and the history progress are read with it the first
-  // time, after a change on this page (`all`), and when a sync has finished since the last read.
-  // Every state is set together, so a Connection never shows synced without its Accounts.
-  const refresh = useCallback(async (all: boolean): Promise<ConnectionView[]> => {
-    const listed = await readJson<{ connections: ConnectionView[]; fakeBank: boolean }>(
-      await api.connections.$get(),
+  useEffect(() => {
+    const opened = createConnectionsPage(CONNECTIONS_READS, setView, () =>
+      navigate("/sign-in", { replace: true }),
     );
-    const key = syncKey(listed.connections);
-    if (all || key !== detailsOf.current) {
-      const [accountsRes, historyRes] = await Promise.all([
-        api.accounts.$get(),
-        api["history-status"].$get(),
-      ]);
-      const read = await readJson<{ accounts: AccountView[] }>(accountsRes);
-      const history = await readJson<HistoryStatusView>(historyRes);
-      setAccounts(read.accounts);
-      setLoading(history.loading);
-      detailsOf.current = key;
-    }
-    setConnections(listed.connections);
-    setFakeBank(listed.fakeBank);
-    setError(undefined);
-    return listed.connections;
-  }, []);
-
-  const load = useCallback(() => {
-    refresh(true).catch((failure) =>
-      setError(failure instanceof Refused ? failure.message : "The server did not answer."),
-    );
-  }, [refresh]);
-
-  useEffect(load, [load]);
-
-  const poll = usePolling(
-    connections.some(syncRunning),
-    async () => (await refresh(false)).some(syncRunning),
-    SYNC_POLL,
-    round,
-  );
+    setPage(opened);
+    opened.load();
+    return opened.stop;
+  }, [navigate]);
 
   // A change to the Connections can change N, so the Plaid settings load again too.
   const changed = () => {
-    load();
+    page?.load();
     props.onChanged();
   };
 
   // A new bank's first sync starts at once: the page reads until its Accounts arrive.
   const linked = () => {
-    setRound((n) => n + 1);
-    changed();
+    page?.linked();
+    props.onChanged();
   };
 
   // A removed Connection covers no bank, so Link lists only the others.
@@ -930,10 +906,7 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
       <ImportConnection plaid={props.plaid} onImported={linked} />
       <FakeBankLink
         offered={fakeBank}
-        onLinked={() => {
-          setRound((n) => n + 1);
-          load();
-        }}
+        onLinked={() => page?.linked()}
         connections={connections}
         accounts={accounts}
         loading={loading}

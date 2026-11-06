@@ -6,7 +6,6 @@ import {
   BeforeLink,
   ConnectionItem,
   FakeBankLink,
-  type HistoryLoadingView,
   ImportConnection,
   ImportPreviewList,
   LinkBank,
@@ -17,11 +16,9 @@ import {
   linkedConnection,
   linkResultOf,
   PLAID_LINK_SCRIPT,
-  SYNC_POLL,
-  syncKey,
-  syncRunning,
   syncState,
 } from "./Connections.tsx";
+import { type HistoryLoadingView, SYNC_POLL, syncKey, syncRunning } from "./connections-page.ts";
 
 // Settings → Banks: the Connections, and what the Member reads before Plaid Link opens.
 
@@ -497,6 +494,55 @@ describe("Settings → Banks: Plaid Link closing with an error", () => {
       }),
     ).toEqual({ words: "The bank is busy.", code: "SOME_NEW_CODE" });
     expect(linkExitProblem({ display_message: "x".repeat(500) })?.words).toHaveLength(200);
+  });
+
+  it("drops format characters, so a right-to-left override cannot turn the app's words around", () => {
+    // A right-to-left override, zero-width space, word joiner, byte order mark, left-to-right
+    // isolate and its end, and a soft hyphen: all format characters, none of them visible.
+    const [rlo, zwsp, joiner, bom, isolate, isolateEnd, softHyphen] = [
+      0x202e, 0x200b, 0x2060, 0xfeff, 0x2066, 0x2069, 0xad,
+    ].map((point) => String.fromCodePoint(point));
+    const problem = linkExitProblem({
+      display_message: `Try later${rlo}.tnepS saw metI${zwsp}${joiner}${bom}${isolate}x${isolateEnd}${softHyphen}`,
+    }) ?? { words: "", code: null };
+    expect(problem.words).toBe("Try later.tnepS saw metIx");
+    expect(problem.words).not.toMatch(/\p{Cf}/u);
+
+    const html = renderToString(
+      <LinkFailed problem={problem} onRetry={() => {}} onClose={() => {}} />,
+    );
+    expect(html).not.toMatch(/\p{Cf}/u);
+    expect(text(html)).toContain("Nothing was saved, and no Item was spent.");
+  });
+
+  it("cuts a long message at 200 code points, never inside an emoji or a letter's marks", () => {
+    const at = (words: string | undefined) => Array.from(words ?? "");
+    const x = (n: number) => "x".repeat(n);
+    const joiner = String.fromCodePoint(0x200d);
+    const acute = String.fromCodePoint(0x301);
+    // 199 letters, then emoji of two UTF-16 units each: the cut counts each emoji as one code
+    // point, so the first stays whole and no lone surrogate is left.
+    const emoji = linkExitProblem({ display_message: `${x(199)}😀😀` })?.words;
+    expect(emoji).toBe(`${x(199)}😀`);
+    expect(emoji?.isWellFormed()).toBe(true);
+    expect(linkExitProblem({ display_message: `${x(200)}😀` })?.words).toBe(x(200));
+    // A family emoji is one grapheme of seven code points, held by joiners: whole, or not at all.
+    const family = ["👨", "👩", "👧", "👦"].join(joiner);
+    expect(linkExitProblem({ display_message: `${x(193)}${family}` })?.words).toBe(
+      `${x(193)}${family}`,
+    );
+    expect(linkExitProblem({ display_message: `${x(195)}${family}` })?.words).toBe(x(195));
+    // A letter with its mark is not split from it.
+    expect(linkExitProblem({ display_message: `${x(199)}e${acute}` })?.words).toBe(x(199));
+    // A lone surrogate from Plaid becomes a replacement character, not a broken string.
+    const lone = String.fromCharCode(0xd83d);
+    expect(linkExitProblem({ display_message: `Busy ${lone} now` })?.words).toBe(
+      `Busy ${String.fromCodePoint(0xfffd)} now`,
+    );
+    // One grapheme longer than the limit is cut by code points rather than dropped.
+    expect(at(linkExitProblem({ display_message: `e${acute.repeat(500)}` })?.words)).toHaveLength(
+      200,
+    );
   });
 
   it("never shows a malformed code or any other part of the error", () => {

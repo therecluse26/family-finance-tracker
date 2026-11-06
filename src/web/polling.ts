@@ -51,6 +51,42 @@ export function startPolling(
   };
 }
 
+// One page's poll, which the page tells after each render or read whether work runs. It starts a
+// fresh poll when `active`, the plan or the `round` changes, and leaves a poll alone otherwise, so a
+// poll that gave up stays given up until a new round, such as the next bank linked. `stop` ends the
+// poll when the page leaves; a later `update` starts again, as React's Strict Mode mounts twice.
+export type Poller = {
+  update(active: boolean, plan: PollPlan, round?: number): void;
+  stop(): void;
+};
+
+export function createPoller(
+  read: () => Promise<boolean>,
+  onState: (state: PollState) => void,
+): Poller {
+  let shown: string | undefined;
+  let stopRun: (() => void) | undefined;
+  const halt = () => {
+    stopRun?.();
+    stopRun = undefined;
+  };
+  return {
+    update(active, plan, round = 0) {
+      const key = [active, plan.everyMs, plan.maxReads, round].join("|");
+      if (key === shown) return;
+      shown = key;
+      halt();
+      if (!active) return onState("ended");
+      onState("polling");
+      stopRun = startPolling(read, plan, onState);
+    },
+    stop() {
+      halt();
+      shown = undefined;
+    },
+  };
+}
+
 // Polls while `active` is true, and stops when the page unmounts. A new `round`, such as the next
 // bank linked, starts a fresh count after a give-up. `read` may change on each render: the latest
 // one is used.
@@ -63,17 +99,29 @@ export function usePolling(
   const [state, setState] = useState<PollState>("ended");
   const latest = useRef(read);
   latest.current = read;
-  const { everyMs, maxReads } = plan;
+  const [poller] = useState(() => createPoller(() => latest.current(), setState));
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new round restarts the count.
-  useEffect(() => {
-    if (!active) {
-      setState("ended");
-      return;
-    }
-    setState("polling");
-    return startPolling(() => latest.current(), { everyMs, maxReads }, setState);
-  }, [active, everyMs, maxReads, round]);
+  useEffect(() => poller.update(active, plan, round));
+  useEffect(() => () => poller.stop(), [poller]);
 
   return state;
+}
+
+// Which answer may show when reads overlap, such as a poll's read and a Member action's read of the
+// same list. Each read takes a place with `begin` before it asks. Its answer shows only when no
+// later read's answer has shown yet, so an older answer that lands last is dropped.
+export function answerOrder(): { begin(): () => boolean } {
+  let started = 0;
+  let shown = 0;
+  return {
+    begin() {
+      started += 1;
+      const mine = started;
+      return () => {
+        if (mine < shown) return false;
+        shown = mine;
+        return true;
+      };
+    },
+  };
 }

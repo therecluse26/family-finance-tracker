@@ -10,6 +10,14 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
+// A 401 from the app's own routes while a page reads: the session ended, so the page stops reading
+// and sends the Member to sign-in, as the shell does.
+export class SignedOut extends Error {
+  constructor() {
+    super("The session ended.");
+  }
+}
+
 // The words to show for a refused request: `wrong` for a wrong password or code, or the words
 // `byCode` gives for the server's code, or the server's own message, such as for too many tries or
 // a password that is too short.

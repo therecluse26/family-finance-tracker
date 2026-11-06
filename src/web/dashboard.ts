@@ -26,6 +26,7 @@ import { loadAiBox } from "./ai-box.ts";
 import { api } from "./api.ts";
 import { browserZone } from "./browser-zone.ts";
 import { type GoalsAnswer, loadGoals } from "./goals.ts";
+import { SignedOut } from "./requests.ts";
 import { transactionsPath } from "./transactions.ts";
 
 // The dashboard's numbers and words (spec 07, The dashboard): its header, its status lines, Left
@@ -121,6 +122,36 @@ export function historyLoadEnded(
 ): boolean {
   const still = new Set(after.loading.map((each) => each.connectionId));
   return before.loading.some((each) => !still.has(each.connectionId));
+}
+
+// One read of the dashboard's history poll, given the progress it shows. It reads the progress
+// again and shows it. When a load ended, it reads the whole page instead (`whole` answers whether
+// that read worked): if it failed, the poll keeps going, within its cap, and the next read tries
+// the whole page again, so a finished bank does not stay in the list. A 401 ends the poll and
+// calls `signedOut`. Answers whether the poll keeps reading.
+export async function readHistoryAgain(
+  shown: Pick<HistoryStatusView, "loading"> | undefined,
+  io: {
+    history(): Promise<HistoryStatusView>;
+    whole(): Promise<boolean>;
+    show(fresh: HistoryStatusView): void;
+    signedOut(): void;
+  },
+): Promise<boolean> {
+  let fresh: HistoryStatusView;
+  try {
+    fresh = await io.history();
+  } catch (failure) {
+    if (!(failure instanceof SignedOut)) throw failure;
+    io.signedOut();
+    return false;
+  }
+  if (shown !== undefined && historyLoadEnded(shown, fresh)) {
+    if (!(await io.whole())) return true;
+  } else {
+    io.show(fresh);
+  }
+  return fresh.loading.length > 0;
 }
 
 // The lines above the boxes (spec 07, Header and status lines). A notice that asks for Repair is
@@ -485,6 +516,7 @@ export type DashboardData = {
 
 async function read<T>(res: Promise<Response>): Promise<T> {
   const answer = await res;
+  if (answer.status === 401) throw new SignedOut();
   if (!answer.ok) throw new Error(`The dashboard's request answered ${answer.status}.`);
   return (await answer.json()) as T;
 }

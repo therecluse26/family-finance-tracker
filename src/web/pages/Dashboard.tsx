@@ -51,7 +51,6 @@ import {
   groupBudgetRows,
   groupStatus,
   headerLine,
-  historyLoadEnded,
   type LeftToSpend,
   leftText,
   leftToSpend,
@@ -63,6 +62,7 @@ import {
   numberTiles,
   paceLine,
   projectedSpending,
+  readHistoryAgain,
   retryHistoryJobs,
   rowNote,
   type StatusLines,
@@ -81,7 +81,8 @@ import {
   WAITS_FOR_HISTORY,
 } from "../goals.ts";
 import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
-import { type PollPlan, type PollState, usePolling } from "../polling.ts";
+import { answerOrder, type PollPlan, type PollState, usePolling } from "../polling.ts";
+import { SignedOut } from "../requests.ts";
 import { FINISH_SETUP_LINKS } from "../setup-gate.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
@@ -1082,30 +1083,41 @@ const DATE_CHECK_MS = 60_000;
 export const HISTORY_POLL: PollPlan = { everyMs: 5_000, maxReads: 120 };
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | undefined>();
   // The history progress read since the page was last read whole.
   const [history, setHistory] = useState<HistoryStatusView | undefined>();
   const [error, setError] = useState<string | undefined>();
+  // A poll's whole read and a Member action's can overlap: an older answer never replaces a newer.
+  const [order] = useState(answerOrder);
 
-  async function load() {
+  // Reads the whole page. Answers whether it read; an ended session goes to sign-in.
+  async function load(): Promise<boolean> {
+    const newest = order.begin();
     try {
-      setData(await loadDashboard());
+      const read = await loadDashboard();
+      if (!newest()) return true;
+      setData(read);
       setHistory(undefined);
       setError(undefined);
-    } catch {
-      setError("The dashboard did not load.");
+      return true;
+    } catch (failure) {
+      if (failure instanceof SignedOut) void navigate("/sign-in", { replace: true });
+      else setError("The dashboard did not load.");
+      return false;
     }
   }
 
   const shownHistory = history ?? data?.history;
   const live = usePolling(
     (shownHistory?.loading.length ?? 0) > 0,
-    async () => {
-      const fresh = await loadHistoryStatus();
-      if (shownHistory !== undefined && historyLoadEnded(shownHistory, fresh)) await load();
-      else setHistory(fresh);
-      return fresh.loading.length > 0;
-    },
+    () =>
+      readHistoryAgain(shownHistory, {
+        history: loadHistoryStatus,
+        whole: load,
+        show: setHistory,
+        signedOut: () => navigate("/sign-in", { replace: true }),
+      }),
     HISTORY_POLL,
   );
 
