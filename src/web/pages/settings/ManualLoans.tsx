@@ -7,7 +7,19 @@ import {
 } from "../../../server/money-movement-views.ts";
 import { accountEdits } from "../../account-edits.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
+import {
+  BUTTONS,
+  DETAILS,
+  INPUT,
+  LABEL,
+  Lead,
+  SettingCard,
+  SUBHEADING,
+  SUMMARY,
+} from "./settings-ui.tsx";
 import { centsOf } from "./UnconnectedAccounts.tsx";
 
 // Settings, Banks: Manual loans (spec 02, Manual loans). Any Member adds a loan that no Bank-data
@@ -94,20 +106,20 @@ export function ManualLoanForm(props: {
   const name = loan?.id ?? "new";
   return (
     <form className="mt-3" onSubmit={submit}>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Lender
         <input
-          className={FIELD}
+          className={INPUT}
           required
           maxLength={100}
           value={lender}
           onChange={(e) => setLender(e.target.value)}
         />
       </label>
-      <fieldset className="mt-3">
-        <legend>Loan type</legend>
+      <fieldset className="mt-3.5">
+        <legend className="text-sm font-semibold">Loan type</legend>
         {MANUAL_LOAN_KINDS.map((each) => (
-          <label key={each} className="mt-1 block">
+          <label key={each} className="mt-2 block">
             <input
               type="radio"
               name={`loan-kind-${name}`}
@@ -120,7 +132,7 @@ export function ManualLoanForm(props: {
         ))}
         {loan === null
           ? REFUSED_KINDS.map((each) => (
-              <label key={each} className="mt-1 block">
+              <label key={each} className="mt-2 block">
                 <input
                   type="radio"
                   name={`loan-kind-${name}`}
@@ -133,61 +145,65 @@ export function ManualLoanForm(props: {
             ))
           : null}
       </fieldset>
-      {refused ? <p className="mt-2 text-red-700">{NOT_A_MANUAL_LOAN}</p> : null}
-      <label className="mt-3 block">
+      {refused ? (
+        <p className="mt-2">
+          <StatusText tone="critical">{NOT_A_MANUAL_LOAN}</StatusText>
+        </p>
+      ) : null}
+      <label className={LABEL}>
         Current balance
         <input
-          className={FIELD}
+          className={INPUT}
           required
           inputMode="decimal"
           value={balance}
           onChange={(e) => setBalance(e.target.value)}
         />
       </label>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Balance date
         <input
-          className={FIELD}
+          className={INPUT}
           required
           type="date"
           value={balanceDate}
           onChange={(e) => setBalanceDate(e.target.value)}
         />
       </label>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Interest rate (APR, %)
         <input
-          className={FIELD}
+          className={INPUT}
           required
           inputMode="decimal"
           value={apr}
           onChange={(e) => setApr(e.target.value)}
         />
       </label>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Regular payment amount (optional)
         <input
-          className={FIELD}
+          className={INPUT}
           inputMode="decimal"
           value={regularPayment}
           onChange={(e) => setRegularPayment(e.target.value)}
         />
       </label>
       {kind === "mortgage" ? (
-        <label className="mt-3 block">
+        <label className={LABEL}>
           Escrow per payment (optional)
           <input
-            className={FIELD}
+            className={INPUT}
             inputMode="decimal"
             value={escrow}
             onChange={(e) => setEscrow(e.target.value)}
           />
         </label>
       ) : null}
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Counts as
         <select
-          className={FIELD}
+          className={INPUT}
           value={loanType}
           onChange={(e) => setLoanType(e.target.value as typeof loanType)}
         >
@@ -196,9 +212,11 @@ export function ManualLoanForm(props: {
           <option value="purchase loan">Purchase loan: the lender paid the seller</option>
         </select>
       </label>
-      <button className={BUTTON} type="submit" disabled={busy || refused}>
-        {loan === null ? "Add the loan" : "Save the loan"}
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy || refused}>
+          {loan === null ? "Add the loan" : "Save the loan"}
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
@@ -210,28 +228,25 @@ export function ManualLoanList(props: {
   onSaved: (loan: ManualLoanView) => void;
 }) {
   return (
-    <>
-      <h3 id="manual-loans" className="mt-6 font-semibold">
-        Manual loans
-      </h3>
-      <p className="mt-2 text-gray-600">
+    <SettingCard id="manual-loans" title="Manual loans">
+      <Lead>
         A personal, car, student, or buy now pay later loan, or a mortgage, that no bank connection
         syncs. The app works out each payment's interest from the balance and the APR. Credit cards
         and lines of credit can't be added: their balances move with purchases the app cannot see.
-      </p>
-      {props.loans.length === 0 ? <p className="mt-2">No Manual loans yet.</p> : null}
+      </Lead>
+      {props.loans.length === 0 ? <p className="mt-3">No Manual loans yet.</p> : null}
       {props.loans.map((loan) => (
-        <details key={loan.id} className="mt-3">
-          <summary>
+        <details key={loan.id} className={DETAILS}>
+          <summary className={SUMMARY}>
             {loan.lender}, {KIND_LABEL[loan.kind]}: {wholeDollars(loan.balance)} owed,{" "}
             {LOAN_TYPE_LABEL[loan.loanType]}
           </summary>
           <ManualLoanForm loan={loan} onSaved={props.onSaved} />
         </details>
       ))}
-      <h3 className="mt-6 font-semibold">Add a Manual loan</h3>
+      <h4 className={SUBHEADING}>Add a Manual loan</h4>
       <ManualLoanForm loan={null} lender={props.lender} onSaved={props.onSaved} />
-    </>
+    </SettingCard>
   );
 }
 

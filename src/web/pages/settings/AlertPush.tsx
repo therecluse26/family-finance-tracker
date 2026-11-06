@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { PushSubscriptionFields, PushView } from "../../../notify/push-view.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { SERVICE_WORKER } from "../../install.ts";
 
 // Settings, Alerts: push on this device (spec 06, Recipients and channels; spec 09, Security mode).
@@ -18,6 +20,9 @@ async function refusal(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   return typeof body.error === "string" ? body.error : "That did not work.";
 }
+
+// A part of the My channels card, under a line.
+const PART = "mt-4 border-t border-line-soft pt-3.5";
 
 export const PLAIN_HTTP_NOTE =
   "Push and installing the app need HTTPS. This app runs in plain-HTTP mode: its address starts with http://, and browsers allow push only over HTTPS. So Alerts and System notices come by email only.";
@@ -124,30 +129,36 @@ export function DevicePush(props: { publicKey: string; initial?: DeviceState }) 
   }
 
   return (
-    <section className="mt-6">
-      <h3 className="font-semibold">Push on this device</h3>
-      <p className="mt-1 text-gray-600">
+    <section className={PART} aria-labelledby="push-on-this-device">
+      <h4 id="push-on-this-device" className="font-semibold">
+        Push on this device
+      </h4>
+      <p className="mt-0.5 text-small text-muted">
         Pushes show each Alert's kind and its text. They wait from 9 PM to 8 AM, Household time.
         Turn Alerts on for each device you want them on.
       </p>
       {state === "not supported" ? (
         <p className="mt-2">This browser cannot get pushes.</p>
       ) : state === "on" ? (
-        <>
-          <p className="mt-2">Alerts are on for this device.</p>
-          <button className={BUTTON} type="button" disabled={busy} onClick={turnOff}>
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2">
+          <p className="text-small">
+            <StatusText tone="good">Alerts are on for this device.</StatusText>
+          </p>
+          <Button type="button" variant="outlined" size="small" disabled={busy} onClick={turnOff}>
             Turn off Alerts on this device
-          </button>
-        </>
+          </Button>
+        </div>
       ) : (
-        <button
-          className={BUTTON}
+        <Button
           type="button"
+          variant="outlined"
+          size="small"
+          className="mt-2.5"
           disabled={busy || state === "checking"}
           onClick={turnOn}
         >
           Turn on Alerts on this device
-        </button>
+        </Button>
       )}
       <ErrorLine error={error} />
     </section>
@@ -178,9 +189,11 @@ export function PushPart(props: { push: PushView; homeScreenFirst: boolean }) {
   return (
     <>
       {props.push.available && props.homeScreenFirst ? (
-        <section className="mt-6">
-          <h3 className="font-semibold">Add to Home Screen</h3>
-          <p className="mt-1">{HOME_SCREEN_NOTE}</p>
+        <section className={PART} aria-labelledby="add-to-home-screen">
+          <h4 id="add-to-home-screen" className="font-semibold">
+            Add to Home Screen
+          </h4>
+          <p className="mt-0.5">{HOME_SCREEN_NOTE}</p>
         </section>
       ) : null}
       <AlertPush push={props.push} />
@@ -193,9 +206,11 @@ export function AlertPush(props: { push: PushView }) {
   if (push.available) return <DevicePush publicKey={push.publicKey} />;
   if (push.why === "setup not done") return null;
   return (
-    <section className="mt-6">
-      <h3 className="font-semibold">Push and the installed app</h3>
-      <p className="mt-1 text-gray-600">{PLAIN_HTTP_NOTE}</p>
+    <section className={PART} aria-labelledby="push-and-installed-app">
+      <h4 id="push-and-installed-app" className="font-semibold">
+        Push and the installed app
+      </h4>
+      <p className="mt-0.5 text-small text-muted">{PLAIN_HTTP_NOTE}</p>
     </section>
   );
 }

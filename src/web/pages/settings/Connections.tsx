@@ -12,7 +12,9 @@ import {
 } from "../../../format.ts";
 import type { AccountView, ConnectionView, HistoryStatusView } from "../../../server/bank-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import type { PollState } from "../../polling.ts";
 import { SignedOut } from "../../requests.ts";
 import {
@@ -24,6 +26,7 @@ import {
   type HistoryLoadingView,
   Refused,
 } from "./connections-page.ts";
+import { BOX, BUTTONS, CHOICE, HINT, LABEL, SettingCard } from "./settings-ui.tsx";
 
 // Settings → Banks: the Connections, and "Link a new bank" through Plaid Link (spec 02, Linking a
 // new bank and The 10 lifetime Items). The browser never sees an access token: it hands Link's
@@ -211,10 +214,12 @@ const accountLabel = (account: AccountView) =>
 function AccountLine(props: { account: AccountView }) {
   const { account } = props;
   return (
-    <li>
-      {accountLabel(account)}
+    <li
+      className={`flex justify-between gap-3 border-t border-line-soft py-2 ${account.closed ? "text-muted" : ""}`}
+    >
+      <span className="min-w-0">{accountLabel(account)}</span>
       {account.currentBalance === null ? null : (
-        <span className="ml-2">{dollarsAndCents(account.currentBalance)}</span>
+        <span className="tabular-nums">{dollarsAndCents(account.currentBalance)}</span>
       )}
     </li>
   );
@@ -260,19 +265,24 @@ export function syncState(
   };
 }
 
+// The grey box each Link panel step shows in, under its button.
+const PANEL = "mt-3 rounded-control border border-line bg-page p-3.5";
+// A list of Accounts inside a panel or a Connection, one per line.
+const ACCOUNT_LIST = "mt-2 text-sm";
+
 // "Opening Plaid" and "Saving the Connection": the Link panel's steps while the Member waits.
 export function LinkWaiting(props: { saving?: string }) {
   return (
-    <div className="mt-3" role="status">
+    <div className={PANEL} role="status">
       {props.saving === undefined ? (
         <>
-          <p className="font-medium">Opening Plaid…</p>
-          <p className="mt-1 text-gray-600">Plaid's window opens over this page.</p>
+          <p className="font-semibold">Opening Plaid…</p>
+          <p className="mt-1 text-small text-muted">Plaid's window opens over this page.</p>
         </>
       ) : (
         <>
-          <p className="font-medium">Saving {props.saving}…</p>
-          <p className="mt-1 text-gray-600">
+          <p className="font-semibold">Saving {props.saving}…</p>
+          <p className="mt-1 text-small text-muted">
             Plaid is confirming the bank. This takes a few seconds.
           </p>
         </>
@@ -292,18 +302,18 @@ export function LinkProgress(props: {
 }) {
   const { connection, bankName } = props;
   const name = connection?.bankName ?? bankName;
-  if (connection?.removed) return <p className="mt-3">{name} was removed.</p>;
+  if (connection?.removed) return <p className={PANEL}>{name} was removed.</p>;
   if (connection?.held) {
     return (
-      <p className="mt-3">
+      <p className={PANEL}>
         {name} is not in use: another Connection already covers this bank, so it never syncs.
       </p>
     );
   }
   if (connection?.health === "needs a member") {
     return (
-      <div className="mt-3" role="status">
-        <p className="font-medium">{name} is linked</p>
+      <div className={PANEL} role="status">
+        <p className="font-semibold">{name} is linked</p>
         <p className="mt-1">
           The bank asked for a new sign-in before the first sync finished. Use Repair on {name} in
           the list.
@@ -313,8 +323,8 @@ export function LinkProgress(props: {
   }
   if (connection?.health === "broken") {
     return (
-      <div className="mt-3" role="status">
-        <p className="font-medium">{name} is linked</p>
+      <div className={PANEL} role="status">
+        <p className="font-semibold">{name} is linked</p>
         <p className="mt-1">
           The bank disconnected before the first sync finished. Use Link again on {name} in the
           list.
@@ -324,8 +334,8 @@ export function LinkProgress(props: {
   }
   if (connection === undefined || connection.lastSyncedAt === null) {
     return (
-      <div className="mt-3" role="status">
-        <p className="font-medium">{name} is linked</p>
+      <div className={PANEL} role="status">
+        <p className="font-semibold">{name} is linked</p>
         {props.poll === "gave up" ? (
           <p className="mt-1">
             The first sync is taking longer than usual, so this page stopped checking. It still
@@ -334,7 +344,7 @@ export function LinkProgress(props: {
         ) : (
           <>
             <p className="mt-1">Getting your Accounts from the bank…</p>
-            <p className="mt-1 text-gray-600">
+            <p className="mt-1 text-small text-muted">
               {connection?.health === "retrying"
                 ? "The bank did not answer the first time, so the app tries again by itself."
                 : "They show here in about a minute. You can leave this page; nothing stops."}
@@ -346,19 +356,21 @@ export function LinkProgress(props: {
   }
   const found = props.accounts.length;
   return (
-    <div className="mt-3" role="status">
-      <p className="font-medium">
+    <div className={PANEL} role="status">
+      <p className="font-semibold">
         {found === 0
           ? `The first sync found no Accounts at ${name}`
           : `${found} ${found === 1 ? "Account" : "Accounts"} found`}
       </p>
-      <ul className="mt-1 list-[circle] pl-6 text-gray-700">
+      <ul className={ACCOUNT_LIST}>
         {props.accounts.map((account) => (
           <AccountLine key={account.id} account={account} />
         ))}
       </ul>
       {connection.historyLoaded ? null : (
-        <p className="mt-1 text-gray-600">History is loading: {historySoFar(props.loading)}.</p>
+        <p className="mt-1 text-small text-muted">
+          History is loading: {historySoFar(props.loading)}.
+        </p>
       )}
     </div>
   );
@@ -372,18 +384,22 @@ export function LinkFailed(props: {
   onClose: () => void;
 }) {
   return (
-    <div className="mt-3" role="alert">
-      <p className="font-medium">The bank was not linked</p>
+    <div className="mt-3 rounded-control border border-critical/40 bg-white p-3.5" role="alert">
+      <p className="font-semibold">
+        <StatusText tone="critical">The bank was not linked</StatusText>
+      </p>
       <p className="mt-1">{props.problem.words} Nothing was saved, and no Item was spent.</p>
       {props.problem.code === null ? null : (
-        <p className="mt-1 text-gray-600">Plaid code: {props.problem.code}</p>
+        <p className="mt-1 text-small text-muted">Plaid code: {props.problem.code}</p>
       )}
-      <button className={BUTTON} type="button" onClick={props.onRetry}>
-        Try again
-      </button>
-      <button className="mt-4 ml-3 underline" type="button" onClick={props.onClose}>
-        Close
-      </button>
+      <div className={BUTTONS}>
+        <Button type="button" onClick={props.onRetry}>
+          Try again
+        </Button>
+        <Button type="button" variant="outlined" onClick={props.onClose}>
+          Close
+        </Button>
+      </div>
     </div>
   );
 }
@@ -395,8 +411,8 @@ export function ConnectionList(props: { connections: ConnectionView[]; accounts:
     <ul className="mt-2 list-disc pl-6">
       {props.connections.map((connection) => (
         <li key={connection.id}>
-          {connection.bankName}
-          <ul className="list-[circle] pl-6 text-gray-700">
+          <span className="font-semibold">{connection.bankName}</span>
+          <ul className="list-[circle] pl-6 text-ink-soft">
             {props.accounts
               .filter((account) => account.connectionId === connection.id)
               .map((account) => (
@@ -425,16 +441,18 @@ export function BeforeLink(props: {
         the bank the first time: at some banks, such as Chase, a second sign-in can break the first
         Connection.
       </p>
-      <p className="mt-2 text-lg">
+      <p className="mt-2 font-semibold tabular-nums">
         At least {itemsUsed} of {itemLimit} used
       </p>
       {itemsUsed >= itemLimit ? (
-        <p className="mt-2 text-red-700">
-          All {itemLimit} of Plaid's lifetime Items are used, so the app cannot link a new bank. You
-          can still import a Plaid Connection by its access token.
+        <p className="mt-1">
+          <StatusText tone="critical">
+            All {itemLimit} of Plaid's lifetime Items are used, so the app cannot link a new bank.
+            You can still import a Plaid Connection by its access token.
+          </StatusText>
         </p>
       ) : (
-        <p className="mt-2 text-gray-600">
+        <p className="mt-1 text-small text-muted">
           Linking a bank spends one of Plaid's {itemLimit} lifetime Items, and removing it later
           does not give the Item back.
         </p>
@@ -525,17 +543,18 @@ export function LinkBank(props: {
     setError(undefined);
   };
 
-  if (!props.plaid.secretSet) return <p className="mt-4">{PLAID_KEYS_FOR_REAL_BANKS}</p>;
+  if (!props.plaid.secretSet) {
+    return <p className="mt-4 text-muted">{PLAID_KEYS_FOR_REAL_BANKS}</p>;
+  }
   return (
     <div className="mt-4">
-      <button
-        className={BUTTON}
+      <Button
         type="button"
         onClick={() => setStep({ step: "before" })}
         disabled={step.step !== "closed"}
       >
         {props.replaces === undefined ? "Link a new bank" : "Link again"}
-      </button>
+      </Button>
       {step.step === "opening" ? <LinkWaiting /> : null}
       {step.step === "saving" ? <LinkWaiting saving={step.bankName} /> : null}
       {step.step === "failed" ? (
@@ -551,27 +570,28 @@ export function LinkBank(props: {
             poll={props.poll ?? "ended"}
           />
           {step.note === undefined ? null : <p className="mt-1">{step.note}</p>}
-          {props.replaces === undefined ? (
-            <button
-              className={BUTTON}
-              type="button"
-              onClick={() => {
-                setConfirmed(false);
-                setStep({ step: "before" });
-              }}
-            >
-              Link another bank
-            </button>
-          ) : null}
-          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
-            Done
-          </button>
+          <div className={BUTTONS}>
+            {props.replaces === undefined ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setConfirmed(false);
+                  setStep({ step: "before" });
+                }}
+              >
+                Link another bank
+              </Button>
+            ) : null}
+            <Button type="button" variant="outlined" onClick={close}>
+              Done
+            </Button>
+          </div>
         </>
       ) : null}
       {step.step === "before" ? (
-        <div className="mt-3">
+        <div className={PANEL}>
           {props.replaces === undefined ? null : (
-            <p className="mt-2">
+            <p>
               The bank says the app's access to {props.replaces.bankName} is gone, so Repair cannot
               fix it. Link again links {props.replaces.bankName} as a new Connection, which spends a
               new Item. Its Accounts carry on the old ones, with their history.
@@ -583,8 +603,9 @@ export function LinkBank(props: {
             accounts={props.accounts}
           />
           {needsConfirm && !blocked ? (
-            <label className="mt-3 block">
+            <label className={`${CHOICE} mt-3 items-start`}>
               <input
+                className="mt-1"
                 type="checkbox"
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
@@ -593,19 +614,20 @@ export function LinkBank(props: {
               one.
             </label>
           ) : null}
-          {blocked ? null : (
-            <button
-              className={BUTTON}
-              type="button"
-              onClick={() => void openLink()}
-              disabled={needsConfirm && !confirmed}
-            >
-              Open Plaid Link
-            </button>
-          )}
-          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
-            Cancel
-          </button>
+          <div className={BUTTONS}>
+            {blocked ? null : (
+              <Button
+                type="button"
+                onClick={() => void openLink()}
+                disabled={needsConfirm && !confirmed}
+              >
+                Open Plaid Link
+              </Button>
+            )}
+            <Button type="button" variant="outlined" onClick={close}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : null}
       <ErrorLine error={error} />
@@ -647,8 +669,8 @@ type ImportPreviewView = { bankName: string; accounts: LinkedAccount[] };
 export function ImportPreviewList(props: { preview: ImportPreviewView }) {
   return (
     <div className="mt-3">
-      <p>{props.preview.bankName}</p>
-      <ul className="list-disc pl-6 text-gray-700">
+      <p className="font-semibold">{props.preview.bankName}</p>
+      <ul className="list-disc pl-6 text-ink-soft">
         {props.preview.accounts.map((account, i) => (
           // Plaid's account IDs never reach the browser, so the place in the list is the key.
           // biome-ignore lint/suspicious/noArrayIndexKey: the list never changes order.
@@ -714,15 +736,15 @@ export function ImportConnection(props: { plaid: PlaidView; onImported: () => vo
   if (!props.plaid.secretSet) return null;
   return (
     <div className="mt-4">
-      <button className={BUTTON} type="button" onClick={() => setOpen(true)} disabled={open}>
+      <Button type="button" variant="outlined" onClick={() => setOpen(true)} disabled={open}>
         Import Plaid Connection
-      </button>
+      </Button>
       {open ? (
-        <div className="mt-3">
-          <label className="mt-3 block">
+        <div className={PANEL}>
+          <label className={`${LABEL} mt-0`}>
             Access token
             <input
-              className={FIELD}
+              className={`${BOX} max-w-[340px]`}
               type="password"
               autoComplete="off"
               spellCheck={false}
@@ -733,34 +755,37 @@ export function ImportConnection(props: { plaid: PlaidView; onImported: () => vo
               }}
             />
           </label>
-          <p className="mt-2 text-gray-600">
+          <p className={HINT}>
             An import spends no new Item, but it counts in "at least N of 10 used". If you already
             raised N by hand for this Item, lower N by one after you save.
           </p>
-          {preview === undefined ? (
-            <button
-              className={BUTTON}
-              type="button"
-              onClick={showPreview}
-              disabled={busy || accessToken.trim() === ""}
-            >
-              Show the bank
-            </button>
-          ) : (
-            <>
-              <ImportPreviewList preview={preview} />
-              <button className={BUTTON} type="button" onClick={save} disabled={busy}>
+          {preview === undefined ? null : <ImportPreviewList preview={preview} />}
+          <div className={BUTTONS}>
+            {preview === undefined ? (
+              <Button
+                type="button"
+                onClick={showPreview}
+                disabled={busy || accessToken.trim() === ""}
+              >
+                Show the bank
+              </Button>
+            ) : (
+              <Button type="button" onClick={save} disabled={busy}>
                 Save this Connection
-              </button>
-            </>
-          )}
-          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
-            Cancel
-          </button>
+              </Button>
+            )}
+            <Button type="button" variant="outlined" onClick={close}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : null}
       <ErrorLine error={error} />
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
+      {done === undefined ? null : (
+        <p className="mt-3">
+          <StatusText tone="good">{done}</StatusText>
+        </p>
+      )}
     </div>
   );
 }
@@ -807,9 +832,15 @@ export function FakeBankLink(props: {
   if (!props.offered) return null;
   return (
     <div className="mt-4">
-      <button className={BUTTON} type="button" onClick={link} disabled={busy}>
+      <Button
+        type="button"
+        variant="outlined"
+        className="border-dashed border-serious text-serious"
+        onClick={link}
+        disabled={busy}
+      >
         Link a fake bank (dev only)
-      </button>
+      </Button>
       <ErrorLine error={error} />
       {linked === undefined ? null : (
         <LinkProgress
@@ -908,10 +939,11 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
   const connected = connections.filter((connection) => !connection.removed);
 
   return (
-    <section className="mt-6">
-      <h3 className="font-semibold">Connections</h3>
-      {connections.length === 0 ? <p className="mt-2">No bank is connected yet.</p> : null}
-      <ul className="mt-2">
+    <SettingCard id="connections" title="Connections">
+      {connections.length === 0 ? (
+        <p className="mt-1.5 text-muted">No bank is connected yet.</p>
+      ) : null}
+      <ul className="mt-3 flex flex-col gap-3 empty:hidden">
         {connections.map((connection) => (
           <ConnectionItem
             key={connection.id}
@@ -938,9 +970,14 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
       <NewBankLinks plaid={props.plaid} view={view} onLinked={linked}>
         <ImportConnection plaid={props.plaid} onImported={linked} />
       </NewBankLinks>
-    </section>
+    </SettingCard>
   );
 }
+
+// Repair is filled in the serious orange, as the boards draw it beside a Connection that needs a
+// Member. White on it reads at 5.0:1.
+const REPAIR_BUTTON =
+  "inline-flex h-[38px] items-center justify-center whitespace-nowrap rounded-control bg-serious px-4 text-sm font-semibold text-white hover:bg-[#92400e] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-serious disabled:cursor-not-allowed disabled:opacity-50";
 
 // Repair or Add accounts: Plaid Link in update mode for one Connection (spec 02, Repair and New
 // accounts at a bank). When Link finishes, the server syncs the Connection at once.
@@ -1004,19 +1041,35 @@ export function UpdateMode(props: {
 
   return (
     <>
-      <button className="mt-1 mr-3 underline" type="button" onClick={open} disabled={busy}>
-        {props.addAccounts ? "Add accounts" : "Repair"}
-      </button>
+      {props.addAccounts ? (
+        <Button type="button" variant="outlined" size="small" onClick={open} disabled={busy}>
+          Add accounts
+        </Button>
+      ) : (
+        <button type="button" className={REPAIR_BUTTON} onClick={open} disabled={busy}>
+          Repair
+        </button>
+      )}
       <ErrorLine error={error} />
-      {done === undefined ? null : <p className="mt-1">{done}</p>}
+      {done === undefined ? null : (
+        <p className="mt-1">
+          <StatusText tone="good">{done}</StatusText>
+        </p>
+      )}
     </>
   );
 }
 
-// What a Connection's health asks of a Member, if anything.
-const HEALTH_NOTES: Partial<Record<ConnectionView["health"], string>> = {
-  "needs a member": " (Needs you to sign in again: use Repair)",
-  broken: " (Disconnected: use Link again)",
+// What a Connection's health asks of a Member, if anything, with its tone.
+const HEALTH_NOTES: Partial<
+  Record<ConnectionView["health"], { tone: "serious" | "critical"; words: string; border: string }>
+> = {
+  "needs a member": {
+    tone: "serious",
+    words: "Needs you to sign in again: use Repair",
+    border: "border-serious/40",
+  },
+  broken: { tone: "critical", words: "Disconnected: use Link again", border: "border-critical/40" },
 };
 
 // One Connection with its Accounts, Repair or Link again, Add accounts, and Remove or Delete
@@ -1067,67 +1120,85 @@ export function ConnectionItem(props: {
 
   // A removed Connection whose Accounts are gone has nothing left to show.
   if (connection.removed && props.accounts.length === 0) return null;
+  const note = connection.removed || connection.held ? undefined : HEALTH_NOTES[connection.health];
+  // Synced and its history loaded, or still on its first sync or history load.
+  const synced = connection.lastSyncedAt !== null && connection.historyLoaded;
+  const repairs = !(connection.removed || connection.held || !connection.actions.repairInApp);
   return (
-    <li className="mt-3">
-      <span className="font-medium">{connection.bankName}</span>
-      {connection.removed
-        ? " (Removed)"
-        : connection.held
-          ? " (Not in use: another Connection already covers this bank, so it never syncs. Remove it.)"
-          : (HEALTH_NOTES[connection.health] ?? null)}
-      {state === null ? null : <span className="ml-2 text-gray-600">{state.word}</span>}
+    <li className={`rounded-xl border bg-white p-4 ${note?.border ?? "border-line"}`}>
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <h4 className={`flex-1 font-semibold ${connection.removed ? "text-muted" : ""}`}>
+          {connection.bankName}
+          {connection.removed ? " (Removed)" : null}
+        </h4>
+        {state === null ? null : (
+          <span className="text-small font-semibold">
+            <StatusText tone={synced ? "good" : "accent"}>{state.word}</StatusText>
+          </span>
+        )}
+      </div>
+      {note === undefined ? null : (
+        <p className="mt-1 text-small font-semibold">
+          <StatusText tone={note.tone}>{note.words}</StatusText>
+        </p>
+      )}
+      {connection.held ? (
+        <p className="mt-1 text-small text-muted">
+          Not in use: another Connection already covers this bank, so it never syncs. Remove it.
+        </p>
+      ) : null}
       {state === null || state.detail === null ? null : (
-        <p className="text-gray-600" role="status">
+        <p className="mt-1.5 text-small text-muted" role="status">
           {state.detail}
         </p>
       )}
-      <ul className="list-[circle] pl-6 text-gray-700">
+      <ul className={`${ACCOUNT_LIST} empty:hidden`}>
         {props.accounts.map((account) => (
           <AccountLine key={account.id} account={account} />
         ))}
       </ul>
-      {connection.removed || connection.held || !connection.actions.repairInApp ? null : (
-        <div>
-          {connection.health === "needs a member" ? (
-            <UpdateMode connection={connection} addAccounts={false} onChanged={props.onChanged} />
-          ) : null}
-          {connection.health === "broken" ? (
-            props.linkAgain
-          ) : (
-            <UpdateMode connection={connection} addAccounts={true} onChanged={props.onChanged} />
-          )}
-        </div>
-      )}
-      {asking === undefined ? (
-        <button
-          className="mt-1 underline"
-          type="button"
-          onClick={() => setAsking(connection.removed ? "delete history" : "remove")}
-        >
-          {connection.removed ? "Delete history" : "Remove"}
-        </button>
-      ) : null}
+      {repairs && connection.health === "broken" ? props.linkAgain : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2 [&>p]:w-full">
+        {repairs && connection.health === "needs a member" ? (
+          <UpdateMode connection={connection} addAccounts={false} onChanged={props.onChanged} />
+        ) : null}
+        {repairs && connection.health !== "broken" ? (
+          <UpdateMode connection={connection} addAccounts={true} onChanged={props.onChanged} />
+        ) : null}
+        {asking === undefined ? (
+          <Button
+            type="button"
+            variant="outlined"
+            size="small"
+            onClick={() => setAsking(connection.removed ? "delete history" : "remove")}
+          >
+            {connection.removed ? "Delete history" : "Remove"}
+          </Button>
+        ) : null}
+      </div>
       {asking === "remove" ? (
-        <div className="mt-2">
+        <div className={PANEL}>
           <p>
             Removing {connection.bankName} does not give its Plaid Item back: the Plaid Trial slot
             stays spent. Its Accounts become Closed, and their history stays.
           </p>
-          <button className={BUTTON} type="button" onClick={remove} disabled={busy}>
-            Remove {connection.bankName}
-          </button>
-          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
-            Cancel
-          </button>
+          <div className={BUTTONS}>
+            <Button type="button" onClick={remove} disabled={busy}>
+              Remove {connection.bankName}
+            </Button>
+            <Button type="button" variant="outlined" onClick={close}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : null}
       {asking === "delete history" ? (
-        <div className="mt-2">
+        <div className={PANEL}>
           <p>
             This deletes these Accounts and every one of their Transactions, for good. Transfers and
             Refunds matched to them are undone, and matching runs again.
           </p>
-          <label className="mt-3 block">
+          <label className={`${CHOICE} mt-3`}>
             <input
               type="checkbox"
               checked={confirmed}
@@ -1135,17 +1206,14 @@ export function ConnectionItem(props: {
             />{" "}
             Delete the history of {connection.bankName}
           </label>
-          <button
-            className={BUTTON}
-            type="button"
-            onClick={deleteHistory}
-            disabled={busy || !confirmed}
-          >
-            Delete history
-          </button>
-          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
-            Cancel
-          </button>
+          <div className={BUTTONS}>
+            <Button type="button" onClick={deleteHistory} disabled={busy || !confirmed}>
+              Delete history
+            </Button>
+            <Button type="button" variant="outlined" onClick={close}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : null}
       <ErrorLine error={error} />

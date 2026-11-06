@@ -3,9 +3,13 @@ import type { PlaidView } from "../../../bank/plaid-view.ts";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { SyncNowView } from "../../../server/bank-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD, TextField } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { Card } from "../../components/Card.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { Connections } from "./Connections.tsx";
 import { ManualLoans } from "./ManualLoans.tsx";
+import { BOX, BUTTONS, DoneLine, Field, LABEL, SettingCard, TabHeading } from "./settings-ui.tsx";
 import { UnconnectedAccounts } from "./UnconnectedAccounts.tsx";
 
 // Settings, Banks: Sync now (spec 02, Sync now), the Plaid keys and the count of Plaid Items
@@ -48,30 +52,41 @@ export function PlaidKeysForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <h3 className="font-semibold">Plaid keys</h3>
-      <p className="mt-2">
+    <form onSubmit={submit}>
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <h3 id="plaid-keys" className="flex-1 text-heading font-bold">
+          Plaid keys
+        </h3>
+        {props.plaid.secretSet ? (
+          <span className="text-small">
+            <StatusText tone="good">Saved</StatusText>
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-1.5">
         {props.plaid.secretSet
           ? `Client ID ${props.plaid.clientId ?? ""}. The secret is set.`
           : "No Plaid keys yet."}
       </p>
-      <p className="mt-2 text-gray-600">
+      <p className="mt-1.5 text-muted">
         Enter the client ID and the Production secret from Plaid's dashboard. The app tests them
         with Plaid at once, which spends no Item.
       </p>
-      <TextField label="Client ID" autoComplete="off" value={clientId} onChange={setClientId} />
-      <TextField
+      <Field label="Client ID" value={clientId} onChange={setClientId} required />
+      <Field
         label="Production secret"
         type="password"
-        autoComplete="off"
         value={secret}
         onChange={setSecret}
+        required
       />
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Test and save the keys
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Test and save the keys
+        </Button>
+      </div>
       <ErrorLine error={error} />
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
+      <DoneLine done={done} />
     </form>
   );
 }
@@ -99,20 +114,22 @@ export function ItemsUsedForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
-      <h3 className="font-semibold">Plaid Items</h3>
-      <p className="mt-2 text-lg">
+    <form onSubmit={submit}>
+      <h3 id="plaid-items" className="text-heading font-bold">
+        Plaid Items
+      </h3>
+      <p className="mt-1.5 font-semibold tabular-nums">
         At least {plaid.itemsUsed} of {plaid.itemLimit} used
       </p>
-      <p className="mt-2 text-gray-600">
+      <p className="mt-1.5 text-muted">
         Plaid's free Trial plan allows {plaid.itemLimit} Items for the life of your Plaid team. Each
         bank linked or imported spends one, and removing a Connection does not give it back. If your
         Plaid team spent Items outside this app, raise the count here.
       </p>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Items used, from {plaid.appItems} to {plaid.itemLimit}
         <input
-          className={FIELD}
+          className={`${BOX} max-w-28 tabular-nums`}
           type="number"
           min={plaid.appItems}
           max={plaid.itemLimit}
@@ -122,9 +139,11 @@ export function ItemsUsedForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
           onChange={(e) => setItemsUsed(e.target.value)}
         />
       </label>
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Save the count
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" variant="outlined" disabled={busy}>
+          Save the count
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
@@ -151,7 +170,9 @@ export function SyncNowResults(props: { results: SyncNowView[] }) {
   return (
     <ul className="mt-3">
       {props.results.map((result) => (
-        <li key={result.connectionId}>{syncNowLine(result)}</li>
+        <li key={result.connectionId} className="border-t border-line-soft py-2 first:border-t-0">
+          {syncNowLine(result)}
+        </li>
       ))}
     </ul>
   );
@@ -178,22 +199,24 @@ export function SyncNow() {
   }
 
   return (
-    <section className="mt-4">
-      <h3 className="font-semibold">Sync now</h3>
-      <p className="mt-2 text-gray-600">
-        Each bank syncs by itself every 6 hours. Sync now syncs every working bank at once.
-      </p>
-      <button className={BUTTON} type="button" disabled={busy} onClick={press}>
-        Sync now
-      </button>
+    <SettingCard id="sync-now" title="Sync now">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <p className="mt-1.5 min-w-0 flex-[1_1_280px] text-muted">
+          Each bank syncs by itself every 6 hours. Sync now syncs every working bank at once.
+        </p>
+        <Button type="button" variant="outlined" disabled={busy} onClick={press}>
+          Sync now
+        </Button>
+      </div>
       <ErrorLine error={error} />
       {results === undefined ? null : <SyncNowResults results={results} />}
-    </section>
+    </SettingCard>
   );
 }
 
 // The Plaid keys, then the ways to add a bank or an Account: Import Plaid Connection, a new
-// Connection, an Unconnected account, and a Manual loan. Settings, Banks shows them. The first-run
+// Connection, an Unconnected account, and a Manual loan, then the count of Plaid Items, each in its
+// own card. Settings, Banks shows them. The first-run
 // wizard's step 5 uses only the Plaid keys form and the link buttons (spec 12, The first-run
 // wizard).
 export function BankSources() {
@@ -217,13 +240,19 @@ export function BankSources() {
       <ErrorLine error={error} />
       {plaid === undefined ? null : (
         <>
-          <PlaidKeysForm plaid={plaid} onSaved={setPlaid} />
-          <ItemsUsedForm plaid={plaid} onSaved={setPlaid} />
+          <Card aria-labelledby="plaid-keys">
+            <PlaidKeysForm plaid={plaid} onSaved={setPlaid} />
+          </Card>
           <Connections plaid={plaid} onChanged={loadPlaid} />
         </>
       )}
       <UnconnectedAccounts />
       <ManualLoans />
+      {plaid === undefined ? null : (
+        <Card aria-labelledby="plaid-items">
+          <ItemsUsedForm plaid={plaid} onSaved={setPlaid} />
+        </Card>
+      )}
     </>
   );
 }
@@ -231,7 +260,7 @@ export function BankSources() {
 export function Banks() {
   return (
     <>
-      <h2 className="text-xl font-semibold">Banks</h2>
+      <TabHeading>Banks</TabHeading>
       <SyncNow />
       <BankSources />
     </>

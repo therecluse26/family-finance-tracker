@@ -17,10 +17,27 @@ import {
 } from "../../../ai/ai-view.ts";
 import { tablePrice } from "../../../ai/prices.ts";
 import { capLine } from "../../../ai/usage-view.ts";
-import { calendarDateIn, dateLabel } from "../../../format.ts";
+import { calendarDateIn, dateLabel, type StatusTone } from "../../../format.ts";
 import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { Meter } from "../../components/Meter.tsx";
+import { StatusText } from "../../components/Status.tsx";
+import {
+  BUTTONS,
+  CHOICE,
+  DoneLine,
+  Field,
+  HINT,
+  INPUT,
+  LABEL,
+  Lead,
+  SettingCard,
+  SUBHEADING,
+  TabHeading,
+  TEXT_LINK,
+} from "./settings-ui.tsx";
 
 // Settings → AI: the Household's one AI provider (spec 08, AI settings page). The API key and the
 // gateway token are write-only: the page shows only whether each is set.
@@ -53,6 +70,14 @@ export function statusLine(status: AiStatus, today: string): string {
   }
 }
 
+// The tone of each AI status: its icon and color beside the words.
+const STATUS_TONE: Record<AiStatus["state"], StatusTone> = {
+  on: "good",
+  "waits for history": "accent",
+  "cost cap": "serious",
+  "key rejected": "critical",
+};
+
 // What the app sends each AI provider so it does not train on the Household's data or keep it.
 export function dataUseLine(provider: AiProviderName, baseUrl: string | null): string {
   const gateway = onGateway(baseUrl)
@@ -74,6 +99,12 @@ const CHECK_WORDS: Record<ModelCheck, string> = {
   worked: "worked",
   "key rejected": "the AI provider rejected the key",
   failed: "did not work",
+};
+
+const CHECK_TONE: Record<ModelCheck, StatusTone> = {
+  worked: "good",
+  "key rejected": "critical",
+  failed: "critical",
 };
 
 const TIER_LABELS: Record<AiTier, string> = { quick: "Quick model", writer: "Writer model" };
@@ -124,31 +155,6 @@ export function enteredPrices(
     prices[tier] = { input, output };
   }
   return prices;
-}
-
-function Field(props: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  autoComplete?: string;
-  placeholder?: string;
-  required?: boolean;
-}) {
-  return (
-    <label className="mt-3 block">
-      {props.label}
-      <input
-        className={FIELD}
-        type={props.type ?? "text"}
-        autoComplete={props.autoComplete ?? "off"}
-        placeholder={props.placeholder}
-        required={props.required ?? false}
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-      />
-    </label>
-  );
 }
 
 export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView | null) => void }) {
@@ -225,11 +231,11 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <label className="mt-3 block">
+    <form onSubmit={submit}>
+      <label className={LABEL}>
         AI provider
         <select
-          className={FIELD}
+          className={INPUT}
           value={provider}
           onChange={(e) => chooseProvider(e.target.value as AiProviderName)}
         >
@@ -240,7 +246,7 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           ))}
         </select>
       </label>
-      <p className="mt-2 text-gray-600">{dataUseLine(provider, baseUrl.trim() || null)}</p>
+      <p className={HINT}>{dataUseLine(provider, baseUrl.trim() || null)}</p>
       <Field
         label="API key"
         type="password"
@@ -274,7 +280,7 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
             }
           />
           {sameDestination && ai.gatewayTokenSet ? (
-            <label className="mt-2 flex items-center gap-2">
+            <label className={CHOICE}>
               <input
                 type="checkbox"
                 checked={removeToken}
@@ -285,51 +291,76 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           ) : null}
         </>
       ) : null}
-      <Field label="Quick model" value={quickModel} onChange={setQuickModel} required />
-      <Field label="Writer model" value={writerModel} onChange={setWriterModel} required />
+      <h4 className={SUBHEADING}>Models</h4>
+      <p className={HINT}>
+        The Quick model makes the small choices during sync. The Writer model writes the Insight
+        cards, the Monthly review, Chat, and Budget tailoring.
+      </p>
+      <div className="grid gap-x-5 sm:grid-cols-2">
+        <Field
+          label="Quick model"
+          value={quickModel}
+          onChange={setQuickModel}
+          required
+          className="max-w-none"
+        />
+        <Field
+          label="Writer model"
+          value={writerModel}
+          onChange={setWriterModel}
+          required
+          className="max-w-none"
+        />
+      </div>
       {unpriced.length === 0 ? null : (
-        <fieldset className="mt-4">
-          <legend className="font-semibold">Prices, in dollars per million tokens</legend>
-          <p className="mt-1 text-gray-600">
+        <fieldset className="mt-5">
+          <legend className="text-sm font-semibold">Prices, in dollars per million tokens</legend>
+          <p className={HINT}>
             The app has no price for this model. Cache reads and writes count at the input price. A
             local model may be $0. The app makes no call with a model that has no price.
           </p>
           {unpriced.map((tier) => (
-            <div key={tier}>
+            <div key={tier} className="grid gap-x-5 sm:grid-cols-2">
               <Field
                 label={`${TIER_LABELS[tier]} (${models[tier]}): input price`}
                 value={prices[tier].input}
                 onChange={(input) => setPrices({ ...prices, [tier]: { ...prices[tier], input } })}
                 placeholder="0.50"
+                className="max-w-36 tabular-nums"
               />
               <Field
                 label={`${TIER_LABELS[tier]} (${models[tier]}): output price`}
                 value={prices[tier].output}
                 onChange={(output) => setPrices({ ...prices, [tier]: { ...prices[tier], output } })}
                 placeholder="2.50"
+                className="max-w-36 tabular-nums"
               />
             </div>
           ))}
         </fieldset>
       )}
       {limit === undefined ? null : (
-        <p className="mt-3">
+        <p className="mt-4 text-small text-muted">
           Set a monthly usage limit at the AI provider too:{" "}
-          <a className="text-blue-700 underline" href={limit.url} target="_blank" rel="noreferrer">
+          <a className={TEXT_LINK} href={limit.url} target="_blank" rel="noreferrer">
             {limit.label}
           </a>
           . The app does not check it.
         </p>
       )}
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Check and save
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Check and save
+        </Button>
+      </div>
       <ErrorLine error={error} />
       {check === undefined ? null : (
-        <ul className="mt-3">
+        <ul className="mt-3 text-small">
           {(["quick", "writer"] as const).map((tier) => (
             <li key={tier}>
-              {TIER_LABELS[tier]}: {CHECK_WORDS[check[tier]]}
+              <StatusText tone={CHECK_TONE[check[tier]]}>
+                {TIER_LABELS[tier]}: {CHECK_WORDS[check[tier]]}
+              </StatusText>
             </li>
           ))}
         </ul>
@@ -340,8 +371,10 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
 
 export function AiStatusLine(props: { ai: AiView; today: string }) {
   return (
-    <p className="mt-2 font-semibold" role="status">
-      {statusLine(props.ai.status, props.today)}
+    <p className="font-semibold" role="status">
+      <StatusText tone={STATUS_TONE[props.ai.status.state]}>
+        {statusLine(props.ai.status, props.today)}
+      </StatusText>
     </p>
   );
 }
@@ -365,15 +398,15 @@ function RemoveAiProvider(props: { onRemoved: () => void }) {
   }
 
   return (
-    <div className="mt-6">
-      <button className={BUTTON} type="button" disabled={busy} onClick={remove}>
-        Remove AI provider
-      </button>
-      <p className="mt-2 text-gray-600">
-        This deletes the key. Every AI use falls back to its no-AI path.
-      </p>
+    <SettingCard id="remove-ai-provider" title="Remove AI provider">
+      <Lead>This deletes the key. Every AI use falls back to its no-AI path.</Lead>
+      <div className={BUTTONS}>
+        <Button type="button" variant="outlined" disabled={busy} onClick={remove}>
+          Remove AI provider
+        </Button>
+      </div>
       <ErrorLine error={error} />
-    </div>
+    </SettingCard>
   );
 }
 
@@ -393,8 +426,23 @@ export async function saveCostCap(
   return { usage: ((await res.json()) as { usage: AiUsageView }).usage, saved: COST_CAP_SAVED };
 }
 
+// Billionths of a dollar in a cent: the unit of an AI call's cost against the cap's unit.
+const NANOS_PER_CENT = 1_000_000_000 / 100;
+
+// How much of the AI cost cap this month's calls spent, for the bar beside the words. It compares
+// the exact amounts the server's cap check does (`atCap`): billionths of a dollar against the cap,
+// so the bar is full just when AI pauses. A $0 cap is full at once.
+export function spentShare(usage: AiUsageView): number {
+  if (usage.capCents === 0) return 1;
+  return usage.totalNanos / (usage.capCents * NANOS_PER_CENT);
+}
+
 // The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap).
-export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsageView) => void }) {
+export function CostCapForm(props: {
+  usage: AiUsageView;
+  today: string;
+  onSaved: (usage: AiUsageView) => void;
+}) {
   const { usage } = props;
   const [cap, setCap] = useState(String(usage.capCents / 100));
   const [busy, setBusy] = useState(false);
@@ -419,24 +467,71 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
-      <h3 className="text-lg font-semibold">AI cost cap</h3>
-      <p className="mt-1">This month: {capLine(usage.totalNanos, usage.capCents)}</p>
-      <p className="mt-1 text-gray-600">
-        At the cap, background AI pauses until the 1st. Chat and Goals ask before each call.
+    <SettingCard
+      id="ai-cost-cap"
+      title="AI cost cap"
+      status={
+        usage.pausedUntil === null ? undefined : (
+          <StatusText tone="serious">
+            AI paused until {dateLabel(usage.pausedUntil, props.today)}
+          </StatusText>
+        )
+      }
+    >
+      <form onSubmit={submit}>
+        <p className="mt-1.5 tabular-nums">
+          This month: {capLine(usage.totalNanos, usage.capCents)}
+        </p>
+        <Meter
+          share={spentShare(usage)}
+          tone={usage.pausedUntil === null ? "accent" : "serious"}
+          className="mt-2.5 max-w-[520px]"
+        />
+        <Field
+          label="AI cost cap, in dollars a month"
+          value={cap}
+          onChange={setCap}
+          required
+          className="max-w-36 tabular-nums"
+        />
+        <p className={HINT}>
+          At the cap, background AI pauses until the 1st. Chat and Goals ask before each call.
+        </p>
+        <div className={BUTTONS}>
+          <Button type="submit" disabled={busy}>
+            Save cap
+          </Button>
+        </div>
+        <ErrorLine error={error} />
+        <DoneLine done={done} />
+        <p className="mt-3 text-sm">
+          <Link className={TEXT_LINK} to="/settings/ai/usage">
+            AI usage
+          </Link>
+        </p>
+      </form>
+    </SettingCard>
+  );
+}
+
+// What the privacy filter takes out of each call (spec 08, Privacy filter), on a grey card.
+function AiPrivacyNote() {
+  return (
+    <section
+      aria-labelledby="what-the-ai-never-sees"
+      className="rounded-card border border-line bg-page p-4 min-[900px]:px-[22px] min-[900px]:py-5"
+    >
+      <h3 id="what-the-ai-never-sees" className="font-bold">
+        What the AI never sees
+      </h3>
+      <p className="mt-1.5 text-small text-ink-soft">
+        The ZIP code and ages are never sent. In the text the app writes for each call, "Member A",
+        "Member B", and so on replace the names of the Household's current Members, and Member email
+        addresses and Account and card numbers are removed. The filter does not look for a removed
+        Member's name. What you type in Chat is best effort: the app hides names and numbers it
+        spots, but not all of them.
       </p>
-      <Field label="AI cost cap, in dollars a month" value={cap} onChange={setCap} required />
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Save cap
-      </button>
-      <ErrorLine error={error} />
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
-      <p className="mt-3">
-        <Link className="text-blue-700 underline" to="/settings/ai/usage">
-          AI usage
-        </Link>
-      </p>
-    </form>
+    </section>
   );
 }
 
@@ -483,20 +578,27 @@ export function AiSettingsFields() {
       <ErrorLine error={error} />
       {ai === undefined ? null : (
         <>
-          {ai === null ? (
-            <p className="mt-2">No AI provider yet. Every AI use takes its no-AI path.</p>
-          ) : (
-            <AiStatusLine ai={ai} today={today} />
+          <SettingCard
+            id="ai-provider"
+            title="AI provider"
+            status={ai === null ? undefined : <AiStatusLine ai={ai} today={today} />}
+          >
+            {ai === null ? (
+              <Lead>No AI provider yet. Every AI use takes its no-AI path.</Lead>
+            ) : null}
+            <AiProviderForm
+              key={ai === null ? "none" : "set"}
+              ai={ai}
+              onSaved={(saved) => {
+                setAi(saved);
+                loadUsage();
+              }}
+            />
+          </SettingCard>
+          {usage === undefined ? null : (
+            <CostCapForm usage={usage} today={today} onSaved={setUsage} />
           )}
-          <AiProviderForm
-            key={ai === null ? "none" : "set"}
-            ai={ai}
-            onSaved={(saved) => {
-              setAi(saved);
-              loadUsage();
-            }}
-          />
-          {usage === undefined ? null : <CostCapForm usage={usage} onSaved={setUsage} />}
+          <AiPrivacyNote />
           {ai === null ? null : <RemoveAiProvider onRemoved={() => setAi(null)} />}
         </>
       )}
@@ -507,7 +609,7 @@ export function AiSettingsFields() {
 export function Ai() {
   return (
     <>
-      <h2 className="text-xl font-semibold">AI</h2>
+      <TabHeading>AI</TabHeading>
       <AiSettingsFields />
     </>
   );

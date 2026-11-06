@@ -2,7 +2,9 @@ import { type FormEvent, useEffect, useState } from "react";
 import { wholeDollars } from "../../../format.ts";
 import type { SteadyIncomeView } from "../../../server/recurring-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { BOX, BUTTONS, LABEL, SettingCard } from "./settings-ui.tsx";
 import { centsOf } from "./UnconnectedAccounts.tsx";
 
 // Steady Income in Settings, Household (spec 05, Steady Income): the figure the app found, and an
@@ -47,46 +49,50 @@ export function SteadyIncomeForm(props: {
   }
 
   return (
-    <section className="mt-6">
-      <h3 className="text-lg font-semibold">Steady Income</h3>
-      <p className="mt-2">Steady Income: {wholeDollars(income.amount)} a month.</p>
-      <p className="mt-2 text-gray-600">
+    <SettingCard id="steady-income" title="Steady Income">
+      <p className="mt-1.5">Steady Income: {wholeDollars(income.amount)} a month.</p>
+      <p className="mt-1.5 text-muted">
         {income.detectedFrom === "Income series"
           ? `The app found ${wholeDollars(income.detected)} a month from Income that repeats, such as paychecks. One-off Income, such as a tax refund, is left out.`
           : `No repeating Income counts yet, so the app uses the middle of the last 3 complete months of Income: ${wholeDollars(income.detected)}.`}{" "}
         It sets the Benchmarks and the Budget draft.
       </p>
       {income.typed === null ? null : (
-        <p className="mt-2">
-          A Member typed {wholeDollars(income.typed)}. It replaces the figure the app found until a
-          Member clears it.{" "}
-          <button
-            className="rounded border border-gray-300 px-3 py-1"
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p>
+            A Member typed {wholeDollars(income.typed)}. It replaces the figure the app found until
+            a Member clears it.
+          </p>
+          <Button
             type="button"
+            variant="outlined"
+            size="small"
             disabled={busy}
             onClick={() => void save(null)}
           >
             Clear the typed figure
-          </button>
-        </p>
+          </Button>
+        </div>
       )}
-      <form className="mt-3" onSubmit={submit}>
-        <label className="block">
+      <form onSubmit={submit}>
+        <label className={LABEL}>
           A different figure, per month (optional)
           <input
-            className={FIELD}
+            className={`${BOX} max-w-48 tabular-nums`}
             inputMode="decimal"
             required
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
           />
         </label>
-        <button className={BUTTON} type="submit" disabled={busy}>
-          Save the figure
-        </button>
+        <div className={BUTTONS}>
+          <Button type="submit" disabled={busy}>
+            Save the figure
+          </Button>
+        </div>
       </form>
       <ErrorLine error={error} />
-    </section>
+    </SettingCard>
   );
 }
 

@@ -1,8 +1,10 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { AlertSettingsView } from "../../../server/alerts-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
 import { AlertEmail } from "./AlertEmail.tsx";
+import { BOX, BUTTONS, DoneLine, HINT, LABEL, SettingCard, TabHeading } from "./settings-ui.tsx";
 
 // Settings, Alerts (spec 06, The weekly cap; Recipients and channels; spec 07, Settings overview):
 // the weekly cap, which any Member may change to any whole number from 0; then each Member's
@@ -36,11 +38,11 @@ export function WeeklyCapForm(props: {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <label className="block">
+    <form onSubmit={submit}>
+      <label className={LABEL}>
         Weekly cap
         <input
-          className={FIELD}
+          className={`${BOX} max-w-40 tabular-nums`}
           inputMode="numeric"
           pattern="\d+"
           required
@@ -48,15 +50,17 @@ export function WeeklyCapForm(props: {
           onChange={(event) => setCap(event.target.value)}
         />
       </label>
-      <p className="mt-1 text-gray-600">
+      <p className={HINT}>
         The app sends at most this many Alerts a week, Monday to Sunday, most urgent first. An Alert
         over the cap is held back: it waits in the Alert list and the Monthly review, and is never
         sent later. Duplicate charges and card interest or fees always go out. With 0, only those
         do.
       </p>
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Save the weekly cap
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Save the weekly cap
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
@@ -79,18 +83,20 @@ export function Alerts() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">Alerts</h2>
+      <TabHeading>Alerts</TabHeading>
       <ErrorLine error={error} />
-      {settings === undefined ? null : (
-        <WeeklyCapForm
-          settings={settings}
-          onSaved={(saved) => {
-            setSettings(saved);
-            setDone("The weekly cap is saved.");
-          }}
-        />
-      )}
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
+      <SettingCard id="weekly-cap" title="How many Alerts a week">
+        {settings === undefined ? null : (
+          <WeeklyCapForm
+            settings={settings}
+            onSaved={(saved) => {
+              setSettings(saved);
+              setDone("The weekly cap is saved.");
+            }}
+          />
+        )}
+        <DoneLine done={done} />
+      </SettingCard>
       <AlertEmail />
     </>
   );

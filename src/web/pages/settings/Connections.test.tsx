@@ -19,6 +19,7 @@ import {
   NewBankLinks,
   PLAID_LINK_SCRIPT,
   syncState,
+  UpdateMode,
 } from "./Connections.tsx";
 import {
   type ConnectionsPageView,
@@ -230,6 +231,28 @@ describe("Settings → Banks: Repair, Link again, and Add accounts", () => {
     expect(shown.match(/Repair/g)).toHaveLength(2);
     expect(shown).toContain("Add accounts");
     expect(shown).not.toContain("LINK AGAIN SHOWN");
+  });
+
+  it("draws Repair as a filled serious button and Add accounts as an outlined one", () => {
+    const html = renderToString(
+      <UpdateMode
+        connection={{ ...CONNECTION, health: "needs a member" }}
+        addAccounts={false}
+        onChanged={() => {}}
+      />,
+    );
+    const addAccounts = renderToString(
+      <UpdateMode
+        connection={{ ...CONNECTION, health: "needs a member" }}
+        addAccounts={true}
+        onChanged={() => {}}
+      />,
+    );
+
+    expect(html).toMatch(
+      /<button type="button" class="[^"]*bg-serious[^"]*text-white[^"]*">Repair/,
+    );
+    expect(addAccounts).not.toContain("bg-serious");
   });
 
   it("offers Link again, not Repair or Add accounts, on a Broken Connection", () => {
@@ -447,7 +470,7 @@ describe("Settings → Banks: a new bank's first sync, with no reload", () => {
         />,
       ),
     );
-    expect(row).toContain("Harbor Savings BankLoading history");
+    expect(row).toContain("Harbor Savings Bank● Loading history");
     expect(row).toContain("312 Transactions so far, back to Aug 2025. Updates by itself.");
     expect(row).toContain("Harbor Checking ··2290$1,902.45");
   });
@@ -581,7 +604,7 @@ describe("Settings → Banks: Plaid Link closing with an error", () => {
     );
 
     expect(shown).toBe(
-      "The bank was not linkedThe bank is not answering Plaid right now. Try again in a few hours. Nothing was saved, and no Item was spent.Plaid code: INSTITUTION_DOWNTry againClose",
+      "▲ The bank was not linkedThe bank is not answering Plaid right now. Try again in a few hours. Nothing was saved, and no Item was spent.Plaid code: INSTITUTION_DOWNTry againClose",
     );
   });
 });

@@ -1,8 +1,19 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
 import { SteadyIncome } from "./SteadyIncome.tsx";
+import {
+  BOX,
+  BUTTONS,
+  CHOICE,
+  DoneLine,
+  HINT,
+  LABEL,
+  SettingCard,
+  TabHeading,
+} from "./settings-ui.tsx";
 
 // The Household facts (spec 05, Household facts): the wizard's step 4, and Settings, Household,
 // where any Member edits them at any time. No one is asked their sex.
@@ -54,15 +65,15 @@ export function HouseholdFactsForm(props: {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <p className="text-gray-600">
+    <form onSubmit={submit}>
+      <p className="mt-1.5 text-muted">
         These facts stay on this server. The AI never receives them. The ZIP code sets the Household
         time zone, which decides when the month starts and when quiet hours begin.
       </p>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         ZIP code
         <input
-          className={FIELD}
+          className={`${BOX} max-w-40 tabular-nums`}
           inputMode="numeric"
           autoComplete="postal-code"
           pattern="\d{5}"
@@ -72,18 +83,18 @@ export function HouseholdFactsForm(props: {
           onChange={(e) => setZipCode(e.target.value)}
         />
       </label>
-      <fieldset className="mt-4">
-        <legend>Each person's age</legend>
-        <p className="text-gray-600">
+      <fieldset className="mt-5">
+        <legend className="text-sm font-semibold">Each person's age</legend>
+        <p className={HINT}>
           Count everyone in the Household, children and others without a login included. Enter 0 for
           a baby under 1.
         </p>
         {people.map((p, index) => (
-          <div className="mt-2 flex items-end gap-2" key={p.key}>
-            <label className="block grow">
+          <div className="mt-1 flex flex-wrap items-end gap-2" key={p.key}>
+            <label className="mt-2.5 block text-sm">
               Person {index + 1}, age in years
               <input
-                className={FIELD}
+                className={`${BOX} max-w-28 tabular-nums`}
                 type="number"
                 min={0}
                 max={120}
@@ -94,42 +105,49 @@ export function HouseholdFactsForm(props: {
               />
             </label>
             {people.length > 1 ? (
-              <button
-                className="rounded border border-gray-300 px-3 py-2"
+              <Button
                 type="button"
+                variant="outlined"
+                className="mb-px"
                 onClick={() => setPeople((list) => list.filter((other) => other.key !== p.key))}
               >
                 Remove
-              </button>
+              </Button>
             ) : null}
           </div>
         ))}
-        <button
-          className="mt-2 rounded border border-gray-300 px-3 py-2"
+        <Button
           type="button"
+          variant="outlined"
+          size="small"
+          className="mt-3"
           onClick={() => setPeople((list) => [...list, person("")])}
         >
           Add a person
-        </button>
+        </Button>
       </fieldset>
-      <fieldset className="mt-4">
-        <legend>Does the Household rent or own its home?</legend>
-        {(["rent", "own"] as const).map((choice) => (
-          <label className="mt-2 mr-4 inline-flex items-center gap-2" key={choice}>
-            <input
-              type="radio"
-              name="rent-or-own"
-              required
-              checked={rentOrOwn === choice}
-              onChange={() => setRentOrOwn(choice)}
-            />
-            {choice === "rent" ? "Rent" : "Own"}
-          </label>
-        ))}
+      <fieldset className="mt-5">
+        <legend className="text-sm font-semibold">Does the Household rent or own its home?</legend>
+        <div className="flex flex-wrap gap-x-5">
+          {(["rent", "own"] as const).map((choice) => (
+            <label className={CHOICE} key={choice}>
+              <input
+                type="radio"
+                name="rent-or-own"
+                required
+                checked={rentOrOwn === choice}
+                onChange={() => setRentOrOwn(choice)}
+              />
+              {choice === "rent" ? "Rent" : "Own"}
+            </label>
+          ))}
+        </div>
       </fieldset>
-      <button className={BUTTON} type="submit" disabled={busy}>
-        {props.submitLabel}
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          {props.submitLabel}
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
@@ -153,22 +171,24 @@ export function Household() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">Household</h2>
+      <TabHeading>Household</TabHeading>
       <ErrorLine error={error} />
-      {facts === undefined ? null : (
-        <>
-          {facts === null ? null : <HouseholdTimeZone facts={facts} />}
-          <HouseholdFactsForm
-            facts={facts}
-            submitLabel="Save the facts"
-            onSaved={(saved) => {
-              setFacts(saved);
-              setDone("The facts are saved.");
-            }}
-          />
-          {done === undefined ? null : <p className="mt-3">{done}</p>}
-        </>
-      )}
+      <SettingCard id="household-facts" title="Household facts">
+        {facts === undefined ? null : (
+          <>
+            {facts === null ? null : <HouseholdTimeZone facts={facts} />}
+            <HouseholdFactsForm
+              facts={facts}
+              submitLabel="Save the facts"
+              onSaved={(saved) => {
+                setFacts(saved);
+                setDone("The facts are saved.");
+              }}
+            />
+            <DoneLine done={done} />
+          </>
+        )}
+      </SettingCard>
       <SteadyIncome />
     </>
   );
@@ -178,7 +198,7 @@ export function HouseholdTimeZone(props: { facts: HouseholdFactsView }) {
   return (
     <>
       <p className="mt-2">Household time zone: {props.facts.timeZone}</p>
-      <p className="mt-2 text-gray-600">
+      <p className="mt-1 text-small text-muted">
         A new ZIP code in another time zone changes the Household time zone at once. A daily task
         may then run one extra time that day.
       </p>

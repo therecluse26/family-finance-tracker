@@ -3,6 +3,7 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiUsageView, AiView } from "../../../ai/ai-view.ts";
+import { atCap } from "../../../ai/usage-view.ts";
 import {
   AiProviderForm,
   AiStatusLine,
@@ -13,6 +14,7 @@ import {
   enteredPrices,
   priceOfText,
   saveCostCap,
+  spentShare,
   statusLine,
   todayHere,
 } from "./Ai.tsx";
@@ -72,7 +74,7 @@ describe("Settings → AI", () => {
     expect(statusLine({ state: "key rejected" }, today)).toBe(
       "AI paused: the AI provider rejected the key",
     );
-    expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("AI is on");
+    expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("✓ AI is on");
   });
 
   it("takes today in the Household time zone, not in UTC", () => {
@@ -192,11 +194,38 @@ describe("Settings → AI", () => {
   });
 
   it("shows the AI cost cap, the month's total against it, and a link to the AI usage page", () => {
-    const html = routed(<CostCapForm usage={USAGE} onSaved={() => {}} />);
+    const html = routed(<CostCapForm usage={USAGE} today="2026-11-20" onSaved={() => {}} />);
 
     expect(text(html)).toContain("This month: $3.12 of $10.00");
     expect(html).toContain('value="10"');
     expect(html).toContain('href="/settings/ai/usage"');
+    expect(html).toContain("bg-accent");
+    expect(text(html)).not.toContain("AI paused");
+  });
+
+  it("fills the cost cap bar just when the server's cap check pauses AI, from exact amounts", () => {
+    const cases = [
+      { totalNanos: 0, capCents: 0 },
+      { totalNanos: 1, capCents: 0 },
+      { totalNanos: 0, capCents: 1000 },
+      // Rounds to $10.00, but is still under the cap.
+      { totalNanos: 9_999_999_999, capCents: 1000 },
+      { totalNanos: 10_000_000_000, capCents: 1000 },
+      { totalNanos: 10_000_000_001, capCents: 1000 },
+    ];
+    for (const amounts of cases) {
+      const share = spentShare({ ...USAGE, ...amounts });
+      expect(share >= 1, JSON.stringify(amounts)).toBe(atCap(amounts.totalNanos, amounts.capCents));
+    }
+    expect(spentShare({ ...USAGE, totalNanos: 5_000_000_000, capCents: 1000 })).toBe(0.5);
+  });
+
+  it("shows the paused status on a serious bar at the cap, and a $0 cap as full", () => {
+    const paused = { ...USAGE, totalNanos: 0, capCents: 0, pausedUntil: "2026-12-01" };
+    const html = routed(<CostCapForm usage={paused} today="2026-11-20" onSaved={() => {}} />);
+
+    expect(text(html)).toContain("◆ AI paused until Dec 1");
+    expect(html).toMatch(/bg-serious[^"]*" style="width:100%"/);
   });
 });
 
