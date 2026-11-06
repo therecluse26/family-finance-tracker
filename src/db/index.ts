@@ -272,6 +272,7 @@ export {
   storeSmtpSettings,
   type WaitingEmail,
 } from "./deliveries.ts";
+export { type FirstMemberRows, makeFirstMember } from "./first-member.ts";
 export {
   listUnhandledTransactions,
   markTransactionsHandled,

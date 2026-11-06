@@ -199,7 +199,7 @@ function buildBetterAuth(options: AuthOptions) {
     onAPIError: { onError: apiErrorsFor(options.logger ?? log) },
     plugins: [
       myLogin({ database, secrets, freshCode: (headers, code) => fresh.check(headers, code) }),
-      firstMember({ database, secrets }),
+      firstMember({ database, secrets, logger: options.logger ?? log }),
       invites({ database, secrets }),
       loginResets({ database, secrets }),
       signInLimit(database),

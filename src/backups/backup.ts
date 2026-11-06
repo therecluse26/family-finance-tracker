@@ -22,6 +22,13 @@ import {
   isRegular,
   listBackups,
 } from "./files.ts";
+import {
+  FOLDER_CALL_LIMIT_MS,
+  type FolderCall,
+  FolderHungError,
+  folderCalls,
+  missingUnlessHung,
+} from "./folder-calls.ts";
 
 // Backups of app.db (spec 11, How the app makes a backup; When backups run; When a backup fails).
 // A backup holds only app.db: never jobs.db, the Master key, the Compose file, or .env. It is a
@@ -65,6 +72,7 @@ type BackupServices = {
   startRetry: (at: Date) => Promise<unknown>;
   checkCopy: (path: string) => Promise<boolean>;
   wait: (ms: number) => Promise<void>;
+  folderLimitMs: number;
 };
 
 export type BackupOptions = {
@@ -80,6 +88,8 @@ export type BackupOptions = {
   checkCopy?: (path: string) => Promise<boolean>;
   // Waits for the next second's name. Tests move their fake clock instead.
   wait?: (ms: number) => Promise<void>;
+  // How long one call on the backup folder may go without an answer. Tests give a short one.
+  folderLimitMs?: number;
 };
 
 let services: BackupServices | undefined;
@@ -100,6 +110,7 @@ export function startBackups(options: BackupOptions): { stop(): void } {
     startRetry: options.startRetry ?? ((at) => startJob(BackupJob, [RETRY], { at })),
     checkCopy: options.checkCopy ?? checkDatabaseCopy,
     wait: options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    folderLimitMs: options.folderLimitMs ?? FOLDER_CALL_LIMIT_MS,
   };
   services = started;
   return {
@@ -127,33 +138,39 @@ function errorFields(error: unknown): { errorName: string; code?: string } {
   };
 }
 
-// Whether anything is at `path`: a file, a folder, or a link, even one to nothing.
-async function taken(path: string): Promise<boolean> {
-  return (await lstat(path).catch(() => undefined)) !== undefined;
+// Whether anything is at `path`: a file, a folder, or a link, even one to nothing. It throws when
+// the folder is hung.
+async function taken(path: string, call: FolderCall): Promise<boolean> {
+  return (await call(() => lstat(path)).catch(missingUnlessHung)) !== undefined;
 }
 
 // Deletes a backup's temporary files, the files SQLite may keep beside the copy included. A link or
-// a folder with such a name stays.
-async function deleteTemporaryFiles(paths: string[]): Promise<void> {
+// a folder with such a name stays. A hung folder stops it; the next start deletes them.
+async function deleteTemporaryFiles(paths: string[], call: FolderCall): Promise<void> {
   for (const path of paths) {
     try {
-      if ((await lstat(path).catch(() => undefined))?.isFile()) await unlink(path);
+      if ((await call(() => lstat(path)).catch(missingUnlessHung))?.isFile()) {
+        await call(() => unlink(path));
+      }
     } catch (error) {
       log.error("Could not delete a backup's temporary file", errorFields(error));
+      if (error instanceof FolderHungError) return;
     }
   }
 }
 
 // The time and names of a new backup. A backup never replaces another: when one of this kind
-// already has this second's name, it waits for the next second, a few times at most.
+// already has this second's name, it waits for the next second, a few times at most. It throws when
+// the folder is hung.
 async function freeNames(
   services: BackupServices,
   kind: BackupKind,
+  call: FolderCall,
 ): Promise<{ at: Date; names: ReturnType<typeof backupNames> } | undefined> {
   for (let tries = 0; tries < NAME_TRIES; tries += 1) {
     const at = services.now();
     const names = backupNames(kind, at);
-    if (!(await taken(join(services.folder, names.name)))) return { at, names };
+    if (!(await taken(join(services.folder, names.name), call))) return { at, names };
     await services.wait(1000 - (at.getTime() % 1000));
   }
   return undefined;
@@ -223,16 +240,19 @@ export async function sameAsGzipped(plain: Readable, gzipped: Readable): Promise
 async function unchangedMigrationCopy(
   services: BackupServices,
   path: string,
+  call: FolderCall,
 ): Promise<BackupFile | undefined> {
   try {
     const now = services.now();
-    const newest = (await listBackups(services.folder)).find(
+    const newest = (await listBackups(services.folder, call)).find(
       (file) => !isRegular(file.kind) && file.at <= now,
     );
     if (newest?.kind !== "migration") return undefined;
-    const same = await sameAsGzipped(
-      createReadStream(path),
-      createReadStream(join(services.folder, newest.name)),
+    const same = await call((progress, signal) =>
+      sameAsGzipped(
+        createReadStream(path, { signal }),
+        createReadStream(join(services.folder, newest.name), { signal }).on("data", progress),
+      ),
     );
     return same ? newest : undefined;
   } catch (error) {
@@ -244,8 +264,20 @@ async function unchangedMigrationCopy(
 // Backups hold readable history, so only the app's user may read them, as with the Master key file.
 const BACKUP_MODE = 0o600;
 
-async function makeBackup(services: BackupServices, kind: BackupKind): Promise<BackupResult> {
-  const free = await freeNames(services, kind).catch(() => undefined);
+// Every call on the backup folder goes through `call`, within its time limit. A hung folder fails
+// the backup at the step it was on.
+async function makeBackup(
+  services: BackupServices,
+  kind: BackupKind,
+  call: FolderCall,
+): Promise<BackupResult> {
+  const free = await freeNames(services, kind, call).catch((error: unknown) =>
+    error instanceof FolderHungError ? error : undefined,
+  );
+  if (free instanceof FolderHungError) {
+    log.error("A backup failed", { kind, failure: "copy failed", ...errorFields(free) });
+    return { ok: false, failure: "copy failed" };
+  }
   if (free === undefined) {
     log.error("A backup failed: its name was taken", { kind });
     return { ok: false, failure: "write failed" };
@@ -256,45 +288,54 @@ async function makeBackup(services: BackupServices, kind: BackupKind): Promise<B
   const final = join(services.folder, names.name);
   // A file or link already at a temporary name is not the app's to write through or delete.
   const temporary = [copy, `${copy}-wal`, `${copy}-shm`, `${copy}-journal`, packed];
-  for (const path of temporary) {
-    if (await taken(path)) {
-      log.error("A backup failed: a temporary name was taken", { kind });
-      return { ok: false, failure: "copy failed" };
+  try {
+    for (const path of temporary) {
+      if (await taken(path, call)) {
+        log.error("A backup failed: a temporary name was taken", { kind });
+        return { ok: false, failure: "copy failed" };
+      }
     }
+  } catch (error) {
+    log.error("A backup failed", { kind, failure: "copy failed", ...errorFields(error) });
+    return { ok: false, failure: "copy failed" };
   }
   let step: BackupFailure = "copy failed";
   try {
-    await copyDatabaseInto(services.database, copy);
+    await call(() => copyDatabaseInto(services.database, copy));
     step = "check failed";
-    if (!(await services.checkCopy(copy))) {
+    if (!(await call(() => services.checkCopy(copy)))) {
       log.error("A backup's copy failed its integrity check", { kind });
       return { ok: false, failure: step };
     }
     if (kind === "migration") {
-      const kept = await unchangedMigrationCopy(services, copy);
+      const kept = await unchangedMigrationCopy(services, copy, call);
       if (kept !== undefined) {
         log.info("Kept the safety copy: app.db has not changed since it", { file: kept.name });
         return { ok: true, name: kept.name, at: kept.at };
       }
     }
     step = "write failed";
-    // "wx" refuses a path that exists, so the gzip never writes through a link.
-    await pipeline(
-      createReadStream(copy),
-      createGzip(),
-      createWriteStream(packed, { flags: "wx", mode: BACKUP_MODE, flush: true }),
+    // "wx" refuses a path that exists, so the gzip never writes through a link. Each chunk read
+    // starts the time limit again, so only a stalled read or write runs out.
+    await call((progress, signal) =>
+      pipeline(
+        createReadStream(copy).on("data", progress),
+        createGzip(),
+        createWriteStream(packed, { flags: "wx", mode: BACKUP_MODE, flush: true }),
+        { signal },
+      ),
     );
-    if (await taken(final)) throw new Error("The backup's name was taken.");
-    await rename(packed, final);
+    if (await taken(final, call)) throw new Error("The backup's name was taken.");
+    await call(() => rename(packed, final));
   } catch (error) {
     log.error("A backup failed", { kind, failure: step, ...errorFields(error) });
     return { ok: false, failure: step };
   } finally {
-    await deleteTemporaryFiles(temporary);
+    await deleteTemporaryFiles(temporary, call);
   }
   log.info("Made a backup", { kind, file: names.name });
   try {
-    const deleted = await deleteOldBackups(services.folder, services.now());
+    const deleted = await deleteOldBackups(services.folder, services.now(), call);
     if (deleted.length > 0) log.info("Deleted old backups", { count: deleted.length });
   } catch (error) {
     log.error("Could not delete old backups", errorFields(error));
@@ -321,7 +362,7 @@ async function endBackupFailed(database: Database): Promise<void> {
 // Makes a backup of this kind now. It never throws for a failed backup.
 export function backUp(kind: BackupKind): Promise<BackupResult> {
   const started = running();
-  return oneAtATime(() => makeBackup(started, kind));
+  return oneAtATime(() => makeBackup(started, kind, folderCalls(started.folderLimitMs)));
 }
 
 export class SafetyCopyError extends Error {
@@ -344,10 +385,10 @@ export async function takeMigrationCopy(): Promise<string> {
 
 // At start, before any backup runs: deletes the temporary files a stopped backup left behind.
 export function deleteLeftoverBackupFiles(): Promise<void> {
-  const { folder } = running();
+  const { folder, folderLimitMs } = running();
   return oneAtATime(async () => {
     try {
-      const deleted = await deleteLeftoverFiles(folder);
+      const deleted = await deleteLeftoverFiles(folder, folderCalls(folderLimitMs));
       if (deleted > 0) log.info("Deleted a stopped backup's temporary files", { count: deleted });
     } catch (error) {
       log.error("Could not delete a stopped backup's temporary files", errorFields(error));
@@ -376,14 +417,14 @@ export function latestBackupTime(now: Date, timeZone: string): Date {
 
 // A daily backup is due when no regular backup is from the most recent 3:00 AM up to now. A backup
 // that names a later time than now, such as one copied from a server whose clock ran ahead, never
-// marks the day done. A folder the app cannot read counts as due, so the backup fails and is
-// retried.
-async function dailyBackupDue(services: BackupServices): Promise<boolean> {
+// marks the day done. A folder the app cannot read, or that does not answer in time, counts as due,
+// so the backup fails and is retried.
+async function dailyBackupDue(services: BackupServices, call: FolderCall): Promise<boolean> {
   const timeZone = (await services.timeZone()) ?? "UTC";
   const now = services.now();
   const latest = latestBackupTime(now, timeZone);
   try {
-    const backups = await listBackups(services.folder);
+    const backups = await listBackups(services.folder, call);
     return !backups.some((file) => isRegular(file.kind) && file.at >= latest && file.at <= now);
   } catch {
     return true;
@@ -395,12 +436,14 @@ export type DailyBackupResult = "not due" | "done" | "retrying" | "failed";
 // The daily backup, when it is due. It runs at 3:00 AM, Household time, from the startup check,
 // and as its own retry. A failed first try starts one retry an hour later. A failed retry, or a
 // retry that cannot start, raises one System notice to every Member, which stays until a backup
-// works. It never throws for a failed backup.
+// works. It never throws for a failed backup. A hung backup folder fails it within one time limit,
+// so the stop never waits on it for good.
 export function runDailyBackup(retry = false): Promise<DailyBackupResult> {
   const started = running();
   return oneAtATime(async () => {
-    if (!(await dailyBackupDue(started))) return "not due";
-    const result = await makeBackup(started, "daily");
+    const call = folderCalls(started.folderLimitMs);
+    if (!(await dailyBackupDue(started, call))) return "not due";
+    const result = await makeBackup(started, "daily", call);
     if (result.ok) return "done";
     if (!retry) {
       const at = new Date(started.now().getTime() + RETRY_AFTER_MS);
@@ -439,10 +482,12 @@ export type BackupStatus = {
 // What Settings show: the folder in use, the last successful backup, the number of files, and their
 // total size. A backup that names a later time than now is left out, as retention leaves it out.
 export async function backupStatus(): Promise<BackupStatus> {
-  const { folder, now } = running();
+  const { folder, now, folderLimitMs } = running();
   try {
     const moment = now();
-    const backups = (await listBackups(folder)).filter((file) => file.at <= moment);
+    const backups = (await listBackups(folder, folderCalls(folderLimitMs))).filter(
+      (file) => file.at <= moment,
+    );
     return {
       folder,
       readable: true,

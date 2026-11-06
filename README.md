@@ -23,7 +23,7 @@ The [self-hosting guide](docs/self-hosting.md) covers the rest: HTTPS for phones
 
 ## Development
 
-The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 26.
+The build tools need Node.js 26 or later and pnpm 12. The image runs Node.js 26.
 
 | Command | What it does |
 |---|---|

@@ -120,7 +120,10 @@ export async function saveHouseholdFacts(
       try {
         await listener({ previous, facts: marked({ ...facts }), memberId });
       } catch (error) {
-        log.error("A Household facts listener failed", { error });
+        // The error's name only: its message or stack can repeat a value from the listener.
+        log.error("A Household facts listener failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
       }
     }
   }

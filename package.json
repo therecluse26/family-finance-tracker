@@ -10,7 +10,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22.6"
+    "node": ">=26"
   },
   "packageManager": "pnpm@12.9.0",
   "scripts": {

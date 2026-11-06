@@ -35,7 +35,7 @@ export function nodeBuild(entry: string, fileName: string): UserConfig {
       ssr: fileURLToPath(new URL(entry, import.meta.url)),
       outDir: fileURLToPath(new URL("./dist", import.meta.url)),
       emptyOutDir: false,
-      target: "node22",
+      target: "node26",
       rolldownOptions: {
         external: isPackage,
         output: { entryFileNames: fileName },
