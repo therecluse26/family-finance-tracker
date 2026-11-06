@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { newMasterKeyHex } from "../secrets/testing.ts";
@@ -18,6 +18,11 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 // Runs the real entry point, the way the image starts it, with only these settings. Its Master
 // key file is missing unless a test names another.
 function start(settings: Record<string, string>) {
+  return startWith({ FFT_MASTER_KEY_FILE: join(dir, "missing.key"), ...settings });
+}
+
+// The same, with no Master key setting at all unless `settings` holds one.
+function startWith(settings: Record<string, string>, options: { cwd?: string } = {}) {
   const {
     APP_URL: _appUrl,
     TRUSTED_PROXIES: _trustedProxies,
@@ -26,7 +31,8 @@ function start(settings: Record<string, string>) {
     ...env
   } = process.env;
   const run = spawnSync(process.execPath, [MAIN], {
-    env: { ...env, FFT_MASTER_KEY_FILE: join(dir, "missing.key"), ...settings },
+    env: { ...env, ...settings },
+    cwd: options.cwd,
     encoding: "utf8",
     timeout: 10_000,
   });
@@ -126,5 +132,70 @@ describe("the app at start, before it opens app.db", () => {
       }),
     ]);
     expect(output).not.toContain(value);
+  });
+});
+
+// `pnpm dev` makes its own Master key in .dev/ when none is set. The production start must never
+// do that: on a server, a missing key means a lost key (spec 12, The `fft` command).
+describe("the production start with no Master key setting", () => {
+  const HOST_KEY = "/run/secrets/master.key";
+  const REPO_DEV_KEY = fileURLToPath(new URL("../../.dev/master.key", import.meta.url));
+
+  // Every master.key file under a folder.
+  const keyFiles = (folder: string) =>
+    readdirSync(folder, { recursive: true, encoding: "utf8" }).filter(
+      (path) => basename(path) === "master.key",
+    );
+
+  // A host with its own Master key at the default path would load it, so the case cannot run there.
+  it.skipIf(existsSync(HOST_KEY))(
+    "logs that `fft setup` must run first, exits, and makes no Master key",
+    () => {
+      const home = join(dir, "no-key-setting");
+      mkdirSync(home);
+      const repoKeyBefore = existsSync(REPO_DEV_KEY) ? readFileSync(REPO_DEV_KEY) : undefined;
+
+      // HOME, TMPDIR and the working folder all point inside `home`, so a key made there is found.
+      const { status, lines, output } = startWith(
+        { PORT: "1", APP_URL: "http://nas.local:3000", HOME: home, TMPDIR: home },
+        { cwd: home },
+      );
+
+      expect(status).toBe(1);
+      expect(lines.filter((line) => line.level === "error")).toEqual([
+        expect.objectContaining({
+          msg: "The app could not start",
+          error: expect.objectContaining({
+            name: "MasterKeyError",
+            message: expect.stringMatching(/^There is no Master key: .*Run `fft setup` first\.$/),
+          }),
+        }),
+      ]);
+      expect(output).not.toContain("Loaded the Master key");
+      expect(keyFiles(home)).toEqual([]);
+      expect(existsSync(REPO_DEV_KEY) ? readFileSync(REPO_DEV_KEY) : undefined).toEqual(
+        repoKeyBefore,
+      );
+    },
+  );
+
+  // Only the Vite plugin loads dev-app.ts, so the server build and the image hold none of it.
+  it("reaches no module that imports dev-app.ts", () => {
+    const devApp = fileURLToPath(new URL("./dev-app.ts", import.meta.url));
+    const seen = new Set<string>();
+    const queue = [MAIN];
+    for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const code = readFileSync(file, "utf8");
+      for (const [, specifier = ""] of code.matchAll(
+        /(?:from|import\()\s*["'](\.{1,2}\/[^"']+)["']/g,
+      )) {
+        queue.push(resolve(dirname(file), specifier));
+      }
+    }
+
+    expect(seen.size).toBeGreaterThan(20);
+    expect([...seen]).not.toContain(devApp);
   });
 });

@@ -35,17 +35,31 @@ function honoDevServer(): Plugin {
         });
       };
       // The API starts with the server, so a new dev Master key and the setup link show at once.
+      // When it cannot start, such as with a bad .dev/master.key, `pnpm dev` prints the reason
+      // once, with no stack, and stops.
       server.httpServer?.once("listening", () => {
         app ??= startDevApp();
-        app.catch((error: unknown) => {
+        app.catch(async (error: unknown) => {
           server.config.logger.error(error instanceof Error ? error.message : String(error));
+          await server.close();
+          process.exit(1);
         });
       });
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split("?")[0] ?? "";
         if (path !== "/healthz" && path !== "/api" && !path.startsWith("/api/")) return next();
         app ??= startDevApp();
-        app.then((loaded) => getRequestListener(loaded.fetch)(req, res)).catch(next);
+        app
+          .then(
+            (loaded) => getRequestListener(loaded.fetch)(req, res),
+            // The terminal already holds the reason, so no request prints it again.
+            () => {
+              res.statusCode = 503;
+              res.setHeader("Content-Type", "text/plain; charset=utf-8");
+              res.end("The dev app could not start. The reason is in the terminal.\n");
+            },
+          )
+          .catch(next);
       });
     },
   };
