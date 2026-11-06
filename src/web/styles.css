@@ -1,1 +1,52 @@
 @import "tailwindcss";
+
+/* The design tokens of the approved page boards. Each color makes a Tailwind class, such as
+   `text-ink`, `bg-page` or `border-line`. The status colors carry the StatusTone names of
+   src/format.ts, so `text-critical` is the red of ▲ Over Budget. The app loads no web font:
+   Inter shows only where the device has it, and system-ui stands in otherwise. */
+@theme {
+  --font-sans: Inter, system-ui, sans-serif;
+
+  /* Text. */
+  --color-ink: #14171c;
+  --color-ink-soft: #3f4650;
+  --color-muted: #5b6470;
+
+  /* Surfaces and lines. */
+  --color-page: #f6f7f9;
+  --color-line: #e3e6ea;
+  --color-line-soft: #eef0f2;
+  --color-field: #c6cbd2;
+  --color-nav-current: #e8eefc;
+  --color-selected: #f1f4fc;
+
+  /* Status and action colors (spec 07, Status). */
+  --color-accent: #1d4ed8;
+  --color-accent-dark: #1e3a8a;
+  --color-critical: #b42318;
+  --color-serious: #b45309;
+  --color-good: #166534;
+  --color-good-bar: #16a34a;
+
+  /* AI-written text. */
+  --color-ai: #5b21b6;
+  --color-ai-soft: #efe9fc;
+
+  /* Type sizes the boards use besides Tailwind's own. */
+  --text-small: 13px;
+  --text-title: 26px;
+  --text-heading: 17px;
+
+  --radius-card: 14px;
+  --radius-control: 8px;
+  --radius-tag: 4px;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+  }
+}
