@@ -5,7 +5,9 @@ import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { monthOf } from "../money-movement/index.ts";
 import {
+  addDays,
   addMonths,
+  daysBetween,
   lastActiveDay,
   nextExpected,
   type RecurringCharge,
@@ -20,6 +22,9 @@ import { listTrackedLoanPayments, type TrackedLoanPayment } from "./loans.ts";
 
 // The history window holds at most this many months.
 const WINDOW_MONTHS = 12;
+
+// With n = 0, the days of history are never fewer than this many (spec 05, Formula terms).
+const MIN_HISTORY_DAYS = 7;
 
 // The month `months` months after `month`, both written YYYY-MM.
 export const monthAfter = (month: string, months = 1) =>
@@ -40,6 +45,9 @@ export function historyWindow(month: string, historyStart: string | undefined): 
   }
   return window;
 }
+
+// The days in a month written YYYY-MM.
+const daysIn = (month: string) => Number(addDays(addMonths(`${month}-01`, 1), -1).slice(8, 10));
 
 // The day before a date written YYYY-MM-DD.
 function dayBefore(date: string): string {
@@ -159,7 +167,8 @@ function draftingBenchmarks(
 
 // Every term the formulas need for m, written YYYY-MM. K takes each Recurring charge's latest
 // amount on `pricedOn`, written YYYY-MM-DD: by default the day before the 1st of m. The first draft
-// takes the amounts of the day it runs.
+// takes the amounts of the day it runs. With n = 0, the Spending loaded so far stands as of that
+// day too.
 export async function readDraftTerms(
   database: Database,
   month: string,
@@ -167,8 +176,17 @@ export async function readDraftTerms(
   pricedOn?: string,
 ): Promise<DraftTerms> {
   const today = calendarDateIn(now, (await householdTimeZone(database)) ?? "UTC");
-  const window = new Set(historyWindow(month, await readHistoryStart(database)));
+  const historyStart = await readHistoryStart(database);
+  const window = new Set(historyWindow(month, historyStart));
   const n = window.size;
+  // A(c), A_other(c), and A_flex(c) from a sum: ÷ n. With n = 0, the sum is all Spending loaded so
+  // far, scaled to a month: × the days in m ÷ the days of history, from its start to the day the
+  // app computes, both days counted, and at least 7 (spec 05, Formula terms). That day is the one
+  // m's figure is set on, `pricedOn` or the day before the 1st, so the figure stays put as m's
+  // Transactions post, as K does.
+  const asOf = pricedOn ?? dayBefore(`${month}-01`);
+  const historyDays = Math.max(MIN_HISTORY_DAYS, daysBetween(historyStart ?? asOf, asOf) + 1);
+  const perMonth = (sum: number) => (n === 0 ? (sum * daysIn(month)) / historyDays : sum / n);
   const charges = await recurringCharges(database, now);
   const posted = await listPostedParts(database);
   const loanPayments = await listTrackedLoanPayments(database, posted);
@@ -187,7 +205,6 @@ export async function readDraftTerms(
     Category,
     CategoryTerms
   >;
-  const soFar = { groceries: 0, superstores: 0 };
   const sums = new Map<Category, { all: number; other: number; flex: number }>();
   for (const part of posted) {
     if (!SPENDING_TYPES.has(part.type)) continue;
@@ -196,9 +213,7 @@ export async function readDraftTerms(
     // dates (spec 03, Which month a link changes).
     const spending = { ...part, id: part.spendingTransactionId ?? part.transactionId };
     const spent = -part.amount;
-    if (part.category === "Groceries") soFar.groceries += spent;
-    if (part.category === "Superstores") soFar.superstores += spent;
-    if (!window.has(monthOf(spending))) continue;
+    if (n === 0 ? spending.postedDate > asOf : !window.has(monthOf(spending))) continue;
     const sum = sums.get(part.category) ?? { all: 0, other: 0, flex: 0 };
     sum.all += spent;
     if (!chargeIds.has(spending.id) && !loanPaymentIds.has(spending.id)) sum.other += spent;
@@ -207,10 +222,9 @@ export async function readDraftTerms(
   }
   for (const [category, sum] of sums) {
     terms[category].spent = sum.all;
-    if (n === 0) continue;
-    terms[category].a = sum.all / n;
-    terms[category].aOther = sum.other / n;
-    terms[category].aFlex = sum.flex / n;
+    terms[category].a = perMonth(sum.all);
+    terms[category].aOther = perMonth(sum.other);
+    terms[category].aFlex = perMonth(sum.flex);
   }
 
   // K: each active Recurring charge at its latest amount, once for each time it is in m, as it
@@ -241,13 +255,7 @@ export async function readDraftTerms(
     n,
     income: benchmarks?.income ?? (await steadyIncome(database, now)).amount,
     categories: terms,
-    split:
-      n === 0
-        ? soFar
-        : {
-            groceries: terms.Groceries.spent,
-            superstores: terms.Superstores.spent,
-          },
+    split: { groceries: terms.Groceries.spent, superstores: terms.Superstores.spent },
     benchmarks: draftingBenchmarks(benchmarks),
   };
 }

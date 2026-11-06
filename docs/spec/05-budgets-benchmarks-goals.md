@@ -29,7 +29,7 @@ Every formula in this file uses these terms.
 - Spending means posted Spending, net of linked Refunds and Reimbursements, in the month of its purchase date ([Categorization](04-categorization.md#which-month-a-transaction-counts-in)).
 - A flexible Category is any Category outside the Bills group.
 - **Room above typical Spending:** in the draft, the Household's own figure for a flexible Category is its 12-month average × 1.10, rounded as drafts round. The draft still takes the lower of the Benchmark and that figure, and history still never loosens a Budget after the draft. The 10% keeps a typical month under its Budget. The [total must fit](#the-total-must-fit) step runs as before.
-- **History shorter than one complete month:** n is 0. Then A(c), A_other(c), and A_flex(c) use all Spending loaded so far, scaled to a month: × the days in m ÷ the days of history. The days of history run from the start of history to the day the app computes, both days counted. Groceries and Superstores then use the [split rule](#shopping-groceries-and-superstores).
+- **History shorter than one complete month:** n is 0. Then A(c), A_other(c), and A_flex(c) use all Spending loaded so far, scaled to a month: × the days in m ÷ the days of history. The days of history run from the start of history to the day the app computes, both days counted. With fewer than 7 days of history, the app counts 7 days. Groceries and Superstores then use the [split rule](#shopping-groceries-and-superstores).
 - The app rounds every Budget to the nearest whole dollar.
 - A Category group's Budget is the sum of its Categories' Budgets.
 

@@ -17,9 +17,10 @@ export const MIN_HISTORY_MONTHS = 3;
 
 // One Category's terms for the month m, in whole cents.
 export type CategoryTerms = {
-  // The Category's Spending over the history window.
+  // The Category's Spending over the history window, or all Spending loaded so far when n is 0.
   spent: number;
-  // A(c), A_other(c), and A_flex(c): Spending over the history window ÷ n, or 0 when n is 0.
+  // A(c), A_other(c), and A_flex(c): Spending over the history window ÷ n. When n is 0, all
+  // Spending loaded so far × the days in m ÷ the days of history.
   a: number;
   aOther: number;
   aFlex: number;
@@ -93,7 +94,8 @@ export function draftBudgets(terms: DraftTerms): DraftedBudget[] {
       monthly(kLoans);
       continue;
     }
-    // No Spending in the history window and no known amounts: no Budget, never a $0 one.
+    // No Spending in the history window (with n = 0, loaded so far) and no known amounts: no
+    // Budget, never a $0 one.
     if (spent <= 0 && k <= 0) continue;
     if (group === "Bills") {
       monthly(k + aOther);

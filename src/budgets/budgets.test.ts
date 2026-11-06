@@ -17,8 +17,10 @@ import { saveHouseholdFacts } from "../household/index.ts";
 import { findRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
 import {
   budgetsForMonth,
+  draftBudgets,
   draftFirstBudgets,
   FIXED_COSTS_PASS_INCOME,
+  followBills,
   historyWindow,
   readDraftTerms,
   startBudgets,
@@ -275,6 +277,195 @@ describe("Budget drafts", () => {
         aOther: $(30) / 12,
         aFlex: $(30) / 12,
       });
+    });
+  });
+
+  // n = 0: A, A_other, and A_flex are all Spending loaded so far × the days in m ÷ the days of
+  // history (spec 05, Formula terms), as of the day m's figure is set. Today is Nov 4, and November
+  // has 30 days.
+  describe("history shorter than one complete month", () => {
+    // The terms as the first draft reads them: on the day it runs.
+    const asFirstDraft = (month = "2026-11") =>
+      readDraftTerms(bank.database, month, now, now.toISOString().slice(0, 10));
+    const budgetOf = async (category: Category) =>
+      (await budgetsForMonth(bank.database, "2026-11")).budgets.find(
+        (budget) => budget.category === category,
+      )?.amount;
+    const withBenchmarks = async () => {
+      await saveHouseholdFacts(
+        bank.database,
+        { zipCode: "99501", ages: [40, 38], rentOrOwn: "rent" },
+        MEMBER,
+      );
+      await typeSteadyIncome(bank.database, $(6_000), MEMBER);
+    };
+    const draft = async (month = "2026-11") =>
+      draftBudgets(await asFirstDraft(month)).map(
+        ({ category, amount, period }) => `${category}: ${amount / 100} ${period}`,
+      );
+
+    it("drafts Groceries and Superstores by the split rule from 10 days: T = B_GS, r = 2/3", async () => {
+      await withBenchmarks();
+      // History starts Oct 26: Oct 26 to Nov 4 is 10 days.
+      await load([
+        spend("market", "2026-10-26", 120, "Groceries"),
+        spend("market-again", "2026-11-03", 80, "Groceries"),
+        spend("superstore", "2026-10-30", 100, "Superstores"),
+      ]);
+
+      const drafted = await asFirstDraft();
+      expect(drafted.n).toBe(0);
+      expect(drafted.split).toEqual({ groceries: $(200), superstores: $(100) });
+      expect(drafted.categories.Groceries).toMatchObject({ spent: $(200), a: $(600) });
+      expect(drafted.categories.Groceries.aFlex).toBe($(600));
+      expect(drafted.categories.Superstores).toMatchObject({ spent: $(100), aFlex: $(300) });
+      const bGs = drafted.benchmarks.Groceries ?? 0;
+      expect(bGs).toBeGreaterThan(0);
+      expect(drafted.benchmarks.Superstores).toBe(bGs);
+      expect((await draft()).filter((line) => /^(Groceries|Superstores)/.test(line))).toEqual([
+        `Groceries: ${Math.round((bGs * 2) / 3 / 100)} monthly`,
+        `Superstores: ${Math.round(bGs / 3 / 100)} monthly`,
+      ]);
+    });
+
+    it("drafts a Bills Category from A_other scaled to the days in m", async () => {
+      await load([
+        spend("start", "2026-10-26", 1, "Miscellaneous"),
+        spend("water", "2026-10-29", 50, "Utilities"),
+      ]);
+
+      // $50 × 30 ÷ 10.
+      expect((await asFirstDraft()).categories.Utilities).toMatchObject({
+        spent: $(50),
+        a: $(150),
+        aOther: $(150),
+        aFlex: $(150),
+      });
+      expect(await draft()).toContain("Utilities: 150 monthly");
+    });
+
+    it("takes the days in m: 31 in December", async () => {
+      now = new Date("2026-12-04T14:00:00.000Z");
+      // Nov 25 to Dec 4 is 10 days.
+      await load([spend("water", "2026-11-25", 50, "Utilities")]);
+
+      // $50 × 31 ÷ 10.
+      expect((await asFirstDraft("2026-12")).categories.Utilities.aOther).toBe($(155));
+    });
+
+    it("counts the days of history to the Household's day", async () => {
+      // Anchorage: 03:00 UTC on Nov 5 is still Nov 4 there.
+      await saveHouseholdFacts(
+        bank.database,
+        { zipCode: "99501", ages: [40, 38], rentOrOwn: "rent" },
+        MEMBER,
+      );
+      now = new Date("2026-11-05T03:00:00.000Z");
+      await load([spend("water", "2026-10-26", 50, "Utilities")]);
+
+      await draftFirstBudgets(bank.database, now);
+
+      // $50 × 30 ÷ 10, where Nov 5 would give 11 days and $136.
+      expect(await budgetOf("Utilities")).toBe($(150));
+    });
+
+    // Fewer than 7 days of history count as 7.
+    it.each([
+      { start: "2026-11-04", days: 1, dollars: 7, aOther: 30 },
+      { start: "2026-10-30", days: 6, dollars: 7, aOther: 30 },
+      { start: "2026-10-29", days: 7, dollars: 7, aOther: 30 },
+      { start: "2026-10-28", days: 8, dollars: 8, aOther: 30 },
+      { start: "2026-10-26", days: 10, dollars: 7, aOther: 21 },
+    ])(
+      "counts $days days of history: $dollars dollars give an A_other of $aOther dollars",
+      async ({ start, dollars, aOther }) => {
+        await load([spend("water", start, dollars, "Utilities")]);
+
+        const { n, categories } = await asFirstDraft();
+        expect(n).toBe(0);
+        expect(categories.Utilities).toMatchObject({ spent: $(dollars), aOther: $(aOther) });
+        expect(await draft()).toContain(`Utilities: ${aOther} monthly`);
+      },
+    );
+
+    it("counts nothing yet from history that starts tomorrow", async () => {
+      await load([spend("water", "2026-11-05", 5, "Utilities")]);
+
+      const { n, categories } = await asFirstDraft();
+      expect(n).toBe(0);
+      expect(categories.Utilities).toMatchObject({ spent: 0, a: 0, aOther: 0, aFlex: 0 });
+      expect((await draft()).filter((line) => line.startsWith("Utilities"))).toEqual([]);
+    });
+
+    it("stands as of the day before the 1st of m when no day is given, as the Month start reads", async () => {
+      await load([
+        spend("water", "2026-10-24", 16, "Utilities"),
+        spend("water-again", "2026-11-03", 50, "Utilities"),
+      ]);
+
+      // Oct 24 to Oct 31 is 8 days: $16 × 30 ÷ 8. The Nov 3 bill is after that day.
+      expect((await terms()).categories.Utilities).toMatchObject({ spent: $(16), aOther: $(60) });
+    });
+
+    it("keeps a Bills Budget as the first draft set it while m's Transactions post", async () => {
+      await typeSteadyIncome(bank.database, $(6_000), MEMBER);
+      await load([
+        spend("start", "2026-10-26", 1, "Miscellaneous"),
+        spend("water", "2026-11-03", 50, "Utilities"),
+      ]);
+      await draftFirstBudgets(bank.database, now);
+      expect(await budgetOf("Utilities")).toBe($(150));
+
+      // Nothing new by Nov 30.
+      now = new Date("2026-11-30T14:00:00.000Z");
+      await followBills(bank.database, now);
+      expect(await budgetOf("Utilities")).toBe($(150));
+
+      // A $500 repair posts on Nov 20: it is Spending against the Budget, not part of it.
+      await load([spend("repair", "2026-11-20", 500, "Utilities")]);
+      await followBills(bank.database, now);
+      expect(await budgetOf("Utilities")).toBe($(150));
+    });
+
+    it("drafts B(c) for a Category with a Benchmark, and nothing for one with no Spending so far", async () => {
+      await withBenchmarks();
+      await load([
+        spend("market", "2026-10-26", 200, "Groceries"),
+        spend("dinner", "2026-10-28", 40, "Restaurants"),
+        spend("hardware", "2026-10-29", 90, "General goods"),
+        spend("flight", "2026-10-30", 400, "Travel"),
+      ]);
+      const { benchmarks } = await asFirstDraft();
+
+      const drafted = await draft();
+      // Groceries takes all of T; Superstores has no Spending so far and no known amounts.
+      expect(drafted).toContain(
+        `Groceries: ${Math.round((benchmarks.Groceries ?? 0) / 100)} monthly`,
+      );
+      expect(drafted).toContain(
+        `Restaurants: ${Math.round((benchmarks.Restaurants ?? 0) / 100)} monthly`,
+      );
+      // No Spending so far and no known amounts: no Budget.
+      expect(drafted.filter((line) => /^(Superstores|Clothing|Utilities):/.test(line))).toEqual([]);
+      // No Benchmark, and yearly: each still waits for n ≥ 3.
+      expect(drafted.filter((line) => /^(General goods|Travel):/.test(line))).toEqual([]);
+    });
+
+    it("keeps n = 1 as before: the one complete month ÷ 1, with nothing scaled", async () => {
+      await load([
+        spend("water", "2026-10-01", 50, "Utilities"),
+        // In m, outside the window.
+        spend("water-again", "2026-11-02", 40, "Utilities"),
+        spend("market", "2026-10-12", 300, "Groceries"),
+        spend("superstore", "2026-10-20", 100, "Superstores"),
+        spend("superstore-again", "2026-11-03", 500, "Superstores"),
+      ]);
+
+      const { n, categories, split } = await terms();
+      expect(n).toBe(1);
+      expect(categories.Utilities).toMatchObject({ spent: $(50), a: $(50), aOther: $(50) });
+      expect(split).toEqual({ groceries: $(300), superstores: $(100) });
+      expect(await draft()).toContain("Utilities: 50 monthly");
     });
   });
 
