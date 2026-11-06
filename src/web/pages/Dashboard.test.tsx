@@ -35,7 +35,7 @@ import {
 } from "../dashboard.ts";
 import type { GoalsAnswer } from "../goals.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
-import { DashboardReport, StatusLineList } from "./Dashboard.tsx";
+import { DashboardReport, DashboardView, StatusLineList } from "./Dashboard.tsx";
 
 // The dashboard (spec 07, The dashboard; Header and status lines; 2. Left to spend; 3. Goals;
 // 4. Number tiles; 5. "A usual month"; 6. Coming up), drawn from its requests' answers. The numbers themselves are checked
@@ -343,9 +343,10 @@ const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   ...fields,
 });
 
+// The page as it draws once it has read: the header, then the status lines and the boxes.
 function render(shown: DashboardData, openGroup?: string, whyOpen?: string): string {
   const page = (
-    <DashboardReport
+    <DashboardView
       data={shown}
       onClose={() => {}}
       onRetry={() => {}}
@@ -398,6 +399,27 @@ describe("the dashboard's header", () => {
     );
 
     expect(text(html)).toMatch(/^October Day 20 of 31 · synced 10:05 AM /);
+  });
+
+  it("draws its one heading before the page has read, in the same place, so the focus stays on it", () => {
+    const view = (shown: DashboardData | undefined) => {
+      const page = (
+        <DashboardView data={shown} onClose={() => {}} onRetry={() => {}} onChanged={() => {}} />
+      );
+      const router = createMemoryRouter([{ path: "/", element: page }], { initialEntries: ["/"] });
+      return renderToString(<RouterProvider router={router} />);
+    };
+    const loading = view(undefined);
+    const loaded = view(data());
+    const heading = (html: string) => /<h1[^>]*>(.*?)<\/h1>/s.exec(html)?.[1];
+
+    expect(loading.match(/<h1[ >]/g)).toHaveLength(1);
+    expect(loaded.match(/<h1[ >]/g)).toHaveLength(1);
+    expect(heading(loading)).toBe("Dashboard");
+    expect(heading(loaded)).toBe("October");
+    // The same elements lead to the <h1> in both, so React keeps it as the page reads: the shell's
+    // focus after a phone-menu choice is not lost when the numbers arrive.
+    expect(loaded.slice(0, loaded.indexOf("<h1"))).toBe(loading.slice(0, loading.indexOf("<h1")));
   });
 
   it("switches to the new month on the 1st, Household time", () => {
@@ -1225,11 +1247,11 @@ describe('the AI box, "This week"', () => {
 
     expect(html).toContain('aria-label="This week"');
     expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
-    expect(text(html)).toMatch(/^This week 1 thing worth acting on ◆ Worth acting on 2 /);
+    expect(text(html)).toMatch(/^This week 1 thing worth acting on ◆ Worth acting on · 2 /);
     expect(listItems(html, "Worth acting on")).toHaveLength(2);
     expect(listItems(html, "Heads up")).toHaveLength(1);
-    expect(text(html).indexOf("◆ Worth acting on 2")).toBeLessThan(
-      text(html).indexOf("● Heads up 1"),
+    expect(text(html).indexOf("◆ Worth acting on · 2")).toBeLessThan(
+      text(html).indexOf("● Heads up · 1"),
     );
     // An empty group is hidden; nothing hides behind "Show all".
     expect(text(html)).not.toContain("Good news");
@@ -1357,7 +1379,7 @@ describe('the AI box, "This week"', () => {
 
     const items = listItems(html, "Heads up");
     expect(items).toHaveLength(2);
-    expect(items[1]).toBe("Your October review is ready Done");
+    expect(items[1]).toBe("Oct review Your October review is ready Done");
     expect(slotHtml(html, "review-link")).toContain('href="/reviews/2026-10"');
     // The link counts in no "worth acting on" heading.
     expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
@@ -1429,7 +1451,7 @@ describe('the AI box, "This week"', () => {
     expect(slotText(fuel ?? "", "note-figure")).toBe("");
     expect(faded(fuel ?? "")).toBe(true);
     expect(text(fuel ?? "")).toContain("Done ✓ Ask about this");
-    expect(text(html)).toMatch(/◆ Worth acting on 3 .* ● Heads up 1 .* ✓ Good news 2 /);
+    expect(text(html)).toMatch(/◆ Worth acting on · 3 .* ● Heads up · 1 .* ✓ Good news · 2 /);
   });
 
   it("shows Good news last", () => {
@@ -1440,7 +1462,7 @@ describe('the AI box, "This week"', () => {
       ],
     });
 
-    expect(text(html)).toMatch(/◆ Worth acting on 2 .* ● Heads up 1 .* ✓ Good news 1 /);
+    expect(text(html)).toMatch(/◆ Worth acting on · 2 .* ● Heads up · 1 .* ✓ Good news · 1 /);
   });
 
   it("lets the number column grow to fit a large number, and breaks a long word in a note", async () => {
@@ -1503,11 +1525,11 @@ describe("the dashboard's layout", () => {
       html.indexOf('data-slot="right-column"'),
     );
 
-    // The header, as in prototype variant H: the month at the left and "Day N of M · synced" at
-    // the right, on one line where both fit.
+    // The header, as on the approved dashboard boards: the month, then "Day N of M · synced" just
+    // after it on the same baseline, on one line where both fit.
     expect(styleOf("dashboard-header", 375).get("display")).toBe("flex");
     expect(styleOf("dashboard-header", 375).get("flex-wrap")).toBe("wrap");
-    expect(styleOf("dashboard-header", 375).get("justify-content")).toBe("space-between");
+    expect(styleOf("dashboard-header", 375).has("justify-content")).toBe(false);
     expect(styleOf("dashboard-header", 375).get("align-items")).toBe("baseline");
 
     // 375 px: one column, so the boxes stack in that order, the AI box first.
