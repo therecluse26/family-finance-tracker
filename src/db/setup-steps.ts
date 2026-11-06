@@ -1,6 +1,6 @@
-import { count, getTableName, sql } from "drizzle-orm";
+import { count, getTableName, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { members, setupSteps } from "./schema.ts";
+import { aiSettings, connections, householdAccounts, members, setupSteps } from "./schema.ts";
 
 export type SetupStepStatus = "done" | "skipped";
 
@@ -31,4 +31,57 @@ export async function markSetupStep(
     .insert(setupSteps)
     .values({ step, status, at })
     .onConflictDoUpdate({ target: setupSteps.step, set: { status, at } });
+}
+
+// Marks each step done in one statement, over a skip.
+export async function markSetupStepsDone(
+  database: Database,
+  steps: readonly string[],
+  at = new Date(),
+): Promise<void> {
+  if (steps.length === 0) return;
+  await database
+    .insert(setupSteps)
+    .values(steps.map((step) => ({ step, status: "done" as const, at })))
+    .onConflictDoUpdate({
+      target: setupSteps.step,
+      set: { status: sql`excluded.status`, at: sql`excluded.at` },
+    });
+}
+
+// Skip on a wizard step. A step already done stays done, and one already skipped keeps its time.
+export async function skipSetupStep(
+  database: Database,
+  step: string,
+  at = new Date(),
+): Promise<void> {
+  await database.insert(setupSteps).values({ step, status: "skipped", at }).onConflictDoNothing();
+}
+
+// What app.db holds for the wizard's optional steps (spec 12, The first-run wizard).
+export type SetupFacts = {
+  // A Connection, an Unconnected account, or a Manual loan: what step 5, Banks, adds.
+  banks: boolean;
+  // An AI provider, set in step 6.
+  ai: boolean;
+  // The Connections not removed, which the Finish step names.
+  connections: number;
+};
+
+export async function readSetupFacts(database: Database): Promise<SetupFacts> {
+  const [[connected], accounts, providers] = await Promise.all([
+    database.select({ count: count() }).from(connections).where(isNull(connections.removedAt)),
+    database.select({ id: householdAccounts.id }).from(householdAccounts).limit(1),
+    database
+      .select({ id: aiSettings.id })
+      .from(aiSettings)
+      .where(isNotNull(aiSettings.provider))
+      .limit(1),
+  ]);
+  const connectionCount = connected?.count ?? 0;
+  return {
+    banks: connectionCount > 0 || accounts.length > 0,
+    ai: providers.length > 0,
+    connections: connectionCount,
+  };
 }

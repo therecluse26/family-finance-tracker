@@ -414,6 +414,7 @@ export {
   listMembersByJoinOrder,
   listRemovedMembers,
   type MemberRemoval,
+  readFirstMemberId,
   removeMember,
 } from "./members.ts";
 export {
@@ -554,7 +555,16 @@ export {
   type StoredReviewItem,
 } from "./review-items.ts";
 export { scheduledTasks } from "./schema.ts";
-export { hasMember, markSetupStep, readSetupSteps, type SetupStepStatus } from "./setup-steps.ts";
+export {
+  hasMember,
+  markSetupStep,
+  markSetupStepsDone,
+  readSetupFacts,
+  readSetupSteps,
+  type SetupFacts,
+  type SetupStepStatus,
+  skipSetupStep,
+} from "./setup-steps.ts";
 export {
   addSignInTries,
   countSignInTries,

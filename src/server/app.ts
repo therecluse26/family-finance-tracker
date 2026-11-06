@@ -42,7 +42,7 @@ import { proposalRoutes } from "./proposals.ts";
 import { recurringRoutes } from "./recurring.ts";
 import { reviewRoutes } from "./review.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
-import { readSetupState } from "./setup.ts";
+import { readSetupState, setupRoutes } from "./setup.ts";
 import { topMerchantRoutes } from "./top-merchants.ts";
 
 // A route threw a value that is not an Error, such as a string.
@@ -187,6 +187,7 @@ export function createApp(
 ) {
   const bank = bankViews(database);
   const masterKey = masterKeyRoutes(database, secrets);
+  const setup = setupRoutes(database);
   const notices = noticeRoutes(database);
   const reviewList = reviewRoutes(database);
   const household = householdRoutes(database);
@@ -235,6 +236,7 @@ export function createApp(
       .use("/api/*", async (c, next) => {
         c.set("bank", bank);
         c.set("masterKey", masterKey);
+        c.set("setup", setup);
         c.set("notices", notices);
         c.set("reviewList", reviewList);
         c.set("household", household);

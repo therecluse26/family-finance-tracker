@@ -22,6 +22,7 @@ import type {
 import type { NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
 import type { ComingUpView } from "../../server/coming-up-views.ts";
+import type { OptionalSetupStep } from "../../server/setup-views.ts";
 import {
   markAlertNoteDone,
   markInsightCardDone,
@@ -78,6 +79,7 @@ import {
   WAITS_FOR_HISTORY,
 } from "../goals.ts";
 import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
+import { FINISH_SETUP_LINKS } from "../setup-gate.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
 import { GoalCard, NeedsAiLink } from "./Goals.tsx";
@@ -120,9 +122,35 @@ function Repair(props: { banner: StatusLines["repairs"][number]; onChanged: () =
   );
 }
 
+// The "Finish setup" list: each skipped wizard step until it is done, with a link to where it is
+// done (spec 12, Order and resume rules). Every Member sees it.
+export function FinishSetupList(props: { steps: readonly OptionalSetupStep[] }) {
+  if (props.steps.length === 0) return null;
+  return (
+    <section
+      aria-labelledby="finish-setup"
+      className="mt-4 rounded border border-gray-200 px-3 py-2"
+      data-slot="finish-setup"
+    >
+      <h2 id="finish-setup" className="font-semibold">
+        Finish setup
+      </h2>
+      <ul className="mt-1 flex flex-col gap-1">
+        {props.steps.map((step) => (
+          <li key={step}>
+            <Link className="text-blue-700 underline" to={FINISH_SETUP_LINKS[step].path}>
+              {FINISH_SETUP_LINKS[step].label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function StatusLineList(props: {
   lines: StatusLines;
-  // The "Finish setup" list of skipped wizard steps, which comes with its own ticket.
+  // The "Finish setup" list of skipped wizard steps.
   finishSetup?: ReactNode;
   onClose: (id: string) => void;
   // Retry on the notice of a stopped First run or bank-added-later job.
@@ -984,6 +1012,7 @@ export function DashboardReport(props: {
       />
       <StatusLineList
         lines={statusLines(data.notices, data.connections, data.history, data.month.today)}
+        finishSetup={<FinishSetupList steps={data.setup.finishSetup} />}
         onClose={props.onClose}
         onRetry={props.onRetry}
         onChanged={props.onChanged}

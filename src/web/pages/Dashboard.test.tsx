@@ -20,6 +20,7 @@ import type {
 import type { ComingUpView } from "../../server/coming-up-views.ts";
 import type { GoalView } from "../../server/goals-views.ts";
 import type { NoticeView } from "../../server/notice-views.ts";
+import type { SetupProgressView } from "../../server/setup-views.ts";
 import {
   changeAgainstUsual,
   type DashboardData,
@@ -318,6 +319,14 @@ const AI_BOX: AiBoxView = {
   paused: null,
 };
 
+// Every wizard step done: no "Finish setup" list.
+const SETUP_DONE: SetupProgressView = {
+  next: null,
+  steps: { banks: "done", ai: "done", alerts: "done", "invite members": "done" },
+  finishSetup: [],
+  connections: 1,
+};
+
 const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   timeZone: ZONE,
   month: dashboardMonth(NOW, ZONE),
@@ -330,6 +339,7 @@ const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   comingUp: COMING_UP,
   goals: GOALS,
   aiBox: AI_BOX,
+  setup: SETUP_DONE,
   ...fields,
 });
 
@@ -525,6 +535,48 @@ describe("the dashboard's status lines", () => {
       : [];
     const lines = parts.find((part) => isValidElement(part) && part.type === StatusLineList);
     expect(isValidElement<{ onRetry?: unknown }>(lines) && lines.props.onRetry).toBe(onRetry);
+  });
+});
+
+describe('the "Finish setup" list', () => {
+  it("lists each skipped wizard step, with a link to where it is done, after the loading lines", () => {
+    const html = render(
+      data({
+        history: {
+          waitEnded: false,
+          aiMayRun: false,
+          loading: [
+            {
+              connectionId: "c1",
+              bankName: "First Fake Bank",
+              transactions: 12,
+              oldestDate: null,
+              holdsBackAi: true,
+            },
+          ],
+        },
+        notices: [notice()],
+        setup: { ...SETUP_DONE, finishSetup: ["ai", "alerts", "invite members"] },
+      }),
+    );
+
+    expect(slotText(html, "finish-setup")).toBe(
+      "Finish setup Set up AI Set up email Alerts and send a test email Invite Members",
+    );
+    const lines = slotHtml(html, "status-lines");
+    for (const path of ["/settings/ai", "/settings/alerts", "/settings/members"]) {
+      expect(lines).toContain(`href="${path}"`);
+    }
+    // In its slot: after the history loading lines, before the other System notices.
+    expect(lines.indexOf("Loading history")).toBeLessThan(lines.indexOf("Finish setup"));
+    expect(lines.indexOf("Finish setup")).toBeLessThan(lines.indexOf("Your history is ready"));
+  });
+
+  it("shows nothing once no skipped step is left", () => {
+    expect(render(data())).not.toContain("Finish setup");
+    expect(render(data({ setup: { ...SETUP_DONE, finishSetup: ["banks"] } }))).toContain(
+      'href="/settings/banks"',
+    );
   });
 });
 

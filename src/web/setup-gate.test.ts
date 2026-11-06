@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { codeFromHash, openWizardIfNeeded, type SetupState } from "./setup-gate.ts";
+import type { SetupProgressView } from "../server/setup-views.ts";
+import {
+  codeFromHash,
+  openWizardIfNeeded,
+  resumeWizardIfNeeded,
+  type SetupState,
+} from "./setup-gate.ts";
 
 // Page gating in the web app: until steps 1 to 4 are done, every page leads to the wizard.
 
@@ -30,6 +36,36 @@ describe("page gating", () => {
     // The first Member signs in to finish steps 3 and 4.
     expect(await opened(AT_MASTER_KEY, "sign-in")).toEqual([]);
     expect(await opened(DONE, "sign-in")).toEqual([]);
+  });
+});
+
+describe("the wizard's steps 5 to 9", () => {
+  const progress = (next: SetupProgressView["next"]): SetupProgressView => ({
+    next,
+    steps: { banks: "skipped", ai: null, alerts: null, "invite members": null },
+    finishSetup: ["banks"],
+    connections: 0,
+  });
+
+  async function resumed(read: SetupProgressView | undefined): Promise<string[]> {
+    const went: string[] = [];
+    const result = await resumeWizardIfNeeded(
+      (path) => went.push(path),
+      async () => read,
+    );
+    expect(result).toBe(went.length > 0);
+    return went;
+  }
+
+  it("opens the wizard's next step for the first Member on the next visit", async () => {
+    expect(await resumed(progress("ai"))).toEqual(["/setup"]);
+    expect(await resumed(progress("finish"))).toEqual(["/setup"]);
+  });
+
+  it("leaves the page open once the wizard has nothing more, and for any other Member", async () => {
+    // The server answers next: null to a Member other than the first.
+    expect(await resumed(progress(null))).toEqual([]);
+    expect(await resumed(undefined)).toEqual([]);
   });
 });
 

@@ -1,5 +1,10 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import {
+  OPTIONAL_SETUP_STEPS,
+  type OptionalSetupStep,
+  type SetupProgressView,
+} from "../../server/setup-views.ts";
 import { api } from "../api.ts";
 import {
   BackupCodes,
@@ -11,21 +16,37 @@ import {
 } from "../components/Fields.tsx";
 import { grouped, sendPastedKey } from "../master-key.ts";
 import { postJson, refusalText } from "../requests.ts";
-import { codeFromHash, fetchSetupState } from "../setup-gate.ts";
+import { codeFromHash, fetchSetupProgress, fetchSetupState } from "../setup-gate.ts";
+import { FinishStep, OptionalStep } from "./SetupSteps.tsx";
 import { HouseholdFactsForm } from "./settings/Household.tsx";
 
 // The first-run wizard (spec 12, The first-run wizard). Step 1 takes the setup code from the setup
 // link, step 2 makes the first Member, and step 3 shows the Master key until the Member pastes it
-// back. Step 4 records the Household facts, which ends page gating.
+// back. Step 4 records the Household facts, which ends page gating. Steps 5 to 9 follow for the
+// first Member only (SetupSteps.tsx).
 
-type Step = "setup link" | "first member" | "master key" | "household facts";
+type Step =
+  | "setup link"
+  | "first member"
+  | "master key"
+  | "household facts"
+  | OptionalSetupStep
+  | "finish";
 
 const TITLES: Record<Step, string> = {
   "setup link": "Step 1: Setup link",
   "first member": "Step 2: First Member",
   "master key": "Step 3: Master key",
   "household facts": "Step 4: Household facts",
+  banks: "Step 5: Banks",
+  ai: "Step 6: AI",
+  alerts: "Step 7: Alerts",
+  "invite members": "Step 8: Invite Members",
+  finish: "Step 9: Finish",
 };
+
+const isOptional = (step: Step | undefined): step is OptionalSetupStep =>
+  (OPTIONAL_SETUP_STEPS as readonly string[]).includes(step ?? "");
 
 const WRONG_SETUP_CODE = "That setup code is wrong. Check the link that fft setup printed.";
 
@@ -245,17 +266,30 @@ export function Setup() {
   const [step, setStep] = useState<Step | undefined>();
   const [linkCode, setLinkCode] = useState<string | undefined>();
   const [setupCode, setSetupCode] = useState<string | undefined>();
+  const [connections, setConnections] = useState(0);
 
-  // Opens the first step that is neither done nor skipped. Steps 3 and 4 need the first Member
-  // signed in.
+  // Opens the first step that is neither done nor skipped. Steps 3 to 9 need the first Member
+  // signed in. Once steps 1 to 4 are done, the server names the next step for the signed-in
+  // Member, and none for a Member other than the first.
   async function load() {
     const state = await fetchSetupState();
-    if (!state.wizard || state.next === null) return navigate("/", { replace: true });
-    const next = state.next as Step;
-    if (next !== "setup link" && (await api.ping.$get()).status === 401) {
-      return navigate("/sign-in", { replace: true });
+    if (state.wizard && state.next !== null) {
+      const next = state.next as Step;
+      if (next !== "setup link" && (await api.ping.$get()).status === 401) {
+        return navigate("/sign-in", { replace: true });
+      }
+      return setStep(next);
     }
-    setStep(next);
+    if ((await api.ping.$get()).status === 401) return navigate("/sign-in", { replace: true });
+    const progress = await fetchSetupProgress();
+    if (progress === undefined) return navigate("/", { replace: true });
+    show(progress);
+  }
+
+  function show(progress: SetupProgressView) {
+    if (progress.next === null) return void navigate("/", { replace: true });
+    setConnections(progress.connections);
+    setStep(progress.next);
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
@@ -291,6 +325,13 @@ export function Setup() {
           facts={null}
           submitLabel="Save and open the app"
           onSaved={() => void load()}
+        />
+      ) : null}
+      {isOptional(step) ? <OptionalStep key={step} step={step} onProgress={show} /> : null}
+      {step === "finish" ? (
+        <FinishStep
+          connections={connections}
+          onFinished={() => void navigate("/", { replace: true })}
         />
       ) : null}
     </main>

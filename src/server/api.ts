@@ -20,6 +20,7 @@ import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
+import { OPTIONAL_SETUP_STEPS, type SetupProgressView, type SetupRefusal } from "./setup-views.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -654,6 +655,24 @@ const DEVICE_REFUSALS: Record<DeviceRefusal, string> = {
     "Alerts are on for another Member in this browser. They turn them off first, in Settings, Alerts.",
 };
 
+// The wizard's steps 5 to 9 (spec 12, The first-run wizard).
+const setupStep = z.enum(OPTIONAL_SETUP_STEPS);
+
+const SETUP_REFUSALS: Record<SetupRefusal, { status: 403 | 409; error: string }> = {
+  "setup not done": { status: 409, error: "Finish the first-run wizard's steps 1 to 4 first." },
+  "not the first member": {
+    status: 403,
+    error: "Only the first Member goes through the first-run wizard.",
+  },
+  "steps left": { status: 409, error: "Do or skip each step of the wizard first." },
+};
+
+function setupAnswer(c: Context<ServerEnv>, answer: SetupProgressView | SetupRefusal) {
+  if (typeof answer === "object") return c.json({ progress: answer }, 200);
+  const { status, error } = SETUP_REFUSALS[answer];
+  return c.json({ error }, status);
+}
+
 export const api = new Hono<ServerEnv>()
   .get("/ping", (c) => c.json({ ok: true }))
   .get("/security-mode", (c) => c.json({ mode: c.var.appUrl.mode, appUrl: c.var.appUrl.origin }))
@@ -1212,6 +1231,27 @@ export const api = new Hono<ServerEnv>()
     if (pasted === undefined) return c.json({ error: NO_KEY }, 400);
     return checkAnswer(c, await c.var.masterKey.pasteBack(c.var.member.id, pasted));
   })
+  // The wizard's steps 5 to 9 (spec 12): the step it opens for the signed-in Member, and the
+  // dashboard's "Finish setup" list (spec 07, Header and status lines).
+  .get("/setup/progress", async (c) =>
+    c.json({ progress: await c.var.setup.progress(c.var.member.id) }),
+  )
+  // Skip on step 5, 6, 7, or 8.
+  .post("/setup/steps/:step/skip", jsonOnly, async (c) => {
+    const step = setupStep.safeParse(c.req.param("step"));
+    if (!step.success) return c.json({ error: "Not found" }, 404);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    return setupAnswer(c, await c.var.setup.skip(c.var.member.id, step.data));
+  })
+  // Step 9's "Open the dashboard".
+  .post("/setup/finish", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    return setupAnswer(c, await c.var.setup.finish(c.var.member.id));
+  })
   // "Check my master key" in Settings, Backups and data (spec 09).
   .get("/master-key/check", async (c) => c.json({ lastCheck: await c.var.masterKey.lastCheck() }))
   .post("/master-key/check", async (c) => {
@@ -1287,6 +1327,8 @@ export const api = new Hono<ServerEnv>()
     if (made === "wizard not done") {
       return c.json({ error: "Finish the first-run wizard first." }, 409);
     }
+    // The wizard's step 8 is done once an invite link is made.
+    await c.var.setup.done("invite members");
     c.header("Cache-Control", "no-store");
     return c.json({ invite: made }, 200);
   })
@@ -1588,7 +1630,11 @@ export const api = new Hono<ServerEnv>()
       return c.json({ sent: false, error: "Send an empty body." }, 400);
     }
     const tested = await c.var.smtp.sendTest(c.var.member.email);
-    if (tested.sent) return c.json({ sent: true }, 200);
+    if (tested.sent) {
+      // The wizard's step 7 is done only once a test email goes out.
+      await c.var.setup.done("alerts");
+      return c.json({ sent: true }, 200);
+    }
     const status =
       tested.problem === "not set up" || tested.problem === "password unreadable" ? 409 : 502;
     return c.json({ sent: false, error: SEND_PROBLEMS[tested.problem] }, status);

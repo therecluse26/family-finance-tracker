@@ -172,6 +172,23 @@ describe("the dashboard on the demo household", () => {
     expect(leftToSpend(data.budgets)).toEqual({ drafted: false });
   });
 
+  it('lists the skipped wizard steps under "Finish setup" until each is done', async () => {
+    const before = (await loadDashboard()).setup;
+    expect(before.finishSetup).toEqual([]);
+    expect(before.connections).toBe((await loadDashboard()).connections.length);
+
+    for (const step of ["ai", "invite%20members"]) {
+      expect((await browser.send("POST", `/api/setup/steps/${step}/skip`, {})).status).toBe(200);
+    }
+    // The demo banks made step 5 done.
+    expect((await loadDashboard()).setup).toMatchObject({
+      steps: { banks: "done", ai: "skipped", alerts: null, "invite members": "skipped" },
+      finishSetup: ["ai", "invite members"],
+    });
+    expect((await browser.send("POST", "/api/invites", {})).status).toBe(200);
+    expect((await loadDashboard()).setup.finishSetup).toEqual(["ai"]);
+  });
+
   it("counts every monthly Budget against the month's Spending, Travel and Gifts and donations left out", async () => {
     await draft();
     const data = await loadDashboard();

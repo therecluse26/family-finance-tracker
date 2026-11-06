@@ -21,6 +21,7 @@ import type { BudgetsView, MonthBudgetView, UsualMonthView } from "../server/bud
 import type { ComingUpRowView, ComingUpView } from "../server/coming-up-views.ts";
 import type { HouseholdFactsView } from "../server/household-views.ts";
 import type { NoticeView } from "../server/notice-views.ts";
+import type { SetupProgressView } from "../server/setup-views.ts";
 import { loadAiBox } from "./ai-box.ts";
 import { api } from "./api.ts";
 import { browserZone } from "./browser-zone.ts";
@@ -469,6 +470,8 @@ export type DashboardData = {
   comingUp: ComingUpView;
   goals: GoalsAnswer;
   aiBox: AiBoxView;
+  // The wizard's steps, for the "Finish setup" list of skipped ones.
+  setup: SetupProgressView;
 };
 
 async function read<T>(res: Promise<Response>): Promise<T> {
@@ -480,15 +483,17 @@ async function read<T>(res: Promise<Response>): Promise<T> {
 // Everything the dashboard shows, in the Household's month on `now`. Until the wizard sets the
 // Household time zone, the browser's stands in.
 export async function loadDashboard(now = new Date()): Promise<DashboardData> {
-  const [household, connections, history, notices, comingUp, goals, aiBox] = await Promise.all([
-    read<{ facts: HouseholdFactsView | null }>(api.household.$get()),
-    read<{ connections: ConnectionView[] }>(api.connections.$get()),
-    read<HistoryStatusView>(api["history-status"].$get()),
-    read<{ notices: NoticeView[] }>(api.notices.$get()),
-    read<ComingUpView>(api["coming-up"].$get()),
-    loadGoals(),
-    loadAiBox(),
-  ]);
+  const [household, connections, history, notices, comingUp, goals, aiBox, setup] =
+    await Promise.all([
+      read<{ facts: HouseholdFactsView | null }>(api.household.$get()),
+      read<{ connections: ConnectionView[] }>(api.connections.$get()),
+      read<HistoryStatusView>(api["history-status"].$get()),
+      read<{ notices: NoticeView[] }>(api.notices.$get()),
+      read<ComingUpView>(api["coming-up"].$get()),
+      loadGoals(),
+      loadAiBox(),
+      read<{ progress: SetupProgressView }>(api.setup.progress.$get()),
+    ]);
   const timeZone = household.facts?.timeZone ?? browserZone();
   const month = dashboardMonth(now, timeZone);
   const [budgets, numberTiles, usualMonth] = await Promise.all([
@@ -508,6 +513,7 @@ export async function loadDashboard(now = new Date()): Promise<DashboardData> {
     comingUp,
     goals,
     aiBox,
+    setup: setup.progress,
   };
 }
 

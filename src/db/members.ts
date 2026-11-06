@@ -46,6 +46,14 @@ export async function listMemberNamesById(
   }));
 }
 
+// The first Member: the one who made their login in the first-run wizard's step 2, and so the
+// only one who goes through the wizard (spec 12, Order and resume rules). They hold label number
+// 0. Once they are removed, number 0 is never given again, so a Member who joined by invite never
+// becomes the first Member. Undefined then.
+export async function readFirstMemberId(database: Database): Promise<string | undefined> {
+  return (await listNumberedMembers(database)).find(({ labelNumber }) => labelNumber === 0)?.id;
+}
+
 // Each removed Member's label number and name, so AI text from before the removal shows the name.
 export async function listRemovedMembers(
   database: Database,

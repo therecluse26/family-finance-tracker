@@ -435,7 +435,9 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   );
 }
 
-export function Ai() {
+// The AI settings page's fields. Settings, AI shows them, and so does the first-run wizard's
+// step 6 (spec 12, Step 6, AI).
+export function AiSettingsFields() {
   const [ai, setAi] = useState<AiView | null | undefined>();
   const [usage, setUsage] = useState<AiUsageView | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -473,7 +475,6 @@ export function Ai() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">AI</h2>
       <ErrorLine error={error} />
       {ai === undefined ? null : (
         <>
@@ -494,6 +495,15 @@ export function Ai() {
           {ai === null ? null : <RemoveAiProvider onRemoved={() => setAi(null)} />}
         </>
       )}
+    </>
+  );
+}
+
+export function Ai() {
+  return (
+    <>
+      <h2 className="text-xl font-semibold">AI</h2>
+      <AiSettingsFields />
     </>
   );
 }

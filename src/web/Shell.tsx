@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { api } from "./api.ts";
 import { MAIN_MENU, type MenuItem, MORE_MENU } from "./menu.ts";
-import { openWizardIfNeeded } from "./setup-gate.ts";
+import { openWizardIfNeeded, resumeWizardIfNeeded } from "./setup-gate.ts";
 
 // The app shell: the main menu and the page. At phone width it is one column, with the menu above
 // the page. From 900 px wide, the menu sits beside the page.
@@ -45,6 +45,8 @@ export function Shell(props: { reviewListOpenCount?: number }) {
         const res = await api["review-list"].count.$get();
         if (res.status === 401) return navigate("/sign-in", { replace: true });
         if (res.ok) setOpenCount((await res.json()).open);
+        // The first Member's next visit opens the wizard's next step, until its Finish step.
+        await resumeWizardIfNeeded(navigate);
       })
       .catch(() => {});
   }, [navigate]);

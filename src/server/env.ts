@@ -30,6 +30,7 @@ import type { NoticeRoutes } from "./notice-views.ts";
 import type { ProposalRoutes } from "./proposals-views.ts";
 import type { RecurringRoutes } from "./recurring-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
+import type { SetupRoutes } from "./setup-views.ts";
 import type { TopMerchantRoutes } from "./top-merchants-views.ts";
 
 // What the security check sets on every request it accepts, and the session check on every /api
@@ -57,6 +58,8 @@ export type ServerEnv = {
     repairing: ConnectionRepairing;
     // The wizard's step 3 and "Check my master key".
     masterKey: MasterKeyRoutes;
+    // The wizard's steps 5 to 9, and the dashboard's "Finish setup" list.
+    setup: SetupRoutes;
     // The open System notices.
     notices: NoticeRoutes;
     // The Review list.
