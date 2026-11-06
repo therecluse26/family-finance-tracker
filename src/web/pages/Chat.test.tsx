@@ -154,9 +154,12 @@ describe("a thread", () => {
           { id: "t1", title: "How are we doing?", lastMessageAt: "2026-10-20T16:00:00.000Z" },
         ]}
         open="t1"
+        today="2026-11-03"
+        zone="America/New_York"
       />,
     );
-    expect(text(html)).toBe("New thread Rent question How are we doing?");
+    // Each thread shows the day of its last message, in the browser's time zone.
+    expect(text(html)).toBe("New thread Rent question Oct 20 How are we doing? Oct 20");
     expect(html).toContain('aria-current="page" class="block truncate');
   });
 });

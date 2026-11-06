@@ -13,6 +13,7 @@ import {
   skipProposal,
   undoProposal,
 } from "../proposals.ts";
+import { Button } from "./Button.tsx";
 import { ErrorLine, FIELD } from "./Fields.tsx";
 import { AiMark } from "./Status.tsx";
 
@@ -63,8 +64,6 @@ function saveFields(proposal: ProposalView, fields: EditFields): Promise<string 
   return saveAndAccept(proposal.id, edit);
 }
 
-const NOTE_BUTTON = "rounded border border-gray-300 px-2 py-0.5 text-sm disabled:opacity-50";
-
 function EditForm(props: {
   proposal: ProposalView;
   busy: boolean;
@@ -84,7 +83,7 @@ function EditForm(props: {
   return (
     <form className="mt-2" onSubmit={submit} data-slot="proposal-edit">
       {proposal.budgets.map((budget) => (
-        <label key={budget.category} className="mt-2 block text-sm">
+        <label key={budget.category} className="mt-2 block text-small text-ink-soft">
           {budget.category} Budget{budget.period === "yearly" ? " a year" : ""}, in dollars
           <input
             className={FIELD}
@@ -95,7 +94,7 @@ function EditForm(props: {
         </label>
       ))}
       {proposal.goal === null ? null : (
-        <label className="mt-2 block text-sm">
+        <label className="mt-2 block text-small text-ink-soft">
           Goal amount, in dollars
           <input
             className={FIELD}
@@ -106,7 +105,7 @@ function EditForm(props: {
         </label>
       )}
       {proposal.kind === "new Goal" ? (
-        <label className="mt-2 block text-sm">
+        <label className="mt-2 block text-small text-ink-soft">
           The Goal, in your own words
           <input
             className={FIELD}
@@ -115,13 +114,13 @@ function EditForm(props: {
           />
         </label>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button type="submit" className={NOTE_BUTTON} disabled={props.busy}>
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        <Button type="submit" size="small" disabled={props.busy}>
           Save and accept
-        </button>
-        <button type="button" className={NOTE_BUTTON} onClick={props.onCancel}>
+        </Button>
+        <Button type="button" variant="outlined" size="small" onClick={props.onCancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -133,6 +132,8 @@ export function ProposalCard(props: {
   editing?: boolean;
   // "Ask about this": a new Chat thread with the Proposal attached. Without it, the button waits.
   onAsk?: () => void;
+  // Where the card sits, such as its width inside a Chat thread.
+  className?: string;
 }) {
   const { proposal } = props;
   const [editing, setEditing] = useState(props.editing ?? false);
@@ -148,14 +149,17 @@ export function ProposalCard(props: {
   }
 
   return (
-    <li className="rounded border border-gray-100 p-2 wrap-anywhere" data-slot="proposal">
-      <p className="text-xs text-gray-600">Proposal</p>
+    <li
+      className={`min-w-0 rounded-[10px] border border-line bg-[#FBFBFC] px-3.5 py-3 wrap-anywhere ${props.className ?? ""}`}
+      data-slot="proposal"
+    >
+      <p className="text-small text-muted">Proposal</p>
       {proposal.changes.map((change) => (
-        <p key={change} className="font-medium" data-slot="proposal-change">
+        <p key={change} className="mt-0.5 font-semibold" data-slot="proposal-change">
           {change}
         </p>
       ))}
-      <p className="mt-1 text-sm" data-slot="proposal-reason">
+      <p className="mt-1 text-small text-ink-soft" data-slot="proposal-reason">
         {proposal.reason} <AiMark />
       </p>
       <ErrorLine error={error} />
@@ -167,39 +171,42 @@ export function ProposalCard(props: {
           onCancel={() => setEditing(false)}
         />
       ) : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <Button
             type="button"
-            className={NOTE_BUTTON}
+            size="small"
             disabled={busy}
             onClick={() => void act(() => acceptProposal(proposal.id))}
           >
             Accept
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={NOTE_BUTTON}
+            variant="outlined"
+            size="small"
             disabled={busy}
             onClick={() => setEditing(true)}
           >
             Edit
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={NOTE_BUTTON}
+            variant="outlined"
+            size="small"
             disabled={busy}
             onClick={() => void act(() => skipProposal(proposal.id))}
           >
             Skip
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={NOTE_BUTTON}
+            variant="outlined"
+            size="small"
             disabled={props.onAsk === undefined}
             onClick={props.onAsk}
           >
             Ask about this
-          </button>
+          </Button>
         </div>
       )}
     </li>
@@ -254,14 +261,15 @@ export function UndoableProposals(props: {
             data-slot="undoable"
           >
             <span>{proposal.changes.join("; ")}</span>
-            <button
+            <Button
               type="button"
-              className={NOTE_BUTTON}
+              variant="outlined"
+              size="small"
               disabled={busy === proposal.id}
               onClick={() => void undo(proposal.id)}
             >
               Undo
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
