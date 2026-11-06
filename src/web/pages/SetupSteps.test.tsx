@@ -1,3 +1,4 @@
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlaidView } from "../../bank/plaid-view.ts";
@@ -25,6 +26,7 @@ import {
   stepBefore,
   WIZARD_STEPS,
 } from "./SetupSteps.tsx";
+import { NewBankLinks } from "./settings/Connections.tsx";
 import { CONNECTIONS_UNREAD, Refused, SYNC_POLL } from "./settings/connections-page.ts";
 
 // The first-run wizard's frame and its steps 5 and 6, as the browser first paints them (spec 12,
@@ -260,6 +262,9 @@ function fakeBanksServer() {
   };
   const held: (() => void)[] = [];
   let holding = 0;
+  // The Plaid settings reads held back, each answering what it read when it was asked.
+  const heldPlaid: (() => void)[] = [];
+  let holdingPlaid = 0;
   const reads = {
     connections: vi.fn(async () => {
       if (server.failure !== undefined) throw server.failure;
@@ -272,7 +277,10 @@ function fakeBanksServer() {
     history: vi.fn(async () => ({ waitEnded: false, aiMayRun: false, loading: [] })),
     plaid: vi.fn(async () => {
       if (server.failure !== undefined) throw server.failure;
-      return { plaid: server.plaid };
+      const answer = { plaid: server.plaid };
+      if (holdingPlaid === 0) return answer;
+      holdingPlaid -= 1;
+      return new Promise<typeof answer>((resolve) => heldPlaid.push(() => resolve(answer)));
     }),
   } satisfies BanksStepReads;
   const states: BanksStepState[] = [];
@@ -289,6 +297,10 @@ function fakeBanksServer() {
       holding += 1;
     },
     release: () => held.shift()?.(),
+    holdNextPlaid: () => {
+      holdingPlaid += 1;
+    },
+    releasePlaid: () => heldPlaid.shift()?.(),
   };
 }
 
@@ -409,6 +421,83 @@ describe("step 5, Banks: a new bank's first sync, with no reload", () => {
     step.plaidSaved(KEYS_SAVED);
     expect(last().plaid).toEqual(KEYS_SAVED);
     expect(last().error).toBeUndefined();
+  });
+});
+
+describe("step 5, Banks: the Plaid keys read", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends the Member to sign-in once, and reads nothing more, when it finds the session ended", async () => {
+    vi.useFakeTimers();
+    const { server, reads, step, signedOut } = fakeBanksServer();
+    server.connections = [CONNECTION];
+    // Only the Plaid read answers 401; the Connection list still answers.
+    reads.plaid.mockImplementationOnce(async () => {
+      throw new SignedOut();
+    });
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signedOut).toHaveBeenCalledTimes(1);
+
+    const after = reads.connections.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(reads.connections).toHaveBeenCalledTimes(after);
+    expect(signedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("never lets an older answer replace a newer one or the keys just saved", async () => {
+    vi.useFakeTimers();
+    const { server, step, last, holdNextPlaid, releasePlaid } = fakeBanksServer();
+    // The first read is held back, and answers NO_KEYS after a link's read answered.
+    holdNextPlaid();
+    step.load();
+    await vi.advanceTimersByTimeAsync(0);
+    server.plaid = { ...KEYS_SAVED, itemsUsed: 1 };
+    step.linked();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual({ ...KEYS_SAVED, itemsUsed: 1 });
+    releasePlaid();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual({ ...KEYS_SAVED, itemsUsed: 1 });
+
+    // A read asked before the keys were saved answers after: the saved keys stay.
+    server.plaid = NO_KEYS;
+    holdNextPlaid();
+    step.linked();
+    await vi.advanceTimersByTimeAsync(0);
+    step.plaidSaved(KEYS_SAVED);
+    releasePlaid();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last().plaid).toEqual(KEYS_SAVED);
+  });
+});
+
+// Every element of `type` in a component's answer, at any depth. Components that use no hooks are
+// called directly, so a test reads what each child is handed.
+function elementsOf<P>(node: ReactNode, type: (props: P) => ReactNode): ReactElement<P>[] {
+  if (Array.isArray(node)) return node.flatMap((child: ReactNode) => elementsOf(child, type));
+  if (!isValidElement<{ children?: ReactNode }>(node)) return [];
+  const own = node.type === type ? [node as unknown as ReactElement<P>] : [];
+  return [...own, ...elementsOf(node.props.children, type)];
+}
+
+describe("step 5, Banks: what its Link panels are handed", () => {
+  it("hands Settings → Banks' Link panels the view the step's poll read, and its link handler", () => {
+    const view = {
+      ...CONNECTIONS_UNREAD,
+      connections: [CONNECTION],
+      accounts: [ACCOUNT],
+      fakeBank: true,
+      poll: "polling" as const,
+    };
+    const onLinked = () => {};
+    const answer = BanksStepView({ plaid: KEYS_SAVED, view, onPlaidSaved: () => {}, onLinked });
+
+    const [links, ...more] = elementsOf(answer, NewBankLinks);
+    expect(more).toEqual([]);
+    expect(links?.props).toEqual({ plaid: KEYS_SAVED, view, onLinked });
   });
 });
 

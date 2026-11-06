@@ -1,3 +1,4 @@
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
@@ -15,10 +16,17 @@ import {
   linkExitProblem,
   linkedConnection,
   linkResultOf,
+  NewBankLinks,
   PLAID_LINK_SCRIPT,
   syncState,
 } from "./Connections.tsx";
-import { type HistoryLoadingView, SYNC_POLL, syncKey, syncRunning } from "./connections-page.ts";
+import {
+  type ConnectionsPageView,
+  type HistoryLoadingView,
+  SYNC_POLL,
+  syncKey,
+  syncRunning,
+} from "./connections-page.ts";
 
 // Settings → Banks: the Connections, and what the Member reads before Plaid Link opens.
 
@@ -575,5 +583,82 @@ describe("Settings → Banks: Plaid Link closing with an error", () => {
     expect(shown).toBe(
       "The bank was not linkedThe bank is not answering Plaid right now. Try again in a few hours. Nothing was saved, and no Item was spent.Plaid code: INSTITUTION_DOWNTry againClose",
     );
+  });
+});
+
+// Every element of `type` in a component's answer, at any depth. Components that use no hooks are
+// called directly, so a test reads what each child is handed.
+function elementsOf<P>(node: ReactNode, type: (props: P) => ReactNode): ReactElement<P>[] {
+  if (Array.isArray(node)) return node.flatMap((child: ReactNode) => elementsOf(child, type));
+  if (!isValidElement<{ children?: ReactNode }>(node)) return [];
+  const own = node.type === type ? [node as unknown as ReactElement<P>] : [];
+  return [...own, ...elementsOf(node.props.children, type)];
+}
+
+describe("Settings → Banks and the wizard's step 5: what the Link panels are handed", () => {
+  const REMOVED: ConnectionView = { ...CONNECTION, id: "c0", bankName: "Gone Bank", removed: true };
+  const FIRST_SYNC: ConnectionView = { ...CONNECTION, id: "c2", bankName: "Harbor Savings Bank" };
+  const LOADING: HistoryLoadingView = {
+    connectionId: "c2",
+    bankName: "Harbor Savings Bank",
+    transactions: 312,
+    oldestDate: "2025-08-14",
+    holdsBackAi: true,
+  };
+  const VIEW: ConnectionsPageView = {
+    connections: [REMOVED, CONNECTION, FIRST_SYNC],
+    accounts: [ACCOUNT],
+    loading: [LOADING],
+    fakeBank: true,
+    error: undefined,
+    poll: "polling",
+  };
+  const onLinked = () => {};
+  const answer = NewBankLinks({ plaid: KEYS_SET, view: VIEW, onLinked, children: "Import" });
+
+  it("hands Link a new bank what the page last read, with no removed Connection", () => {
+    const [link, ...more] = elementsOf(answer, LinkBank);
+    expect(more).toEqual([]);
+    expect(link?.props).toEqual({
+      plaid: KEYS_SET,
+      connections: [CONNECTION, FIRST_SYNC],
+      accounts: [ACCOUNT],
+      onLinked,
+      loading: [LOADING],
+      poll: "polling",
+    });
+  });
+
+  it("hands the fake bank the whole view, so its panel follows the first sync", () => {
+    const [fake, ...more] = elementsOf(answer, FakeBankLink);
+    expect(more).toEqual([]);
+    expect(fake?.props).toEqual({
+      offered: true,
+      onLinked,
+      connections: VIEW.connections,
+      accounts: [ACCOUNT],
+      loading: [LOADING],
+      poll: "polling",
+    });
+  });
+
+  it("shows Settings → Banks' Import between the two", () => {
+    expect(text(renderToString(answer))).toMatch(/^Link a new bankImportLink a fake bank/);
+  });
+
+  it('leaves a removed Connection out of "Already connected"', () => {
+    const [link] = elementsOf(answer, LinkBank);
+    const before = text(
+      renderToString(
+        <BeforeLink
+          plaid={KEYS_SET}
+          connections={link?.props.connections ?? []}
+          accounts={[ACCOUNT]}
+        />,
+      ),
+    );
+    expect(before).toContain("First Bank");
+    expect(before).toContain("Harbor Savings Bank");
+    expect(before).not.toContain("Gone Bank");
   });
 });

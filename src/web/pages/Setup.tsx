@@ -119,7 +119,7 @@ function SetupLink(props: {
 
 // Step 2: name, email, and password, then TOTP, then the backup codes. Name and Email survive a
 // reload, with the setup code; the password does not.
-function FirstMember(props: { setupCode: string; onBack: () => void; onDone: () => void }) {
+export function FirstMember(props: { setupCode: string; onBack: () => void; onDone: () => void }) {
   const [draft, setDraft] = useState(savedFirstMemberDraft);
   const { name, email } = draft;
   const [password, setPassword] = useState("");

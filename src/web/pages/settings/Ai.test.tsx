@@ -1,16 +1,18 @@
 import type { ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiUsageView, AiView } from "../../../ai/ai-view.ts";
 import {
   AiProviderForm,
   AiStatusLine,
+  COST_CAP_SAVED,
   CostCapForm,
   centsOfText,
   dataUseLine,
   enteredPrices,
   priceOfText,
+  saveCostCap,
   statusLine,
   todayHere,
 } from "./Ai.tsx";
@@ -235,5 +237,46 @@ describe("Settings → AI → AI usage", () => {
 
     expect(text(html)).toContain("AI paused until Dec 1: AI cost cap reached");
     expect(text(html)).toContain("No AI calls this month.");
+  });
+});
+
+describe("Settings → AI: Save cap", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A server that answers PUT /api/ai/cost-cap with `status` and `body`, and records each request.
+  function server(status: number, body: unknown) {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      sent.push({ method: init.method ?? "GET", path: String(input), body: init.body });
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    return sent;
+  }
+
+  it("says the cap is saved, as the Alerts and email forms do, with the new usage", async () => {
+    const saved = { ...USAGE, capCents: 700 };
+    const sent = server(200, { usage: saved });
+
+    expect(COST_CAP_SAVED).toBe("The AI cost cap is saved.");
+    expect(await saveCostCap("7")).toEqual({ usage: saved, saved: COST_CAP_SAVED });
+    expect(sent).toEqual([{ method: "PUT", path: "/api/ai/cost-cap", body: '{"capCents":700}' }]);
+  });
+
+  it("says nothing is saved when the server refuses, or the cap is not an amount", async () => {
+    server(400, { error: "The cap is too high." });
+    expect(await saveCostCap("7")).toEqual({ error: "The cap is too high." });
+
+    const sent = server(200, { usage: USAGE });
+    for (const typed of ["seven", "10000.01"]) {
+      expect(await saveCostCap(typed)).toEqual({
+        error: "Enter the AI cost cap in dollars, from $0 to $10,000.",
+      });
+    }
+    expect(sent).toEqual([]);
   });
 });
