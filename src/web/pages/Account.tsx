@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
-import { calendarDateIn, dateLabel, dollarsAndCents, wholeDollars } from "../../format.ts";
+import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
 import type {
   AccountView,
   BalancePointView,
@@ -16,8 +16,12 @@ import type {
 import { accountEdits } from "../account-edits.ts";
 import { api } from "../api.ts";
 import { BalanceChart } from "../components/BalanceChart.tsx";
+import { Button } from "../components/Button.tsx";
+import { Card, CardLabel } from "../components/Card.tsx";
 import { BUTTON, ErrorLine, FIELD } from "../components/Fields.tsx";
-import { accountLabel, browserZone, Marks, marksOf } from "./Accounts.tsx";
+import { Page, PageHeading, SectionHeading } from "../components/Page.tsx";
+import { Pill } from "../components/Pill.tsx";
+import { accountLabel, Balance, browserZone, Marks, marksOf } from "./Accounts.tsx";
 import { ManualLoanForm } from "./settings/ManualLoans.tsx";
 import { UnconnectedAccountForm } from "./settings/UnconnectedAccounts.tsx";
 import { merchantOf } from "./Transactions.tsx";
@@ -26,7 +30,7 @@ import { merchantOf } from "./Transactions.tsx";
 // and its Transactions from the last year. A Member closes or reopens it, sets its Exclude switch,
 // and edits it: a connected loan's type and APR, or an Unconnected account's or Manual loan's form.
 
-const LINK = "text-blue-700 underline";
+const LINK = "text-accent hover:text-accent-dark hover:underline";
 const SHOWN_DAYS = 365;
 
 // The day `days` before a YYYY-MM-DD date.
@@ -62,9 +66,10 @@ export function AccountSwitches(props: { account: AccountView; onChanged: () => 
   const { account, onChanged } = props;
   const [error, setError] = useState<string | undefined>();
   return (
-    <section className="mt-6">
-      <label className="block">
+    <Card>
+      <label className="flex items-start gap-2.5">
         <input
+          className="mt-1 size-4 shrink-0 accent-accent"
           type="checkbox"
           checked={account.excluded}
           onChange={(e) =>
@@ -74,12 +79,15 @@ export function AccountSwitches(props: { account: AccountView; onChanged: () => 
               onChanged,
             )
           }
-        />{" "}
-        Exclude: its Transactions count nowhere, and its balance drops out of every total.
+        />
+        <span>
+          Exclude: its Transactions count nowhere, and its balance drops out of every total.
+        </span>
       </label>
-      <button
+      <Button
         type="button"
-        className={BUTTON}
+        variant="outlined"
+        className="mt-4"
         onClick={() =>
           void edit(
             () => (account.closed ? accountEdits.reopen : accountEdits.close)(account.id),
@@ -89,9 +97,9 @@ export function AccountSwitches(props: { account: AccountView; onChanged: () => 
         }
       >
         {account.closed ? "Reopen this Account" : "Close this Account"}
-      </button>
+      </Button>
       <ErrorLine error={error} />
-    </section>
+    </Card>
   );
 }
 
@@ -124,39 +132,42 @@ export function LoanSettings(props: { loan: LoanView; onChanged: () => void }) {
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
-      <h2 className="text-lg font-semibold">Loan</h2>
-      <fieldset className="mt-3">
-        <legend>
-          Loan type, now {LOAN_TYPE_LABEL[loan.loanType]}
-          {loan.setBy === "app" ? " (set by the app)" : ""}
-        </legend>
-        {(["app", "cash loan", "purchase loan"] as const).map((each) => (
-          <label key={each} className="mt-1 block">
-            <input
-              type="radio"
-              name="loan-type"
-              checked={loanType === each}
-              onChange={() => setLoanType(each)}
-            />{" "}
-            {each === "app" ? "Let the app decide" : LOAN_TYPE_LABEL[each]}
-          </label>
-        ))}
-      </fieldset>
-      <label className="mt-3 block">
-        APR, as a percent (optional)
-        <input
-          className={FIELD}
-          inputMode="decimal"
-          value={apr}
-          onChange={(e) => setApr(e.target.value)}
-        />
-      </label>
-      <button type="submit" className={BUTTON}>
-        Save
-      </button>
-      <ErrorLine error={error} />
-    </form>
+    <Card as="div">
+      <form onSubmit={submit}>
+        <SectionHeading>Loan</SectionHeading>
+        <fieldset className="mt-3">
+          <legend className="text-small font-semibold text-muted">
+            Loan type, now {LOAN_TYPE_LABEL[loan.loanType]}
+            {loan.setBy === "app" ? " (set by the app)" : ""}
+          </legend>
+          {(["app", "cash loan", "purchase loan"] as const).map((each) => (
+            <label key={each} className="mt-1.5 flex items-center gap-2.5">
+              <input
+                className="size-4 accent-accent"
+                type="radio"
+                name="loan-type"
+                checked={loanType === each}
+                onChange={() => setLoanType(each)}
+              />
+              {each === "app" ? "Let the app decide" : LOAN_TYPE_LABEL[each]}
+            </label>
+          ))}
+        </fieldset>
+        <label className="mt-4 block max-w-xs">
+          APR, as a percent (optional)
+          <input
+            className={FIELD}
+            inputMode="decimal"
+            value={apr}
+            onChange={(e) => setApr(e.target.value)}
+          />
+        </label>
+        <button type="submit" className={BUTTON}>
+          Save
+        </button>
+        <ErrorLine error={error} />
+      </form>
+    </Card>
   );
 }
 
@@ -165,19 +176,27 @@ export function TransactionList(props: {
   today: string;
 }) {
   if (props.transactions.length === 0) {
-    return <p className="mt-3 text-gray-600">No Transactions in the last year.</p>;
+    return <p className="py-3 text-muted">No Transactions in the last year.</p>;
   }
   // Each row names the Merchant and its day as the Transactions page does.
   return (
     <ul>
       {props.transactions.map((txn) => (
-        <li key={txn.id} className="mt-2 flex justify-between gap-x-4">
-          <span>
-            <span className="text-gray-600">
-              {dateLabel(txn.authorizedDate ?? txn.postedDate, props.today)}
-            </span>{" "}
+        <li
+          key={txn.id}
+          className="grid grid-cols-[3.75rem_minmax(0,1fr)_auto] sm:grid-cols-[5.75rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-t border-line-soft py-[11px] text-sm tabular-nums first:border-t-0"
+        >
+          <span className="text-muted">
+            {dateLabel(txn.authorizedDate ?? txn.postedDate, props.today)}
+          </span>
+          <span className="min-w-0">
             {merchantOf(txn)}
-            {txn.pending ? <span className="ml-2 text-sm text-gray-500">pending</span> : null}
+            {txn.pending ? (
+              <>
+                {" "}
+                <Pill>pending</Pill>
+              </>
+            ) : null}
           </span>
           <span className="whitespace-nowrap">{dollarsAndCents(txn.amount, { signed: true })}</span>
         </li>
@@ -206,31 +225,42 @@ export function AccountDetail(props: {
   const { account, marks, points, transactions, loan, unconnected, manualLoan } = props.facts;
   return (
     <>
-      <p className="mt-2 text-gray-600">
-        {account.institutionName ?? ""}
-        <Marks marks={marks} />
-      </p>
-      <p className="mt-2 text-xl">
-        {account.currentBalance === null ? "" : wholeDollars(account.currentBalance)}
-      </p>
-      <h2 className="mt-6 text-lg font-semibold">Balance over time</h2>
-      <BalanceChart points={points} today={props.today} />
+      <Card>
+        <CardLabel>Current balance</CardLabel>
+        <p className="mt-0.5 text-[28px] font-bold tracking-[-.01em] tabular-nums">
+          <Balance cents={account.currentBalance} />
+        </p>
+        {account.institutionName === null && marks.length === 0 ? null : (
+          <p className="mt-1 text-small text-muted">
+            {account.institutionName ?? ""}
+            <Marks marks={marks} />
+          </p>
+        )}
+      </Card>
+      <Card aria-labelledby="balance-over-time">
+        <SectionHeading id="balance-over-time">Balance over time</SectionHeading>
+        <BalanceChart points={points} today={props.today} />
+      </Card>
       <AccountSwitches account={account} onChanged={props.onChanged} />
       {loan === undefined ? null : <LoanSettings loan={loan} onChanged={props.onChanged} />}
       {unconnected === undefined ? null : (
-        <section className="mt-6">
-          <h2 className="text-lg font-semibold">Edit this Unconnected account</h2>
+        <Card aria-labelledby="edit-unconnected">
+          <SectionHeading id="edit-unconnected">Edit this Unconnected account</SectionHeading>
           <UnconnectedAccountForm account={unconnected} onSaved={props.onChanged} />
-        </section>
+        </Card>
       )}
       {manualLoan === undefined ? null : (
-        <section className="mt-6">
-          <h2 className="text-lg font-semibold">Edit this Manual loan</h2>
+        <Card aria-labelledby="edit-manual-loan">
+          <SectionHeading id="edit-manual-loan">Edit this Manual loan</SectionHeading>
           <ManualLoanForm loan={manualLoan} onSaved={props.onChanged} />
-        </section>
+        </Card>
       )}
-      <h2 className="mt-6 text-lg font-semibold">Transactions</h2>
-      <TransactionList transactions={transactions} today={props.today} />
+      <Card padding="list" aria-labelledby="account-transactions">
+        <div className="pt-2 pb-1">
+          <SectionHeading id="account-transactions">Transactions</SectionHeading>
+        </div>
+        <TransactionList transactions={transactions} today={props.today} />
+      </Card>
     </>
   );
 }
@@ -297,16 +327,22 @@ export function Account() {
   }, [id]);
 
   return (
-    <main>
-      <p>
-        <Link className={LINK} to="/accounts">
-          Accounts
-        </Link>
-      </p>
-      <h1 className="text-2xl font-semibold">{facts ? accountLabel(facts.account) : "Account"}</h1>
+    <Page>
+      <div className="flex flex-col gap-1">
+        <p className="text-small">
+          <Link className={LINK} to="/accounts">
+            <span aria-hidden="true">← </span>Accounts
+          </Link>
+        </p>
+        <PageHeading title={facts ? accountLabel(facts.account) : "Account"} />
+      </div>
       <ErrorLine error={error} />
-      {facts === null ? <p className="mt-3">No Account has this ID.</p> : null}
+      {facts === null ? (
+        <Card>
+          <p className="text-muted">No Account has this ID.</p>
+        </Card>
+      ) : null}
       {facts ? <AccountDetail facts={facts} today={today} onChanged={() => void load()} /> : null}
-    </main>
+    </Page>
   );
 }

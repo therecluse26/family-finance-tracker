@@ -2,9 +2,10 @@ import { isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecurringChargeView } from "../../server/recurring-views.ts";
+import { Button } from "../components/Button.tsx";
 import {
   type ChargeActions,
-  chargeLine,
+  chargeFacts,
   RecurringChargeList,
   RecurringChargeRow,
   recurringChargeRequests,
@@ -73,7 +74,8 @@ function buttonsOf(element: ReactNode): Map<string, () => void> {
   const walk = (node: ReactNode) => {
     if (Array.isArray(node)) return node.forEach(walk);
     if (!isValidElement<{ children?: ReactNode; onClick?: () => void }>(node)) return;
-    if (node.type === "button" && node.props.onClick !== undefined) {
+    // A native button, or the shared Button, which renders one.
+    if ((node.type === "button" || node.type === Button) && node.props.onClick !== undefined) {
       found.set(words(node.props.children), node.props.onClick);
     }
     walk(node.props.children);
@@ -99,18 +101,21 @@ describe("the Recurring charges page", () => {
       <RecurringChargeList charges={CHARGES} states={{}} today={TODAY} actions={noActions} />,
     );
     // A signed amount never breaks after its sign (spec 07, Number formats).
-    expect(html).toContain('Streamly · <span class="whitespace-nowrap">−$15.49</span> · monthly');
+    expect(html).toMatch(/<span class="whitespace-nowrap [^"]*">−\$15\.49<\/span>/);
     const rows = [...html.matchAll(/<button[^>]*aria-expanded[^>]*>(.*?)<\/button>/gs)].map(
       (match) => text(match[1] ?? ""),
     );
 
+    // The next date, the Merchant and its marks, the interval and Category, and the amount.
     expect(rows).toEqual([
-      "Streamly · −$15.49 · monthly · next Nov 8 · Subscriptions · on card",
-      "Brightwave · −$65.00 · yearly · next Nov 12 · Subscriptions",
-      "Tunebox · −$15.49 · every 2 weeks · next Nov 18 · Subscriptions · on card",
-      "Ironworks Gym · −$15.49 · monthly · next Sep 1 · ended",
-      "Daily Paper · −$15.49 · weekly · next Oct 20 · Subscriptions",
+      "next Nov 8 Streamly on card monthly · Subscriptions −$15.49",
+      "next Nov 12 Brightwave yearly · Subscriptions −$65.00",
+      "next Nov 18 Tunebox on card every 2 weeks · Subscriptions −$15.49",
+      "next Sep 1 Ironworks Gym ended monthly −$15.49",
+      "next Oct 20 Daily Paper weekly · Subscriptions −$15.49",
     ]);
+    // "On card" is explained once, under the active rows.
+    expect(text(html)).toContain("&quot;On card&quot; means the charge lands on a credit card.");
     // The Inactive section is collapsed, after the active rows.
     expect(html).toMatch(/<details class="[^"]*"><summary[^>]*>Inactive \(<!-- -->2<!-- -->\)/);
     expect(html.indexOf("Tunebox")).toBeLessThan(html.indexOf("<details"));
@@ -130,9 +135,17 @@ describe("the Recurring charges page", () => {
     );
 
     expect(html).not.toContain("<details");
-    expect(chargeLine(charge("old", "Old Co", "2025-12-30"), TODAY)).toBe(
-      "Old Co · −$15.49 · monthly · next Dec 30, 2025 · Subscriptions",
+    expect(html).not.toContain("means the charge lands on a credit card");
+    expect(chargeFacts(charge("old", "Old Co", "2025-12-30", { category: null }))).toBe("monthly");
+    const old = renderToString(
+      <RecurringChargeRow
+        charge={charge("old", "Old Co", "2025-12-30")}
+        state={{}}
+        today={TODAY}
+        actions={noActions}
+      />,
     );
+    expect(text(old)).toContain("next Dec 30, 2025 Old Co monthly · Subscriptions −$15.49");
   });
 
   it("opens the price history on a tap: each Transaction's date and amount, newest first", () => {
@@ -144,7 +157,7 @@ describe("the Recurring charges page", () => {
       today: TODAY,
       actions: { ...noActions, toggle },
     });
-    buttonsOf(closed).get(chargeLine(streamly, TODAY))?.();
+    buttonsOf(closed).get("next Nov 8Streamlymonthly · Subscriptions−$15.49")?.();
     expect(toggle).toHaveBeenCalledWith(streamly);
     expect(renderToString(closed)).not.toContain("Price history");
 
