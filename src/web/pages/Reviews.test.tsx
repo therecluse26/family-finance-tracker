@@ -132,7 +132,7 @@ describe("one Monthly review", () => {
     const html = section(render(view()), "review-title");
 
     expect(text(html)).toBe(
-      "October review · written Sunday, Nov 1 Takeout carried October, and the cards still hold a balance. AI The AI wrote the words. The app drew every number and picture. Spending: $3,420 of $3,100 Budget Left over $320 over Debt $12,840",
+      "October review · written Sunday, Nov 1 Takeout carried October, and the cards still hold a balance. AI The AI wrote the words. The app drew every number and picture. Spending: $3,420 of $3,100 Budget Left over ▲ $320 over Debt $12,840",
     );
     // The bar runs to 125% of the Budget, and its words carry its numbers.
     expect(html).toContain('aria-hidden="true"');
@@ -202,8 +202,8 @@ describe("one Monthly review", () => {
       "spending",
       "spending",
     ]);
-    expect(html.match(/bg-red-600/g)).toHaveLength(1);
-    expect(html.match(/bg-green-600/g)).toHaveLength(4);
+    expect(html.match(/bg-critical/g)).toHaveLength(1);
+    expect(html.match(/bg-good-bar/g)).toHaveLength(4);
     // Every reason is hidden, and the caption carries the chart's reading.
     expect(html.match(/<div id="[^"]+" hidden=""/g)).toHaveLength(5);
     expect(html.match(/aria-expanded="false"/g)).toHaveLength(5);
@@ -221,7 +221,7 @@ describe("one Monthly review", () => {
     expect(slotTexts(html, "idea-facts")[0]).toBe("Habit · Some effort · $2,160 a year");
     const shown = /<div id="[^"]+" class="[^"]*" data-slot="idea-why">(.*?)<\/div>/s.exec(html);
     expect(text(shown?.[1] ?? "")).toBe(
-      "Eight delivery orders at $45 is $360; cooking two of those nights saves about $180. Catch: It needs a plan for the busiest nights. Habit · Some effort · $2,160 a year",
+      "Why: Eight delivery orders at $45 is $360; cooking two of those nights saves about $180. AI Catch: It needs a plan for the busiest nights. Habit · Some effort · $2,160 a year",
     );
   });
 
@@ -264,7 +264,7 @@ describe("one Monthly review", () => {
     const html = section(render(view()), "review-goals");
 
     expect(text(html)).toBe(
-      "Goals “Spend less on eating out” ◆ Behind 62% On pace for $540 this month; Goal is $480 Cooking two more nights moves this about $180 a month.",
+      "Goals “Spend less on eating out” ◆ Behind · 62% On pace for $540 this month; Goal is $480 Cooking two more nights moves this about $180 a month. AI",
     );
     expect(html).toContain("width:62%");
 
@@ -289,18 +289,24 @@ describe("one Monthly review", () => {
     ]);
   });
 
-  it("lays the sections in two columns on a wide screen and one on a phone, the header and Habits across both", () => {
+  it("lays the sections in two columns on a wide screen and one on a phone, the header across both", () => {
     const html = render(view());
     const columns = /<div class="([^"]*)" data-slot="review-columns"/.exec(html)?.[1] ?? "";
 
     expect(columns.split(" ")).toEqual(
       expect.arrayContaining(["grid", "grid-cols-1", "min-[900px]:grid-cols-2"]),
     );
-    for (const id of ["review-title", "habits"]) {
-      expect(html).toMatch(
-        new RegExp(`<section aria-labelledby="${id}" class="[^"]*min-\\[900px\\]:col-span-2`),
-      );
-    }
+    expect(html).toMatch(
+      /<section aria-labelledby="review-title" class="[^"]*min-\[900px\]:col-span-2/,
+    );
+    // As on the board: Habits and the plan in the first column; the ideas, Goals, Budget changes
+    // and held-back Alerts in the second. On a phone the second column follows the first.
+    const [first = "", second = ""] = html.split('data-slot="review-column"').slice(1);
+    const sections = (part: string) =>
+      [...part.matchAll(/<section aria-labelledby="([^"]+)"/g)].map((match) => match[1]);
+    expect(sections(first)).toEqual(["habits", "plan"]);
+    expect(sections(second)).toEqual(["ideas", "review-goals", "budget-changes", "held-back"]);
+    expect(html).not.toMatch(/<section aria-labelledby="habits" class="[^"]*col-span-2/);
   });
 
   it("titles a review written in another year with its year", () => {
