@@ -369,7 +369,13 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       ["POST", "/api/auth/update-user"],
       ["POST", "/api/auth/delete-user"],
       ["POST", "/api/auth/request-password-reset"],
+      // Settings, My login lists and ends sessions through the app's own routes instead, which
+      // never send a token, an IP address, or a user agent (spec 09, Signed-in devices).
       ["GET", "/api/auth/list-sessions"],
+      ["POST", "/api/auth/revoke-session"],
+      ["POST", "/api/auth/revoke-sessions"],
+      ["POST", "/api/auth/revoke-other-sessions"],
+      ["POST", "/api/auth/update-session"],
       ["GET", "/api/auth/sign-in/email"],
     ])("answers %s %s with 404, even with a session", async (method, path) => {
       const tab = browser();

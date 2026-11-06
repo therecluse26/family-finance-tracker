@@ -1,5 +1,10 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
+import type { DeviceView } from "../../../server/devices-views.ts";
+import type { HouseholdFactsView } from "../../../server/household-views.ts";
+import { api } from "../../api.ts";
+import { browserZone } from "../../browser-zone.ts";
 import { Button } from "../../components/Button.tsx";
 import { BackupCodes, ErrorLine, NewTotp } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
@@ -28,7 +33,8 @@ import {
 // (spec 09, Members), through the routes under /api/auth/my-login/. TOTP is asked only at sign-in
 // (spec 09, Sensitive actions): a password change asks for the current password, and a new TOTP
 // asks for one code from the new authenticator. Over HTTPS the Member also adds and deletes
-// passkeys; adding one asks for the current password too.
+// passkeys; adding one asks for the current password too. Signed-in devices lists the Member's own
+// sessions, with Sign out on each, through the app's routes under /api/my-login/.
 
 const CURRENT_PASSWORD_LABEL = "Current password";
 const WRONG_PASSWORD = "Your current password is wrong.";
@@ -342,28 +348,183 @@ function Passkeys() {
   );
 }
 
-function SignOut() {
-  const navigate = useNavigate();
-  const action = useAction("That did not work.");
+// The requests Signed-in devices sends, each with a JSON body, even an empty one: the routes take
+// only JSON. The routes read their body themselves, so each body goes in through a separate object.
+export function signOutDevice(id: string) {
+  const signOut = { param: { id }, json: {} };
+  return api["my-login"].devices[":id"]["sign-out"].$post(signOut);
+}
+export function signOutOtherDevices() {
+  const signOut = { json: {} };
+  return api["my-login"]["sign-out-other-devices"].$post(signOut);
+}
+
+// "Signed in Nov 6, 9:30 AM", in the Household time zone (spec 07, Dates and Times).
+export function signedInLine(signedInAt: string, zone: string, now: Date): string {
+  const at = new Date(signedInAt);
+  const day = dateLabel(calendarDateIn(at, zone), calendarDateIn(now, zone));
+  return `Signed in ${day}, ${timeLabel(at, zone)}`;
+}
+
+async function errorOf(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  return typeof body.error === "string" ? body.error : "That did not work.";
+}
+
+// The rows: each device's name, "this device" on this one, when it signed in, and Sign out.
+export function DeviceRows(props: {
+  devices: DeviceView[];
+  zone: string;
+  now: Date;
+  busy: boolean;
+  onSignOut: (device: DeviceView) => void;
+}) {
   return (
-    <div>
-      <Button
-        type="button"
-        variant="outlined"
-        disabled={action.busy}
-        onClick={() =>
-          void action.run(
-            () => postJson("/api/auth/sign-out", {}),
-            async () => {
-              await navigate("/sign-in", { replace: true });
-              return "";
-            },
-          )
-        }
-      >
-        Sign out
-      </Button>
-    </div>
+    <ul className="mt-2.5">
+      {props.devices.map((device) => (
+        <li key={device.id} className={ROW}>
+          <div className="min-w-0 flex-[1_1_220px]">
+            <p>
+              <span className="font-semibold">{device.name}</span>
+              {device.thisDevice ? (
+                <span className="text-small">
+                  {" · "}
+                  <StatusText tone="good">this device</StatusText>
+                </span>
+              ) : null}
+            </p>
+            <p className="mt-0.5 text-small text-muted">
+              {signedInLine(device.signedInAt, props.zone, props.now)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outlined"
+            size="small"
+            disabled={props.busy}
+            aria-label={device.thisDevice ? "Sign out this device" : `Sign out ${device.name}`}
+            onClick={() => props.onSignOut(device)}
+          >
+            Sign out
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Signed-in devices (spec 09): the Member's own sessions that have not expired. Sign out on this
+// device's row signs out through Better Auth's /sign-out, which also clears the cookie; Sign out
+// on another row ends that session. Until the list loads, or if it does not, the card still offers
+// Sign out for this device.
+function SignedInDevices() {
+  const navigate = useNavigate();
+  const [devices, setDevices] = useState<DeviceView[] | undefined>();
+  const [zone, setZone] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
+
+  const load = useCallback(() => {
+    api["my-login"].devices
+      .$get()
+      .then(async (res) => {
+        if (res.status === 401) return navigate("/sign-in", { replace: true });
+        if (!res.ok) return setError(await errorOf(res));
+        setDevices((await res.json()).devices);
+      })
+      .catch(() => setError("The server did not answer."));
+  }, [navigate]);
+
+  useEffect(() => {
+    load();
+    api.household
+      .$get()
+      .then(async (res) => {
+        if (!res.ok) return;
+        setZone(((await res.json()) as { facts: HouseholdFactsView | null }).facts?.timeZone);
+      })
+      .catch(() => {});
+  }, [load]);
+
+  async function run(request: () => Promise<Response>, onOk: () => Promise<void>) {
+    setBusy(true);
+    setError(undefined);
+    setDone(undefined);
+    try {
+      const res = await request();
+      if (res.status === 401) return void (await navigate("/sign-in", { replace: true }));
+      if (!res.ok) {
+        setError(await errorOf(res));
+        load();
+        return;
+      }
+      await onOk();
+    } catch {
+      setError("The server did not answer.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function signOutThisDevice() {
+    void run(
+      () => postJson("/api/auth/sign-out", {}),
+      async () => void (await navigate("/sign-in", { replace: true })),
+    );
+  }
+
+  function signOut(device: DeviceView) {
+    if (device.thisDevice) return signOutThisDevice();
+    void run(
+      () => signOutDevice(device.id),
+      async () => {
+        setDone(`${device.name} is signed out.`);
+        load();
+      },
+    );
+  }
+
+  function signOutOthers() {
+    void run(signOutOtherDevices, async () => {
+      setDone("Every other device is signed out.");
+      load();
+    });
+  }
+
+  const others = devices?.filter((device) => !device.thisDevice).length ?? 0;
+  return (
+    <SettingCard id="signed-in-devices" title="Signed-in devices">
+      {devices === undefined ? (
+        <div className={BUTTONS}>
+          <Button type="button" variant="outlined" disabled={busy} onClick={signOutThisDevice}>
+            Sign out
+          </Button>
+        </div>
+      ) : (
+        <DeviceRows
+          devices={devices}
+          zone={zone ?? browserZone()}
+          now={new Date()}
+          busy={busy}
+          onSignOut={signOut}
+        />
+      )}
+      {others > 0 ? (
+        <div className={BUTTONS}>
+          <Button type="button" variant="outlined" disabled={busy} onClick={signOutOthers}>
+            Sign out everywhere else
+          </Button>
+        </div>
+      ) : null}
+      <ErrorLine error={error} />
+      <DoneLine done={done} />
+      {devices === undefined ? null : (
+        <p className="mt-3 text-small text-muted">
+          Sign out needs no code. If you do not know a device, sign it out and change your password.
+        </p>
+      )}
+    </SettingCard>
   );
 }
 
@@ -375,7 +536,7 @@ export function MyLogin() {
       <ChangeTotp />
       <ChangeBackupCodes />
       <Passkeys />
-      <SignOut />
+      <SignedInDevices />
     </>
   );
 }
