@@ -26,7 +26,7 @@ describe("Settings → Banks", () => {
     expect(html).toContain('min="2"');
   });
 
-  it("asks for the client ID, the Production secret, and a code, and shows only that the secret is set", () => {
+  it("asks for the client ID and the Production secret, with no code, and shows only that the secret is set", () => {
     const before = renderToString(<PlaidKeysForm plaid={NO_KEYS} onSaved={() => {}} />);
     const after = renderToString(
       <PlaidKeysForm
@@ -39,6 +39,7 @@ describe("Settings → Banks", () => {
     expect(text(before)).toContain("Production secret");
     expect(text(before)).not.toMatch(/sandbox/i);
     expect(before).toContain('type="password"');
+    expect(before).not.toContain("one-time-code");
     expect(text(after)).toContain("Client ID client-id-shown. The secret is set.");
   });
 

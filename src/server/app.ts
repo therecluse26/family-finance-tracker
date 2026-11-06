@@ -88,7 +88,6 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
     if (signedIn === undefined) return c.json({ error: "Sign in first" }, 401);
     for (const cookie of signedIn.setCookies) c.header("Set-Cookie", cookie, { append: true });
     c.set("member", signedIn.member);
-    c.set("checkFreshCode", (code) => auth.checkFreshCode(c.req.raw, c.var.clientAddress, code));
     await next();
   };
 }

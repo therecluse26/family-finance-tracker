@@ -92,7 +92,7 @@ describe("the app shell", () => {
       "Download my data",
     ]);
     expect(html).toMatch(/<textarea[^>]*autoComplete="off"[^>]*spellCheck="false"/i);
-    expect(html).toMatch(/<input[^>]*inputMode="numeric"[^>]*autoComplete="one-time-code"/i);
+    expect(html).not.toContain("one-time-code");
   });
 
   it("shows the Master key in groups of 4, and who last checked it and when", () => {

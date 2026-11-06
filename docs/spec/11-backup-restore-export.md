@@ -108,7 +108,7 @@ The restore still brings back all history. Every Master-key secret is lost, with
 
 ## Data export
 
-Any Member can download one ZIP file from settings, at any time. The export asks for a TOTP code again ([Members, login, and security](09-members-login-security.md#signing-in)).
+Any Member can download one ZIP file from settings, at any time. The export asks for no code: the app asks for TOTP only at sign-in ([Members, login, and security](09-members-login-security.md#signing-in)).
 
 **CSV files:** Transactions, Accounts, Budgets, Goals, and Category rules.
 

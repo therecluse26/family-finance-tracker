@@ -103,15 +103,15 @@ describe("Settings, Backups and data: Download my data", () => {
     vi.unstubAllGlobals();
   });
 
-  it("says the file is not encrypted before the download, and asks for a code", () => {
+  it("says the file is not encrypted before the download, and asks for no code", () => {
     const html = text(renderToString(<DownloadMyData />));
 
     expect(html).toContain("The file is not encrypted.");
-    expect(html).toContain("enter a code from your authenticator app, or a backup code");
+    expect(html).not.toContain("code from your authenticator app");
     expect(html.indexOf("not encrypted")).toBeLessThan(html.lastIndexOf("Download my data"));
   });
 
-  it("sends the code as JSON", async () => {
+  it("sends an empty JSON body", async () => {
     const requests: { method: string; path: string; type: string | null; body: unknown }[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
       requests.push({
@@ -123,10 +123,10 @@ describe("Settings, Backups and data: Download my data", () => {
       return new Response("", { headers: { "content-type": "application/zip" } });
     });
 
-    await downloadMyData("123456");
+    await downloadMyData();
 
     expect(requests).toEqual([
-      { method: "POST", path: "/api/export", type: "application/json", body: '{"code":"123456"}' },
+      { method: "POST", path: "/api/export", type: "application/json", body: "{}" },
     ]);
   });
 

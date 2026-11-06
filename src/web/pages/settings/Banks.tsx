@@ -12,10 +12,7 @@ import { UnconnectedAccounts } from "./UnconnectedAccounts.tsx";
 // (spec 02, Plaid keys and The 10 lifetime Items), and the Unconnected accounts. The app never
 // shows the secret again, only that it is set. Connections come with their own tickets.
 
-const CODE_LABEL = "A code from your authenticator app, or a backup code";
-
-// The words to show for a refused request: the server's own, such as "Wrong code." or "Sign in
-// first".
+// The words to show for a refused request: the server's own, such as "Sign in first".
 async function refusal(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   return typeof body.error === "string" ? body.error : "That did not work.";
@@ -24,7 +21,6 @@ async function refusal(res: Response): Promise<string> {
 export function PlaidKeysForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidView) => void }) {
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
@@ -36,9 +32,8 @@ export function PlaidKeysForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
     setDone(undefined);
     try {
       const res = await api.plaid.keys.$post({
-        json: { clientId: clientId.trim(), secret: secret.trim(), code: code.trim() },
+        json: { clientId: clientId.trim(), secret: secret.trim() },
       });
-      setCode("");
       if (!res.ok) return setError(await refusal(res));
       const body = (await res.json()) as { plaid: PlaidView };
       setClientId("");
@@ -72,7 +67,6 @@ export function PlaidKeysForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
         value={secret}
         onChange={setSecret}
       />
-      <TextField label={CODE_LABEL} autoComplete="one-time-code" value={code} onChange={setCode} />
       <button className={BUTTON} type="submit" disabled={busy}>
         Test and save the keys
       </button>

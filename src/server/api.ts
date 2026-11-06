@@ -105,15 +105,11 @@ function transactionQuery(query: Record<string, string>): TransactionQuery | und
   return { ...(account === undefined ? {} : { accountId: account }), ...filters };
 }
 
-// Changing the Plaid keys is a sensitive action, so it takes a fresh TOTP or backup code.
+// The Plaid keys. TOTP is asked only at sign-in (spec 09, Sensitive actions).
 const plaidKeysBody = z.object({
   clientId: z.string().trim().regex(PLAID_KEY),
   secret: z.string().trim().regex(PLAID_KEY),
-  code: z.string().trim().min(1).max(64),
 });
-
-// A TOTP code or a backup code, asked again for a sensitive action (spec 09).
-const codeBody = z.object({ code: z.string().trim().min(1).max(64) });
 
 // Delete history's own confirmation.
 const deleteHistoryBody = z.object({ confirmed: z.literal(true) });
@@ -483,9 +479,8 @@ const MAX_PRICE = 1_000_000_000;
 const price = z.number().int().min(0).max(MAX_PRICE);
 const enteredPrice = z.object({ input: price, output: price });
 
-// Changing the API key, the gateway token, the AI provider, or the base URL takes a fresh TOTP or
-// backup code, checked when `code` is given. An API key or gateway token left out keeps the one
-// stored.
+// An API key or gateway token left out keeps the one stored, but only for the same AI provider and
+// base URL.
 const aiSettingsBody = z.object({
   provider: z.enum(AI_PROVIDERS),
   apiKey: aiSecret.optional(),
@@ -494,7 +489,6 @@ const aiSettingsBody = z.object({
   quickModel: modelId,
   writerModel: modelId,
   prices: z.object({ quick: enteredPrice.optional(), writer: enteredPrice.optional() }).optional(),
-  code: z.string().trim().min(1).max(64).optional(),
 });
 
 // The AI cost cap, in whole cents.
@@ -531,10 +525,6 @@ const BASE_URL_REFUSALS = {
 const SAVE_REFUSALS = {
   "key needed": { status: 400, error: "Enter the API key." },
   "token needed": { status: 400, error: "Enter the gateway token." },
-  "code needed": {
-    status: 400,
-    error: "Enter a code from your authenticator app, or a backup code.",
-  },
   changed: {
     status: 409,
     error: "The AI settings changed while the app checked them. Check and save again.",
@@ -586,9 +576,8 @@ function balanceQuery(query: Record<string, string>): BalanceQuery | undefined {
   return { ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) };
 }
 
-// The Household's SMTP server (spec 06, Recipients and channels). Changing the password, or the
-// server or sign-in name a stored password goes to, takes a fresh TOTP or backup code (spec 09,
-// Signing in), checked when `code` is given. A password left out keeps the one stored.
+// The Household's SMTP server (spec 06, Recipients and channels). A password left out keeps the one
+// stored, but only for the same server and sign-in name.
 const DNS_NAME =
   /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 const IPV6 = /^(?=.*:)[0-9A-Fa-f:.]{2,45}$/;
@@ -604,7 +593,6 @@ const smtpBody = z
     username: z.string().trim().min(1).max(320).regex(NO_CONTROL),
     password: z.string().min(1).max(1000).regex(NO_CONTROL).optional(),
     sender: z.email().max(320),
-    code: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
 
@@ -613,14 +601,13 @@ const smtpBody = z
 const testEmailBody = z.object({}).strict();
 
 const SMTP_REFUSALS: Record<SmtpRefusal, string> = {
-  "code needed": "Enter a code from your authenticator app, or a backup code.",
   "password needed": "Enter the SMTP password.",
 };
 
 const SEND_PROBLEMS: Record<SendProblem, string> = {
   "not set up": "Save the SMTP server first.",
   "password unreadable":
-    "The app cannot read the saved SMTP password. Enter the password again, with a code, and save.",
+    "The app cannot read the saved SMTP password. Enter the password again, and save.",
   "sign-in refused": "The SMTP server refused the sign-in name or password.",
   "no answer": "The app could not reach the SMTP server over TLS. Check the host and port.",
   "message refused": "The SMTP server did not take the email. Check the sender address.",
@@ -997,16 +984,12 @@ export const api = new Hono<ServerEnv>()
   .post("/history-jobs/retry", async (c) => c.json(await c.var.bank.retryHistoryJobs()))
   // Sync now: any Member syncs every Healthy or Retrying Connection (spec 02, Sync now).
   .post("/sync-now", async (c) => c.json({ connections: await c.var.bank.syncNow() }))
-  // Removing a Connection asks for a TOTP code or a backup code again (spec 09, Sensitive
-  // actions). The Accounts become Closed, and their history stays.
+  // Removing a Connection takes an empty JSON body. The Accounts become Closed, and their history
+  // stays.
   .post("/connections/:id/remove", async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const removed = await c.var.removing.remove(c.req.param("id"));
     if (removed.outcome === "not found") return c.json({ error: "Not found" }, 404);
     if (removed.outcome === "provider error") {
@@ -1095,14 +1078,9 @@ export const api = new Hono<ServerEnv>()
   .post("/plaid/keys", async (c) => {
     const body = plaidKeysBody.safeParse(await jsonBody(c));
     if (!body.success) {
-      return c.json({ error: "Enter the client ID, the Production secret, and a code." }, 400);
+      return c.json({ error: "Enter the client ID and the Production secret." }, 400);
     }
-    const { clientId, secret, code } = body.data;
-    const fresh = await c.var.checkFreshCode(code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-    }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+    const { clientId, secret } = body.data;
     const keys = await c.var.plaid.saveKeys({ clientId, secret });
     if (keys === "refused") {
       return c.json({ keys, error: "Plaid refused these keys. Nothing was saved." }, 422);
@@ -1298,17 +1276,12 @@ export const api = new Hono<ServerEnv>()
     if (!result.ok) return c.json({ error: BACKUP_FAILURES[result.failure], backups }, 500);
     return c.json({ backup: { file: result.file, at: result.at }, backups }, 200);
   })
-  // "Download my data" (spec 11, Data export): any Member, with a fresh TOTP or backup code, since
-  // a data export is a sensitive action (spec 09). The ZIP is not encrypted, and streams as it is
-  // written.
+  // "Download my data" (spec 11, Data export): any Member, with an empty JSON body. The ZIP is not
+  // encrypted, and streams as it is written.
   .post("/export", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const { fileName, stream } = await c.var.dataExport.download();
     return c.body(stream, 200, {
       "Content-Type": "application/zip",
@@ -1318,17 +1291,12 @@ export const api = new Hono<ServerEnv>()
   })
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
-  // "Make an invite link": any Member, with a fresh TOTP or backup code, since a new login outlives
-  // a change to the maker's own (spec 09, Sensitive actions). The answer holds the link once; the
+  // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the
   // app keeps its hash.
   .post("/invites", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const made = await c.var.members.makeInvite(c.var.member.id);
     if (made === "wizard not done") {
       return c.json({ error: "Finish the first-run wizard first." }, 409);
@@ -1348,17 +1316,12 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ cancelled: true }, 200);
   })
-  // "Remove": any Member removes any Member, themselves included, with a fresh TOTP or backup
-  // code, since removing a Member is a sensitive action (spec 09). The app refuses to remove the
-  // last Member.
+  // "Remove": any Member removes any Member, themselves included, with an empty JSON body. The app
+  // refuses to remove the last Member.
   .post("/members/:id/remove", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const id = c.req.param("id");
     const removed = await c.var.members.remove(id);
     if (removed === "no such Member") return c.json({ error: "No Member has this ID." }, 404);
@@ -1367,21 +1330,16 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ removed: true, you: id === c.var.member.id }, 200);
   })
-  // "Reset login": any Member resets another Member's login with a fresh TOTP or backup code,
-  // since it is a sensitive action (spec 09). The answer holds the reset link once; the app keeps
-  // its hash. A Member's own login is refused before the code is checked, so no code is used up.
+  // "Reset login": any Member resets another Member's login, with an empty JSON body. The answer
+  // holds the reset link once; the app keeps its hash. A Member changes their own login in My login.
   .post("/members/:id/reset-login", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
     const id = c.req.param("id");
     if (id === c.var.member.id) {
       return c.json({ error: "Change your own login in Settings, My login." }, 409);
     }
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-    }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const reset = await c.var.members.resetLogin(id);
     if (reset === "no such Member") return c.json({ error: "No Member has this ID." }, 404);
     c.header("Cache-Control", "no-store");
@@ -1565,7 +1523,7 @@ export const api = new Hono<ServerEnv>()
   .post("/ai/settings", async (c) => {
     const body = aiSettingsBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Check the AI provider's fields." }, 400);
-    const { code, ...fields } = body.data;
+    const fields = body.data;
     const baseUrl = aiBaseUrl(fields.baseUrl);
     if (baseUrl === undefined) {
       return c.json({ error: "Enter the base URL as an http or https address." }, 400);
@@ -1578,16 +1536,7 @@ export const api = new Hono<ServerEnv>()
     if (typeof fields.gatewayToken === "string" && !onGateway(baseUrl)) {
       return c.json({ error: "A gateway token needs a Cloudflare AI Gateway base URL." }, 400);
     }
-    let freshCode = false;
-    if (code !== undefined) {
-      const fresh = await c.var.checkFreshCode(code);
-      if (fresh === "too many tries") {
-        return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-      }
-      if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
-      freshCode = true;
-    }
-    const saved = await c.var.ai.save({ ...fields, baseUrl }, { freshCode });
+    const saved = await c.var.ai.save({ ...fields, baseUrl });
     if (!saved.saved) {
       if (saved.refusal === "price needed") {
         const error = `The app has no price for the ${TIER_NAMES[saved.tier]}. Enter its input and output prices.`;
@@ -1616,17 +1565,8 @@ export const api = new Hono<ServerEnv>()
   .post("/smtp/settings", async (c) => {
     const body = smtpBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Check the SMTP server's fields." }, 400);
-    const { code, ...fields } = body.data;
-    let freshCode = false;
-    if (code !== undefined) {
-      const fresh = await c.var.checkFreshCode(code);
-      if (fresh === "too many tries") {
-        return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-      }
-      if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
-      freshCode = true;
-    }
-    const saved = await c.var.smtp.save(fields, { freshCode });
+    const fields = body.data;
+    const saved = await c.var.smtp.save(fields);
     if (!saved.saved) return c.json({ error: SMTP_REFUSALS[saved.refusal] }, 400);
     return c.json({ smtp: saved.smtp }, 200);
   })

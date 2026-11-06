@@ -64,7 +64,7 @@ describe("Login reset", () => {
     return new TestBrowser(app, APP_URL, `192.168.1.${clients}`);
   };
 
-  // Each TOTP code works once, so each sign-in and each fresh code takes its own step.
+  // Each TOTP code works once, so each sign-in takes its own step.
   async function signedIn(member: TestMember): Promise<TestBrowser> {
     later(TOTP_STEP_MS);
     const tab = browser();
@@ -107,18 +107,15 @@ describe("Login reset", () => {
   // The exact request Settings, Members sends.
   const resetLogin = (
     id: string,
-    code: string,
     tab = aliceTab,
     headers: Record<string, string | undefined> = {},
-  ) => tab.send("POST", `/api/members/${id}/reset-login`, { code }, headers);
+  ) => tab.send("POST", `/api/members/${id}/reset-login`, {}, headers);
 
   async function newReset(
     id = bob.id,
     tab = aliceTab,
-    member = alice,
   ): Promise<{ link: string; token: string; expiresAt: string }> {
-    later(TOTP_STEP_MS);
-    const res = await resetLogin(id, await member.totpCode(), tab);
+    const res = await resetLogin(id, tab);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const { reset } = (await res.json()) as { reset: { link: string; expiresAt: string } };
@@ -162,7 +159,7 @@ describe("Login reset", () => {
   }
 
   // The rows a refused request must leave as they were. Sessions renew on each use, so they are
-  // compared by ID, and a fresh code claims its TOTP step.
+  // compared by ID.
   async function lasting() {
     const tables = await readEveryTable(test.database);
     return {
@@ -236,36 +233,20 @@ describe("Login reset", () => {
       expect(removeLogin).toHaveBeenCalledExactlyOnceWith(bob.id);
     });
 
-    it("refuses the Member's own login before checking the code, and changes nothing", async () => {
+    it("refuses the Member's own login, and changes nothing", async () => {
       const before = await lasting();
-      const code = await alice.totpCode();
 
-      const res = await resetLogin(alice.id, code);
+      const res = await resetLogin(alice.id);
 
       expect(res.status).toBe(409);
       expect(await lasting()).toEqual(before);
-      // The code was not used up.
-      expect((await resetLogin(bob.id, code)).status).toBe(200);
-    });
-
-    it("refuses a wrong code and too many tries, and resets no one", async () => {
-      const before = await lasting();
-      const wrong = (await alice.totpCode()).replace(/\d/g, (d) => String((Number(d) + 1) % 10));
-
-      const answers = [];
-      for (let i = 0; i < 6; i++) answers.push((await resetLogin(bob.id, wrong)).status);
-
-      expect(answers).toEqual([401, 401, 401, 401, 401, 429]);
-      expect(await lasting()).toEqual(before);
-      expect(await bobTab.isSignedIn()).toBe(true);
     });
 
     it("refuses an ID no Member has, and changes nothing", async () => {
       const before = await lasting();
 
       for (const id of [`${bob.id}x`, bob.email, "reset-1"]) {
-        later(TOTP_STEP_MS);
-        expect((await resetLogin(id, await alice.totpCode())).status, id).toBe(404);
+        expect((await resetLogin(id)).status, id).toBe(404);
       }
 
       expect(await lasting()).toEqual(before);
@@ -275,18 +256,18 @@ describe("Login reset", () => {
       const stranger = browser();
       const before = await lasting();
 
-      expect((await resetLogin(bob.id, await alice.totpCode(), stranger)).status).toBe(401);
+      expect((await resetLogin(bob.id, stranger)).status).toBe(401);
       for (const origin of WRONG_ORIGINS) {
-        const res = await resetLogin(bob.id, await alice.totpCode(), aliceTab, { origin });
+        const res = await resetLogin(bob.id, aliceTab, { origin });
         expect(res.status, `${origin}`).toBe(403);
       }
       for (const type of ["text/plain", "application/x-www-form-urlencoded"]) {
-        const res = await resetLogin(bob.id, await alice.totpCode(), aliceTab, {
+        const res = await resetLogin(bob.id, aliceTab, {
           "content-type": type,
         });
         expect(res.status).toBe(415);
       }
-      for (const body of [{}, { code: "" }, [], null, "123456"]) {
+      for (const body of [{ code: "123456" }, [], null, "123456"]) {
         const res = await aliceTab.send("POST", `/api/members/${bob.id}/reset-login`, body);
         expect(res.status).toBe(400);
       }
@@ -355,9 +336,9 @@ describe("Login reset", () => {
     });
 
     it("works for 24 hours, and at hour 25 is refused", async () => {
-      const { carol, carolTab } = await carolSignedIn();
+      const { carolTab } = await carolSignedIn();
       const kept = await newReset();
-      const expired = await newReset(alice.id, carolTab, carol);
+      const expired = await newReset(alice.id, carolTab);
 
       later(23 * HOUR_MS);
       expect((await openLink(kept.token)).res.status).toBe(200);
@@ -463,10 +444,10 @@ describe("Login reset", () => {
     });
 
     it("never writes a token to the log", async () => {
-      const { carol, carolTab } = await carolSignedIn();
+      const { carolTab } = await carolSignedIn();
       const used = await newReset();
-      const replaced = await newReset(alice.id, carolTab, carol);
-      const expired = await newReset(alice.id, carolTab, carol);
+      const replaced = await newReset(alice.id, carolTab);
+      const expired = await newReset(alice.id, carolTab);
       await openLink(used.token);
       await openLink(used.token);
       await openLink(replaced.token);

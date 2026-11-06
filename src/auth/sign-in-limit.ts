@@ -24,18 +24,22 @@ export function limitedAddress(ctx: { headers?: Headers; request?: Request }): s
   return address ? limitAddress(address) : undefined;
 }
 
-// The routes that check a password or a code. A code check for a sensitive action goes through
-// the same two code routes, so it counts too.
+// The routes that check a password or a code. A password change and a new passkey check the
+// signed-in Member's current password, so they count too. A before hook that refuses one of these
+// routes for another reason runs before this plugin: a hook that throws after it skips the after
+// hook, so the try would stay as a failure.
 const CHECKS = new Set([
   "/sign-in/email",
   "/two-factor/verify-totp",
   "/two-factor/verify-backup-code",
+  "/my-login/change-password",
+  "/passkey/verify-registration",
 ]);
 
 export type HookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
 
-// The Member a code on a /two-factor/ route is for: the signed-in Member, or the sign-in that the
-// two-factor cookie names and that waits for its code.
+// The Member a code on a /two-factor/ route, or a current password, is for: the signed-in Member,
+// or the sign-in that the two-factor cookie names and that waits for its code.
 export async function codeMemberId(ctx: HookContext): Promise<string | undefined> {
   const session = await getSessionFromCtx(ctx);
   if (session) return session.user.id;

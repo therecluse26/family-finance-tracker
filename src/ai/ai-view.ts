@@ -298,17 +298,14 @@ export type AiSave =
   | { saved: false; refusal: "token needed" }
   // A Remove AI provider or another save changed the settings while this save checked them.
   | { saved: false; refusal: "changed" }
-  // The change touches a secret or where it goes, so it needs a fresh TOTP or backup code.
-  | { saved: false; refusal: "code needed" }
   // A model is not in the price table, and has no prices from a Member.
   | { saved: false; refusal: "price needed"; tier: AiTier };
 
 export type AiSettings = {
   // Undefined when no AI provider is set up.
   view(): Promise<AiView | undefined>;
-  // Checks both models with one call each, then saves. `freshCode` says the route has checked a
-  // fresh TOTP or backup code from the Member.
-  save(input: AiSettingsInput, options: { freshCode: boolean }): Promise<AiSave>;
+  // Checks both models with one call each, then saves.
+  save(input: AiSettingsInput): Promise<AiSave>;
   // Deletes the AI provider and its key. Every use falls back to its no-AI path.
   remove(): Promise<void>;
   // The AI usage page. It holds no prompt text or reply text.

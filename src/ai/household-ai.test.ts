@@ -78,7 +78,7 @@ describe("an AI call", () => {
     makeModels: AiModelMaker = stub.makeModels,
   ) {
     const settings = aiSettings(options(makeModels));
-    expect(await settings.save(settingsFor(provider), { freshCode: true })).toMatchObject({
+    expect(await settings.save(settingsFor(provider))).toMatchObject({
       saved: true,
     });
     return { ai: householdAi(options(makeModels)), settings };
@@ -731,7 +731,7 @@ describe("an AI call", () => {
 
         // A Member saves a key that works: the notice ends, and AI calls again.
         stub.answers = { quick: "work", writer: "work" };
-        expect(await settings.save(settingsFor("anthropic"), { freshCode: true })).toMatchObject({
+        expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
           saved: true,
         });
         expect(ended).toEqual([KEY_REJECTED_CONDITION]);
@@ -781,7 +781,7 @@ describe("an AI call", () => {
         if (saving) return;
         saving = true;
         stub.answers.quick = "work";
-        await settings.save(settingsFor("anthropic"), { freshCode: true });
+        await settings.save(settingsFor("anthropic"));
         stub.answers.quick = "reject";
       };
 

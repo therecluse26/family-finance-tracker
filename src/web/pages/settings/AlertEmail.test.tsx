@@ -50,7 +50,7 @@ describe("Settings, Alerts: the email server", () => {
     }
     expect(html).toContain('value="587"');
     expect(html).toMatch(/type="password"[^>]*placeholder="Not saved"[^>]*required=""/);
-    expect(text(html)).toContain("to set or change the password");
+    expect(html).not.toContain("one-time-code");
   });
 
   it("shows a saved server, but never its password", () => {

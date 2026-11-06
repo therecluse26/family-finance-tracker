@@ -16,7 +16,6 @@ import { type App, TestBrowser } from "./testing.ts";
 // keys (spec 08, AI settings page; spec 09, Signing in).
 
 const APP_URL = "http://nas.local:8080";
-const TOTP_STEP_MS = 30_000;
 const GATEWAY = "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai";
 
 // A local model's prices: $0.
@@ -76,12 +75,10 @@ describe("the AI routes", () => {
     await markSetupStep(test.database, "household facts", "done");
   }
 
-  // Signed in, with the clock moved on one TOTP step, so the next code is fresh.
   async function signedIn(): Promise<TestBrowser> {
     clients += 1;
     const tab = new TestBrowser(app, APP_URL, `192.168.1.${clients}`);
     await tab.signIn(alice);
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
     return tab;
   }
 
@@ -94,8 +91,8 @@ describe("the AI routes", () => {
     ...more,
   });
 
-  const save = async (tab: TestBrowser, body: Record<string, unknown>, code?: string) =>
-    tab.post("/api/ai/settings", { ...body, code: code ?? (await alice.totpCode()) });
+  const save = (tab: TestBrowser, body: Record<string, unknown>) =>
+    tab.post("/api/ai/settings", body);
 
   const shown = async (tab: TestBrowser) =>
     ((await (await tab.get("/api/ai/settings")).json()) as { ai: AiView | null }).ai;
@@ -171,23 +168,15 @@ describe("the AI routes", () => {
     ]);
   });
 
-  it("asks for a fresh TOTP code, or a backup code, to change the key", async () => {
+  it("sets and changes the key with no code: TOTP is asked only at sign-in", async () => {
     await finishWizard();
     const tab = await signedIn();
-    const code = await alice.totpCode();
-    const wrong = code.replace(/\d/g, (digit) => String((Number(digit) + 1) % 10));
-    const { code: _none, ...noCode } = { ...openai(), code: undefined };
-
-    expect((await tab.post("/api/ai/settings", noCode)).status).toBe(400);
-    expect((await save(tab, openai(), wrong)).status).toBe(401);
-    expect(stub.calls).toEqual([]);
 
     const first = openai();
-    expect((await save(tab, first, code)).status).toBe(200);
-    const second = openai();
-    expect((await save(tab, second, code)).status).toBe(401);
+    expect((await save(tab, first)).status).toBe(200);
     expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
-    expect((await save(tab, second, alice.backupCodes[0])).status).toBe(200);
+    const second = openai();
+    expect((await save(tab, second)).status).toBe(200);
     expect(stub.connections.at(-1)?.apiKey).toBe(second.apiKey);
   });
 
@@ -209,23 +198,7 @@ describe("the AI routes", () => {
     expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
   });
 
-  it("refuses every code after 5 wrong ones in 15 minutes, with 429", async () => {
-    await finishWizard();
-    const tab = await signedIn();
-    const wrong = (await alice.totpCode()).replace(/\d/g, (digit) =>
-      String((Number(digit) + 1) % 10),
-    );
-
-    const statuses: number[] = [];
-    for (let i = 0; i < 5; i += 1) statuses.push((await save(tab, openai(), wrong)).status);
-    const refused = await save(tab, openai());
-
-    expect(statuses).toEqual([401, 401, 401, 401, 401]);
-    expect(refused.status).toBe(429);
-    expect(stub.calls).toEqual([]);
-  });
-
-  it("refuses fields that cannot be sent as written, before it checks the code", async () => {
+  it("refuses fields that cannot be sent as written", async () => {
     await finishWizard();
     const tab = await signedIn();
 
@@ -241,7 +214,7 @@ describe("the AI routes", () => {
       openai({ gatewayToken: newAiKey() }),
       openai({ baseUrl: "https://proxy.example/v1", gatewayToken: newAiKey() }),
     ]) {
-      expect([body, (await save(tab, body, "000000")).status]).toEqual([body, 400]);
+      expect([body, (await save(tab, body)).status]).toEqual([body, 400]);
     }
     expect(stub.calls).toEqual([]);
   });
@@ -284,8 +257,6 @@ describe("the AI routes", () => {
       "http://host.docker.internal:11434/v1",
       "https://api.example.com/v1",
     ]) {
-      // Each change of base URL takes a fresh code.
-      vi.setSystemTime(Date.now() + TOTP_STEP_MS);
       expect([baseUrl, (await save(tab, compatible(baseUrl))).status]).toEqual([baseUrl, 200]);
     }
   });
@@ -403,9 +374,7 @@ describe("the AI routes", () => {
     await test.database.$client.execute("UPDATE ai_settings SET api_key = 'v1.not-a-ciphertext'");
     const { apiKey: _key, ...kept } = first;
 
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
     const again = await save(tab, kept);
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
     const fresh = openai();
     const replaced = await save(tab, fresh);
 
@@ -417,7 +386,7 @@ describe("the AI routes", () => {
   it("takes only a JSON body, and changes only from APP_URL's origin", async () => {
     await finishWizard();
     const tab = await signedIn();
-    const body = { ...openai(), code: await alice.totpCode() };
+    const body = openai();
 
     const text = await tab.send("POST", "/api/ai/settings", body, { "content-type": "text/plain" });
     expect(text.status).toBe(415);

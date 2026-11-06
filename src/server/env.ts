@@ -45,9 +45,6 @@ export type ServerEnv = {
     member: { id: string; name: string; email: string };
     // The Accounts, Transactions, and Connections in app.db, for the routes that list them.
     bank: BankViews;
-    // The sensitive-action check (spec 09, Signing in) for a code from the Member signed in on
-    // this request. Its answer is the auth module's FreshCode, written out as member is.
-    checkFreshCode: (code: string) => Promise<"fresh" | "wrong" | "too many tries">;
     // The Plaid keys and the count of Plaid Items, for the routes under /api/plaid/.
     plaid: PlaidSettings;
     // Linking a new bank through Plaid, for the routes under /api/plaid/.

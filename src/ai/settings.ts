@@ -198,7 +198,7 @@ export function aiSettings(options: AiOptions): AiSettings {
   return {
     view,
 
-    async save(input, { freshCode }) {
+    async save(input) {
       const { settings: stored, generation } = await readAiSettingsVersion(database);
       // A stored key or token goes only to the AI provider and base URL it was entered for.
       const sameDestination =
@@ -227,10 +227,6 @@ export function aiSettings(options: AiOptions): AiSettings {
         if (price === undefined) return { saved: false, refusal: "price needed", tier };
         prices[tier] = price;
       }
-
-      const changesSecrets =
-        !sameDestination || input.apiKey !== undefined || typeof input.gatewayToken === "string";
-      if (changesSecrets && !freshCode) return { saved: false, refusal: "code needed" };
 
       // A stored secret is read only when this save keeps it, so a new key replaces one that no
       // longer decrypts. One that is kept but cannot be read must be entered again.

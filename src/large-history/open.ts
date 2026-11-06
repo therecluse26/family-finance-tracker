@@ -35,7 +35,7 @@ export type LargeHistory = {
   // A signed-in Member's browser on the app's HTTP interface.
   browser: TestBrowser;
   memberId: string;
-  // That Member, with a TOTP secret and backup codes, for a route that asks for a fresh code.
+  // That Member, with their password, TOTP secret and backup codes.
   member: TestMember;
   // The AI SDK test models behind the app's AI. No AI provider is set up until a case saves one.
   ai: StubModels;

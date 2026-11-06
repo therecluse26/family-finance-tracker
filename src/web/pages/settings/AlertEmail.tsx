@@ -14,12 +14,10 @@ import { AlertPush } from "./AlertPush.tsx";
 // The page's writes, exactly as it sends them. Each sends a JSON body: the server answers 415 to a
 // write without one.
 export const saveChannels = (channels: Channels) => api["alert-channels"].$put({ json: channels });
-export const saveSmtp = (json: SmtpFields & { code?: string }) => api.smtp.settings.$post({ json });
+export const saveSmtp = (json: SmtpFields) => api.smtp.settings.$post({ json });
 export const sendTestEmail = () => api.smtp.test.$post({ json: {} });
 
-const CODE_LABEL = "A code from your authenticator app, or a backup code";
-
-// The words to show for a refused request: the server's own, such as "Wrong code.".
+// The words to show for a refused request: the server's own, such as "Enter the SMTP password.".
 async function refusal(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   return typeof body.error === "string" ? body.error : "That did not work.";
@@ -144,7 +142,6 @@ export function SmtpForm(props: { smtp: SmtpView | null; onSaved: (smtp: SmtpVie
   const [username, setUsername] = useState(smtp?.username ?? "");
   const [password, setPassword] = useState("");
   const [sender, setSender] = useState(smtp?.sender ?? "");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -169,9 +166,7 @@ export function SmtpForm(props: { smtp: SmtpView | null; onSaved: (smtp: SmtpVie
         username: username.trim(),
         ...(password === "" ? {} : { password }),
         sender: sender.trim(),
-        ...(code.trim() === "" ? {} : { code: code.trim() }),
       });
-      setCode("");
       if (!res.ok) return setError(await refusal(res));
       setPassword("");
       props.onSaved(((await res.json()) as { smtp: SmtpView }).smtp);
@@ -207,12 +202,6 @@ export function SmtpForm(props: { smtp: SmtpView | null; onSaved: (smtp: SmtpVie
         value={sender}
         onChange={setSender}
         required
-      />
-      <Field
-        label={`${CODE_LABEL}, to set or change the password`}
-        autoComplete="one-time-code"
-        value={code}
-        onChange={setCode}
       />
       <button className={BUTTON} type="submit" disabled={busy}>
         Save the email server

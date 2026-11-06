@@ -80,17 +80,14 @@ describe("the Chat routes", () => {
       logger: QUIET,
       notices: { raise: async () => {}, end: async () => {} },
     };
-    await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     const ai = householdAi(options);
     const talk = chat({
       database: test.database,

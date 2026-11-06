@@ -560,14 +560,12 @@ export function ConnectionItem(props: {
 }) {
   const { connection } = props;
   const [asking, setAsking] = useState<"remove" | "delete history" | undefined>();
-  const [code, setCode] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const close = () => {
     setAsking(undefined);
-    setCode("");
     setConfirmed(false);
   };
 
@@ -588,7 +586,7 @@ export function ConnectionItem(props: {
 
   // The routes read their bodies themselves, so the typed client does not name them.
   const param = { id: connection.id };
-  const removal = { param, json: { code } };
+  const removal = { param, json: {} };
   const deletion = { param, json: { confirmed: true } };
   const remove = () => send(() => api.connections[":id"].remove.$post(removal));
   const deleteHistory = () => send(() => api.connections[":id"]["delete-history"].$post(deletion));
@@ -635,22 +633,7 @@ export function ConnectionItem(props: {
             Removing {connection.bankName} does not give its Plaid Item back: the Plaid Trial slot
             stays spent. Its Accounts become Closed, and their history stays.
           </p>
-          <label className="mt-3 block">
-            To confirm, enter a code from your authenticator app, or a backup code
-            <input
-              className={FIELD}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-          </label>
-          <button
-            className={BUTTON}
-            type="button"
-            onClick={remove}
-            disabled={busy || code.trim() === ""}
-          >
+          <button className={BUTTON} type="button" onClick={remove} disabled={busy}>
             Remove {connection.bankName}
           </button>
           <button className="mt-4 ml-3 underline" type="button" onClick={close}>

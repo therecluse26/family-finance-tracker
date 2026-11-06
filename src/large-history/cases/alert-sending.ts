@@ -65,16 +65,13 @@ timedCase("Alerts step", async (history, time) => {
     database: history.database,
     secrets: history.secrets,
     address: (path) => path,
-  }).save(
-    {
-      host: "smtp.example.test",
-      port: 587,
-      username: "household@example.test",
-      password: `pw-${crypto.randomUUID()}`,
-      sender: "alerts@example.test",
-    },
-    { freshCode: true },
-  );
+  }).save({
+    host: "smtp.example.test",
+    port: 587,
+    username: "household@example.test",
+    password: `pw-${crypto.randomUUID()}`,
+    sender: "alerts@example.test",
+  });
   expect(saved.saved).toBe(true);
   await time.job(`Delivery job on ${done.sent} sent Alerts`, 10_000, () => deliverWaiting());
   const waiting = await history.database.$client.execute(

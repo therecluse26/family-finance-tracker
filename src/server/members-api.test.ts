@@ -72,7 +72,7 @@ describe("Settings, Members", () => {
     return new TestBrowser(app, APP_URL, `192.168.1.${clients}`);
   };
 
-  // Each TOTP code works once, so each sign-in and each fresh code takes its own step.
+  // Each TOTP code works once, so each sign-in takes its own step.
   async function signedIn(member: TestMember): Promise<TestBrowser> {
     later(TOTP_STEP_MS);
     const tab = browser();
@@ -105,30 +105,18 @@ describe("Settings, Members", () => {
     vi.useRealTimers();
   });
 
-  // The exact requests the page sends: each with a JSON body, even an empty one. Making a link
-  // takes a fresh code from the Member signed in on the tab, in its own TOTP step.
-  async function makeInvite(
-    tab = aliceTab,
-    headers: Record<string, string | undefined> = {},
-    member = alice,
-  ) {
-    later(TOTP_STEP_MS);
-    return tab.send("POST", "/api/invites", { code: await member.totpCode() }, headers);
-  }
+  // The exact requests the page sends: each with a JSON body, even an empty one.
+  const makeInvite = (tab = aliceTab, headers: Record<string, string | undefined> = {}) =>
+    tab.send("POST", "/api/invites", {}, headers);
   const cancel = (id: string, tab = aliceTab, headers: Record<string, string | undefined> = {}) =>
     tab.send("POST", `/api/invites/${id}/cancel`, {}, headers);
-  const remove = (
-    id: string,
-    code: string,
-    tab = aliceTab,
-    headers: Record<string, string | undefined> = {},
-  ) => tab.send("POST", `/api/members/${id}/remove`, { code }, headers);
+  const remove = (id: string, tab = aliceTab, headers: Record<string, string | undefined> = {}) =>
+    tab.send("POST", `/api/members/${id}/remove`, {}, headers);
 
   async function newLink(
     tab = aliceTab,
-    member = alice,
   ): Promise<{ link: string; token: string; expiresAt: string }> {
-    const res = await makeInvite(tab, {}, member);
+    const res = await makeInvite(tab);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const { invite } = (await res.json()) as { invite: { link: string; expiresAt: string } };
@@ -165,7 +153,7 @@ describe("Settings, Members", () => {
   }
 
   // The rows a refused request must leave as they were. Sessions renew on each use, so they are
-  // compared by ID, and a fresh code claims its TOTP step.
+  // compared by ID.
   async function lasting() {
     const tables = await readEveryTable(test.database);
     return {
@@ -190,13 +178,13 @@ describe("Settings, Members", () => {
 
       expect(made.link).toMatch(LINK);
       expect(made.expiresAt).toBe(
-        new Date(NOW.getTime() + 3 * TOTP_STEP_MS + 7 * DAY_MS).toISOString(),
+        new Date(NOW.getTime() + 2 * TOTP_STEP_MS + 7 * DAY_MS).toISOString(),
       );
       expect((await settings()).invites).toEqual([
         {
           id: expect.any(String),
           madeBy: "Alice",
-          createdAt: new Date(NOW.getTime() + 3 * TOTP_STEP_MS).toISOString(),
+          createdAt: new Date(NOW.getTime() + 2 * TOTP_STEP_MS).toISOString(),
           expiresAt: made.expiresAt,
         },
       ]);
@@ -471,35 +459,6 @@ describe("Settings, Members", () => {
       expect((await settings()).invites).toHaveLength(1);
     });
 
-    it("asks for a fresh code: no code, a wrong code, and too many tries each make no link", async () => {
-      const before = await lasting();
-      const wrong = (await alice.totpCode()).replace(/\d/g, (d) => String((Number(d) + 1) % 10));
-
-      for (const body of [{}, { code: "" }, { code: 123456 }]) {
-        expect((await aliceTab.send("POST", "/api/invites", body)).status).toBe(400);
-      }
-      const answers = [];
-      for (let i = 0; i < 6; i++) {
-        answers.push((await aliceTab.send("POST", "/api/invites", { code: wrong })).status);
-      }
-      expect(answers).toEqual([401, 401, 401, 401, 401, 429]);
-      // Past the limit, even the right code is refused unchecked.
-      expect((await makeInvite()).status).toBe(429);
-
-      expect(await lasting()).toEqual(before);
-      expect((await readEveryTable(test.database)).setup_steps).not.toContainEqual(
-        expect.objectContaining({ step: "invite members" }),
-      );
-    });
-
-    it("takes a backup code in place of a TOTP code, once", async () => {
-      const [backupCode = ""] = alice.backupCodes;
-
-      expect((await aliceTab.post("/api/invites", { code: backupCode })).status).toBe(200);
-      expect((await aliceTab.post("/api/invites", { code: backupCode })).status).toBe(401);
-      expect((await settings()).invites).toHaveLength(1);
-    });
-
     it("refuses to make a link until the first-run wizard's required steps are done", async () => {
       const fresh = await newTestAuth(APP_URL);
       try {
@@ -517,7 +476,7 @@ describe("Settings, Members", () => {
         await tab.signIn(first);
         later(TOTP_STEP_MS);
 
-        const res = await tab.post("/api/invites", { code: await first.totpCode() });
+        const res = await tab.post("/api/invites", {});
 
         expect(res.status).toBe(409);
         expect((await readEveryTable(fresh.database)).invites).toEqual([]);
@@ -544,7 +503,7 @@ describe("Settings, Members", () => {
         expect((await makeInvite(aliceTab, { "content-type": type })).status).toBe(415);
         expect((await cancel(id, aliceTab, { "content-type": type })).status).toBe(415);
       }
-      for (const body of [{ days: 30 }, [], null, "now"]) {
+      for (const body of [{ days: 30 }, { code: "123456" }, [], null, "now"]) {
         expect((await aliceTab.send("POST", "/api/invites", body)).status).toBe(400);
         expect((await aliceTab.send("POST", `/api/invites/${id}/cancel`, body)).status).toBe(400);
       }
@@ -604,7 +563,7 @@ describe("Settings, Members", () => {
         new Date(),
       );
 
-      const res = await remove(bob.id, await alice.totpCode());
+      const res = await remove(bob.id);
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ removed: true, you: false });
@@ -640,7 +599,7 @@ describe("Settings, Members", () => {
     });
 
     it("lets a Member remove themselves, which signs them out", async () => {
-      const res = await remove(bob.id, await bob.totpCode(), bobTab);
+      const res = await remove(bob.id, bobTab);
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ removed: true, you: true });
@@ -649,12 +608,11 @@ describe("Settings, Members", () => {
     });
 
     it("cancels the invite links they made, and leaves the other Members' links open", async () => {
-      const bobs = await newLink(bobTab, bob);
+      const bobs = await newLink(bobTab);
       later(MINUTE_MS);
       const alices = await newLink();
-      later(TOTP_STEP_MS);
 
-      expect((await remove(bob.id, await alice.totpCode())).status).toBe(200);
+      expect((await remove(bob.id)).status).toBe(200);
 
       expect((await settings()).invites.map((invite) => invite.madeBy)).toEqual(["Alice"]);
       expect((await join(bobs.token, { name: "Cy", email: "cy@example.com" })).res.status).toBe(
@@ -666,11 +624,10 @@ describe("Settings, Members", () => {
     });
 
     it("refuses to remove the last Member, themselves included, and changes nothing", async () => {
-      expect((await remove(bob.id, await alice.totpCode())).status).toBe(200);
-      later(TOTP_STEP_MS);
+      expect((await remove(bob.id)).status).toBe(200);
       const before = await lasting();
 
-      const res = await remove(alice.id, await alice.totpCode());
+      const res = await remove(alice.id);
 
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({ error: "The app cannot remove the last Member." });
@@ -679,25 +636,10 @@ describe("Settings, Members", () => {
     });
 
     it("of two Members who remove each other at once, removes one", async () => {
-      const answers = await Promise.all([
-        remove(bob.id, await alice.totpCode(), aliceTab),
-        remove(alice.id, await bob.totpCode(), bobTab),
-      ]);
+      const answers = await Promise.all([remove(bob.id, aliceTab), remove(alice.id, bobTab)]);
 
       expect(answers.map((res) => res.status).sort()).toEqual([200, 409]);
       expect(await listMembers(test.database)).toHaveLength(1);
-    });
-
-    it("refuses a wrong code and too many tries, and removes no one", async () => {
-      const before = await lasting();
-      const wrong = (await alice.totpCode()).replace(/\d/g, (d) => String((Number(d) + 1) % 10));
-
-      const answers = [];
-      for (let i = 0; i < 6; i++) answers.push((await remove(bob.id, wrong)).status);
-
-      expect(answers).toEqual([401, 401, 401, 401, 401, 429]);
-      expect(await lasting()).toEqual(before);
-      expect(await bobTab.isSignedIn()).toBe(true);
     });
 
     it("refuses an ID no Member has, such as an invite's or a Goal's, and changes nothing", async () => {
@@ -714,8 +656,7 @@ describe("Settings, Members", () => {
       const before = await lasting();
 
       for (const id of [invite?.id ?? "", goalId, `${bob.id}x`, bob.email]) {
-        later(TOTP_STEP_MS);
-        expect((await remove(id, await alice.totpCode())).status, id).toBe(404);
+        expect((await remove(id)).status, id).toBe(404);
       }
 
       expect(await lasting()).toEqual(before);
@@ -725,19 +666,17 @@ describe("Settings, Members", () => {
       const stranger = browser();
       const before = await lasting();
 
-      expect((await remove(bob.id, await alice.totpCode(), stranger)).status).toBe(401);
+      expect((await remove(bob.id, stranger)).status).toBe(401);
       for (const origin of WRONG_ORIGINS) {
-        expect((await remove(bob.id, await alice.totpCode(), aliceTab, { origin })).status).toBe(
-          403,
-        );
+        expect((await remove(bob.id, aliceTab, { origin })).status).toBe(403);
       }
       for (const type of ["text/plain", "application/x-www-form-urlencoded"]) {
-        const res = await remove(bob.id, await alice.totpCode(), aliceTab, {
+        const res = await remove(bob.id, aliceTab, {
           "content-type": type,
         });
         expect(res.status).toBe(415);
       }
-      for (const body of [{}, { code: "" }, [], null, "123456"]) {
+      for (const body of [{ code: "123456" }, [], null, "123456"]) {
         expect((await aliceTab.send("POST", `/api/members/${bob.id}/remove`, body)).status).toBe(
           400,
         );

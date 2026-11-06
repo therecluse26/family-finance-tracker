@@ -9,10 +9,8 @@ const WHOLE_ZIP_LIMIT_MS = 3_000;
 // JSON, so the case times it as jobs: the request until the response starts, with the request
 // limit, then the whole ZIP read to its end.
 timedCase("the data export", async (history, time) => {
-  const [code = ""] = history.member.backupCodes;
-
   const res = await time.job("POST /api/export (until the response starts)", REQUEST_LIMIT_MS, () =>
-    history.browser.send("POST", "/api/export", { code }),
+    history.browser.send("POST", "/api/export", {}),
   );
   if (!res.ok) throw new Error(`POST /api/export answered ${res.status}: ${await res.text()}`);
   const zip = await time.job(

@@ -183,20 +183,17 @@ describe("the Quick tier's link decisions", () => {
       cost: aiCost({ database: bank.database }),
       notices: { raise: async () => {}, end: async () => {} },
     };
-    const saved = await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: {
-          quick: { input: 1_000_000, output: 2_000_000 },
-          writer: { input: 1_000_000, output: 2_000_000 },
-        },
+    const saved = await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: {
+        quick: { input: 1_000_000, output: 2_000_000 },
+        writer: { input: 1_000_000, output: 2_000_000 },
       },
-      { freshCode: true },
-    );
+    });
     expect(saved).toMatchObject({ saved: true });
     stops = [startMoneyMovement({ database: bank.database, ai: householdAi(options) }).stop];
     connections.clear();
