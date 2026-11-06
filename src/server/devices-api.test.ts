@@ -159,6 +159,14 @@ describe("Settings, My login, Signed-in devices", () => {
       expect((await devices(desktop)).filter((device) => device.thisDevice)).toHaveLength(1);
     });
 
+    it("is not kept in a cache", async () => {
+      const tab = await signedIn(alice, FIREFOX_LINUX);
+
+      const res = await tab.get("/api/my-login/devices");
+
+      expect(res.headers.get("cache-control")).toBe("no-store");
+    });
+
     it("never sends another Member's sessions, a token, an IP address, or the user agent", async () => {
       const tab = await signedIn(alice, FIREFOX_LINUX);
       await signedIn(alice, SAFARI_IPHONE);
@@ -347,14 +355,18 @@ describe("Settings, My login, Signed-in devices", () => {
   it("writes no token, IP address, or user agent to the log", async () => {
     const tab = await signedIn(alice, FIREFOX_LINUX);
     await signedIn(alice, SAFARI_IPHONE);
+    await signedIn(alice, CHROME_WINDOWS);
     await signedIn(bob, CHROME_WINDOWS);
+    // Read before the sign-outs, so the tokens of the sessions they end are checked too.
+    const tokens = (await query("SELECT token FROM sessions")).map((row) => String(row.token));
     await signOut(tab, idOf(await devices(tab), "Safari on iPhone"));
     await signOut(tab, "no-such-session");
     await signOutOthers(tab);
-    const tokens = await query("SELECT token FROM sessions");
 
+    expect(tokens).toHaveLength(4);
+    expect((await query("SELECT token FROM sessions")).length).toBe(2);
     const log = lines.join("\n");
-    for (const row of tokens) expect(log).not.toContain(String(row.token));
+    for (const token of tokens) expect(log).not.toContain(token);
     expect(log).not.toMatch(/192\.168\.|Mozilla/);
   });
 });

@@ -200,10 +200,10 @@ describe("passkeys", () => {
 
       expect(res.status).toBe(200);
       expect(await tab.isSignedIn()).toBe(true);
-      const session = (await (await tab.get("/api/auth/get-session")).json()) as {
-        user: { id: string };
+      const { members } = (await (await tab.get("/api/members")).json()) as {
+        members: { id: string; you: boolean }[];
       };
-      expect(session.user.id).toBe(alice.id);
+      expect(members.find((member) => member.you)?.id).toBe(alice.id);
     });
 
     it("asks for the current password to add a passkey, counts a wrong one as a failed sign-in, and stores nothing", async () => {

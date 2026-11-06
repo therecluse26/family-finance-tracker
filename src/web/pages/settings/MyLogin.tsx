@@ -31,7 +31,7 @@ import {
 
 // Settings, My login: the signed-in Member changes their own password, TOTP, and backup codes
 // (spec 09, Members), through the routes under /api/auth/my-login/. TOTP is asked only at sign-in
-// (spec 09, Sensitive actions): a password change asks for the current password, and a new TOTP
+// (spec 09, Sensitive actions): each change asks for the current password, and a new TOTP also
 // asks for one code from the new authenticator. Over HTTPS the Member also adds and deletes
 // passkeys; adding one asks for the current password too. Signed-in devices lists the Member's own
 // sessions, with Sign out on each, through the app's routes under /api/my-login/.
@@ -144,16 +144,34 @@ export function ConfirmNewTotp(props: {
   );
 }
 
+// The current password a new TOTP or new backup codes ask for, so a stolen session cannot lock
+// the Member out.
+function CurrentPassword(props: { value: string; onChange: (value: string) => void }) {
+  return (
+    <Field
+      label={CURRENT_PASSWORD_LABEL}
+      type="password"
+      autoComplete="current-password"
+      value={props.value}
+      onChange={props.onChange}
+      required
+    />
+  );
+}
+
 function ChangeTotp() {
   const [totpURI, setTotpURI] = useState<string | undefined>();
   const [newCode, setNewCode] = useState("");
-  const action = useAction("Wrong code.");
+  const [currentPassword, setCurrentPassword] = useState("");
+  // A 401 from the first step is a wrong password, and from the second a wrong code.
+  const action = useAction("Wrong code.", { INVALID_PASSWORD: WRONG_PASSWORD });
 
   function start(event: FormEvent) {
     event.preventDefault();
     void action.run(
-      () => postJson("/api/auth/my-login/new-totp", {}),
+      () => postJson("/api/auth/my-login/new-totp", { currentPassword }),
       async (res) => {
+        setCurrentPassword("");
         const body = (await res.json()) as { totpURI: string };
         setTotpURI(body.totpURI);
         return "Enter a code from the new TOTP to finish.";
@@ -183,6 +201,7 @@ function ChangeTotp() {
       <Lead>Sign-in asks for a code from this app.</Lead>
       {totpURI === undefined ? (
         <form onSubmit={start}>
+          <CurrentPassword value={currentPassword} onChange={setCurrentPassword} />
           <div className={BUTTONS}>
             <Button type="submit" variant="outlined" disabled={action.busy}>
               Set up a new TOTP
@@ -209,13 +228,15 @@ function ChangeTotp() {
 
 function ChangeBackupCodes() {
   const [codes, setCodes] = useState<string[] | undefined>();
-  const action = useAction("That did not work.");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const action = useAction(WRONG_PASSWORD);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     void action.run(
-      () => postJson("/api/auth/my-login/new-backup-codes", {}),
+      () => postJson("/api/auth/my-login/new-backup-codes", { currentPassword }),
       async (res) => {
+        setCurrentPassword("");
         const body = (await res.json()) as { backupCodes: string[] };
         setCodes(body.backupCodes);
         return "Your old backup codes no longer work.";
@@ -227,6 +248,7 @@ function ChangeBackupCodes() {
     <SettingCard id="backup-codes" title="Backup codes">
       <Lead>Use one at sign-in if you lose your phone. Each code works once.</Lead>
       <form onSubmit={submit}>
+        <CurrentPassword value={currentPassword} onChange={setCurrentPassword} />
         <div className={BUTTONS}>
           <Button type="submit" variant="outlined" disabled={action.busy}>
             Make new backup codes

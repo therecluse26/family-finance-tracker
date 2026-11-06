@@ -30,13 +30,14 @@ export const MIN_PASSWORD_LENGTH = 12;
 export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 
 // The only Better Auth routes the app answers. Every other route Better Auth has, such as sign-up,
-// turning TOTP off, or reading the TOTP secret again, answers 404.
+// turning TOTP off, or reading the TOTP secret again, answers 404. So does /get-session, which
+// would hand the page this session's token, IP address, and user agent: the app checks a session
+// through signedIn() instead, and the web app never read it.
 const ROUTES = new Set([
   "POST /sign-in/email",
   "POST /two-factor/verify-totp",
   "POST /two-factor/verify-backup-code",
   "POST /sign-out",
-  "GET /get-session",
   "POST /my-login/change-password",
   "POST /my-login/new-totp",
   "POST /my-login/confirm-totp",

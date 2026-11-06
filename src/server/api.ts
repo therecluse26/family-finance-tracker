@@ -1362,9 +1362,10 @@ export const api = new Hono<ServerEnv>()
   // Settings, My login, Signed-in devices (spec 09): the signed-in Member's own sessions that have
   // not expired. Each row has a name made from its user agent, never the user agent or the IP
   // address.
-  .get("/my-login/devices", async (c) =>
-    c.json({ devices: await c.var.devices.devices(c.var.member.id, c.var.sessionId) }),
-  )
+  .get("/my-login/devices", async (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json({ devices: await c.var.devices.devices(c.var.member.id, c.var.sessionId) });
+  })
   // "Sign out" on another device, with an empty JSON body. Another Member's session, an expired
   // one, and an unknown ID get the same answer, so it does not show that a session exists.
   .post("/my-login/devices/:id/sign-out", jsonOnly, async (c) => {

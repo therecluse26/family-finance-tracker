@@ -91,6 +91,14 @@ describe("the app shell", () => {
       "Make new backup codes",
       "Sign out",
     ]);
+    // Each form that changes the login asks for the current password (spec 09, Sensitive actions).
+    const forms = outsideMenu(html).split("<form").slice(1);
+    expect(forms).toHaveLength(3);
+    for (const form of forms) {
+      expect(form).toMatch(
+        /Current password<input[^>]*type="password"[^>]*autoComplete="current-password"/,
+      );
+    }
   });
 
   it("gives Backups and data its Back up now button, its Check my master key form, and its Download my data form", () => {
