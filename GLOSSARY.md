@@ -118,6 +118,10 @@ _Avoid_: Notification, warning
 A notice to Members about the app itself, such as a failed backup or the AI cost cap. It is never about the Household's Spending.
 _Avoid_: Error, warning
 
+**Weekly summary email**:
+A short email each Sunday morning about the Household's last 7 days, which each Member turns on for themselves. The app writes it from its own numbers, with no AI. It is not an Alert.
+_Avoid_: Digest, newsletter, weekly report
+
 ## Review
 
 **Review list**:
