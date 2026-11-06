@@ -37,7 +37,7 @@ const JOB_LIST = new URL("../jobs/list.ts", import.meta.url).href;
 // The Master key settings that loadMasterKey reads.
 type MasterKeyEnv = Parameters<typeof loadMasterKey>[0];
 
-type DevEnv = {
+export type DevEnv = {
   APP_URL: string;
   TRUSTED_PROXIES?: string;
   FFT_MASTER_KEY_FILE?: string;
@@ -121,10 +121,15 @@ export async function showSetupLink(
 
 // The services `pnpm start` runs, with the same start-up steps: the bank module, the job runner and
 // its schedule, the follow-up work, and email. Dev adds the fake adapter beside Plaid's, with each
-// demo bank scripted, and its fake bank route. close() stops them, as Vite closes.
-export async function createDevApp(webRoot: string, env: DevEnv) {
+// demo bank scripted, and its fake bank route. close() stops them, as Vite closes or before a
+// restart. Tests pass their own folder, and no scheduled tasks, so nothing calls out.
+export async function createDevApp(
+  webRoot: string,
+  env: DevEnv,
+  { folder = DEV_FOLDER, tasks = scheduledTasks } = {},
+) {
   const security = await loadSecurity(env);
-  const opened = await openDevDatabase(env, DEV_FOLDER);
+  const opened = await openDevDatabase(env, folder);
   try {
     await showSetupLink(opened.database, security.appUrl.address("/setup"), opened.masterKey);
   } finally {
@@ -133,12 +138,12 @@ export async function createDevApp(webRoot: string, env: DevEnv) {
   const fake = new FakeBankAdapter();
   offerDemoBanks(fake);
   // "Back up now" and the daily backup write to .dev/backups.
-  const backups = join(DEV_FOLDER, "backups");
+  const backups = join(folder, "backups");
   const services = await launchServices({
     masterKey: opened.masterKey,
-    databaseUrl: devDatabaseUrl(DEV_FOLDER),
+    databaseUrl: devDatabaseUrl(folder),
     migrationsFolder: MIGRATIONS,
-    jobs: { jobsDb: join(DEV_FOLDER, "jobs.db"), jobList: JOB_LIST, tasks: scheduledTasks },
+    jobs: { jobsDb: join(folder, "jobs.db"), jobList: JOB_LIST, tasks },
     security,
     extraBankAdapters: [fake],
     backupFolders: { mounted: backups, fallback: backups },
@@ -147,5 +152,5 @@ export async function createDevApp(webRoot: string, env: DevEnv) {
     ...services.routes,
     devRoutes: devRoutes(services.database),
   });
-  return { fetch: app.fetch, close: () => services.close() };
+  return { app, close: () => services.close() };
 }
