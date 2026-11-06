@@ -12,14 +12,39 @@ const DEV_PORT = 5173;
 type DevAppModule = Partial<typeof import("./src/server/dev-app.ts")>;
 type HonoApp = Awaited<ReturnType<NonNullable<DevAppModule["createDevApp"]>>>;
 
+// Sidequest's packages. Sidequest imports each job class from the job list itself. Run outside
+// Vite, that import would load a second copy of src/jobs, without the dev app's state. Vite
+// therefore runs Sidequest's files too, so both imports share one copy, as they do in the built app.
+const SIDEQUEST = ["sidequest", /^@sidequest\//];
+
+// Vite's warning for each Sidequest file it runs: Sidequest's published source maps name source
+// files it does not publish. Only this warning is dropped.
+const SIDEQUEST_SOURCE_MAP =
+  /^Sourcemap for "[^"]*\/node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?(?:sidequest|@sidequest\/[^/]+)\/[^"]*" points to missing source files$/;
+
 // In `pnpm dev`, Vite serves the web app and hands /api and /healthz to the Hono app, which runs
-// on its own app.db in .dev/. With no Master key set, it makes .dev/master.key.
+// on its own app.db and jobs.db in .dev/, with the services `pnpm start` runs. With no Master key
+// set, it makes .dev/master.key. When Vite closes, the app stops its jobs and closes app.db.
 function honoDevServer(): Plugin {
+  let app: Promise<HonoApp> | undefined;
   return {
     name: "hono-dev-server",
     apply: "serve",
+    configResolved(config) {
+      const warnOnce = config.logger.warnOnce;
+      config.logger.warnOnce = (message, options) => {
+        if (!SIDEQUEST_SOURCE_MAP.test(message)) warnOnce(message, options);
+      };
+    },
+    async closeServer() {
+      const running = app;
+      app = undefined;
+      await running?.then(
+        (loaded) => loaded.close(),
+        () => undefined,
+      );
+    },
     configureServer(server) {
-      let app: Promise<HonoApp> | undefined;
       // The Master key leaves process.env here; loadMasterKey then deletes it from `env`.
       const startDevApp = () => {
         const env = {
@@ -95,6 +120,7 @@ export default defineConfig({
   root: webRoot,
   oxc: { jsx: { runtime: "automatic" } },
   plugins: [tailwindcss(), honoDevServer(), browserNotices(), installableApp],
+  ssr: { noExternal: SIDEQUEST },
   // The dev APP_URL names this port, so Vite must not move to another.
   server: { port: DEV_PORT, strictPort: true },
   build: {

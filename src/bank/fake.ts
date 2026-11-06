@@ -53,6 +53,11 @@ export class FakeBankAdapter implements BankDataAdapter {
   private readonly scripts = new Map<string, Script>();
   // The error each check of a bank, or of one Connection, finds, until it is cleared.
   private readonly checkErrors = new Map<string, FakeFailure>();
+  // The banks finishLink links, by bank ID.
+  private readonly linkable = new Map<
+    string,
+    { bankId: string; bankName: string; accounts: AccountSnapshot[] }
+  >();
 
   // A bank's ID, or a Connection's ID.
   private script(key: string): Script {
@@ -147,8 +152,24 @@ export class FakeBankAdapter implements BankDataAdapter {
     return { linkToken: "fake-update-link-token" };
   }
 
-  async finishLink(_result: LinkResult): Promise<NewConnection> {
-    throw new Error("The fake adapter does not link banks.");
+  // Lets finishLink link a bank, as `pnpm dev`'s fake bank button does. The core stores the new
+  // Connection as it stores a Plaid one, and its first sync reads the bank's script.
+  addLinkableBank(bank: { bankId: string; bankName: string; accounts: AccountSnapshot[] }): void {
+    this.linkable.set(bank.bankId, bank);
+  }
+
+  // Only a bank given to addLinkableBank links. The bank comes from the script, never from the
+  // browser's word, so it is always confirmed.
+  async finishLink(result: LinkResult): Promise<NewConnection> {
+    const bank = this.linkable.get(result.bankId);
+    if (bank === undefined) throw new Error("The fake adapter does not link this bank.");
+    return {
+      bankId: bank.bankId,
+      bankName: bank.bankName,
+      bankConfirmed: true,
+      credential: `fake-credential-${crypto.randomUUID()}`,
+      accounts: bank.accounts,
+    };
   }
 
   async remove(_connection: BankConnection): Promise<void> {}

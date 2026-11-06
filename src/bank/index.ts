@@ -107,6 +107,7 @@ export {
 export { connectionRemoving } from "./remove.ts";
 export {
   adapterActions,
+  adapterRuns,
   runSyncJob,
   type SyncJobOutcome,
   type SyncOptions,
