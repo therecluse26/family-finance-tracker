@@ -6,12 +6,14 @@ import { openWizardIfNeeded, resumeWizardIfNeeded } from "./setup-gate.ts";
 
 // The app shell: the main menu and the page. From 900 px wide, the menu is a column beside the
 // page. At phone width it folds to a bar at the foot of the screen with the PHONE_TABS and
-// "More"; "More" opens the whole menu over the page.
+// "More"; "More" opens the whole menu over the page. While it is open, the page under it is inert,
+// so neither Tab nor a screen reader reaches it.
 
 // Each class string is written out in full so Tailwind finds it. A phone tab is an icon over its
-// label; from 900 px wide, and in the open menu, each item is a row.
+// label, with the open count on the icon's corner; below 360 px the labels get smaller so they
+// never touch. From 900 px wide, and in the open menu, each item is a row.
 const TAB_LINK = {
-  base: "flex flex-col items-center gap-0.5 px-1 py-2 text-[11px] whitespace-nowrap min-[900px]:flex-row min-[900px]:gap-2 min-[900px]:rounded-control min-[900px]:px-2.5 min-[900px]:py-[9px] min-[900px]:text-[15px]",
+  base: "relative flex flex-col items-center gap-0.5 px-1 py-2 text-[11px] whitespace-nowrap max-[359px]:px-0.5 max-[359px]:text-[10px] max-[359px]:tracking-tight min-[900px]:flex-row min-[900px]:gap-2 min-[900px]:rounded-control min-[900px]:px-2.5 min-[900px]:py-[9px] min-[900px]:text-[15px]",
   current: "font-semibold text-accent min-[900px]:bg-nav-current min-[900px]:text-ink",
   other: "text-muted min-[900px]:text-ink-soft min-[900px]:hover:bg-page",
 };
@@ -20,6 +22,10 @@ const ROW_LINK = {
   current: "bg-nav-current font-semibold text-ink",
   other: "text-ink-soft hover:bg-page",
 };
+const TAB_BADGE =
+  "absolute top-0.5 left-1/2 ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold tracking-normal text-white min-[900px]:static min-[900px]:ml-0 min-[900px]:h-[22px] min-[900px]:min-w-[22px] min-[900px]:px-1.5 min-[900px]:text-xs";
+const ROW_BADGE =
+  "inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-accent px-1.5 text-xs font-semibold text-white";
 
 // The phone tabs' icons, from the App-Phone-Dashboard board.
 const TAB_ICON: Record<string, ReactNode> = {
@@ -46,7 +52,12 @@ function TabIcon(props: { children: ReactNode; className: string }) {
   );
 }
 
-function MenuLink(props: { item: MenuItem; count?: number | undefined; open: boolean }) {
+function MenuLink(props: {
+  item: MenuItem;
+  count?: number | undefined;
+  open: boolean;
+  onChoose(path: string): void;
+}) {
   const style = props.open ? ROW_LINK : TAB_LINK;
   const icon = TAB_ICON[props.item.path];
   return (
@@ -54,6 +65,7 @@ function MenuLink(props: { item: MenuItem; count?: number | undefined; open: boo
       to={props.item.path}
       end={props.item.path === "/"}
       className={({ isActive }) => `${style.base} ${isActive ? style.current : style.other}`}
+      onClick={() => props.onChoose(props.item.path)}
     >
       {icon === undefined ? null : (
         <TabIcon className={props.open ? "hidden" : "min-[900px]:hidden"}>{icon}</TabIcon>
@@ -61,10 +73,7 @@ function MenuLink(props: { item: MenuItem; count?: number | undefined; open: boo
       <span className="flex flex-1 items-center justify-between gap-1">
         <span>{props.item.label}</span>
         {props.count === undefined ? null : (
-          <span
-            className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-white min-[900px]:h-[22px] min-[900px]:min-w-[22px] min-[900px]:text-xs"
-            data-slot="open-count"
-          >
+          <span className={props.open ? ROW_BADGE : TAB_BADGE} data-slot="open-count">
             {props.count}
           </span>
         )}
@@ -107,6 +116,18 @@ export function Shell(props: { reviewListOpenCount?: number }) {
     backToMore.current = true;
     setOpen(false);
   }, []);
+  const page = useRef<HTMLDivElement>(null);
+  // The page a Member chose in the open menu. Once it shows, its heading takes the focus, because
+  // the link they chose is hidden with the menu.
+  const chosenPage = useRef<string | null>(null);
+  const choosePage = useCallback(
+    (path: string) => {
+      if (!open) return;
+      chosenPage.current = path;
+      setOpen(false);
+    },
+    [open],
+  );
 
   // Every page leads to the wizard until it is done. After that, every page in the shell needs a
   // signed-in Member. The Review list's menu item then shows its open count.
@@ -128,7 +149,8 @@ export function Shell(props: { reviewListOpenCount?: number }) {
   useEffect(() => setOpen(false), [pathname]);
 
   // The open menu takes the focus, and Escape closes it. "More" is shown again only after the
-  // render that closes the menu, so it takes the focus back here.
+  // render that closes the menu, so it takes the focus back here. From 900 px wide the menu is a
+  // column again, so a window widened past it closes the menu, and the page is never left inert.
   useEffect(() => {
     if (!open) {
       if (backToMore.current) moreButton.current?.focus();
@@ -139,9 +161,31 @@ export function Shell(props: { reviewListOpenCount?: number }) {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeMenu();
     };
+    const wide = window.matchMedia("(min-width: 900px)");
+    const onWide = () => {
+      if (wide.matches) setOpen(false);
+    };
+    onWide();
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    wide.addEventListener("change", onWide);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      wide.removeEventListener("change", onWide);
+    };
   }, [open, closeMenu]);
+
+  // The page chosen in the menu takes the focus on its <h1>, or its <main>, once it shows.
+  useEffect(() => {
+    if (open || chosenPage.current !== pathname) return;
+    chosenPage.current = null;
+    const target =
+      page.current?.querySelector<HTMLElement>("h1") ??
+      page.current?.querySelector<HTMLElement>("main") ??
+      page.current;
+    if (target === null || target === undefined) return;
+    if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+    target.focus();
+  }, [open, pathname]);
 
   const onMorePage = !PHONE_TABS.some((path) =>
     path === "/" ? pathname === "/" : pathname.startsWith(path),
@@ -196,6 +240,7 @@ export function Shell(props: { reviewListOpenCount?: number }) {
                   item={item}
                   count={item.path === "/review-list" ? openCount : undefined}
                   open={open}
+                  onChoose={choosePage}
                 />
               </li>
             );
@@ -206,7 +251,7 @@ export function Shell(props: { reviewListOpenCount?: number }) {
               type="button"
               aria-expanded={open}
               aria-controls="main-menu"
-              className={`flex w-full flex-col items-center gap-0.5 px-1 py-2 text-[11px] ${
+              className={`flex w-full flex-col items-center gap-0.5 px-1 py-2 text-[11px] max-[359px]:px-0.5 max-[359px]:text-[10px] ${
                 onMorePage ? "font-semibold text-accent" : "text-muted"
               }`}
               onClick={() => setOpen(true)}
@@ -227,13 +272,17 @@ export function Shell(props: { reviewListOpenCount?: number }) {
           <ul className="flex flex-col gap-0.5">
             {MORE_MENU.map((item) => (
               <li key={item.path}>
-                <MenuLink item={item} open={open} />
+                <MenuLink item={item} open={open} onChoose={choosePage} />
               </li>
             ))}
           </ul>
         </div>
       </nav>
-      <div className="min-w-0 px-4 pt-4 pb-24 min-[900px]:px-5 min-[900px]:pt-7 min-[900px]:pb-12">
+      <div
+        ref={page}
+        inert={open}
+        className="min-w-0 px-4 pt-4 pb-24 min-[900px]:px-5 min-[900px]:pt-7 min-[900px]:pb-12"
+      >
         <Outlet context={{ setReviewListOpenCount: setOpenCount } satisfies ShellContext} />
       </div>
     </div>

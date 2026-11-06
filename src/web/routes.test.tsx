@@ -163,6 +163,8 @@ describe("the app shell", () => {
       /<button type="button" aria-expanded="false" aria-controls="main-menu"[^>]*>.*More<\/button>/s,
     );
     expect(html).toContain('id="main-menu"');
+    // Closed, the page under the menu is not inert.
+    expect(html).not.toContain("inert");
   });
 
   it("answers an unknown path with Page not found, inside the shell", () => {

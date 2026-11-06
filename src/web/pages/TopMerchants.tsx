@@ -86,7 +86,7 @@ export function TopMerchantList(props: { merchants: readonly TopMerchantView[] }
           ))}
         </ol>
       </Card>
-      <p className="text-small text-muted">Click a Merchant to see its Transactions.</p>
+      <p className="text-small text-muted">Choose a Merchant to see its Transactions.</p>
     </>
   );
 }
