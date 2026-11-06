@@ -4,6 +4,23 @@ A free, self-hosted, read-only finance tracker for one US Household. It pulls Tr
 
 v1 is being built. The rules are in the [v1 spec](docs/spec/README.md), the decisions in [docs/adr](docs/adr/), and the terms in [GLOSSARY.md](GLOSSARY.md).
 
+## Quick start
+
+On a computer with Docker and Compose v2, this runs the app at `http://localhost:3000`, for that computer only:
+
+```sh
+mkdir family-finance-tracker && cd family-finance-tracker
+curl -fsSL -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/main/compose.yaml \
+  -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/main/.env.example
+sed 's|^APP_URL=$|APP_URL=http://localhost:3000|' .env.example > .env
+docker compose run --rm app fft setup
+docker compose up -d
+```
+
+Then open the setup link that `fft setup` printed, such as `http://localhost:3000/setup#code=XXXX-XXXX-XXXX`. The setup wizard shows the Master key once: save it in a password manager.
+
+The [self-hosting guide](docs/self-hosting.md) covers the rest: HTTPS for phones and other devices, a rented server or a platform service, Plaid sign-up, backups and restore, updates, the Master key, and what to do when something goes wrong.
+
 ## Development
 
 The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 26.
@@ -30,6 +47,8 @@ A package in the production tree or the browser bundle that ships no license fil
 The Master key is 32 random bytes written as 64 hexadecimal characters. The app reads the file named by `FFT_MASTER_KEY_FILE` (default `/run/secrets/master.key`), or `FFT_MASTER_KEY` when that file is missing, and does not start without one. `fft setup` makes it, with mode `0600`, and prints a one-use setup link that makes the first Member. Keep the Master key file readable only by the app's user, and keep a copy off the server, such as in a password manager: without it, every Connection must be made again. The rules are in [Members, login, and security](docs/spec/09-members-login-security.md#the-master-key) and [Install and first-run setup](docs/spec/12-install-and-first-run.md#the-fft-command).
 
 ## Docker
+
+To build and run the image from this source, instead of the published image:
 
 ```sh
 docker build --tag family-finance-tracker .

@@ -162,6 +162,11 @@ jobs:
           grep --quiet '^react ' notices.txt
       - name: compose.yaml starts the app as UID 1000, and PUID and PGID change it
         run: scripts/compose-smoke-test.sh family-finance-tracker:ci
+      # The README's quick start, word for word, with APP_URL=http://localhost:3000. It fetches
+      # nothing: compose.yaml and .env.example come from this checkout. The link check on the
+      # README and docs/self-hosting.md runs with the tests, in scripts/doc-links.test.ts.
+      - name: The README quick start prints a setup link, and GET /healthz answers 200
+        run: scripts/quick-start-test.sh family-finance-tracker:ci
 
   platforms:
     name: Docker image for amd64 and arm64
