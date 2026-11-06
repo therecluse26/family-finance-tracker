@@ -131,13 +131,16 @@ function statusOf(error: unknown): number | undefined {
   return APICallError.isInstance(last) ? last.statusCode : undefined;
 }
 
+// The fixed prompt of the check on save and the key test. It holds no Household data.
+const CHECK_PROMPT = "Reply with OK.";
+
 // One call with a 1-token reply, and no retry, with a model from privateModels counted as the
 // check on save. A 401 or 403 means the AI provider rejected the key.
 export async function checkModel(model: LanguageModel, logger: Logger): Promise<ModelCheck> {
   try {
     await generateText({
       model,
-      prompt: "Reply with OK.",
+      prompt: CHECK_PROMPT,
       maxOutputTokens: 1,
       maxRetries: 0,
       timeout: CALL_TIMEOUT_MS,
@@ -219,6 +222,42 @@ function callErrorOf(error: unknown): AiCallError | undefined {
     return new AiCallError("bad reply");
   }
   return networkCode(last) ? new AiCallError("network") : undefined;
+}
+
+// "Test the key" (spec 08, Test the key): one call with the fixed prompt and a 1-token reply, no
+// retry, and the 120-second limit, with a model from privateModels counted as the key test. A
+// failure maps as every AI call's does. Throws a plain Error for a failure that is not the AI
+// provider's, such as a database error, never the error itself, which can hold the key.
+export async function testModel(
+  model: LanguageModel,
+  logger: Logger,
+): Promise<"worked" | AiFailure | "key rejected"> {
+  // The timeout is the app's own, so a test's fake clock moves it.
+  const timeout = new AbortController();
+  const timer = setTimeout(
+    () => timeout.abort(new DOMException("No reply within 120 seconds.", "TimeoutError")),
+    CALL_TIMEOUT_MS,
+  );
+  try {
+    await generateText({
+      model,
+      prompt: CHECK_PROMPT,
+      maxOutputTokens: 1,
+      maxRetries: 0,
+      abortSignal: timeout.signal,
+    });
+    return "worked";
+  } catch (error) {
+    if (timeout.signal.aborted) return "timeout";
+    const failed = callErrorOf(error);
+    if (failed !== undefined) return failed.failure;
+    logger.warn("The key test failed in the app", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+    throw new Error("The key test failed in the app.");
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // The AI SDK's tools for a call's tools. Each result goes out as plain JSON data, which the privacy

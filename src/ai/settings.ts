@@ -3,7 +3,9 @@ import { aiMayRun } from "../bank/index.ts";
 import {
   AI_SETTINGS_ROW,
   type AiUseName,
+  clearAiKeyRejected,
   type Database,
+  markAiKeyRejected,
   readAiSettings,
   readAiSettingsVersion,
   readMemberPrice,
@@ -25,13 +27,15 @@ import {
   baseUrlProblem,
   type EnteredPrice,
   isBackground,
+  type KeyTest,
+  type KeyTestResult,
   type ModelCheck,
   type ModelUse,
   onGateway,
   type PriceSource,
   USE_TIERS,
 } from "./ai-view.ts";
-import { checkModel, privateModels } from "./call.ts";
+import { type AiFailure, checkModel, privateModels, testModel } from "./call.ts";
 import type { AiCost } from "./cost.ts";
 import type { AiPause } from "./outbound.ts";
 import { type ModelPrice, memberPrice, tablePrice } from "./prices.ts";
@@ -126,6 +130,41 @@ export function noticesOf(options: Pick<AiOptions, "notices">): AiNotices {
 // that works, or removes the AI provider.
 export const KEY_REJECTED_CONDITION = "ai key rejected";
 
+// Spec 08, Failures: a rejected key pauses AI until a Member fixes it, with one System notice. It
+// marks the key only at `generation`, so a key saved since the call stays as it is.
+export async function markKeyRejected(
+  options: Pick<AiOptions, "database" | "logger" | "notices">,
+  generation: number,
+): Promise<void> {
+  const { database, logger = log } = options;
+  if (!(await markAiKeyRejected(database, generation, new Date()))) return;
+  try {
+    await noticesOf(options).raise({
+      kind: "condition",
+      condition: KEY_REJECTED_CONDITION,
+      text: "AI paused: the AI provider rejected the key. A Member can enter a new key in Settings, AI.",
+    });
+  } catch (error) {
+    logger.warn("The rejected AI key System notice could not be raised", {
+      error: error instanceof Error ? error.name : "unknown",
+    });
+  }
+}
+
+// Spec 08, Test the key: a test starts at least 10 seconds after the last one started.
+export const KEY_TEST_WAIT_MS = 10_000;
+
+// The line a key test's call ends on. Every AI error but a rate limit is "no answer".
+const TEST_RESULTS: Record<"worked" | AiFailure | "key rejected", KeyTestResult> = {
+  worked: "works",
+  "key rejected": "key rejected",
+  "rate limit": "rate limit",
+  network: "no answer",
+  timeout: "no answer",
+  "server error": "no answer",
+  "bad reply": "no answer",
+};
+
 export function aiSettings(options: AiOptions): AiSettings {
   const { database, secrets, cost, makeModels, logger = log } = options;
   const gates = options.gates ?? defaultGates(database, cost);
@@ -195,8 +234,89 @@ export function aiSettings(options: AiOptions): AiSettings {
     };
   }
 
+  // "Test the key": one test at a time, and at least 10 seconds after the last one started, both
+  // in memory, as a restart ends every test. A test takes its place in the same step as the check,
+  // before any wait, so tests sent together cannot all pass.
+  let testing = false;
+  let lastTestAt: number | undefined;
+
+  async function testKey(): Promise<KeyTest> {
+    const at = Date.now();
+    if (testing) return { tested: false, refusal: "busy" };
+    if (lastTestAt !== undefined && at - lastTestAt < KEY_TEST_WAIT_MS) {
+      const waitSeconds = Math.ceil((lastTestAt + KEY_TEST_WAIT_MS - at) / 1000);
+      return { tested: false, refusal: "too soon", waitSeconds };
+    }
+    const before = lastTestAt;
+    testing = true;
+    lastTestAt = at;
+    let called = false;
+    try {
+      const { settings: stored, generation } = await readAiSettingsVersion(database);
+      if (stored === undefined) return { tested: true, result: "no key", ai: null };
+      const apiKey = stored.apiKey === null ? undefined : readSecret(stored.apiKey, KEY_PLACE);
+      if (stored.apiKey !== null && apiKey === undefined) {
+        return { tested: false, refusal: "key unreadable" };
+      }
+      if (apiKey === undefined && stored.provider !== "openai-compatible") {
+        return { tested: true, result: "no key", ai: (await view()) ?? null };
+      }
+      const gatewayToken =
+        stored.gatewayToken === null ? undefined : readSecret(stored.gatewayToken, TOKEN_PLACE);
+      if (stored.gatewayToken !== null && gatewayToken === undefined) {
+        return { tested: false, refusal: "token unreadable" };
+      }
+      // The app makes no call with a model that has no price.
+      const price = await priceOf(database, stored.provider, stored.quickModel);
+      if (price === undefined) return { tested: false, refusal: "price needed" };
+      // Before the AI provider sees them, so no log line can hold them.
+      for (const secret of [apiKey, gatewayToken]) {
+        if (secret !== undefined) registerSecretValue(secret);
+      }
+      // The test is the Member's own, as the check on save is, so no gate holds it back: it runs at
+      // the AI cost cap, while history loads, and while the key is marked as rejected. It still
+      // passes the privacy filter, and its cost still counts.
+      const models = privateModels(
+        database,
+        makeModels,
+        { provider: stored.provider, apiKey, baseUrl: stored.baseUrl, gatewayToken },
+        { quick: stored.quickModel, writer: stored.writerModel },
+        () => ({
+          use: "key test",
+          provider: stored.provider,
+          model: stored.quickModel,
+          price,
+          gate: async () => undefined,
+          cost,
+        }),
+      );
+      called = true;
+      const answer = await testModel(models.quick, logger);
+      if (answer !== "worked") {
+        // Never the prompt, the reply, or the key: only what failed.
+        logger.warn("The key test failed", { failure: answer });
+      }
+      // A save or a Remove AI provider came first while the AI provider answered.
+      if ((await readAiSettingsVersion(database)).generation !== generation) {
+        return { tested: false, refusal: "changed" };
+      }
+      if (answer === "key rejected") await markKeyRejected(options, generation);
+      // A key that works ends the paused AI's System notice, as a save with the same key does.
+      if (answer === "worked" && (await clearAiKeyRejected(database, generation))) {
+        await endKeyRejected();
+        await changed();
+      }
+      return { tested: true, result: TEST_RESULTS[answer], ai: (await view()) ?? null };
+    } finally {
+      testing = false;
+      // A test that made no call gives its place back.
+      if (!called) lastTestAt = before;
+    }
+  }
+
   return {
     view,
+    testKey,
 
     async save(input) {
       const { settings: stored, generation } = await readAiSettingsVersion(database);

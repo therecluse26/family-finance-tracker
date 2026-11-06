@@ -511,7 +511,8 @@ export const aiSettings = sqliteTable(
 );
 
 // Each AI use, as the AI usage page names it (spec 08, Every AI use). The check on save is the one
-// call to each model when a Member saves the AI settings.
+// call to each model when a Member saves the AI settings, and the key test is the one call to the
+// Quick model when a Member presses "Test the key".
 export const AI_USE_NAMES = [
   "category fix",
   "merchant cleanup",
@@ -524,6 +525,7 @@ export const AI_USE_NAMES = [
   "monthly review",
   "chat",
   "check on save",
+  "key test",
 ] as const;
 
 // One AI call, for the AI usage page and the AI cost cap (spec 08, Counting cost). It holds

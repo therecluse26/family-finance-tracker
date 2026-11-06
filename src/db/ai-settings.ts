@@ -84,6 +84,23 @@ export async function markAiKeyRejected(
   return result.rowsAffected === 1;
 }
 
+// Clears the rejected key mark after a call with the same key worked, such as "Test the key", read
+// at `generation`. A save or a Remove AI provider since then changed the key, so it clears nothing.
+// True when it cleared the mark now, and false when there was none.
+export async function clearAiKeyRejected(database: Database, generation: number): Promise<boolean> {
+  const result = await database
+    .update(aiSettings)
+    .set({ keyRejectedAt: null })
+    .where(
+      and(
+        eq(aiSettings.id, AI_SETTINGS_ROW),
+        eq(aiSettings.generation, generation),
+        isNotNull(aiSettings.keyRejectedAt),
+      ),
+    );
+  return result.rowsAffected === 1;
+}
+
 const EMPTY = {
   provider: null,
   apiKey: null,

@@ -10,6 +10,7 @@ import {
   type AiView,
   DEFAULT_MODELS,
   type EnteredPrice,
+  type KeyTestResult,
   MAX_COST_CAP_CENTS,
   type ModelCheck,
   onGateway,
@@ -109,6 +110,42 @@ const CHECK_TONE: Record<ModelCheck, StatusTone> = {
 
 const TIER_LABELS: Record<AiTier, string> = { quick: "Quick model", writer: "Writer model" };
 
+// What "Test the key" found, as its line shows it (spec 08, Test the key).
+export const KEY_TEST_WORDS: Record<KeyTestResult, string> = {
+  works: "The key works",
+  "key rejected": "The AI provider rejected the key",
+  "rate limit": "The AI provider is limiting calls. Wait a minute, then test again",
+  "no answer": "The AI provider did not answer. Try again later",
+  "no key": "No key is saved",
+};
+
+const KEY_TEST_TONE: Record<KeyTestResult, StatusTone> = {
+  works: "good",
+  "key rejected": "critical",
+  "rate limit": "serious",
+  "no answer": "serious",
+  "no key": "muted",
+};
+
+// Presses "Test the key": the result with the AI settings after it, or the server's refusal, such
+// as "Wait 4 seconds, then test the key again.".
+export async function testTheKey(): Promise<
+  { result: KeyTestResult; ai: AiView | null } | { error: string }
+> {
+  const res = await api.ai.test.$post({ json: {} });
+  if (!res.ok) return { error: await refusal(res) };
+  return (await res.json()) as { result: KeyTestResult; ai: AiView | null };
+}
+
+// The line under the buttons: what the last test found, with its icon, color, and words.
+export function KeyTestLine(props: { result: KeyTestResult }) {
+  return (
+    <p className="mt-3 text-small" role="status" data-slot="key-test">
+      <StatusText tone={KEY_TEST_TONE[props.result]}>{KEY_TEST_WORDS[props.result]}</StatusText>
+    </p>
+  );
+}
+
 // A price as a Member types it, in dollars per million tokens, such as "0.50", in millionths of
 // a dollar per million tokens. Undefined when it is not $0 or more with at most 6 decimals.
 export function priceOfText(text: string): number | undefined {
@@ -177,6 +214,9 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [check, setCheck] = useState<Record<AiTier, ModelCheck> | undefined>();
+  const [testing, setTesting] = useState(false);
+  const [tested, setTested] = useState<KeyTestResult | undefined>();
+  const [testError, setTestError] = useState<string | undefined>();
 
   const sameDestination =
     ai !== null && ai.provider === provider && ai.baseUrl === (baseUrl.trim() || null);
@@ -227,6 +267,24 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
       setError("The server did not answer.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  // "Test the key" tests the saved settings, not the fields as typed. Its call counts toward the
+  // month's cost, and it may change the status line, so the page loads both again.
+  async function testKey() {
+    setTestError(undefined);
+    setTested(undefined);
+    setTesting(true);
+    try {
+      const answer = await testTheKey();
+      if ("error" in answer) return setTestError(answer.error);
+      setTested(answer.result);
+      props.onSaved(answer.ai);
+    } catch {
+      setTestError("The server did not answer.");
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -352,8 +410,13 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
         <Button type="submit" disabled={busy}>
           Check and save
         </Button>
+        <Button type="button" variant="outlined" disabled={testing} onClick={testKey}>
+          Test the key
+        </Button>
       </div>
       <ErrorLine error={error} />
+      <ErrorLine error={testError} />
+      {tested === undefined ? null : <KeyTestLine result={tested} />}
       {check === undefined ? null : (
         <ul className="mt-3 text-small">
           {(["quick", "writer"] as const).map((tier) => (
