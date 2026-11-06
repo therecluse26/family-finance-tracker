@@ -8,21 +8,23 @@ import type * as Db from "../db/index.ts";
 import {
   addGoal,
   claimGoalAmount,
+  closeDatabase,
   expireProposals,
   listBudgetsInEffect,
   type NewBudget,
+  openDatabaseCopy,
   readGoal,
   readHouseholdSummary,
   storeBudgetChangeAccept,
   storeDecisions,
   storeFirstDraft,
   storeGoalAmountApplied,
+  storeGoalStart,
   storeHouseholdSummary,
   storeNewGoalAccept,
 } from "../db/index.ts";
 import { readEveryTable } from "../db/testing.ts";
-import type * as Goals from "../goals/index.ts";
-import { markGoal, startGoal } from "../goals/index.ts";
+import { markGoal } from "../goals/index.ts";
 import {
   acceptProposal,
   GUARDRAIL,
@@ -43,12 +45,9 @@ vi.mock("../db/index.ts", async (original) => {
   return {
     ...actual,
     expireProposals: vi.fn(actual.expireProposals),
+    storeGoalStart: vi.fn(actual.storeGoalStart),
     storeGoalAmountApplied: vi.fn(actual.storeGoalAmountApplied),
   };
-});
-vi.mock("../goals/index.ts", async (original) => {
-  const actual = await original<typeof Goals>();
-  return { ...actual, startGoal: vi.fn(actual.startGoal) };
 });
 
 // Proposals (spec 08, Proposals; Guardrails; Lifecycle; spec 05, What accepting a Proposal
@@ -667,7 +666,7 @@ describe("Proposals", () => {
       expect(await readEveryTable(bank.database)).toEqual(before);
     });
 
-    it("accepts nothing when a step of a Goal amount's Accept fails, and can be accepted again", async () => {
+    it("accepts nothing when a step of a Goal amount's Accept fails, even in a crash, and can be accepted again", async () => {
       const goalId = await spendLessGoal();
       const id = await shown({
         kind: "Goal amount",
@@ -679,15 +678,40 @@ describe("Proposals", () => {
       });
       const before = await readEveryTable(bank.database);
       const accept = () => acceptProposal(bank.database, { id, memberId: "member-a" }, NOW);
+      // What app.db holds for good when a step fails, as a crash at that point would leave it: read
+      // on a second connection, which sees only what is committed.
+      const file = await bank.database.$client.execute(
+        "SELECT file FROM pragma_database_list WHERE name = 'main'",
+      );
+      const held: string[] = [];
+      const crash = (message: string) => async () => {
+        const other = openDatabaseCopy(String(file.rows[0]?.file));
+        try {
+          const proposal = await other.$client.execute({
+            sql: "SELECT status FROM proposals WHERE id = ?",
+            args: [id],
+          });
+          const goal = await other.$client.execute({
+            sql: "SELECT goal_amount FROM goals WHERE id = ?",
+            args: [goalId],
+          });
+          held.push(`${proposal.rows[0]?.status} ${goal.rows[0]?.goal_amount}`);
+        } finally {
+          closeDatabase(other);
+        }
+        throw new Error(message);
+      };
 
-      vi.mocked(startGoal).mockRejectedValueOnce(new Error("The Goal start failed."));
+      vi.mocked(storeGoalStart).mockImplementationOnce(crash("The Goal start failed."));
       await expect(accept()).rejects.toThrow("The Goal start failed.");
       expect(await readEveryTable(bank.database)).toEqual(before);
 
-      // The Goal amount is set, then recording it fails: the Goal gets back what it held.
-      vi.mocked(storeGoalAmountApplied).mockRejectedValueOnce(new Error("The write failed."));
+      // The Goal amount is set, then recording it fails.
+      vi.mocked(storeGoalAmountApplied).mockImplementationOnce(crash("The write failed."));
       await expect(accept()).rejects.toThrow("The write failed.");
       expect(await readEveryTable(bank.database)).toEqual(before);
+      // At each failure, the Proposal was still open and the Goal had no amount.
+      expect(held).toEqual(["open null", "open null"]);
 
       expect(await accept()).toBe("accepted");
       expect(await readGoal(bank.database, goalId)).toMatchObject({ goalAmount: $(480) });

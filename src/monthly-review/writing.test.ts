@@ -23,6 +23,7 @@ import {
   storeMonthlyReviewReply,
   storeMonthlyReviewRetry,
 } from "../db/index.ts";
+import { markGoal, readGoalsWithProgress } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { openReviewProposals, propose } from "../proposals/index.ts";
 import {
@@ -499,6 +500,31 @@ describe("writing the Monthly review", () => {
       "Cooking two more nights moves this about $180.",
       "Cooking two more nights moves this about $180.",
     ]);
+  });
+
+  // Spec 05, Rules: done and dropped Goals leave the AI's context, though a Goal done this month
+  // still shows with the active ones on the Goals page.
+  it("sends only the active Goals: a Goal done this month is not in the call", async () => {
+    await connectAi();
+    const done = await addGoal(bank.database, {
+      words: "Put money aside for the beach trip",
+      authorId: "member-1",
+      date: "2026-10-06",
+      target: null,
+      change: null,
+      deadline: null,
+    });
+    expect(await markGoal(bank.database, done, "done", "member-1", ON_THE_1ST("00:00"))).toBe(
+      "marked",
+    );
+    expect(
+      (await readGoalsWithProgress(bank.database, NOON)).find((goal) => goal.id === done),
+    ).toMatchObject({ status: "done", list: "active" });
+
+    expect(await check(NOON)).toBe("written");
+
+    expect(asked[0]?.goals).toBe('Active Goals, by number:\n1. "Spend less on eating out"');
+    expect(JSON.stringify(stub.prompts.at(-1))).not.toContain("beach trip");
   });
 
   it("refuses a reply with 3 Budget changes, or one that breaks the review fields, as an AI error", async () => {

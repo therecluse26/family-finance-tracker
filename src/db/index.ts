@@ -499,7 +499,6 @@ export {
   type ProposalSource,
   type ProposalStatus,
   readProposal,
-  reopenProposal,
   type StoredProposal,
   type StoredProposalBudget,
   storeBudgetChangeAccept,

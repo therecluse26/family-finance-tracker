@@ -139,7 +139,11 @@ export function draftBudgets(terms: DraftTerms): DraftedBudget[] {
       continue;
     }
     if (sharesTWith(category) !== undefined) {
-      monthly(shareOf(terms, category, b));
+      // A share of T that rounds to $0 gives no Budget, never a $0 one (spec 05, Which Categories
+      // get a Budget). So a newcomer with a tiny r gets no first Budget this month, and the one
+      // that holds T keeps all of it.
+      const share = shareOf(terms, category, b);
+      if (wholeDollars(share) > 0) monthly(share);
       continue;
     }
     monthly(Math.max(k, y + (n < MIN_HISTORY_MONTHS ? b : Math.min(b, withRoom(aFlex)))));

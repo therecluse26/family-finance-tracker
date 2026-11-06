@@ -97,9 +97,42 @@ async function raiseMonthStartStopped(): Promise<void> {
   });
 }
 
+// Work another module does in the Month start job, on the 1st, Household time: the Goal Done check
+// (spec 05, Done). A step runs in each run that finds the month's work due, after the month's
+// Budgets, whether they were set or not. Its failure is its own: it changes neither the Month
+// start's result nor its tries. A step must be safe to run again, as it does after a failed run.
+export type MonthStartStep = (now: Date) => Promise<void>;
+
+const monthStartSteps = new Map<string, MonthStartStep>();
+
+// Registers a step's work. Returns a function that removes it again.
+export function registerMonthStartStep(name: string, step: MonthStartStep): () => void {
+  if (monthStartSteps.has(name)) {
+    throw new Error(`The Month start step "${name}" is already registered.`);
+  }
+  monthStartSteps.set(name, step);
+  return () => {
+    if (monthStartSteps.get(name) === step) monthStartSteps.delete(name);
+  };
+}
+
+async function runMonthStartSteps(now: Date): Promise<void> {
+  for (const [name, step] of monthStartSteps) {
+    try {
+      await step(now);
+    } catch (error) {
+      log.error("A Month start step failed", {
+        step: name,
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+}
+
 // The Month start's work for the Household's month, when it is due: after the first draft, not yet
 // done, and not stopped at the cap. A failed run counts a try and never throws, so the daily task
-// tries again the next day. The run that reaches the cap raises one System notice.
+// tries again the next day. The run that reaches the cap raises one System notice. Each registered
+// step runs after the month's Budgets.
 export async function runMonthStart(
   database: Database,
   now = new Date(),
@@ -110,6 +143,16 @@ export async function runMonthStart(
   const state = await readMonthStart(database, month);
   if (state?.doneAt != null) return "not due";
   if ((state?.failedTries ?? 0) >= MONTH_START_CAP) return "stopped";
+  const result = await setMonthStartBudgets(database, month, now);
+  await runMonthStartSteps(now);
+  return result;
+}
+
+async function setMonthStartBudgets(
+  database: Database,
+  month: string,
+  now: Date,
+): Promise<"done" | "failed" | "stopped"> {
   try {
     const written = await setMonthBudgets(database, now, true);
     await markMonthStartDone(database, month, now);

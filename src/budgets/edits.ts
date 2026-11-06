@@ -1,4 +1,4 @@
-import { isCategory } from "../categories/index.ts";
+import { categoryGroupOf, isCategory } from "../categories/index.ts";
 import {
   type Database,
   type DraftAcceptance,
@@ -16,7 +16,8 @@ import { type Budget, budgetOf } from "./stored.ts";
 // effect in the Household's current month.
 
 // Edits the Budget in effect this month: from this month, or for a yearly Budget the whole current
-// year. An edited Bills Budget is pinned. Undefined when the Category has no Budget.
+// year. An edited Bills Budget is pinned. A Category whose first Budget a Member undid gets its
+// Budget again this way. Undefined when the Category has no Budget.
 export async function editBudget(
   database: Database,
   edit: { category: string; amount: number; memberId: string },
@@ -29,6 +30,7 @@ export async function editBudget(
     amount: edit.amount,
     setBy: edit.memberId,
     setAt: now,
+    bills: categoryGroupOf(category) === "Bills",
   });
   if (stored === undefined) return undefined;
   log.info("A Member edited a Budget", { period: stored.period, pinned: stored.pinned });

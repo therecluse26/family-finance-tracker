@@ -164,6 +164,13 @@ describe("the draft formulas", () => {
         }),
       ).toEqual(["Groceries: 700 monthly", "Superstores: 560 monthly"]);
     });
+
+    // Spec 05, Which Categories get a Budget: never a $0 Budget this way.
+    it("drafts no Budget for a share that rounds to $0: T = $400, Superstores' share is 0.001", () => {
+      const given = { ...shopping(999, 1), benchmarks: { Groceries: $(400), Superstores: $(400) } };
+      // Superstores: $400 × 0.001 = $0.40. Groceries: $400 × 0.999 = $399.60.
+      expect(both(given)).toEqual(["Groceries: 400 monthly"]);
+    });
   });
 
   describe("Categories with a Benchmark: max(K, Y + min(B, A_flex × 1.10))", () => {

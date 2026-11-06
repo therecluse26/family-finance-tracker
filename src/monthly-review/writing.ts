@@ -365,7 +365,8 @@ async function ask(
   let goals: Goal[];
   let reply: AiReply<ReviewAnswer>;
   try {
-    goals = (await readGoalsWithProgress(database, now)).filter((goal) => goal.list === "active");
+    // A done Goal leaves the AI's context at once (spec 05, Rules).
+    goals = (await readGoalsWithProgress(database, now)).filter((goal) => goal.status === "active");
     const summary = await householdSummary({
       database,
       ai,
