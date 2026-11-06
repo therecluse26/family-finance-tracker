@@ -8,6 +8,7 @@ import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { PictureRoutes } from "../pictures/picture-view.ts";
+import type { WeeklySummarySettings } from "../weekly-summary/view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AiBoxRoutes } from "./ai-box-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
@@ -105,6 +106,8 @@ export type ServerEnv = {
     smtp: SmtpSettings;
     // Each Member's own channels for Alerts and System notices.
     channels: ChannelSettings;
+    // Each Member's own weekly summary email switch.
+    weeklySummary: WeeklySummarySettings;
     // Web push and each Member's devices, for the routes under /api/push/.
     push: PushSettings;
   };

@@ -18,6 +18,7 @@ import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { weeklySummarySettings } from "../weekly-summary/index.ts";
 import { aboutRoutes } from "./about.ts";
 import { aiBoxRoutes } from "./ai-box.ts";
 import { alertRoutes } from "./alerts.ts";
@@ -216,6 +217,7 @@ export function createApp(
   const pictures = pictureRoutes(database);
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);
+  const weeklySummary = weeklySummarySettings(database);
   const topMerchants = topMerchantRoutes(database);
   const aiBox = aiBoxRoutes(database, services.ai);
   const proposals = proposalRoutes(database);
@@ -275,6 +277,7 @@ export function createApp(
         c.set("pictures", pictures);
         c.set("comingUp", comingUp);
         c.set("channels", channels);
+        c.set("weeklySummary", weeklySummary);
         c.set("topMerchants", topMerchants);
         c.set("aiBox", aiBox);
         c.set("proposals", proposals);
@@ -299,6 +302,7 @@ export function createApp(
       .use("/api/push/*", secretRoutes(database, "push", services.push))
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
+      .use("/api/weekly-summary", jsonOnly)
       .route("/api", api)
       .route("/api/dev", services.devRoutes ?? new Hono<ServerEnv>())
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))

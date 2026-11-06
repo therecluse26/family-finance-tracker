@@ -627,3 +627,12 @@ export {
   storeUpdateFailure,
   type UpdateCheckState,
 } from "./update-check.ts";
+export {
+  countWeeklySummaryFailures,
+  finishWeeklySummary,
+  listWeeklySummaryMembers,
+  readLastWeeklySummary,
+  readWeeklySummarySwitch,
+  storeWeeklySummarySwitch,
+  takeWeeklySummaries,
+} from "./weekly-summaries.ts";

@@ -614,6 +614,9 @@ const SEND_PROBLEMS: Record<SendProblem, string> = {
 // A Member's own channels: push, email, both, or none.
 const channelsBody = z.object({ push: z.boolean(), email: z.boolean() }).strict();
 
+// A Member's own weekly summary email switch: on or off, for the signed-in Member only.
+const weeklySummaryBody = z.object({ on: z.boolean() }).strict();
+
 // A browser's push subscription (spec 06, Recipients and channels). Its keys are base64url: the
 // browser's P-256 public key, 65 bytes, and its auth secret, 16 bytes.
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
@@ -1648,6 +1651,17 @@ export const api = new Hono<ServerEnv>()
     const body = channelsBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Pick push, email, both, or none." }, 400);
     return c.json({ channels: await c.var.channels.set(c.var.member.id, body.data) }, 200);
+  })
+  // Settings, Alerts: the signed-in Member's own weekly summary email (spec 06, Weekly summary
+  // email). The Member comes from the session, never from the body.
+  .get("/weekly-summary", async (c) =>
+    c.json({ weeklySummary: await c.var.weeklySummary.view(c.var.member.id) }),
+  )
+  .put("/weekly-summary", async (c) => {
+    const body = weeklySummaryBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Turn the weekly summary on or off." }, 400);
+    const weeklySummary = await c.var.weeklySummary.set(c.var.member.id, body.data.on);
+    return c.json({ weeklySummary }, 200);
   })
   // Settings, Alerts: web push, over HTTPS only. The answer holds the VAPID public key, never the
   // private key.
