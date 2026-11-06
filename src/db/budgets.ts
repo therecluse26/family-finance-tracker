@@ -165,8 +165,12 @@ export async function listBudgetsInEffect(
 // - `follows`: a Bills Budget, which follows the formula each month. It replaces the Budget in
 //   effect unless that one is pinned, or a Member set this month's by hand.
 // - `first`: it becomes the Category's first Budget when the Category has none in effect.
-// An entry that is neither changes nothing.
-export type MonthBudget = NewBudget & { follows: boolean; first: boolean };
+// - `sharesTWith`: the Category this one shares T with, Groceries or Superstores (spec 05, Shopping:
+//   Groceries and Superstores). When that one gets its first Budget in this write while the formula
+//   set this one's Budget in effect, this entry replaces it, so their total stays T. A Budget a
+//   Member set, or an AI draft, never changes this way, and neither does any Budget for $0.
+// An entry that is none of these changes nothing.
+export type MonthBudget = NewBudget & { follows: boolean; first: boolean; sharesTWith?: string };
 
 // Stores the formula's Budgets for `month` (YYYY-MM) in one write, each by its rule above. A month's
 // formula Budget that is already stored is updated in place, so running twice stores nothing new.
@@ -181,10 +185,17 @@ export async function storeMonthBudgets(
       (await listBudgetsInEffect(tx, month)).map((row) => [row.category, row]),
     );
     let written = 0;
-    for (const { follows, first, ...entry } of entries) {
+    // The Categories that get their first Budget in this write, and the entries that wait on them.
+    const firsts = new Set<string>();
+    const shares: { sharesTWith: string; current: StoredBudget; entry: NewBudget }[] = [];
+    for (const { follows, first, sharesTWith, ...entry } of entries) {
       const current = inEffect.get(entry.category);
       if (current === undefined) {
         if (!first) continue;
+        firsts.add(entry.category);
+      } else if (sharesTWith !== undefined) {
+        shares.push({ sharesTWith, current, entry });
+        continue;
       } else {
         if (!follows || current.pinned === true) continue;
         if (current.takesEffect === entry.takesEffect) {
@@ -199,6 +210,20 @@ export async function storeMonthBudgets(
         }
       }
       await tx.insert(budgets).values(entry);
+      written += 1;
+    }
+    for (const { sharesTWith, current, entry } of shares) {
+      if (!firsts.has(sharesTWith) || current.source !== "formula") continue;
+      // A share that rounds to $0 leaves the Budget as it is: never a $0 Budget this way.
+      if (entry.amount <= 0 || current.amount === entry.amount) continue;
+      if (current.takesEffect === entry.takesEffect) {
+        await tx
+          .update(budgets)
+          .set({ amount: entry.amount, setAt: entry.setAt })
+          .where(eq(budgets.id, current.id));
+      } else {
+        await tx.insert(budgets).values(entry);
+      }
       written += 1;
     }
     return written;

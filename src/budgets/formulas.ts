@@ -76,12 +76,38 @@ function groceriesAndSuperstores(terms: DraftTerms, bGs: number): { t: number; r
   return { t, r: both > 0 ? terms.split.groceries / both : 0.5 };
 }
 
+// Groceries and Superstores share one figure, T. The other Category of the two, or undefined for
+// any other Category.
+export function sharesTWith(category: Category): Category | undefined {
+  if (category === "Groceries") return "Superstores";
+  if (category === "Superstores") return "Groceries";
+  return undefined;
+}
+
+// When I is $0, flexible Categories draft as if they had no Benchmark.
+const benchmarkOf = (terms: DraftTerms, category: Category) =>
+  terms.income > 0 ? (terms.benchmarks[category] ?? null) : null;
+
+// Groceries' or Superstores' Budget from its share of T: max(K, Y + T × r) for Groceries, and
+// max(K, Y + T × (1 − r)) for Superstores. K and Y are each Category's own.
+function shareOf(terms: DraftTerms, category: Category, bGs: number): number {
+  const { t, r } = groceriesAndSuperstores(terms, bGs);
+  const { k, y } = terms.categories[category];
+  return Math.max(k, y + t * (category === "Groceries" ? r : 1 - r));
+}
+
+// Groceries' or Superstores' Budget from its share of T. Undefined for any other Category, and when
+// there is no T: with no B_GS, or when I is $0. The Month start sets it when the other of the two
+// gets its first Budget (spec 05, Shopping: Groceries and Superstores).
+export function shareOfT(terms: DraftTerms, category: Category): number | undefined {
+  const bGs = benchmarkOf(terms, category);
+  if (sharesTWith(category) === undefined || bGs === null) return undefined;
+  return wholeDollars(shareOf(terms, category, bGs));
+}
+
 // Every Budget the formulas draft for m, in Category list order. A Category with none is left out.
 export function draftBudgets(terms: DraftTerms): DraftedBudget[] {
-  const { n, income } = terms;
-  // When I is $0, flexible Categories draft as if they had no Benchmark.
-  const benchmarkOf = (category: Category) =>
-    income > 0 ? (terms.benchmarks[category] ?? null) : null;
+  const { n } = terms;
   const drafted: DraftedBudget[] = [];
   for (const { name: category, group } of CATEGORIES) {
     const { spent, a, aOther, aFlex, k, y, kLoans } = terms.categories[category];
@@ -107,14 +133,13 @@ export function draftBudgets(terms: DraftTerms): DraftedBudget[] {
       }
       continue;
     }
-    const b = benchmarkOf(category);
+    const b = benchmarkOf(terms, category);
     if (b === null) {
       if (n >= MIN_HISTORY_MONTHS) monthly(Math.max(k, y + withRoom(aFlex)));
       continue;
     }
-    if (category === "Groceries" || category === "Superstores") {
-      const { t, r } = groceriesAndSuperstores(terms, b);
-      monthly(Math.max(k, y + t * (category === "Groceries" ? r : 1 - r)));
+    if (sharesTWith(category) !== undefined) {
+      monthly(shareOf(terms, category, b));
       continue;
     }
     monthly(Math.max(k, y + (n < MIN_HISTORY_MONTHS ? b : Math.min(b, withRoom(aFlex)))));

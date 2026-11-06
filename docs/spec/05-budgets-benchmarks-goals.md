@@ -215,6 +215,8 @@ The app drafts the two together, then splits the total by the Household's own ra
 2. r = Groceries Spending ÷ (Groceries + Superstores Spending), over the history window. With n = 0, use all Spending loaded so far.
 3. Groceries: Budget = max(K, Y + T × r). Superstores: Budget = max(K, Y + T × (1 − r)). K and Y are each Category's own.
 
+When one of the two gets its first Budget while the other holds all of T, the app splits T between them by r, so their total stays T. The other keeps its Budget when the formula would give it none this month, or when its share rounds to $0, because no Category gets a $0 Budget this way; the total can then stay above T.
+
 **Example.** B_GS = $1,120. Groceries averages $600 and Superstores $400, so history is $1,000 × 1.10 = $1,100. T = $1,100. r = 60%. Groceries = $660; Superstores = $440. If history had been $1,500, T = $1,120: Groceries $672, Superstores $448.
 
 ### Shopping, Transportation, Health and care, Leisure: Categories with a Benchmark

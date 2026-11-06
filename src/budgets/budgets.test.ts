@@ -19,10 +19,12 @@ import {
   budgetsForMonth,
   draftBudgets,
   draftFirstBudgets,
+  editBudget,
   FIXED_COSTS_PASS_INCOME,
   followBills,
   historyWindow,
   readDraftTerms,
+  runMonthStart,
   startBudgets,
 } from "./index.ts";
 
@@ -466,6 +468,175 @@ describe("Budget drafts", () => {
       expect(categories.Utilities).toMatchObject({ spent: $(50), a: $(50), aOther: $(50) });
       expect(split).toEqual({ groceries: $(300), superstores: $(100) });
       expect(await draft()).toContain("Utilities: 50 monthly");
+    });
+  });
+
+  // Groceries and Superstores share one figure, T (spec 05, Shopping: Groceries and Superstores).
+  // History starts Nov 2, so the first draft on Nov 4 and December's Month start both have n = 0,
+  // and T = B_GS. Household time is Anchorage time.
+  describe("Groceries and Superstores sharing T", () => {
+    const december = new Date("2026-12-01T14:00:00.000Z");
+    let bGs: number;
+    const dollars = (cents: number) => Math.round(cents / 100);
+    // The Groceries and Superstores Budgets for a month as "amount source", in dollars.
+    const shared = async (month: string) =>
+      Object.fromEntries(
+        (await budgetsForMonth(bank.database, month)).budgets
+          .filter(({ category }) => category === "Groceries" || category === "Superstores")
+          .map((budget) => [budget.category, `${budget.amount / 100} ${budget.source}`]),
+      );
+
+    // The first draft gives `holder` all of T. By Nov 30, `holder` has $300 of Spending,
+    // `newcomer` its first $100 (or `newcomerDollars`), and Restaurants its first $60.
+    const draftThenSpend = async (holder: Category, newcomer: Category, newcomerDollars = 100) => {
+      await saveHouseholdFacts(
+        bank.database,
+        { zipCode: "99501", ages: [40, 38], rentOrOwn: "rent" },
+        MEMBER,
+      );
+      await typeSteadyIncome(bank.database, $(6_000), MEMBER);
+      await load([spend("first", "2026-11-02", 200, holder)]);
+      expect(await draftFirstBudgets(bank.database, now)).toBe(true);
+      bGs = (await terms()).benchmarks.Groceries ?? 0;
+      expect(bGs).toBeGreaterThan(0);
+      expect(await shared("2026-11")).toEqual({ [holder]: `${dollars(bGs)} formula` });
+      now = new Date("2026-11-30T14:00:00.000Z");
+      await load([
+        spend("again", "2026-11-15", 100, holder),
+        spend("newcomer", "2026-11-20", newcomerDollars, newcomer),
+        spend("dinner", "2026-11-22", 60, "Restaurants"),
+      ]);
+    };
+
+    it.each([
+      { holder: "Groceries" as const, newcomer: "Superstores" as const },
+      { holder: "Superstores" as const, newcomer: "Groceries" as const },
+    ])(
+      "splits T by r when $newcomer gets its first Budget while $holder holds all of T",
+      async ({ holder, newcomer }) => {
+        await draftThenSpend(holder, newcomer);
+        // $500 more posts Dec 1, before the Month start runs. December's figure stands as of Nov 30,
+        // so it is left out: the holder's share is $300 ÷ $400.
+        now = december;
+        await load([spend("newcomer-again", "2026-12-01", 500, newcomer)]);
+
+        expect(await runMonthStart(bank.database, december)).toBe("done");
+
+        const inDecember = await shared("2026-12");
+        expect(inDecember).toEqual({
+          [holder]: `${dollars((bGs * 3) / 4)} formula`,
+          [newcomer]: `${dollars(bGs / 4)} formula`,
+        });
+        // Their total stays T, to within the rounding of each Budget, not T + T × (1 − r).
+        const total = (await budgetsForMonth(bank.database, "2026-12")).budgets
+          .filter(({ category }) => category === holder || category === newcomer)
+          .reduce((sum, budget) => sum + budget.amount, 0);
+        expect(Math.abs(total / 100 - dollars(bGs))).toBeLessThanOrEqual(1);
+        // A past month keeps its Budget.
+        expect(await shared("2026-11")).toEqual({ [holder]: `${dollars(bGs)} formula` });
+        // Restaurants gets its first Budget in the same write, from its own formula, not a share
+        // of T.
+        const own = draftBudgets(await readDraftTerms(bank.database, "2026-12", december)).find(
+          (budget) => budget.category === "Restaurants",
+        );
+        expect(own?.amount).toBeGreaterThan(0);
+        expect(
+          (await budgetsForMonth(bank.database, "2026-12")).budgets.find(
+            (budget) => budget.category === "Restaurants",
+          )?.amount,
+        ).toBe(own?.amount);
+
+        // Once both have a Budget, the rule is done. In January the window is December, where only
+        // the newcomer has Spending, so r moves to 0 for the holder, and neither Budget changes.
+        now = new Date("2027-01-01T14:00:00.000Z");
+        expect(await runMonthStart(bank.database, now)).toBe("done");
+        expect(await shared("2027-01")).toEqual(inDecember);
+      },
+    );
+
+    it("never changes a Budget a Member set", async () => {
+      await draftThenSpend("Groceries", "Superstores");
+      await editBudget(
+        bank.database,
+        { category: "Groceries", amount: $(700), memberId: MEMBER },
+        now,
+      );
+
+      expect(await runMonthStart(bank.database, december)).toBe("done");
+
+      expect(await shared("2026-12")).toEqual({
+        Groceries: "700 Member edit",
+        Superstores: `${dollars(bGs / 4)} formula`,
+      });
+    });
+
+    it.each(["AI draft", "Proposal"])("never changes an %s Budget", async (kind) => {
+      await draftThenSpend("Groceries", "Superstores");
+      await bank.database.$client.execute({
+        sql: "UPDATE budgets SET source = ? WHERE category = 'Groceries'",
+        args: [kind],
+      });
+
+      expect(await runMonthStart(bank.database, december)).toBe("done");
+
+      expect(await shared("2026-12")).toEqual({
+        Groceries: `${dollars(bGs)} ${kind}`,
+        Superstores: `${dollars(bGs / 4)} formula`,
+      });
+    });
+
+    // Spec 05, Which Categories get a Budget: never a $0 Budget this way.
+    it("keeps the holder's Budget when the formula gives it none this month", async () => {
+      await draftThenSpend("Groceries", "Superstores");
+      // Every Groceries part moves to Superstores, as a Member's recategorization would.
+      await bank.database.$client.execute(
+        "UPDATE transaction_parts SET category = 'Superstores' WHERE category = 'Groceries'",
+      );
+
+      expect(await runMonthStart(bank.database, december)).toBe("done");
+
+      // Superstores takes all of T as its first Budget. Groceries keeps all of T, not $0.
+      expect(await shared("2026-12")).toEqual({
+        Groceries: `${dollars(bGs)} formula`,
+        Superstores: `${dollars(bGs)} formula`,
+      });
+    });
+
+    it("keeps the holder's Budget with no Spending when neither has Spending and T splits evenly", async () => {
+      await draftThenSpend("Groceries", "Superstores");
+      // Every Groceries and Superstores part moves to Miscellaneous, so r = 1/2. Superstores
+      // qualifies only through a monthly Recurring charge expected in December.
+      await bank.database.$client.execute(
+        "UPDATE transaction_parts SET category = 'Miscellaneous' WHERE category IN ('Groceries', 'Superstores')",
+      );
+      await replaceRecurringCharges(bank.database, [
+        charge("warehouse-club", {
+          category: "Superstores",
+          schedule: "monthly",
+          nextExpectedDate: "2026-12-20",
+          paid: [["newcomer", "2026-11-20", $(100)]],
+        }),
+      ]);
+
+      expect(await runMonthStart(bank.database, december)).toBe("done");
+
+      // Superstores: max(K, T × 1/2). Groceries keeps all of T, not T × 1/2.
+      expect(await shared("2026-12")).toEqual({
+        Groceries: `${dollars(bGs)} formula`,
+        Superstores: `${dollars(Math.max($(100), bGs / 2))} formula`,
+      });
+    });
+
+    it("keeps the holder's Budget when its share rounds to $0", async () => {
+      // r = $300 ÷ $1,000,300: the holder's share is under 50 cents.
+      await draftThenSpend("Groceries", "Superstores", 1_000_000);
+
+      expect(await runMonthStart(bank.database, december)).toBe("done");
+
+      expect(await shared("2026-12")).toEqual({
+        Groceries: `${dollars(bGs)} formula`,
+        Superstores: `${dollars((bGs * 1_000_000) / 1_000_300)} formula`,
+      });
     });
   });
 

@@ -12,7 +12,7 @@ import { Job } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { endCondition, raiseNotice } from "../notify/index.ts";
 import { householdDay } from "./first-draft.ts";
-import { draftBudgets } from "./formulas.ts";
+import { draftBudgets, shareOfT, sharesTWith } from "./formulas.ts";
 import { readDraftTerms } from "./terms.ts";
 
 // The month's Bills Budgets (spec 05, When the app drafts; Bills group; Stored Budgets).
@@ -23,7 +23,10 @@ import { readDraftTerms } from "./terms.ts";
 //   Recurring charge or loan payment, which moves its known amount into this month, and a loan
 //   payment's actual interest, which replaces its expected interest, change them.
 // Neither touches a pinned Bills Budget, a Bills Budget a Member set by hand this month, a flexible
-// Budget that exists, or any month but the current one.
+// Budget that exists, or any month but the current one. The one exception is Groceries and
+// Superstores, which share one figure, T: when the Month start gives one of them its first Budget
+// while the formula set the other's, it sets the other's to its share too, so their total stays T.
+// It does so only when the formula gives the other a Budget this month and its share is above $0.
 
 // A month's Month start runs at most this many times before it stops until the next month.
 export const MONTH_START_CAP = 3;
@@ -54,11 +57,14 @@ async function setMonthBudgets(
   for (const { name: category } of CATEGORIES) {
     const bills = categoryGroupOf(category) === "Bills";
     const budget = drafted.get(category);
+    // Groceries' or Superstores' share of T, only when the formula gives it a Budget this month on
+    // its own: one with no Spending in the window and no known amounts never gets a $0 Budget.
+    const share = firstBudgets && budget !== undefined ? shareOfT(terms, category) : undefined;
     if (!bills && (!firstBudgets || budget === undefined)) continue;
     entries.push({
       category,
       // A Bills Category the formula gives no Budget to keeps following it at $0, once it has one.
-      amount: budget?.amount ?? 0,
+      amount: share ?? budget?.amount ?? 0,
       period: budget?.period ?? "monthly",
       takesEffect: budget?.period === "yearly" ? month.slice(0, 4) : month,
       source: "formula",
@@ -67,6 +73,7 @@ async function setMonthBudgets(
       setAt: now,
       follows: bills,
       first: firstBudgets && budget !== undefined,
+      sharesTWith: share === undefined ? undefined : sharesTWith(category),
     });
   }
   return storeMonthBudgets(database, month, entries);
