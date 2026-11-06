@@ -133,13 +133,15 @@ async function decisionContext(
   records: readonly DecisionRecord[],
   pairing?: PairingResult,
 ): Promise<DecisionContext> {
-  const today = await householdToday(database, now);
+  const timeZone = (await householdTimeZone(database)) ?? "UTC";
+  const today = calendarDateIn(now, timeZone);
   const accounts = new Map(
     (await listDecisionAccounts(database)).map((account) => [account.id, account]),
   );
   const members = await listMemberNames(database);
   return {
     today,
+    timeZone,
     accounts,
     members,
     loanFacts: loanFactsReader(database, accounts),

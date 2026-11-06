@@ -87,11 +87,12 @@ export type Decision = {
   offersManualLoan?: ManualLoanOffer;
 };
 
-// What a rule reads besides the Transaction: the Household's date, its Accounts by ID, its
-// Members' names, and the facts of a connected loan or a Manual loan, read once a run when a rule
-// first needs them.
+// What a rule reads besides the Transaction: the Household's date and time zone, its Accounts by
+// ID, its Members' names, and the facts of a connected loan or a Manual loan, read once a run when
+// a rule first needs them.
 export type DecisionContext = {
   today: string;
+  timeZone: string;
   accounts: ReadonlyMap<string, DecisionAccount>;
   members: readonly string[];
   loanFacts(loanId: string): Promise<LoanFacts>;

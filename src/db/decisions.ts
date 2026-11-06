@@ -83,6 +83,9 @@ export type DecisionAccount = {
   // False for an Account that no provider syncs.
   connected: boolean;
   closed: boolean;
+  // When and why it was Closed, or null while it is open (spec 02, Closed Accounts).
+  closedAt: Date | null;
+  closedReason: (typeof householdAccounts.$inferSelect)["closedReason"];
   // A Member turned on its Exclude switch (spec 02, Exclude).
   excluded: boolean;
   // A loan's type as a Member set it, or null while the app decides it.
@@ -103,17 +106,18 @@ export async function listDecisionAccounts(database: Database): Promise<Decision
       mask: householdAccounts.mask,
       connectionId: householdAccounts.connectionId,
       closedAt: householdAccounts.closedAt,
+      closedReason: householdAccounts.closedReason,
       excluded: householdAccounts.excluded,
       loanType: householdAccounts.loanType,
       memberApr: householdAccounts.memberApr,
     })
     .from(householdAccounts)
     .orderBy(asc(householdAccounts.name), asc(householdAccounts.id));
-  return rows.map(({ memberName, connectionId, closedAt, ...row }) => ({
+  return rows.map(({ memberName, connectionId, ...row }) => ({
     ...row,
     name: memberName ?? row.name,
     connected: connectionId !== null,
-    closed: closedAt !== null,
+    closed: row.closedAt !== null,
   }));
 }
 
