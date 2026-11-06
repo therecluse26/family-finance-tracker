@@ -573,6 +573,11 @@ export {
 } from "./review-items.ts";
 export { scheduledTasks } from "./schema.ts";
 export {
+  endOpenSession,
+  listOpenSessions,
+  type OpenSession,
+} from "./sessions.ts";
+export {
   hasMember,
   markSetupStep,
   markSetupStepsDone,

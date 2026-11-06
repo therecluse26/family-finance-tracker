@@ -106,16 +106,20 @@ export const newTotpIdentifier = (memberId: string) => `new-totp-${memberId}`;
 const WAITING_SIGN_IN = "2fa-";
 const waitingSignInTries = (identifier: string) => `2fa-attempts-${identifier}`;
 
-// After a change to a Member's password, TOTP, or backup codes (spec 09, Sessions): ends their
-// other sessions and their sign-ins that wait for a code, at once, so a thief who held either is
-// out. The session that made the change stays.
-async function endOtherSignIns(
-  context: HookContext["context"],
+// After a change to a Member's password, TOTP, or backup codes (spec 09, Sessions), and on "Sign
+// out everywhere else" (spec 09, Sign out on a device): ends their other sessions and their
+// sign-ins that wait for a code, at once, so a thief who held either is out. The session that made
+// the change stays.
+export async function endOtherSignIns(
+  context: {
+    internalAdapter: HookContext["context"]["internalAdapter"];
+    adapter: Pick<HookContext["context"]["adapter"], "findMany">;
+  },
   memberId: string,
-  keptToken: string,
+  keptSessionId: string,
 ): Promise<void> {
   const sessions = await context.internalAdapter.listSessions(memberId);
-  const others = sessions.map((one) => one.token).filter((token) => token !== keptToken);
+  const others = sessions.filter((one) => one.id !== keptSessionId).map((one) => one.token);
   if (others.length > 0) await context.internalAdapter.deleteSessions(others);
   const waiting = await context.adapter.findMany<{ identifier: string }>({
     model: "verification",
@@ -211,7 +215,7 @@ export function myLogin(options: { database: Database; secrets: Secrets }): Bett
           }
           const hash = await ctx.context.password.hash(newPassword);
           await ctx.context.internalAdapter.updatePassword(user.id, hash);
-          await endOtherSignIns(ctx.context, user.id, session.token);
+          await endOtherSignIns(ctx.context, user.id, session.id);
           return ctx.json({ status: true });
         },
       ),
@@ -265,7 +269,7 @@ export function myLogin(options: { database: Database; secrets: Secrets }): Bett
             where: [{ field: "userId", value: memberId }],
             update: await storedTwoFactor(ctx.context.secretConfig, { secret }),
           });
-          await endOtherSignIns(ctx.context, memberId, ctx.context.session.session.token);
+          await endOtherSignIns(ctx.context, memberId, ctx.context.session.session.id);
           return ctx.json({ status: true });
         },
       ),
@@ -281,7 +285,7 @@ export function myLogin(options: { database: Database; secrets: Secrets }): Bett
             where: [{ field: "userId", value: user.id }],
             update: await storedTwoFactor(ctx.context.secretConfig, { backupCodes }),
           });
-          await endOtherSignIns(ctx.context, user.id, session.token);
+          await endOtherSignIns(ctx.context, user.id, session.id);
           ctx.setHeader("Cache-Control", "no-store");
           return ctx.json({ backupCodes });
         },

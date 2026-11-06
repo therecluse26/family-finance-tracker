@@ -1359,6 +1359,36 @@ export const api = new Hono<ServerEnv>()
     c.header("Cache-Control", "no-store");
     return c.json({ reset }, 200);
   })
+  // Settings, My login, Signed-in devices (spec 09): the signed-in Member's own sessions that have
+  // not expired. Each row has a name made from its user agent, never the user agent or the IP
+  // address.
+  .get("/my-login/devices", async (c) =>
+    c.json({ devices: await c.var.devices.devices(c.var.member.id, c.var.sessionId) }),
+  )
+  // "Sign out" on another device, with an empty JSON body. Another Member's session, an expired
+  // one, and an unknown ID get the same answer, so it does not show that a session exists.
+  .post("/my-login/devices/:id/sign-out", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    const { id: memberId } = c.var.member;
+    const result = await c.var.devices.signOut(memberId, c.var.sessionId, c.req.param("id"));
+    if (result === "this device") {
+      return c.json({ error: "Sign this device out with Sign out." }, 409);
+    }
+    if (result === "already signed out") {
+      return c.json({ error: "That device is already signed out." }, 404);
+    }
+    return c.json({ signedOut: true }, 200);
+  })
+  // "Sign out everywhere else", with an empty JSON body. This device stays signed in.
+  .post("/my-login/sign-out-other-devices", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    await c.var.devices.signOutOthers(c.var.member.id, c.var.sessionId);
+    return c.json({ signedOut: true }, 200);
+  })
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.
   .get("/benchmarks", async (c) => c.json(await c.var.benchmarks.benchmarks()))
