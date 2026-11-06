@@ -12,6 +12,7 @@ export {
   type AlertNote,
   type AlertNoteGroup,
   alertNotes,
+  alertTitle,
   markAlertNote,
 } from "./alert-notes.ts";
 export {

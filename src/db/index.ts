@@ -183,6 +183,7 @@ export {
   type NewChatMessage,
   readChatThread,
   type StoredChatThread,
+  storeAlertThread,
   storeChatMessage,
   storeChatThread,
 } from "./chat.ts";

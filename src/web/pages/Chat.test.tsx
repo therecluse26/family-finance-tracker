@@ -14,7 +14,7 @@ import {
   problemOf,
   WAITS_FOR_HISTORY,
 } from "../chat.ts";
-import { Composer, NewThread, ThreadList, ThreadMessages } from "./Chat.tsx";
+import { AttachedNote, Composer, NewThread, ThreadList, ThreadMessages } from "./Chat.tsx";
 
 // The Chat page's parts as the browser first paints them (spec 07, Chat page). The requests go
 // through the app in src/server/chat-api.test.ts.
@@ -144,6 +144,21 @@ describe("a thread", () => {
       />,
     );
     expect(html).toMatch(/<p class="[^"]*\bwrap-anywhere\b[^"]*">x{90}<\/p>/u);
+  });
+
+  it("shows each line of the attached note, two that match too, each under its own key", () => {
+    const line = "Card interest: $12.50 on Northwind card on Oct 18.";
+    const note = { kind: "Alert", title: "2 Card interest or fee charges", lines: [line, line] };
+
+    expect(text(render(<AttachedNote note={note} />))).toBe(
+      `Alert: 2 Card interest or fee charges ${line} ${line}`,
+    );
+    // The server render checks no key, so the keys are read from the elements.
+    const [, lines] = (AttachedNote({ note }) as ReactElement<{ children: ReactElement[][] }>).props
+      .children;
+    const keys = (lines ?? []).map((each) => each.key);
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
   });
 
   it("lists the threads, the open one marked", () => {

@@ -1787,6 +1787,8 @@ export const insightCards = sqliteTable(
 // Member can continue or delete it. Its title is its first Member message, cut to 60 characters.
 // A thread started with "Ask about this" keeps the note it was started from, as the chat module
 // built it for the AI (src/chat/note.ts): what the note is about, its title, and its pieces.
+// A thread started with "Ask the AI" on an Alert keeps the Alert as its note: see
+// chat_alert_threads.
 export const chatThreads = sqliteTable(
   "chat_threads",
   {
@@ -1798,6 +1800,26 @@ export const chatThreads = sqliteTable(
     lastMessageAt: moment("last_message_at").notNull(),
   },
   (table) => [index("chat_threads_last_message_at").on(table.lastMessageAt)],
+);
+
+// The Chat threads "Ask the AI" started on an Alert (spec 06, "Ask the AI"): the Alert and the
+// Member who pressed it, so that Member's next press on that Alert opens the same thread. Each
+// Member has at most one per Alert. Deleting the thread, the Alert, or the Member deletes the row
+// and keeps the thread, with its copy of the Alert: no press opens it again.
+export const chatAlertThreads = sqliteTable(
+  "chat_alert_threads",
+  {
+    threadId: text("thread_id")
+      .primaryKey()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    alertId: text("alert_id")
+      .notNull()
+      .references(() => alerts.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+  },
+  (table) => [uniqueIndex("chat_alert_threads_alert_member").on(table.alertId, table.memberId)],
 );
 
 // The messages of a Chat thread, oldest first. A Member's message keeps the Member and their name

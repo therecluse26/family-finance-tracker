@@ -770,6 +770,15 @@ export const api = new Hono<ServerEnv>()
   })
   // The Alert list (spec 06, The Alert list), newest first.
   .get("/alerts", async (c) => c.json({ alerts: await c.var.alerts.list() }))
+  // "Ask the AI" (spec 06, "Ask the AI"): the Member's Chat thread about this Alert, 201 when new
+  // and 200 when it was already there. The route takes only JSON and reads no body: the app reads
+  // the Alert itself from its ID. It makes no AI call.
+  .post("/alerts/:id/ask-ai", jsonOnly, async (c) => {
+    const asked = await c.var.chat.askAboutAlert(chatMember(c), c.req.param("id"));
+    if ("threadId" in asked) return c.json({ threadId: asked.threadId }, asked.started ? 201 : 200);
+    const { status, ...refused } = asked;
+    return c.json(refused, status);
+  })
   // "Not a problem" (spec 06): any Member marks an Alert, or one part of a merged Alert, for the
   // whole Household. A Member's second press records nothing. It makes no AI call.
   .post("/alerts/:id/not-a-problem", jsonOnly, async (c) => {

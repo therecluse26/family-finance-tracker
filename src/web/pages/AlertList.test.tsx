@@ -1,6 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AlertPartView, AlertView } from "../../server/alerts-views.ts";
+import { askAiAbout } from "../chat.ts";
 import { AlertPart, AlertRows, alertLine, alertListRequests, newestFirst } from "./AlertList.tsx";
 
 // The Alert list (spec 07, Alert list), with every mark and a merged Alert.
@@ -75,7 +76,15 @@ describe("the Alert list page", () => {
       "found",
     ]);
     const html = renderToString(
-      <AlertRows alerts={ALERTS} states={{}} today={TODAY} zone={ZONE} onNotAProblem={() => {}} />,
+      <AlertRows
+        alerts={ALERTS}
+        states={{}}
+        asks={{}}
+        today={TODAY}
+        zone={ZONE}
+        onNotAProblem={() => {}}
+        onAskAi={() => {}}
+      />,
     );
     const rows = [
       ...html.matchAll(
@@ -86,14 +95,15 @@ describe("the Alert list page", () => {
       text((match[1] ?? "").replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/g, "$1")),
     );
 
-    // Each Alert's kind icon, its text, then its date, kind and mark, then its press. A merged
-    // Alert puts the icon and the date line under its heading, and each part has its own press.
+    // Each Alert's kind icon, its text, then its date, kind and mark, then its presses. A merged
+    // Alert puts the icon, the date line, and its one "Ask the AI" under its heading, and each part
+    // has its own "Not a problem".
     expect(rows).toEqual([
       // 1 AM UTC on Nov 5 is Nov 4 in New York. The Alerts step has not decided it yet.
-      "◆ Streamly went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3. Nov 4 · Price increase Not a problem",
-      "▲ 2 Categories are over Budget Nov 4 · Over Budget · sent Groceries is $40.00 over its Budget. Not a problem Dining is $12.00 over its Budget. AI Plan two meals at home this week. Not a problem",
-      "● Alert held. Nov 2 · Large purchase · held back (weekly cap) Not a problem",
-      "◆ Alert found. Dec 30, 2025 · Duplicate charge · found in history Not a problem",
+      "◆ Streamly went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3. Nov 4 · Price increase Ask the AI Not a problem",
+      "▲ 2 Categories are over Budget Nov 4 · Over Budget · sent Ask the AI Groceries is $40.00 over its Budget. Not a problem Dining is $12.00 over its Budget. AI Plan two meals at home this week. Not a problem",
+      "● Alert held. Nov 2 · Large purchase · held back (weekly cap) Ask the AI Not a problem",
+      "◆ Alert found. Dec 30, 2025 · Duplicate charge · found in history Ask the AI Not a problem",
     ]);
     // The icon is color with a word: the kind always shows beside it, and the icon is hidden from
     // screen readers.
@@ -107,7 +117,15 @@ describe("the Alert list page", () => {
 
   it('says "No Alerts yet." with no Alerts', () => {
     const html = renderToString(
-      <AlertRows alerts={[]} states={{}} today={TODAY} zone={ZONE} onNotAProblem={() => {}} />,
+      <AlertRows
+        alerts={[]}
+        states={{}}
+        asks={{}}
+        today={TODAY}
+        zone={ZONE}
+        onNotAProblem={() => {}}
+        onAskAi={() => {}}
+      />,
     );
 
     expect(text(html)).toBe("No Alerts yet.");
@@ -130,7 +148,7 @@ describe("the Alert list page", () => {
 
     for (const each of merged.parts) {
       const button = AlertPart({ part: each, state: {}, today: TODAY, zone: ZONE, onNotAProblem })
-        .props.children[1].props.children[0];
+        .props.children[1].props.children[1];
       button.props.onClick();
     }
 
@@ -165,5 +183,62 @@ describe("the Alert list page", () => {
       />,
     );
     expect(open).not.toContain(`disabled=""`);
+  });
+
+  it('"Ask the AI" sends only the Alert\'s ID, as an empty JSON body, and opens its thread or says why not', async () => {
+    const sent: { method: string; path: string; type: string | null; body: unknown }[] = [];
+    let answer = Response.json({ threadId: "thread-1" }, { status: 201 });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), "http://app.test");
+      sent.push({
+        method: init?.method ?? "GET",
+        path: url.pathname,
+        type: new Headers(init?.headers).get("content-type"),
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      });
+      return answer;
+    });
+    const asked: string[] = [];
+    const html = renderToString(
+      <AlertRows
+        alerts={ALERTS}
+        states={{}}
+        asks={{
+          held: { error: "Set up an AI provider in Settings, AI, to use Chat." },
+          merged: { error: "Chat is paused." },
+        }}
+        today={TODAY}
+        zone={ZONE}
+        onNotAProblem={() => {}}
+        onAskAi={(each) => asked.push(each.id)}
+      />,
+    );
+    // One press per Alert, a merged one too, and the refusal's words under the Alert it is about.
+    expect(html.match(/>Ask the AI<\/button>/g)).toHaveLength(ALERTS.length);
+    expect(text(html)).toContain(
+      "Nov 2 · Large purchase · held back (weekly cap) Ask the AI Not a problem Set up an AI provider in Settings, AI, to use Chat.",
+    );
+    // A merged Alert's words go under its heading's row, not beside the button in it.
+    expect(text(html)).toContain("Nov 4 · Over Budget · sent Ask the AI Chat is paused. Groceries");
+    expect(html).toContain(
+      '>Ask the AI</button></div><p class="mt-3 text-critical" role="alert">Chat is paused.</p></div>',
+    );
+
+    expect(await askAiAbout("merged")).toEqual({ threadId: "thread-1" });
+    answer = Response.json(
+      { error: "Set up an AI provider in Settings, AI, to use Chat.", pause: "no AI provider" },
+      { status: 409 },
+    );
+    expect(await askAiAbout("held")).toEqual({
+      error: "Set up an AI provider in Settings, AI, to use Chat.",
+    });
+    expect(sent).toEqual(
+      ["merged", "held"].map((id) => ({
+        method: "POST",
+        path: `/api/alerts/${id}/ask-ai`,
+        type: "application/json",
+        body: {},
+      })),
+    );
   });
 });

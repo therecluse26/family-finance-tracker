@@ -21,7 +21,7 @@ export const PRIVACY_NOTICE =
   "What you type goes to your AI provider. The app hides names and numbers it spots, but not all of them.";
 
 // The note "Ask about this" attaches: its kind, ID, and title, which the drafted question names.
-export type AskAbout = { kind: ChatNoteKindView; id: string; title: string };
+export type AskAbout = { kind: Exclude<ChatNoteKindView, "Alert">; id: string; title: string };
 
 export const draftQuestion = (title: string) => `Tell me more about this: ${title}`;
 
@@ -81,6 +81,12 @@ export const chatRequests = {
     return api.chat.threads.$post(start);
   },
   remove: (id: string) => api.chat.threads[":id"].$delete({ param: { id } }),
+  // "Ask the AI" on an Alert. The route takes only JSON, and reads no body: the server reads the
+  // Alert from its ID.
+  askAboutAlert: (id: string) => {
+    const press = { param: { id }, json: {} };
+    return api.alerts[":id"]["ask-ai"].$post(press);
+  },
 };
 
 export async function loadChat(): Promise<{
@@ -135,6 +141,22 @@ export async function startThread(
   }
   if (res.ok) return (await res.json()) as { threadId: string };
   return problemOf(await res.text());
+}
+
+// "Ask the AI" on an Alert (spec 06, "Ask the AI"): the Member's thread about it, or the words for
+// why it did not start, such as "Set up an AI provider in Settings, AI, to use Chat."
+export async function askAiAbout(
+  alertId: string,
+): Promise<{ threadId: string } | { error: string }> {
+  let res: Response;
+  try {
+    res = await chatRequests.askAboutAlert(alertId);
+  } catch {
+    return { error: "The server did not answer." };
+  }
+  const body = (await res.json().catch(() => ({}))) as { threadId?: unknown; error?: unknown };
+  if (res.ok && typeof body.threadId === "string") return { threadId: body.threadId };
+  return { error: typeof body.error === "string" ? body.error : "That did not work." };
 }
 
 // The words of a refusal, or undefined when it worked.
