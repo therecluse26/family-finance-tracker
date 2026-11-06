@@ -753,6 +753,7 @@ describe("linking a new bank through Plaid", () => {
           { name: "Plaid Credit Card", type: "credit", subtype: "credit card", mask: "3333" },
           { name: "Plaid Student Loan", type: "loan", subtype: "student", mask: "7777" },
           { name: "Personal Loan", type: "loan", subtype: "personal", mask: "8888" },
+          { name: "Plaid Mortgage", type: "loan", subtype: "mortgage", mask: "9999" },
         ],
       });
       expect(plaid.to(ITEM_GET).map((request) => request.body.access_token)).toEqual([accessToken]);

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addConnection, PLAID_SETTINGS_ROW, storePlaidKeys } from "../db/index.ts";
+import {
+  addConnection,
+  EXPORTED_TABLES,
+  PLAID_SETTINGS_ROW,
+  readExportedJson,
+  readExportedTransactions,
+  storePlaidKeys,
+} from "../db/index.ts";
 import { holdsSecretValue } from "../log.ts";
 import { FakePlaid, plaidFailure, RECORDED } from "./fake-plaid.ts";
 import {
@@ -268,6 +275,25 @@ describe("the Plaid adapter", () => {
         card: null,
         loan: null,
       },
+      {
+        // A mortgage has no minimum payment in Plaid's data.
+        id: "acct-mortgage",
+        name: "Plaid Mortgage",
+        type: "loan",
+        subtype: "mortgage",
+        mask: "9999",
+        currentBalance: -5_630_206,
+        availableBalance: null,
+        creditLimit: null,
+        card: null,
+        loan: {
+          apr: 3.99,
+          principal: 5_630_206,
+          interestPaidThisYear: 1_230_040,
+          minimumPayment: null,
+          dueDate: "2026-11-01",
+        },
+      },
     ]);
     // The raw data keeps the account and its Liabilities data, with no account number.
     expect(accounts[2]?.raw).toMatchObject({
@@ -277,13 +303,34 @@ describe("the Plaid adapter", () => {
     expect(JSON.stringify(accounts)).not.toContain("account_number");
   });
 
-  it("stores raw data with no account number, by field name or by value", async () => {
-    // The recorded student loan has an account number and a different payment reference number,
-    // and the recorded payment terminal has a bank account number.
-    const names = ["account_number", "account_numbers", "payment_reference_number"];
-    const values = ["9000000001", "9000000002", "90000003"];
+  // The fields raw data never holds (spec 02, Records the adapter returns), and the values the
+  // recorded Plaid data puts in them: the student loan's account number and different payment
+  // reference number, the payment terminal's bank account number, the payroll's reference number
+  // and PPD ID, two account owners, and the mortgage's account number and home address.
+  const PERSONAL_FIELDS = [
+    "account_number",
+    "account_numbers",
+    "payment_reference_number",
+    "reference_number",
+    "ppd_id",
+    "account_owner",
+    "property_address",
+  ];
+  const PERSONAL_VALUES = [
+    "9000000001",
+    "9000000002",
+    "90000003",
+    "9000000004",
+    "9000000005",
+    "9000000006",
+    "FAKE OWNER ONE",
+    "FAKE OWNER TWO",
+    "Fake Home Ln",
+  ];
+
+  it("stores raw data with no account number or personal detail, by field name or by value", async () => {
     const recorded = JSON.stringify(RECORDED);
-    for (const text of [...names, ...values]) expect(recorded).toContain(text);
+    for (const text of [...PERSONAL_FIELDS, ...PERSONAL_VALUES]) expect(recorded).toContain(text);
     recordedPages();
 
     await syncConnection(connectionId);
@@ -292,9 +339,118 @@ describe("the Plaid adapter", () => {
       ...(await rows("SELECT raw FROM household_accounts")),
       ...(await rows("SELECT raw FROM transactions")),
     ]);
-    expect(stored).toContain("acct-student");
+    expect(stored).toContain("acct-mortgage");
     expect(stored).toContain("txn-coffee");
-    for (const text of [...names, ...values]) expect(stored).not.toContain(text);
+    for (const text of [...PERSONAL_FIELDS, ...PERSONAL_VALUES]) {
+      expect(stored).not.toContain(text);
+    }
+  });
+
+  it("keeps the other payment_meta fields and the rest of the mortgage details", async () => {
+    recordedPages();
+
+    await syncConnection(connectionId);
+
+    const [payroll] = await rows(
+      "SELECT raw FROM transactions WHERE provider_transaction_id = 'txn-pay'",
+    );
+    expect(JSON.parse(String(payroll?.raw)).payment_meta).toEqual({
+      by_order_of: null,
+      payee: "EXAMPLE CO",
+      payer: null,
+      payment_method: "ACH",
+      payment_processor: null,
+      reason: null,
+    });
+    const [mortgage] = await rows(
+      "SELECT raw FROM household_accounts WHERE provider_account_id = 'acct-mortgage'",
+    );
+    const {
+      property_address: _,
+      account_number: __,
+      ...rest
+    } = (RECORDED.liabilitiesGet as { liabilities: { mortgage: Record<string, unknown>[] } })
+      .liabilities.mortgage[0] as Record<string, unknown>;
+    expect(JSON.parse(String(mortgage?.raw)).liability).toEqual(rest);
+  });
+
+  // A field at three depths: in the object, in an object inside it, and in an object in an array
+  // inside that. The field beside it at each depth stays.
+  const planted = (name: string, into: Record<string, unknown>) => ({
+    ...into,
+    [name]: "held-at-depth-1",
+    kept_1: "kept-at-depth-1",
+    nested: {
+      [name]: "held-at-depth-2",
+      kept_2: "kept-at-depth-2",
+      list: [{ [name]: "held-at-depth-3", kept_3: "kept-at-depth-3" }],
+    },
+  });
+
+  it.each(PERSONAL_FIELDS)(
+    "drops %s at every depth of a Transaction, an Account, and its mortgage details",
+    async (name) => {
+      plaid.answer(
+        SYNC,
+        syncPage({ added: [planted(name, anotherTxn("txn-planted"))], next_cursor: "cursor-1" }),
+      );
+      const { accounts } = RECORDED.accountsGet;
+      plaid.answer(ACCOUNTS, {
+        body: {
+          ...RECORDED.accountsGet,
+          accounts: accounts.map((account) =>
+            account.account_id === "acct-mortgage" ? planted(name, account) : account,
+          ),
+        },
+      });
+      const liabilities = RECORDED.liabilitiesGet as {
+        liabilities: { mortgage: Record<string, unknown>[] };
+      };
+      plaid.answer(LIABILITIES, {
+        body: {
+          ...liabilities,
+          liabilities: {
+            ...liabilities.liabilities,
+            mortgage: liabilities.liabilities.mortgage.map((loan) => planted(name, loan)),
+          },
+        },
+      });
+
+      await syncConnection(connectionId);
+
+      const stored = JSON.stringify([
+        ...(await rows(
+          "SELECT raw FROM household_accounts WHERE provider_account_id = 'acct-mortgage'",
+        )),
+        ...(await rows(
+          "SELECT raw FROM transactions WHERE provider_transaction_id = 'txn-planted'",
+        )),
+      ]);
+      expect(stored).not.toContain(name);
+      expect(stored).not.toContain("held-at-depth");
+      // The Transaction, the account, and the mortgage details each keep the field beside it.
+      for (const depth of [1, 2, 3]) {
+        expect(stored.split(`kept-at-depth-${depth}`)).toHaveLength(4);
+      }
+    },
+  );
+
+  it("puts none of the personal fields in the data export", async () => {
+    recordedPages();
+    await syncConnection(connectionId);
+
+    let exported = "";
+    for (const entry of EXPORTED_TABLES) {
+      for await (const page of readExportedJson(bank.database, entry)) exported += page;
+    }
+    for await (const page of readExportedTransactions(bank.database)) {
+      exported += JSON.stringify(page);
+    }
+
+    expect(exported).toContain("STARBUCKS STORE");
+    for (const text of [...PERSONAL_FIELDS, ...PERSONAL_VALUES]) {
+      expect(exported).not.toContain(text);
+    }
   });
 
   it.each([
@@ -310,7 +466,7 @@ describe("the Plaid adapter", () => {
 
     const { accounts } = await adapter.sync(connection, null);
 
-    expect(accounts).toHaveLength(4);
+    expect(accounts).toHaveLength(5);
     expect(accounts.every((snapshot) => snapshot.card === null && snapshot.loan === null)).toBe(
       true,
     );
@@ -454,7 +610,7 @@ describe("the Plaid adapter", () => {
       ]);
       expect(plaid.to(ACCOUNTS)).toHaveLength(1);
       expect(plaid.to(LIABILITIES)).toHaveLength(1);
-      expect(await rows("SELECT count(*) AS n FROM daily_balances")).toEqual([{ n: 4 }]);
+      expect(await rows("SELECT count(*) AS n FROM daily_balances")).toEqual([{ n: 5 }]);
     });
 
     it("fetches the Accounts again for the next sync", async () => {

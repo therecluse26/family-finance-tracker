@@ -141,23 +141,29 @@ function cents(dollars: number | null | undefined): Cents | null {
 // The other sign. 0 - 0 is 0, where -0 would be -0.
 const flip = (amount: Cents | null): Cents | null => (amount === null ? null : 0 - amount);
 
-// The fields of Plaid's data that hold an account number. A student loan's
-// payment_reference_number is, by Plaid's docs, usually its account number.
-const ACCOUNT_NUMBER_FIELDS = new Set([
+// The fields of Plaid's data that hold an account number or a personal detail (spec 02, Records
+// the adapter returns). A student loan's payment_reference_number is, by Plaid's docs, usually its
+// account number. A Transaction's payment_meta holds a reference_number and a ppd_id, its
+// account_owner names a person, and a mortgage's property_address is the Household's home.
+const PERSONAL_FIELDS = new Set([
   "account_number",
   "account_numbers",
   "payment_reference_number",
+  "reference_number",
+  "ppd_id",
+  "account_owner",
+  "property_address",
 ]);
 
-// Plaid's data with every account number left out, at every depth, for a record's raw data.
-// Liabilities and other parties can hold one.
-function withoutAccountNumbers(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withoutAccountNumbers);
+// Plaid's data with every account number and personal detail left out, by field name at every
+// depth, for a record's raw data. Liabilities and other parties can hold one.
+function withoutPersonalFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutPersonalFields);
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([name]) => !ACCOUNT_NUMBER_FIELDS.has(name))
-      .map(([name, field]) => [name, withoutAccountNumbers(field)]),
+      .filter(([name]) => !PERSONAL_FIELDS.has(name))
+      .map(([name, field]) => [name, withoutPersonalFields(field)]),
   );
 }
 
@@ -190,7 +196,7 @@ function txnRecord(txn: Transaction): TxnRecord {
           mcc: null,
         }
       : null,
-    raw: withoutAccountNumbers(txn),
+    raw: withoutPersonalFields(txn),
   };
 }
 
@@ -237,7 +243,7 @@ function accountSnapshot(account: AccountBase, liabilities: LiabilitiesObject | 
           dueDate: loan.next_payment_due_date ?? null,
         }
       : null,
-    raw: withoutAccountNumbers({ account, liability: credit ?? loan ?? null }),
+    raw: withoutPersonalFields({ account, liability: credit ?? loan ?? null }),
   };
   return snapshot;
 }

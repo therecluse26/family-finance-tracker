@@ -61,6 +61,21 @@
         "official_name": null,
         "type": "loan",
         "subtype": "personal"
+      },
+      {
+        "account_id": "acct-mortgage",
+        "balances": {
+          "available": null,
+          "current": 56302.06,
+          "limit": null,
+          "iso_currency_code": "USD",
+          "unofficial_currency_code": null
+        },
+        "mask": "9999",
+        "name": "Plaid Mortgage",
+        "official_name": null,
+        "type": "loan",
+        "subtype": "mortgage"
       }
     ],
     "request_id": "req-accounts"
@@ -94,7 +109,36 @@
           "next_payment_due_date": "2026-11-01"
         }
       ],
-      "mortgage": null,
+      "mortgage": [
+        {
+          "account_id": "acct-mortgage",
+          "account_number": "9000000006",
+          "current_late_fee": 0,
+          "escrow_balance": 3141.54,
+          "has_pmi": true,
+          "has_prepayment_penalty": false,
+          "interest_rate": { "percentage": 3.99, "type": "fixed" },
+          "last_payment_amount": 3141.54,
+          "last_payment_date": "2026-10-01",
+          "loan_term": "30 year",
+          "loan_type_description": "conventional",
+          "maturity_date": "2045-07-31",
+          "next_monthly_payment": 3141.54,
+          "next_payment_due_date": "2026-11-01",
+          "origination_date": "2015-07-31",
+          "origination_principal_amount": 425000,
+          "past_due_amount": 0,
+          "property_address": {
+            "city": "Springfield",
+            "country": "US",
+            "postal_code": "00002",
+            "region": "XX",
+            "street": "2 Fake Home Ln"
+          },
+          "ytd_interest_paid": 12300.4,
+          "ytd_principal_paid": 12300.4
+        }
+      ],
       "student": [
         {
           "account_id": "acct-student",
@@ -161,7 +205,7 @@
           "logo_url": null,
           "website": "starbucks.com",
           "payment_channel": "in store",
-          "account_owner": null,
+          "account_owner": "FAKE OWNER ONE",
           "transaction_code": null,
           "counterparties": [
             {
@@ -207,6 +251,17 @@
           "merchant_name": null,
           "merchant_entity_id": null,
           "payment_channel": "other",
+          "payment_meta": {
+            "by_order_of": null,
+            "payee": "EXAMPLE CO",
+            "payer": null,
+            "payment_method": "ACH",
+            "payment_processor": null,
+            "ppd_id": "9000000005",
+            "reason": null,
+            "reference_number": "9000000004"
+          },
+          "account_owner": "FAKE OWNER TWO",
           "counterparties": [],
           "personal_finance_category": {
             "primary": "INCOME",
