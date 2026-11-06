@@ -9,8 +9,7 @@ export type SmtpFields = SmtpView & {
   password?: string;
 };
 
-// Why a save stored nothing: changing the password, or the server or sign-in name it goes to,
-// takes a fresh TOTP or backup code; and a new server or sign-in name needs its password.
+// Why a save stored nothing: a new server or sign-in name needs its password.
 export type SmtpRefusal = "password needed";
 
 export type SmtpSave = { saved: true; smtp: SmtpView } | { saved: false; refusal: SmtpRefusal };

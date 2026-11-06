@@ -21,8 +21,9 @@ import { postJson, refusalText } from "../../requests.ts";
 const CURRENT_PASSWORD_LABEL = "Your current password";
 const WRONG_PASSWORD = "Your current password is wrong.";
 
-// `wrong` is the words to show when the server answers 401.
-function useAction(wrong: string) {
+// `wrong` is the words to show when the server answers 401, and `byCode` the words for a refusal
+// with one of its codes.
+function useAction(wrong: string, byCode?: Record<string, string>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
@@ -34,7 +35,7 @@ function useAction(wrong: string) {
     setDone(undefined);
     try {
       const res = await request();
-      if (!res.ok) return setError(await refusalText(res, wrong));
+      if (!res.ok) return setError(await refusalText(res, wrong, byCode));
       setDone(await onOk(res));
     } catch {
       setError("The server did not answer.");
@@ -200,9 +201,10 @@ function Passkeys() {
   const [rows, setRows] = useState<PasskeyRow[] | undefined>();
   const [name, setName] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
-  const action = useAction(
-    "Your current password is wrong, or the passkey did not check that it was you. Try again.",
-  );
+  const action = useAction(WRONG_PASSWORD, {
+    MEMBER_NOT_VERIFIED:
+      "The passkey did not check that it was you, by a PIN or a fingerprint. Try again.",
+  });
 
   const load = useCallback(() => {
     listPasskeys()

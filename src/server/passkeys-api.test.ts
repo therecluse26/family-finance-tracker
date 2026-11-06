@@ -218,6 +218,24 @@ describe("passkeys", () => {
       expect(await lasting()).toEqual(before);
     });
 
+    it("counts no refusal but a wrong password: 5 names too long, then the right password and a short name add the passkey", async () => {
+      // One character over the 60 a passkey's name may have.
+      const tooLong = "x".repeat(61);
+      for (let i = 0; i < 5; i++) {
+        const res = await addPasskey(aliceTab, alice, device, { name: tooLong });
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as { code?: string }).code).toBe("PASSKEY_NAME_LENGTH");
+      }
+      expect(await passkeyRows()).toEqual([]);
+
+      expect((await addPasskey(aliceTab, alice, device, { name: "Alice's phone" })).status).toBe(
+        200,
+      );
+      expect(await passkeyRows()).toHaveLength(1);
+      // Another browser still signs Alice in with her password and TOTP.
+      expect(await (await signedIn(alice)).isSignedIn()).toBe(true);
+    });
+
     it("refuses a passkey that does not verify the Member, to add or to sign in", async () => {
       const presenceOnly = new TestAuthenticator(HTTPS_URL, { verifiesMember: false });
       expect((await addPasskey(aliceTab, alice, presenceOnly)).status).toBe(401);
@@ -443,6 +461,16 @@ describe("passkeys", () => {
         expect(((await res.json()) as { message: string }).message).toMatch(/^Passkeys need HTTPS/);
       }
       expect(await lasting()).toEqual(before);
+
+      // A refusal for plain-HTTP mode is no failed sign-in: past 5 of them, the Member still signs in.
+      for (let i = 0; i < 5; i++) {
+        const res = await tab.post("/api/auth/passkey/verify-registration", {
+          response,
+          currentPassword: alice.password,
+        });
+        expect(res.status).toBe(403);
+      }
+      expect(await (await signedIn(alice, PLAIN_URL)).isSignedIn()).toBe(true);
     });
   });
 

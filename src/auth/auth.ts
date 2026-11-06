@@ -192,6 +192,9 @@ function buildBetterAuth(options: AuthOptions) {
       firstMember({ database, secrets }),
       invites({ database, secrets }),
       loginResets({ database, secrets }),
+      // Before the sign-in limit, so that a passkey refused for plain-HTTP mode or a long name does
+      // not count as a failed sign-in.
+      passkey.gate,
       signInLimit(database),
       // After the sign-in limit, so that a used code counts as a failed sign-in.
       totpOnce(database),

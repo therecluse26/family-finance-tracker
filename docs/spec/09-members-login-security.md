@@ -40,7 +40,7 @@ Every Member has the same powers. Every Member signs in with a password plus TOT
 - **Failed sign-ins:** the app allows 5 failed sign-ins per 15 minutes, per Member and per IP address. The app refuses further tries in that window without checking them. An IPv6 address counts with every address in its /64 network.
 - **Sensitive actions:** the app asks for TOTP, a backup code, or a passkey only at sign-in. No action after sign-in asks for a code again. This includes a data export, an invite link, removing a Connection, resetting or removing a Member, and changing the Plaid keys, an AI key, or the SMTP settings.
   - A code again after sign-in added work for each Member and gave no real protection to a self-hosted app.
-  - Changing one's own password asks for the current password. Adding a passkey asks for it too. Then a stolen session cannot take over the login. A wrong current password counts as a failed sign-in.
+  - Changing one's own password asks for the current password. Adding a passkey asks for it too. Then a stolen session cannot take over the login. A wrong current password counts as a failed sign-in. When a Member adds a passkey, a passkey that does not check the Member (by a PIN or a fingerprint) also counts as a failed sign-in. Other refusals, such as a name that is too long or plain-HTTP mode, do not count.
   - Getting a new TOTP asks for one code from the new authenticator app. That code proves the new setup. Getting new backup codes asks for nothing more.
 
 ## Login reset

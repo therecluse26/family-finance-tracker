@@ -739,6 +739,54 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
     });
   });
 
+  describe("My login routes", () => {
+    it("refuse a cross-site Origin and a missing Origin with 403, and a body that is not JSON with 415, each changing nothing and counting no failed sign-in", async () => {
+      const tab = browser();
+      await tab.signIn(alice);
+      const started = await tab.post("/api/auth/my-login/new-totp", {});
+      expect(started.status).toBe(200);
+      const { totpURI } = (await started.json()) as { totpURI: string };
+      later(TOTP_STEP_MS);
+      const newCode = await totpCodeFromURI(totpURI);
+      const routes: [string, unknown][] = [
+        [
+          "/api/auth/my-login/change-password",
+          { currentPassword: alice.password, newPassword: "a new password here" },
+        ],
+        ["/api/auth/my-login/new-totp", {}],
+        ["/api/auth/my-login/new-backup-codes", {}],
+        ["/api/auth/my-login/confirm-totp", { code: newCode }],
+      ];
+      // Sessions renew on each use, so they are compared by ID.
+      const lasting = async () => ({
+        accounts: await query("SELECT * FROM accounts ORDER BY id"),
+        twoFactors: await query("SELECT * FROM two_factors ORDER BY id"),
+        verifications: await query("SELECT * FROM verifications ORDER BY id"),
+        sessions: await query("SELECT id FROM sessions ORDER BY id"),
+        tries: await query("SELECT * FROM sign_in_tries ORDER BY id"),
+      });
+      const before = await lasting();
+
+      for (const [path, body] of routes) {
+        for (const origin of ["https://evil.example", ""]) {
+          expect((await tab.send("POST", path, body, { origin })).status, `${path} ${origin}`).toBe(
+            403,
+          );
+        }
+        for (const type of ["text/plain", "application/x-www-form-urlencoded"]) {
+          const res = await tab.send("POST", path, body, { "content-type": type });
+          expect(res.status, `${path} ${type}`).toBe(415);
+        }
+      }
+
+      expect(await lasting()).toEqual(before);
+      // The new TOTP still waits, and its code was not used up.
+      expect((await tab.post("/api/auth/my-login/confirm-totp", { code: newCode })).status).toBe(
+        200,
+      );
+    });
+  });
+
   once("sensitive actions", () => {
     // Settings, My login's "Change password": the current password, then the new one.
     const changePassword = (

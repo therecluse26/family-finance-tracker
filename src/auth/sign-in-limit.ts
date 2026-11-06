@@ -25,7 +25,9 @@ export function limitedAddress(ctx: { headers?: Headers; request?: Request }): s
 }
 
 // The routes that check a password or a code. A password change and a new passkey check the
-// signed-in Member's current password, so they count too.
+// signed-in Member's current password, so they count too. A before hook that refuses one of these
+// routes for another reason runs before this plugin: a hook that throws after it skips the after
+// hook, so the try would stay as a failure.
 const CHECKS = new Set([
   "/sign-in/email",
   "/two-factor/verify-totp",
