@@ -36,6 +36,7 @@ import type { AiCost } from "./cost.ts";
 import type { AiPause } from "./outbound.ts";
 import { type ModelPrice, memberPrice, tablePrice } from "./prices.ts";
 import type { AiConnection, AiModelMaker } from "./providers.ts";
+import { endRetriesRanOut } from "./retries.ts";
 
 // The Household's one AI provider (spec 08, AI settings page). The API key and the gateway token
 // are Master-key secrets: the app encrypts them, and never shows or logs them again.
@@ -276,6 +277,12 @@ export function aiSettings(options: AiOptions): AiSettings {
         checkModel(models.writer, logger),
       ]);
       const check: Record<AiTier, ModelCheck> = { quick, writer };
+      // A rejected key stays rejected until a check answers that the key works. A check that only
+      // failed, such as on a network error, says nothing about the key: AI stays paused, with its
+      // System notice, and the save still stores the key.
+      const rejected = quick === "key rejected" || writer === "key rejected";
+      const works = !rejected && (quick === "worked" || writer === "worked");
+      const keptRejection = works ? null : (stored?.keyRejectedAt ?? null);
 
       const written = await storeAiSettings(
         database,
@@ -287,16 +294,14 @@ export function aiSettings(options: AiOptions): AiSettings {
             gatewayToken === undefined ? null : secrets.encrypt(gatewayToken, TOKEN_PLACE),
           quickModel: input.quickModel,
           writerModel: input.writerModel,
-          keyRejectedAt: quick === "key rejected" || writer === "key rejected" ? new Date() : null,
+          keyRejectedAt: rejected ? new Date() : keptRejection,
         },
         generation,
       );
       // A Remove AI provider or another save came first while the AI provider answered.
       if (!written) return { saved: false, refusal: "changed" };
       // A key that works ends the paused AI's System notice.
-      if (stored?.keyRejectedAt != null && quick !== "key rejected" && writer !== "key rejected") {
-        await endKeyRejected();
-      }
+      if (stored?.keyRejectedAt != null && works) await endKeyRejected();
       for (const tier of TIERS) {
         const entered = input.prices?.[tier];
         if (entered !== undefined && tablePrice(input.provider, modelOf[tier]) === undefined) {
@@ -313,6 +318,9 @@ export function aiSettings(options: AiOptions): AiSettings {
       const stored = await readAiSettings(database);
       await removeAiSettings(database);
       if (stored?.keyRejectedAt != null) await endKeyRejected();
+      // Every use now takes its no-AI path and calls no AI, so no call that works ends a notice
+      // for retries that ran out: the removal ends them.
+      await endRetriesRanOut(database, notices, logger);
     },
 
     usage: () => cost.usage(),

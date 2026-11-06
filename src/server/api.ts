@@ -16,6 +16,7 @@ import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
+import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
@@ -179,7 +180,7 @@ const chatThreadBody = z
   .object({
     text: z.string().max(20_000),
     note: z
-      .object({ kind: z.enum(["Alert note", "Proposal"]), id: z.string().min(1).max(100) })
+      .object({ kind: z.enum(CHAT_NOTE_KINDS), id: z.string().min(1).max(100) })
       .strict()
       .nullable(),
     sendAnyway: z.boolean(),

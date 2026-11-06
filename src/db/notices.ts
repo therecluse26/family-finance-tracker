@@ -51,6 +51,18 @@ export async function endNoticeCondition(
   return closed.length > 0;
 }
 
+// True when the condition has an open notice.
+export async function isNoticeConditionOpen(
+  database: Database,
+  condition: string,
+): Promise<boolean> {
+  const [open] = await database
+    .select({ id: systemNotices.id })
+    .from(systemNotices)
+    .where(and(eq(systemNotices.condition, condition), isNull(systemNotices.closedAt)));
+  return open !== undefined;
+}
+
 // A Member closes an open event notice, for every Member. A condition notice stays open until its
 // condition ends.
 export async function closeEventNotice(

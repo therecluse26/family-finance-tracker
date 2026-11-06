@@ -1,9 +1,10 @@
-import type { AiBoxNoteView } from "../server/ai-box-views.ts";
-import type {
-  ChatNoteKindView,
-  ChatStatusView,
-  ChatThreadItemView,
-  ChatThreadView,
+import type { AiBoxInsightCardView, AiBoxNoteView } from "../server/ai-box-views.ts";
+import {
+  CHAT_NOTE_KINDS,
+  type ChatNoteKindView,
+  type ChatStatusView,
+  type ChatThreadItemView,
+  type ChatThreadView,
 } from "../server/chat-views.ts";
 import type { ProposalView } from "../server/proposals-views.ts";
 import { api } from "./api.ts";
@@ -35,6 +36,12 @@ export const askAboutAlertNote = (note: AiBoxNoteView): AskAbout => ({
   title: note.title,
 });
 
+export const askAboutInsightCard = (card: AiBoxInsightCardView): AskAbout => ({
+  kind: "Insight card",
+  id: card.id,
+  title: card.title,
+});
+
 // A Proposal's title is its change, one line each, as the server titles it.
 export const askAboutProposal = (proposal: ProposalView): AskAbout => ({
   kind: "Proposal",
@@ -46,9 +53,9 @@ export const askAboutProposal = (proposal: ProposalView): AskAbout => ({
 export function askAboutOf(state: unknown): AskAbout | null {
   if (typeof state !== "object" || state === null) return null;
   const { kind, id, title } = state as Record<string, unknown>;
-  if (kind !== "Alert note" && kind !== "Proposal") return null;
-  if (typeof id !== "string" || typeof title !== "string") return null;
-  return { kind, id, title };
+  const known = CHAT_NOTE_KINDS.find((each) => each === kind);
+  if (known === undefined || typeof id !== "string" || typeof title !== "string") return null;
+  return { kind: known, id, title };
 }
 
 // Why Chat cannot answer now, in the page's words, or undefined when it can, or when it asks

@@ -465,6 +465,7 @@ export {
   addNotice,
   closeEventNotice,
   endNoticeCondition,
+  isNoticeConditionOpen,
   listOpenNotices,
   type NewNotice,
   type StoredNotice,

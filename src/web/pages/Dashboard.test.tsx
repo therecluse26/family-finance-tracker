@@ -1372,9 +1372,10 @@ describe('the AI box, "This week"', () => {
     // The picture shows under "Why?", inside the reason it opens.
     const [, , acting, , groceries, fuel] = notes(html);
     expect(slotHtml(acting ?? "", "note-why")).toContain('data-slot="note-picture"');
-    // Chat takes Alert notes only: an Insight card's "Ask about this" is disabled, an Alert's is not.
+    // Every note has "Ask about this": an Insight card's is enabled, as an Alert note's is.
     const ask = (item: string) => /<button[^>]*>Ask about this<\/button>/.exec(item)?.[0] ?? "";
-    expect(ask(acting ?? "")).toContain(' disabled=""');
+    expect(ask(acting ?? "")).toMatch(/^<button/u);
+    expect(ask(acting ?? "")).not.toContain(' disabled=""');
     expect(ask(notes(html)[0] ?? "")).not.toContain(' disabled=""');
 
     // A Good news card's last words carry no "Next step:" label, and a card with no picture or

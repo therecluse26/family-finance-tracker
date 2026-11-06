@@ -739,6 +739,37 @@ describe("an AI call", () => {
       },
     );
 
+    it("keeps AI paused, with its System notice, after a save whose check only failed, until a key that works is saved", async () => {
+      const { ai, settings } = await connect();
+      stub.answers.quick = "reject";
+      expect(await ai.generate(categoryFix())).toEqual({ ready: false, pause: "key rejected" });
+      expect(raised).toEqual([KEY_REJECTED_CONDITION]);
+      const storedKey = async () =>
+        (await test.database.$client.execute("SELECT api_key FROM ai_settings")).rows[0]?.api_key;
+      const before = await storedKey();
+
+      // A network error on each check says nothing about the key.
+      stub.answers = { quick: "throw", writer: "throw" };
+      expect(await settings.save(settingsFor("anthropic"), { freshCode: true })).toMatchObject({
+        saved: true,
+        check: { quick: "failed", writer: "failed" },
+        ai: { status: { state: "key rejected" } },
+      });
+      expect(await storedKey()).not.toEqual(before);
+      expect(ended).toEqual([]);
+      expect(await ai.generate(readingAGoal)).toEqual({ ready: false, pause: "key rejected" });
+      expect(modelCalls()).toHaveLength(1 + 2);
+
+      // One tier's check works: the key works, and the notice ends.
+      stub.answers = { quick: "work", writer: "throw" };
+      expect(await settings.save(settingsFor("anthropic"), { freshCode: true })).toMatchObject({
+        saved: true,
+        ai: { status: { state: "on" } },
+      });
+      expect(ended).toEqual([KEY_REJECTED_CONDITION]);
+      expect(await ai.generate(readingAGoal)).toMatchObject({ ready: true });
+    });
+
     it("raises one System notice when two calls fail with a rejected key at once", async () => {
       const { ai } = await connect();
       stub.answers.quick = "reject";
