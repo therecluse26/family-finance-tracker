@@ -513,6 +513,7 @@ describe("the AI routes", () => {
       for (const [answer, result] of [
         ["work", "works"],
         ["rate limit", "rate limit"],
+        ["unknown model", "model unknown"],
         ["fail", "no answer"],
         ["reject", "key rejected"],
       ] as const) {
@@ -554,6 +555,28 @@ describe("the AI routes", () => {
         { error: "Wait 10 seconds, then test the key again." },
       ]);
       expect(stub.calls).toHaveLength(3);
+    });
+
+    it("answers 409 with the AI settings as they are now when a save came during the test", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      stub.answers.quick = "reject";
+      stub.beforeAnswer = async () => {
+        stub.beforeAnswer = async () => {};
+        stub.answers.quick = "work";
+        await save(tab, openai({ writerModel: "gpt-6-luna" }));
+      };
+
+      const res = await testKey(tab);
+
+      expect([res.status, await res.json()]).toEqual([
+        409,
+        {
+          error: "The AI settings changed during the test. Test again.",
+          ai: expect.objectContaining({ writerModel: "gpt-6-luna", status: { state: "on" } }),
+        },
+      ]);
     });
 
     it("answers 409 when the stored key cannot be read", async () => {

@@ -235,6 +235,21 @@ describe("Test the key", () => {
     expect(raised).toEqual([]);
   });
 
+  it("names the Quick model when the AI provider answers 404, and changes nothing", async () => {
+    await saved();
+    stub.answers.quick = "unknown model";
+
+    expect(await ai.testKey()).toMatchObject({
+      tested: true,
+      result: "model unknown",
+      ai: { status: { state: "on" } },
+    });
+    expect(raised).toEqual([]);
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({ msg: "The key test failed", failure: "model unknown" }),
+    );
+  });
+
   it("says the AI provider did not answer on a server error", async () => {
     await saved();
     stub.answers.quick = "fail";
@@ -357,7 +372,7 @@ describe("Test the key", () => {
       await ai.remove();
     };
 
-    expect(await ai.testKey()).toEqual({ tested: false, refusal: "changed" });
+    expect(await ai.testKey()).toEqual({ tested: false, refusal: "changed", ai: null });
     expect(raised).toEqual([]);
     expect(await usesCounted()).toEqual([
       ["check on save", 2],

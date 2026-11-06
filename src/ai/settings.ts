@@ -154,16 +154,18 @@ export async function markKeyRejected(
 // Spec 08, Test the key: a test starts at least 10 seconds after the last one started.
 export const KEY_TEST_WAIT_MS = 10_000;
 
-// The line a key test's call ends on. Every AI error but a rate limit is "no answer".
-const TEST_RESULTS: Record<"worked" | AiFailure | "key rejected", KeyTestResult> = {
-  worked: "works",
-  "key rejected": "key rejected",
-  "rate limit": "rate limit",
-  network: "no answer",
-  timeout: "no answer",
-  "server error": "no answer",
-  "bad reply": "no answer",
-};
+// The line a key test's call ends on. Every AI error but a rate limit and a 404 is "no answer".
+const TEST_RESULTS: Record<"worked" | AiFailure | "key rejected" | "model unknown", KeyTestResult> =
+  {
+    worked: "works",
+    "key rejected": "key rejected",
+    "model unknown": "model unknown",
+    "rate limit": "rate limit",
+    network: "no answer",
+    timeout: "no answer",
+    "server error": "no answer",
+    "bad reply": "no answer",
+  };
 
 export function aiSettings(options: AiOptions): AiSettings {
   const { database, secrets, cost, makeModels, logger = log } = options;
@@ -298,7 +300,7 @@ export function aiSettings(options: AiOptions): AiSettings {
       }
       // A save or a Remove AI provider came first while the AI provider answered.
       if ((await readAiSettingsVersion(database)).generation !== generation) {
-        return { tested: false, refusal: "changed" };
+        return { tested: false, refusal: "changed", ai: (await view()) ?? null };
       }
       if (answer === "key rejected") await markKeyRejected(options, generation);
       // A key that works ends the paused AI's System notice, as a save with the same key does.

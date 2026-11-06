@@ -1596,7 +1596,10 @@ export const api = new Hono<ServerEnv>()
           409,
         );
       case "changed":
-        return c.json({ error: "The AI settings changed during the test. Test again." }, 409);
+        return c.json(
+          { error: "The AI settings changed during the test. Test again.", ai: test.ai },
+          409,
+        );
     }
   })
   .post("/ai/remove", async (c) => {

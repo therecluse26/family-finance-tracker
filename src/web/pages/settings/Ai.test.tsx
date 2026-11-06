@@ -102,6 +102,10 @@ describe("Settings → AI", () => {
       "◆ The AI provider is limiting calls. Wait a minute, then test again",
     );
     expect(line("rate limit")).toContain("text-serious");
+    expect(text(line("model unknown"))).toBe(
+      "▲ The AI provider does not know the Quick model. Check the model names",
+    );
+    expect(line("model unknown")).toContain("text-critical");
     expect(text(line("no answer"))).toBe("◆ The AI provider did not answer. Try again later");
     expect(line("no answer")).toContain("text-serious");
     expect(text(line("no key"))).toBe("● No key is saved");
@@ -370,5 +374,14 @@ describe("Settings → AI: Test the key", () => {
     server(429, { error: "Wait 4 seconds, then test the key again." });
 
     expect(await testTheKey()).toEqual({ error: "Wait 4 seconds, then test the key again." });
+  });
+
+  it("answers the AI settings as they are now with a refusal because they changed", async () => {
+    const error = "The AI settings changed during the test. Test again.";
+    server(409, { error, ai: OPENAI });
+    expect(await testTheKey()).toEqual({ error, ai: OPENAI });
+
+    server(409, { error, ai: null });
+    expect(await testTheKey()).toEqual({ error, ai: null });
   });
 });

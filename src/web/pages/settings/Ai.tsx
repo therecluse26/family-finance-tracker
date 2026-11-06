@@ -115,6 +115,7 @@ export const KEY_TEST_WORDS: Record<KeyTestResult, string> = {
   works: "The key works",
   "key rejected": "The AI provider rejected the key",
   "rate limit": "The AI provider is limiting calls. Wait a minute, then test again",
+  "model unknown": "The AI provider does not know the Quick model. Check the model names",
   "no answer": "The AI provider did not answer. Try again later",
   "no key": "No key is saved",
 };
@@ -123,17 +124,23 @@ const KEY_TEST_TONE: Record<KeyTestResult, StatusTone> = {
   works: "good",
   "key rejected": "critical",
   "rate limit": "serious",
+  "model unknown": "critical",
   "no answer": "serious",
   "no key": "muted",
 };
 
 // Presses "Test the key": the result with the AI settings after it, or the server's refusal, such
-// as "Wait 4 seconds, then test the key again.".
+// as "Wait 4 seconds, then test the key again.". A refusal because the settings changed during the
+// test comes with the AI settings as they are now, for the status line.
 export async function testTheKey(): Promise<
-  { result: KeyTestResult; ai: AiView | null } | { error: string }
+  { result: KeyTestResult; ai: AiView | null } | { error: string; ai?: AiView | null }
 > {
   const res = await api.ai.test.$post({ json: {} });
-  if (!res.ok) return { error: await refusal(res) };
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown; ai?: AiView | null };
+    const error = typeof body.error === "string" ? body.error : "That did not work.";
+    return body.ai === undefined ? { error } : { error, ai: body.ai };
+  }
   return (await res.json()) as { result: KeyTestResult; ai: AiView | null };
 }
 
@@ -194,7 +201,12 @@ export function enteredPrices(
   return prices;
 }
 
-export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView | null) => void }) {
+export function AiProviderForm(props: {
+  ai: AiView | null;
+  onSaved: (ai: AiView | null) => void;
+  // After a test, with the AI settings it read. The form keeps what the Member typed.
+  onTested?: (ai: AiView | null) => void;
+}) {
   const { ai } = props;
   const [provider, setProvider] = useState<AiProviderName>(ai?.provider ?? "anthropic");
   const [apiKey, setApiKey] = useState("");
@@ -238,6 +250,9 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
     event.preventDefault();
     setError(undefined);
     setCheck(undefined);
+    // A save checks the key again, so the last test's line no longer holds.
+    setTested(undefined);
+    setTestError(undefined);
     const entered = enteredPrices(provider, models, prices);
     if (entered === "bad") {
       return setError("Enter each price in dollars per million tokens, such as 0.50.");
@@ -275,12 +290,19 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
   async function testKey() {
     setTestError(undefined);
     setTested(undefined);
+    // The test checks the key again, so the last save's check lines no longer hold.
+    setCheck(undefined);
     setTesting(true);
+    const tested = props.onTested ?? props.onSaved;
     try {
       const answer = await testTheKey();
-      if ("error" in answer) return setTestError(answer.error);
+      if ("error" in answer) {
+        setTestError(answer.error);
+        if (answer.ai !== undefined) tested(answer.ai);
+        return;
+      }
       setTested(answer.result);
-      props.onSaved(answer.ai);
+      tested(answer.ai);
     } catch {
       setTestError("The server did not answer.");
     } finally {
@@ -602,6 +624,13 @@ function AiPrivacyNote() {
 // wizard's Finish step links here as an optional extra.
 export function AiSettingsFields() {
   const [ai, setAi] = useState<AiView | null | undefined>();
+  // The form starts again, with the saved fields, only on a load, a save, or a Remove AI provider:
+  // never on a test, so a test keeps what the Member typed and its own line.
+  const [formKey, setFormKey] = useState<"none" | "set">("none");
+  const showSaved = useCallback((saved: AiView | null) => {
+    setAi(saved);
+    setFormKey(saved === null ? "none" : "set");
+  }, []);
   const [usage, setUsage] = useState<AiUsageView | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [zone, setZone] = useState<string | undefined>();
@@ -631,10 +660,10 @@ export function AiSettingsFields() {
       .$get()
       .then(async (res) => {
         if (!res.ok) return setError(await refusal(res));
-        setAi(((await res.json()) as { ai: AiView | null }).ai);
+        showSaved(((await res.json()) as { ai: AiView | null }).ai);
       })
       .catch(() => setError("The server did not answer."));
-  }, [loadUsage]);
+  }, [loadUsage, showSaved]);
 
   return (
     <>
@@ -650,10 +679,14 @@ export function AiSettingsFields() {
               <Lead>No AI provider yet. Every AI use takes its no-AI path.</Lead>
             ) : null}
             <AiProviderForm
-              key={ai === null ? "none" : "set"}
+              key={formKey}
               ai={ai}
               onSaved={(saved) => {
-                setAi(saved);
+                showSaved(saved);
+                loadUsage();
+              }}
+              onTested={(tested) => {
+                setAi(tested);
                 loadUsage();
               }}
             />
@@ -662,7 +695,7 @@ export function AiSettingsFields() {
             <CostCapForm usage={usage} today={today} onSaved={setUsage} />
           )}
           <AiPrivacyNote />
-          {ai === null ? null : <RemoveAiProvider onRemoved={() => setAi(null)} />}
+          {ai === null ? null : <RemoveAiProvider onRemoved={() => showSaved(null)} />}
         </>
       )}
     </>

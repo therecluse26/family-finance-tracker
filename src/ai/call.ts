@@ -226,12 +226,13 @@ function callErrorOf(error: unknown): AiCallError | undefined {
 
 // "Test the key" (spec 08, Test the key): one call with the fixed prompt and a 1-token reply, no
 // retry, and the 120-second limit, with a model from privateModels counted as the key test. A
-// failure maps as every AI call's does. Throws a plain Error for a failure that is not the AI
-// provider's, such as a database error, never the error itself, which can hold the key.
+// failure maps as every AI call's does, but for a 404, which the test alone names: the AI provider
+// does not know the model. Throws a plain Error for a failure that is not the AI provider's, such
+// as a database error, never the error itself, which can hold the key.
 export async function testModel(
   model: LanguageModel,
   logger: Logger,
-): Promise<"worked" | AiFailure | "key rejected"> {
+): Promise<"worked" | AiFailure | "key rejected" | "model unknown"> {
   // The timeout is the app's own, so a test's fake clock moves it.
   const timeout = new AbortController();
   const timer = setTimeout(
@@ -250,6 +251,7 @@ export async function testModel(
   } catch (error) {
     if (timeout.signal.aborted) return "timeout";
     const failed = callErrorOf(error);
+    if (failed?.status === 404) return "model unknown";
     if (failed !== undefined) return failed.failure;
     logger.warn("The key test failed in the app", {
       error: error instanceof Error ? error.name : "unknown",

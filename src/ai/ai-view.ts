@@ -303,10 +303,16 @@ export type AiSave =
   // A model is not in the price table, and has no prices from a Member.
   | { saved: false; refusal: "price needed"; tier: AiTier };
 
-// What "Test the key" found (spec 08, Test the key). "no answer" is any other AI error, such as a
-// network failure, no reply within 120 seconds, or a server error. With "no key", no AI provider
-// is saved, and the app made no call.
-export type KeyTestResult = "works" | "key rejected" | "rate limit" | "no answer" | "no key";
+// What "Test the key" found (spec 08, Test the key). "model unknown" is the AI provider's 404.
+// "no answer" is any other AI error, such as a network failure, no reply within 120 seconds, or a
+// server error. With "no key", no AI provider is saved, and the app made no call.
+export type KeyTestResult =
+  | "works"
+  | "key rejected"
+  | "rate limit"
+  | "model unknown"
+  | "no answer"
+  | "no key";
 
 export type KeyTest =
   // `ai` is the AI settings after the test, whose status line it may have changed.
@@ -319,8 +325,8 @@ export type KeyTest =
   // key, or the Quick model has no price. The app made no call.
   | { tested: false; refusal: "key unreadable" | "token unreadable" | "price needed" }
   // A save or a Remove AI provider changed the settings while the AI provider answered. The call
-  // counted, and the AI status did not change.
-  | { tested: false; refusal: "changed" };
+  // counted, and the AI status did not change. `ai` is the AI settings as they are now.
+  | { tested: false; refusal: "changed"; ai: AiView | null };
 
 export type AiSettings = {
   // Undefined when no AI provider is set up.
