@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GoalView } from "../../server/goals-views.ts";
 import { type GoalsAnswer, markGoal, readingParts, saveGoal } from "../goals.ts";
-import { type GoalForm, type GoalFormActions, GoalsReport } from "./Goals.tsx";
+import { type GoalForm, type GoalFormActions, GoalsHeadingControl, GoalsReport } from "./Goals.tsx";
 
 // The Goals page (spec 07, Goals page), drawn from the Goal routes' answer. The routes themselves
 // are checked through the app's HTTP interface in src/server/goals-api.test.ts.
@@ -92,8 +92,12 @@ const ANSWER: GoalsAnswer = {
   ],
 };
 
+// The page under its heading: what sits beside the heading, then the Goals.
 const report = (answer: GoalsAnswer, onMark: (id: string, status: string) => void = () => {}) => (
-  <GoalsReport answer={answer} accountNames={ACCOUNT_NAMES} today={TODAY} onMark={onMark} />
+  <>
+    <GoalsHeadingControl answer={answer} />
+    <GoalsReport answer={answer} accountNames={ACCOUNT_NAMES} today={TODAY} onMark={onMark} />
+  </>
 );
 
 const render = (answer: GoalsAnswer) =>
@@ -146,15 +150,58 @@ describe("the Goals page", () => {
     const html = render(ANSWER);
 
     expect(listItems(html, "Active Goals")).toEqual([
-      "Alex “Spend less on eating out” ◆ Behind 62% On pace for $540 this month; Goal is $480 " +
-        "Sep 2 AI Target: Restaurants · Change: 20% · Deadline: not said Mark done Mark dropped",
-      "Sam “Save $5,000 for the trip by June” ✓ Done 100% estimated $5,000 of $5,000 Oct 5 " +
-        "AI Target: Rainy Day Savings, Brokerage · Change: $5,000 · Deadline: Jun 30, 2027",
+      "“Spend less on eating out” ◆ Behind · 62% Alex · set Sep 2 " +
+        "On pace for $540 this month; Goal is $480 " +
+        "Target AI Restaurants Change 20% Deadline not said Mark done Mark dropped",
+      "“Save $5,000 for the trip by June” ✓ Done · 100% estimated Sam · set Oct 5 $5,000 of $5,000 " +
+        "Target AI Rainy Day Savings, Brokerage Change $5,000 Deadline Jun 30, 2027",
     ]);
     expect(html.indexOf("Active Goals")).toBeLessThan(html.indexOf('data-slot="done-list"'));
     expect(html.indexOf('data-slot="done-list"')).toBeLessThan(
       html.indexOf('data-slot="dropped-list"'),
     );
+  });
+
+  it("draws a Behind Goal's bar orange and an on-track or done Goal's green, filled to its percentage", () => {
+    const html = render(ANSWER);
+    const bar = (id: string) =>
+      new RegExp(
+        `data-goal="${id}".*?class="([^"]*)" style="width:([\\d.]+)%" data-slot="meter-fill"`,
+        "s",
+      )
+        .exec(html)
+        ?.slice(1, 3);
+
+    expect(bar("g1")?.[0]).toContain("bg-serious");
+    expect(bar("g1")?.[1]).toBe("62");
+    expect(bar("g2")?.[0]).toContain("bg-good-bar");
+    expect(bar("g2")?.[1]).toBe("100");
+  });
+
+  it("shows the percentage alone for a Goal with no status, and no bar for one with no progress", () => {
+    const html = render({
+      ...ANSWER,
+      goals: [
+        goal({
+          progress: {
+            kind: "spend less",
+            percentage: 40,
+            state: null,
+            detail: "On pace for $540 this month; Goal is $480",
+            estimated: false,
+          },
+        }),
+        goal({ id: "g5", reading: { target: null, change: null, deadline: null }, progress: null }),
+      ],
+    });
+
+    expect(listItems(html, "Active Goals")).toEqual([
+      "“Spend less on eating out” 40% Alex · set Sep 2 On pace for $540 this month; Goal is $480 " +
+        "Target AI Restaurants Change 20% Deadline not said Mark done Mark dropped",
+      "“Spend less on eating out” Alex · set Sep 2 " +
+        "Target AI not said Change not said Deadline not said Mark done Mark dropped",
+    ]);
+    expect(html.match(/data-slot="meter-fill"/g)).toHaveLength(1);
   });
 
   it("holds the done list and the dropped list in collapsed sections at the end", () => {
@@ -214,13 +261,16 @@ describe("Add a Goal and Edit the words", () => {
   }
 
   const withWriting = (answer: GoalsAnswer, actions: GoalFormActions) => (
-    <GoalsReport
-      answer={answer}
-      accountNames={ACCOUNT_NAMES}
-      today={TODAY}
-      onMark={() => {}}
-      writing={actions}
-    />
+    <>
+      <GoalsHeadingControl answer={answer} writing={actions} />
+      <GoalsReport
+        answer={answer}
+        accountNames={ACCOUNT_NAMES}
+        today={TODAY}
+        onMark={() => {}}
+        writing={actions}
+      />
+    </>
   );
   const renderWith = (answer: GoalsAnswer, actions: GoalFormActions) =>
     renderToString(<MemoryRouter>{withWriting(answer, actions)}</MemoryRouter>);
