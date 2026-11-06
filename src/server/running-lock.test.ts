@@ -82,6 +82,7 @@ describe("the running lock", () => {
   function appStart(onWait: (now: number) => void = () => {}) {
     let clock = Date.now();
     let waits = 0;
+    const infos: string[] = [];
     const lock = takeAppLock(file, {
       now: () => clock,
       sleep: async (ms) => {
@@ -89,8 +90,9 @@ describe("the running lock", () => {
         clock += ms;
         onWait(clock);
       },
+      info: (line) => infos.push(line),
     });
-    return { lock, waits: () => waits };
+    return { lock, waits: () => waits, infos };
   }
 
   it("refuses a restore while an app's lock is fresh, and while another restore's is", async () => {
@@ -209,6 +211,16 @@ describe("the running lock", () => {
       held.push(lock);
       expect(start.waits()).toBeGreaterThan(25);
       expect(readFileSync(file, "utf8")).not.toBe(other);
+      // One line when the wait starts, and none for each later look.
+      expect(start.infos).toEqual([
+        "Waiting for the running lock to go stale, as after a crash. This takes up to 40 seconds.",
+      ]);
+    });
+
+    it("logs no wait when it takes the lock at once", async () => {
+      const start = appStart();
+      held.push(await start.lock);
+      expect(start.infos).toEqual([]);
     });
 
     // Two containers can share a host name (network_mode: host, or hostname: in Compose), and the

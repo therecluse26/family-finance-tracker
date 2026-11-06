@@ -149,16 +149,23 @@ const flip = (amount: Cents | null): Cents | null => (amount === null ? null : 0
 
 // The fields of Plaid's data that hold an account number or a personal detail (spec 02, Records
 // the adapter returns). A student loan's payment_reference_number is, by Plaid's docs, usually its
-// account number. A Transaction's payment_meta holds a reference_number and a ppd_id, its
-// account_owner names a person, and a mortgage's property_address is the Household's home.
+// account number. A Transaction's payment_meta holds a reference_number and a ppd_id, and its
+// payer, payee, by_order_of and reason can name a person. Its account_owner names a person, and a
+// mortgage's property_address is the Household's home. An Account's verification_insights score
+// the name on it. That name, verification_name, stays (owner decision D20).
 const PERSONAL_FIELDS = new Set([
   "account_number",
   "account_numbers",
   "payment_reference_number",
   "reference_number",
   "ppd_id",
+  "payer",
+  "payee",
+  "by_order_of",
+  "reason",
   "account_owner",
   "property_address",
+  "verification_insights",
 ]);
 
 // Plaid's data with every account number and personal detail left out, by field name at every

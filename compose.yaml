@@ -12,6 +12,10 @@ services:
     # The major version: it gets fixes, but never a breaking change.
     image: ghcr.io/therecluse26/family-finance-tracker:1
     restart: unless-stopped
+    # A small init process runs first and passes stop signals on. The app as the first process
+    # would miss a stop while it still loads, then be killed after 15 seconds with its running lock
+    # left in data/app.lock.
+    init: true
     # The app gives itself 10 seconds to stop. Docker's default of 10 seconds would race it.
     stop_grace_period: 15s
     environment:

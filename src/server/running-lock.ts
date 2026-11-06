@@ -224,13 +224,17 @@ export class LockHeldError extends Error {
 // crash.
 export async function takeAppLock(
   file: string,
-  options: LockOptions & { sleep?: (ms: number) => Promise<void> } = {},
+  options: LockOptions & {
+    sleep?: (ms: number) => Promise<void>;
+    // A line for the log, once, when the start begins to wait, so a quiet start explains itself.
+    info?: (message: string) => void;
+  } = {},
 ): Promise<RunningLock> {
   const now = options.now ?? Date.now;
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
   const until = now() + STALE_AFTER_MS + REFRESH_EVERY_MS;
-  for (;;) {
+  for (let waited = false; ; waited = true) {
     const result = await takeRunningLock(file, "app", options);
     if (result.taken) return result.lock;
     const { holder } = result.refusal;
@@ -249,6 +253,11 @@ export async function takeAppLock(
       throw new LockHeldError(
         "Another app process on this data folder keeps the running lock fresh, so this one did " +
           "not start. Two apps must never share one app.db: stop the other one first.",
+      );
+    }
+    if (!waited) {
+      options.info?.(
+        "Waiting for the running lock to go stale, as after a crash. This takes up to 40 seconds.",
       );
     }
     await sleep(WAIT_STEP_MS);

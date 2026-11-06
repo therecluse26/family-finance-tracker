@@ -7,11 +7,18 @@ type Signals = {
   on(signal: NodeJS.Signals, listener: (signal: NodeJS.Signals) => void): unknown;
 };
 
+type Closable = { close: () => Promise<void> };
+
 // On SIGTERM or SIGINT, closes the app, which stops taking requests and starting jobs and waits
 // for the running job. The app exits when that is done, or after 10 seconds. A job cut off by the
 // exit runs again after the next start.
+//
+// main sets it up before the start begins, with the start's promise. A signal during the start
+// waits for the start to end, then closes the app, which releases the running lock. Without it,
+// Node as the container's first process ignores the signal, and Docker kills it with the lock
+// still fresh. A start that fails releases the lock itself, and main reports the failure.
 export function exitOnSignal(
-  app: { close: () => Promise<void> },
+  app: Closable | Promise<Closable>,
   exit: (code: number) => void = (code) => process.exit(code),
   signals: Signals = process,
 ): void {
@@ -24,13 +31,16 @@ export function exitOnSignal(
       log.warn("Exiting before the app finished stopping", { waitedMs: STOP_TIMEOUT_MS });
       exit(0);
     }, STOP_TIMEOUT_MS).unref();
-    app
-      .close()
-      .catch((error: unknown) => log.error("The app could not stop cleanly", { error }))
-      .finally(() => {
-        clearTimeout(timeout);
-        exit(0);
-      });
+    const close = (started: Closable) =>
+      started
+        .close()
+        .catch((error: unknown) => log.error("The app could not stop cleanly", { error }))
+        .finally(() => {
+          clearTimeout(timeout);
+          exit(0);
+        });
+    if (app instanceof Promise) app.then(close, () => clearTimeout(timeout));
+    else void close(app);
   };
   signals.on("SIGTERM", stop);
   signals.on("SIGINT", stop);

@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { createClient } from "@libsql/client";
 import type { Database } from "./client.ts";
 
@@ -6,9 +6,11 @@ import type { Database } from "./client.ts";
 // The backups module names the files and does the rest.
 
 // Copies app.db into a new file at `path` with VACUUM INTO, while the app keeps running. The copy
-// holds every committed row, the ones still in the WAL file too, and no uncommitted one. VACUUM
-// INTO refuses a file that already exists.
+// holds every committed row, the ones still in the WAL file too, and no uncommitted one. It refuses
+// a file that already exists. It makes the file empty and owner-only first, whatever the umask, and
+// VACUUM INTO fills an empty file and keeps its mode (spec 11, What a backup holds).
 export async function copyDatabaseInto(database: Database, path: string): Promise<void> {
+  await writeFile(path, "", { flag: "wx", mode: 0o600 });
   await database.$client.execute({ sql: "VACUUM INTO ?", args: [path] });
 }
 

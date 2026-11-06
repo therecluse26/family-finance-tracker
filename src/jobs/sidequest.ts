@@ -1,5 +1,5 @@
 import { Sidequest } from "sidequest";
-import type { Database } from "../db/index.ts";
+import { type Database, makeFilesOwnerOnly, sqliteFiles } from "../db/index.ts";
 import { holdsSecretValue, log } from "../log.ts";
 import { Job, type JobArgument, type JobClass, refusePerformOverride } from "./job.ts";
 import { createScheduler, type ScheduledTask } from "./scheduler.ts";
@@ -87,6 +87,8 @@ export async function startJobs(options: JobsOptions): Promise<RunningJobs> {
   if (running !== undefined) throw new Error("The jobs module is already running.");
   const jobs = await readJobList(options.jobList);
   checkTasks(options.tasks, jobs);
+  // Before Sidequest opens it: jobs.db holds job arguments, and an older version left it 0644.
+  await makeFilesOwnerOnly(sqliteFiles(options.jobsDb));
   await Sidequest.start({
     backend: { driver: "@sidequest/sqlite-backend", config: options.jobsDb },
     // Jobs run inside the app process, one at a time, as Sidequest's docs advise for SQLite.

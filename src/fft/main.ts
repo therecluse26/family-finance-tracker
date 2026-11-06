@@ -23,6 +23,10 @@ function ask(question: string): Promise<string> {
   });
 }
 
+// Before anything opens a file: app.db, its -wal and -shm files, a restore's files, and the Master
+// key are the app's user's alone (spec 11, What a backup holds).
+process.umask(0o077);
+
 const code = await runFft(process.argv.slice(2), {
   env: process.env,
   databaseFile: APP_DB_URL.replace(/^file:/, ""),

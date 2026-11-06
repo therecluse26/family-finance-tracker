@@ -68,7 +68,8 @@ function lockRefusal(refusal: LockRefusal, file: string): string {
   if (refusal.holder === "app") {
     return (
       "The app is running, so fft restore changed nothing. Stop it first with " +
-      "`docker compose stop app`, then run fft restore again.\n"
+      "`docker compose stop app`, then run fft restore again. Right after a crash, wait 30 " +
+      "seconds and try again.\n"
     );
   }
   if (refusal.holder === "restore") {

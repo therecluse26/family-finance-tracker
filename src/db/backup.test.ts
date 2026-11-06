@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
@@ -63,6 +71,46 @@ describe("copying app.db for a backup", () => {
       await open.rollback();
       open.close();
     }
+  });
+
+  it("makes app.db, its -wal and -shm files, and the copy owner-only under a loose umask", async () => {
+    const before = process.umask(0o022);
+    try {
+      const path = join(dir, "app.db");
+      const database = await openDatabase(`file:${path}`);
+      try {
+        await database.$client.execute("CREATE TABLE t (x)");
+        const copy = join(dir, "app-copy.db.tmp");
+        await copyDatabaseInto(database, copy);
+
+        const modes = Object.fromEntries(
+          [path, `${path}-wal`, `${path}-shm`, copy].map((file) => [
+            file.slice(dir.length + 1),
+            (statSync(file).mode & 0o777).toString(8),
+          ]),
+        );
+        expect(modes).toEqual({
+          "app.db": "600",
+          "app.db-wal": "600",
+          "app.db-shm": "600",
+          "app-copy.db.tmp": "600",
+        });
+      } finally {
+        closeDatabase(database);
+      }
+    } finally {
+      process.umask(before);
+    }
+  });
+
+  it("makes an app.db that another umask left readable owner-only when it opens", async () => {
+    const path = join(dir, "app.db");
+    writeFileSync(path, "");
+    chmodSync(path, 0o644);
+
+    closeDatabase(await openDatabase(`file:${path}`));
+
+    expect((statSync(path).mode & 0o777).toString(8)).toBe("600");
   });
 
   it("refuses to copy over a file that already exists", async () => {

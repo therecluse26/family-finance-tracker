@@ -7,6 +7,11 @@
 # to run as the app's user in the running container, where the start already changed the owners.
 set -eu
 
+# Every file and folder the command makes is the app's user's alone: app.db, its -wal and -shm
+# files, jobs.db, and each backup (spec 11, What a backup holds). No other user on the host can
+# read them.
+umask 077
+
 change_owners=true
 if [ "${1-}" = --no-chown ]; then
   change_owners=false
@@ -46,6 +51,13 @@ if [ "$change_owners" = true ]; then
     # user. Only files with another owner change, so a large backups folder costs one pass of reads.
     find -P "$folder" \( ! -user "$uid" -o ! -group "$gid" \) -exec chown -h "$uid:$gid" {} + ||
       echo "fft: could not give every file in $folder to $uid:$gid, such as on a read-only mount." >&2
+    # Owner-only, so a file made before the umask above, such as a 0644 app.db, is still closed
+    # to other users. Only once the folder is the app's user's: on a share that squashes root, the
+    # folder can keep another owner, and a chmod would shut the app's user out of it.
+    if [ "$(stat -c %u "$folder")" = "$uid" ]; then
+      chmod 700 "$folder" ||
+        echo "fft: could not make $folder readable by $uid alone, such as on a read-only mount." >&2
+    fi
   done
 fi
 

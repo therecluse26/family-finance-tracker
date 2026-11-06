@@ -64,6 +64,7 @@ At every start, the app runs these steps in order:
 - On `SIGTERM`, the app stops taking requests and starting jobs.
 - It waits up to 10 seconds for the running job, then exits.
 - Work cut off by a stop runs again after the next start. Jobs are safe to run twice.
+- A `SIGTERM` during the start waits for the start to end, for up to 10 seconds, then stops the same way, so it releases the running lock.
 
 ### HTTP routes
 

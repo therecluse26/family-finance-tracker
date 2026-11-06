@@ -28,7 +28,7 @@ Every key, token, address, and email address in this guide is a placeholder, suc
 **Cautions:**
 
 - **Exactly one app per data folder.** Two app containers must never share one `data/` folder. SQLite does not share. A second app refuses to start while the first one runs.
-- **Keep the app private until setup is done.** Until the first Member exists, anyone who can reach the app can send wrong setup codes. The setup page allows 5 wrong codes per 15 minutes, so a stranger can keep you locked out. Tailscale Serve and plain HTTP on the home network are private. With Caddy on a public domain, finish setup right after the first start.
+- **Keep the app private until setup is done.** Until the first Member exists, anyone who can reach the app can send wrong setup codes. The setup page allows 5 wrong codes per 15 minutes, so a stranger can keep you locked out. Tailscale Serve and plain HTTP on the home network are private. Finish the wizard's steps 1 and 2 (the setup link and the first Member) before the app is reachable from the internet. With Caddy on a public domain, finish setup right after the first start.
 - **There is no reset command.** Never delete `data/` to start over: it holds every Plaid token, and connecting the banks again spends new Plaid Items, which are limited for life. Restore a backup instead ([Restore](#restore)).
 
 ## Install with Docker Compose
@@ -89,7 +89,11 @@ Open this setup link to make the first Member. It stops working once the first M
   https://money.example.com/setup#code=XXXX-XXXX-XXXX
 ```
 
-The code after `#` comes from the Master key. Your browser never sends it to the server, so it stays out of logs. Lost the link? Run `fft setup` again: until the first Member exists, it prints the same link.
+The code after `#` comes from the Master key. Your browser never sends it to the server, so it stays out of logs. Lost the link? Run `fft setup` again: until the first Member exists, it prints the same link. While the app runs, run it in the running container:
+
+```sh
+docker compose exec app fft-entrypoint --no-chown fft setup
+```
 
 ### 4. Start the app
 
@@ -135,6 +139,8 @@ Use the first way that fits.
 
 `TRUSTED_PROXIES` lists only your proxy's own address. The app reads `X-Forwarded-For` and `X-Forwarded-Proto` only from the sources it lists. With an `http://` `APP_URL`, the app refuses to start when `TRUSTED_PROXIES` is `*` or covers every address.
 
+With an `https://` `APP_URL`, the proxy must pass on the browser's own `Host`. The app answers any other host with 421, even from a trusted proxy. Tailscale Serve keeps the `Host` as it is, and so does the Compose file's `caddy reverse-proxy` command unless `--change-host-header` is added to it. nginx sends the app's own address by default, so an nginx proxy needs `proxy_set_header Host $host;`.
+
 ### 1. Tailscale Serve (preferred)
 
 Tailscale gives the server a private name and a real certificate. Only devices signed in to your tailnet can reach it. Each Member installs the Tailscale app on their phone and computer.
@@ -160,7 +166,7 @@ Tailscale gives the server a private name and a real certificate. Only devices s
    TRUSTED_PROXIES=172.18.0.1
    ```
 
-   Tailscale Serve sends each request to `127.0.0.1:3000`, and Docker passes it to the app from this gateway address.
+   Tailscale Serve sends each request to `127.0.0.1:3000`, and Docker passes it to the app from this gateway address. Serve keeps the `ts.net` name as the `Host`, which must match `APP_URL`.
 
 6. Start the app with `docker compose up -d`, then turn on Tailscale Serve:
 
@@ -186,7 +192,7 @@ Caddy is an optional service in `compose.yaml`. It gets a certificate for `APP_U
    TRUSTED_PROXIES=caddy
    ```
 
-   `caddy` is Caddy's service name. The app trusts the address it resolves to.
+   `caddy` is Caddy's service name. The app trusts the address it resolves to. The Caddy service's `caddy reverse-proxy` command keeps the browser's `Host`; do not add `--change-host-header` to it.
 
 5. Run `fft setup`, then start the app and Caddy:
 
@@ -259,7 +265,7 @@ Render, Railway, and Fly.io run the image without Compose. They get this checkli
   ```
 
   It prints a new Master key and the setup link for that address, and writes no file. Save the key in your password manager. If the platform has secret files, add the key as a file and set `FFT_MASTER_KEY_FILE` to its path; the app's user (UID 1000) must be able to read it. Otherwise set it as the secret `FFT_MASTER_KEY`. Prefer the file: platform dashboards and crash reports can show an environment variable.
-- [ ] **`APP_URL`** set to the platform's `https://` address for the app.
+- [ ] **`APP_URL`** set to the platform's `https://` address for the app: the host the platform serves it under, or the app answers 421.
 - [ ] **`TRUSTED_PROXIES=*`.** The platform's proxy is the only way in.
 - [ ] **Backups in `/data/backups`.** With no `/backups` mount, the app writes backups there, on the same disk as the data. Download them now and then with the platform's own file copy tool, such as `fly ssh sftp get` on Fly.io.
 
@@ -267,7 +273,14 @@ The image is `ghcr.io/therecluse26/family-finance-tracker:1`. It listens on `POR
 
 **Serverless containers are not supported:** Cloud Run, AWS App Runner, Azure Container Apps, and Lambda. They scale to zero and give no lasting local disk, which breaks SQLite and the job runner.
 
-**Restore on a platform** needs the app stopped and `fft restore` run on the same volume. If the platform gives no shell on the volume while the app is stopped, restore on your own computer with Compose ([Restore](#restore)), with the same Master key in `secrets/master.key`, and do not start the app there. Then, with the platform's app stopped, replace `/data/app.db` on the volume with the restored `data/app.db`, and delete these files on the volume if they exist: `app.db-wal`, `app.db-shm`, `jobs.db`, `jobs.db-wal`, and `jobs.db-shm`.
+**Restore on a platform** needs the app stopped and `fft restore` run on the same volume. If the platform gives no shell on the volume while the app is stopped, restore on your own computer with Compose:
+
+1. Make the folder on your computer ([Install with Docker Compose](#install-with-docker-compose)), but do not run `fft setup`. Set `APP_URL` in `.env` to the platform's address: Compose refuses an empty one.
+2. Put the same Master key in `secrets/master.key` ([The server is gone, the Master key is saved](#the-server-is-gone-the-master-key-is-saved)).
+3. Download the backup from the platform's `/data/backups`, and copy it into `backups/` with its name.
+4. Run `fft restore` on it ([Restore](#restore)). Do not start the app there.
+5. Stop the platform's app. Download its current `/data/app.db` and keep it: this way makes no `restore` safety copy.
+6. Replace `/data/app.db` on the volume with the restored `data/app.db`, and delete these files on the volume if they exist: `app.db-wal`, `app.db-shm`, `jobs.db`, `jobs.db-wal`, and `jobs.db-shm`. Then start the platform's app.
 
 ## Plaid sign-up
 
@@ -323,7 +336,7 @@ A backup is a gzipped SQLite file, named by its time (in UTC) and kind, such as 
 - **The backup folder holds readable history:** Transactions, Merchants, and Members' names and email addresses. Keep it on an encrypted disk, and copy it only to places you trust. The bank, AI, and SMTP secrets inside stay encrypted with the Master key.
 - **A backup never holds the Master key**, `compose.yaml`, or `.env`. Keep those yourself.
 - **Copy backups off the server** now and then, such as to a NAS or another computer. You may also point the `backups` mount in `compose.yaml` at a NAS or a synced folder.
-- The files belong to the app's user (UID 1000, or `PUID`) with mode `0600`. Copy them as that user, or with `sudo`. To own them as your own user, set `PUID` and `PGID` in `.env` to the numbers from `id -u` and `id -g`.
+- The files belong to the app's user (UID 1000, or `PUID`) with mode `0600`, and the `data/`, `backups/`, and `secrets/` folders with mode `0700`, so no other user on the host can read them. Copy them as that user, or with `sudo`. To own them as your own user, set `PUID` and `PGID` in `.env` to the numbers from `id -u` and `id -g`.
 
 Settings, Backups and data, also has "Download my data": a ZIP file of CSV and JSON for your own use. It holds no secret, and `fft restore` does not read it.
 
@@ -369,7 +382,7 @@ Member changes made after the backup, such as hand-set Categories, are lost. Syn
 
 **On a new server**, put the Master key in `secrets/master.key` before the restore ([The server is gone, the Master key is saved](#the-server-is-gone-the-master-key-is-saved)). If `APP_URL` changes, each passkey stops working, and the app deletes it at start. Members sign in with password and TOTP, and may add a new passkey.
 
-**After a crash**, a power cut, or `docker kill`, `fft restore` says the app is running for up to 30 seconds. Wait 30 seconds and try again.
+**After a crash**, a power cut, `docker kill`, or a stop that took more than 10 seconds, `fft restore` says the app is running for up to 30 seconds. Wait 30 seconds and try again. A normal stop releases the lock, also while the app is still starting.
 
 ## The Master key
 
@@ -409,7 +422,7 @@ Without the Master key, history stays, but every saved secret is lost. Every Con
 
 Every Member sees a System notice that lists what to set up again. Changes made after the newest backup are lost.
 
-**The server is gone and so is the key:** make the folder on a new server ([Install with Docker Compose](#install-with-docker-compose)), but do not run `fft setup`. Copy a backup into `backups/`, then follow the steps above from step 2.
+**The server is gone and so is the key:** make the folder on a new server ([Install with Docker Compose](#install-with-docker-compose)), but do not run `fft setup`. Make the backup folder with `mkdir -p backups`, copy a backup into it, then follow the steps above from step 2.
 
 ### The server is gone, the Master key is saved
 
@@ -422,7 +435,12 @@ Every Member sees a System notice that lists what to set up again. Changes made 
    chmod 600 secrets/master.key
    ```
 
-3. Copy a backup into `backups/`, and keep its name.
+3. Make the backup folder, then copy a backup into it, and keep its name:
+
+   ```sh
+   mkdir -p backups
+   ```
+
 4. Restore it and start the app:
 
    ```sh
@@ -440,7 +458,7 @@ Someone with the Master key and a copy of `app.db` or a backup can read the save
 2. **AI:** revoke the API key at the AI provider, make a new one, and enter it in Settings, AI.
 3. **SMTP:** change the mail account's password, and enter it in Settings, Alerts.
 
-The Master key also signs logins. If someone who can reach the app may have it, move to a new Master key: stop the app, move `secrets/master.key` off the server, and restore the newest backup as in [A lost Master key](#a-lost-master-key). That costs a new Plaid Item for each bank.
+The Master key also signs logins. If someone who can reach the app may have it, move to a new Master key: press "Back up now" in Settings, Backups and data, so the newest backup holds today's changes. Then stop the app, move `secrets/master.key` off the server, and restore that `manual` backup as in [A lost Master key](#a-lost-master-key). That costs a new Plaid Item for each bank.
 
 ## Updates
 
@@ -489,18 +507,19 @@ docker compose ps
 
 | What you see | What to do |
 |---|---|
-| The app takes about 30 seconds to start after a crash, a power cut, or `docker kill`, and the log says nothing after "Loaded the Master key". | This is expected. The app waits until the lock it left in `data/app.lock` goes stale, for at most 40 seconds. A normal stop does not leave the lock. |
-| `fft restore` says "The app is running" right after a crash. | Wait 30 seconds and try again. |
+| The app takes about 30 seconds to start after a crash, a power cut, or `docker kill`, and the log says "Waiting for the running lock to go stale". | This is expected. The app waits until the lock it left in `data/app.lock` goes stale, for at most 40 seconds. A normal stop does not leave the lock, also while the app is starting. A stop that takes more than 10 seconds can. |
+| `fft restore` says "The app is running" right after a crash, or after a stop that took more than 10 seconds. | Wait 30 seconds and try again. |
 | "Another app process on this data folder keeps the running lock fresh". | A second app uses the same `data/` folder. Stop the other one. Two apps must never share one `data/` folder. |
 | "There is no Master key". | Before setup: run `fft setup`. After setup: put the saved key back in `secrets/master.key`, or follow [A lost Master key](#a-lost-master-key). |
 | "The Master key cannot decrypt the data key in app.db". | The key is not the one this `app.db` was set up with. Put the right key back. Only `fft restore` goes on without it. |
-| "app.db holds a migration that this version of the app does not have". | A newer version ran on this data. Run the newer image again, or see [Going back to an older version](#updates). |
+| "app.db holds a migration that this version of the app does not have", or "holds 2 migrations" or more. | A newer version ran on this data. Run the newer image again, or see [Going back to an older version](#updates). |
 | "APP_URL is http://, so its host must be a local address". | Use a local address ([Plain HTTP](#3-plain-http-on-the-home-network)), or an `https://` address with a proxy. |
 | "TRUSTED_PROXIES=* is only for platform services". | With an `http://` `APP_URL`, leave `TRUSTED_PROXIES` empty, or list the proxy's own address. |
 | Every page is refused, and the log says "Refused a request" with `"reason":"not-from-trusted-proxy"`. | The request came from an address not in `TRUSTED_PROXIES`. The log's `source` is that address. If it is your proxy, such as the Docker gateway for Tailscale Serve after a `docker compose down`, put it in `TRUSTED_PROXIES` and run `docker compose up -d`. |
 | On plain HTTP, a page names another address. | Open exactly the `APP_URL` address. |
+| Over HTTPS, every page answers 421. | The request's host is not `APP_URL`'s host. Open exactly the `APP_URL` address. If you do, your proxy rewrites the `Host`: with nginx, add `proxy_set_header Host $host;`; with the Compose file's Caddy, remove `--change-host-header` from its command. On a platform service, set `APP_URL` to the host the platform serves the app under. |
 | The setup page refuses codes, or asks you to wait. | It allows 5 wrong codes per 15 minutes. Wait, and keep the app private until setup is done. |
-| The setup link is lost. | `fft setup` prints it again until the first Member exists. |
+| The setup link is lost. | `fft setup` prints it again until the first Member exists. While the app runs: `docker compose exec app fft-entrypoint --no-chown fft setup`. |
 | No Member can sign in. | `docker compose exec app fft-entrypoint --no-chown fft reset-login member@example.com`. |
 | Plaid Link does not finish on plain HTTP. | Use [Tailscale Serve](#1-tailscale-serve-preferred). |
 | A System notice says a backup failed. | Check free space on the disk that holds `backups/`, and that the folder is writable. Then press "Back up now" in Settings, Backups and data. |

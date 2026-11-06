@@ -7,10 +7,13 @@ import { dirname, resolve } from "node:path";
 
 export type BrokenLink = { target: string; reason: string };
 
+// A fenced code block, also one indented inside a list item, as most of the setup guide's are.
+const FENCED_BLOCK = /^[ \t]*```[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm;
+
 // Markdown with its fenced code blocks and inline code taken out, so a link-like text in code is
 // not read as a link.
 function withoutCode(markdown: string): string {
-  return markdown.replace(/^```[^\n]*\n[\s\S]*?^```$/gm, "").replace(/`[^`\n]*`/g, "");
+  return markdown.replace(FENCED_BLOCK, "").replace(/`[^`\n]*`/g, "");
 }
 
 // GitHub's anchor for a heading: the text, lowercased, with only letters, marks, numbers,
@@ -19,7 +22,7 @@ function withoutCode(markdown: string): string {
 export function headingAnchors(markdown: string): Set<string> {
   const anchors = new Set<string>();
   const seen = new Map<string, number>();
-  const fenceless = markdown.replace(/^```[^\n]*\n[\s\S]*?^```$/gm, "");
+  const fenceless = markdown.replace(FENCED_BLOCK, "");
   for (const [, heading] of fenceless.matchAll(/^#{1,6} +(.+?) *#* *$/gm)) {
     const text = (heading ?? "")
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")

@@ -132,7 +132,7 @@ type SyncResult = {
 
 - **Amounts** are integer cents in US dollars. A positive amount is money into the Account; a negative amount is money out. The Plaid adapter flips Plaid's sign.
 - **Raw data** is stored with each record, so a later version can reprocess history without fetching it again.
-- Raw data holds no account number and no personal detail. The Plaid adapter drops these fields by name, at every depth: `account_number`, `account_numbers`, `payment_reference_number`, `reference_number` and `ppd_id` (in `payment_meta`), `account_owner`, and `property_address` (in a mortgage's details).
+- Raw data holds no account number and no personal detail. The Plaid adapter drops these fields by name, at every depth: `account_number`, `account_numbers`, `payment_reference_number`, `reference_number`, `ppd_id`, `payer`, `payee`, `by_order_of` and `reason` (in `payment_meta`), `account_owner`, `property_address` (in a mortgage's details), and `verification_insights` (on an Account). An Account's `verification_name` stays.
 - **Provider categories** carry the transfer, credit card payment, loan payment, and loan payout (`LOAN_DISBURSEMENTS_*`) signals that [Money movement](03-money-movement.md) uses.
 - **MCC:** the Plaid adapter leaves it empty. When a later adapter sends one, it is a hint to the AI only ([Categorization](04-categorization.md)).
 

@@ -306,16 +306,22 @@ describe("the Plaid adapter", () => {
 
   // The fields raw data never holds (spec 02, Records the adapter returns), and the values the
   // recorded Plaid data puts in them: the student loan's account number and different payment
-  // reference number, the payment terminal's bank account number, the payroll's reference number
-  // and PPD ID, two account owners, and the mortgage's account number and home address.
+  // reference number, the payment terminal's bank account number, the payroll's reference number,
+  // PPD ID, payer, payee, ordering party and reason, two account owners, the mortgage's account
+  // number and home address, and the checking Account's name match score.
   const PERSONAL_FIELDS = [
     "account_number",
     "account_numbers",
     "payment_reference_number",
     "reference_number",
     "ppd_id",
+    "payer",
+    "payee",
+    "by_order_of",
+    "reason",
     "account_owner",
     "property_address",
+    "verification_insights",
   ];
   const PERSONAL_VALUES = [
     "9000000001",
@@ -327,6 +333,11 @@ describe("the Plaid adapter", () => {
     "FAKE OWNER ONE",
     "FAKE OWNER TWO",
     "Fake Home Ln",
+    "FAKE PAYER ONE",
+    "FAKE PAYEE ONE",
+    "FAKE ORDERER ONE",
+    "FAKE PERSON ONE",
+    "name_match_score",
   ];
 
   it("stores raw data with no account number or personal detail, by field name or by value", async () => {
@@ -347,21 +358,26 @@ describe("the Plaid adapter", () => {
     }
   });
 
-  it("keeps the other payment_meta fields and the rest of the mortgage details", async () => {
+  it("keeps the other payment_meta fields, the rest of the mortgage details, and the name on an Account", async () => {
     recordedPages();
 
     await syncConnection(connectionId);
 
+    // The name on the checking Account stays, with its status (owner decision D20).
+    const [checking] = await rows(
+      "SELECT raw FROM household_accounts WHERE provider_account_id = 'acct-checking'",
+    );
+    expect(JSON.parse(String(checking?.raw)).account).toMatchObject({
+      verification_name: "FAKE HOLDER ONE",
+      verification_status: "automatically_verified",
+    });
+    expect(JSON.parse(String(checking?.raw)).account).not.toHaveProperty("verification_insights");
     const [payroll] = await rows(
       "SELECT raw FROM transactions WHERE provider_transaction_id = 'txn-pay'",
     );
     expect(JSON.parse(String(payroll?.raw)).payment_meta).toEqual({
-      by_order_of: null,
-      payee: "EXAMPLE CO",
-      payer: null,
       payment_method: "ACH",
       payment_processor: null,
-      reason: null,
     });
     const [mortgage] = await rows(
       "SELECT raw FROM household_accounts WHERE provider_account_id = 'acct-mortgage'",
@@ -449,7 +465,8 @@ describe("the Plaid adapter", () => {
     }
 
     expect(exported).toContain("STARBUCKS STORE");
-    for (const text of [...PERSONAL_FIELDS, ...PERSONAL_VALUES]) {
+    // A field name as a JSON key, since the app's own closed_reason column holds "reason".
+    for (const text of [...PERSONAL_FIELDS.map((name) => `"${name}"`), ...PERSONAL_VALUES]) {
       expect(exported).not.toContain(text);
     }
   });

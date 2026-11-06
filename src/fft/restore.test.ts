@@ -348,6 +348,7 @@ describe("fft restore", { timeout: 30_000 }, () => {
       expect(await fft(["restore", backupName], { masterKey: sameKey() })).toBe(1);
       expect(err).toContain("The app is running");
       expect(err).toContain("docker compose stop app");
+      expect(err).toContain("Right after a crash, wait 30 seconds and try again.");
       await app.lock.release();
 
       // The app's container refreshed its lock 20 seconds ago.

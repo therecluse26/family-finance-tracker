@@ -488,6 +488,59 @@ describe("a registered secret value", () => {
     expect(parsed()[0].target).toBe("[refused]");
   });
 
+  it("refuses one written JSON-escaped inside an Error's message", () => {
+    const value = newSecretValue(`pw"\\\t`);
+    const body = JSON.stringify({ pass: value });
+    expect(body).not.toContain(value);
+    const { lines, logger, parsed } = captureLogger(false);
+
+    logger.error("A request failed", { error: new Error(`The server answered ${body}`) });
+
+    expect(lines.join("")).not.toContain(JSON.stringify(value).slice(1, -1));
+    expect(parsed()[0].error).toEqual({ message: "[refused]", name: "Error", stack: "[refused]" });
+  });
+
+  it("refuses one written JSON-escaped in the message itself", () => {
+    const value = newSecretValue(`pw"\\\t`);
+    const { logger, parsed } = captureLogger(false);
+
+    logger.info(`Sent ${JSON.stringify({ pass: value })}`);
+
+    expect(parsed()[0].msg).toBe("[refused]");
+  });
+
+  it.each([0, 1, 2])(
+    "refuses one written in base64 after %i other bytes, in both alphabets",
+    (before) => {
+      const value = newSecretValue(`pw"\\\t~?>`);
+      const bytes = Buffer.from(`${"u:".repeat(before).slice(0, before)}${value}!`);
+      const { logger, parsed } = captureLogger(false);
+
+      logger.info("Sent", {
+        header: `Basic ${bytes.toString("base64")}`,
+        query: `auth=${bytes.toString("base64url")}`,
+      });
+
+      expect(parsed()[0]).toMatchObject({ header: "[refused]", query: "[refused]" });
+    },
+  );
+
+  // A very short value, such as a Member-typed SMTP password. Its base64 forms are "wq", "Kn" and
+  // "Cp", which most log lines hold.
+  it("of one character refuses lines that hold it, and only those", () => {
+    registerSecretValue("§");
+    const { logger, parsed } = captureLogger(false);
+
+    logger.info("Known Cpu wq", { note: "Kn Cp wq" });
+    logger.info("Sent", { note: "sent §" });
+
+    expect(parsed()).toMatchObject([
+      { msg: "Known Cpu wq", note: "Kn Cp wq" },
+      { msg: "Sent", note: "[refused]" },
+      { level: "warn", refused: ["note"] },
+    ]);
+  });
+
   it("refuses one that holds a lone surrogate, which no URL can escape", () => {
     const value = newSecretValue("\uD800");
     const { logger, parsed } = captureLogger(false);

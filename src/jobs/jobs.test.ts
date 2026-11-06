@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -190,6 +198,21 @@ describe("background jobs", () => {
     finishSlowJob();
     await waitFor(() => jobRuns.length > 1);
     expect(jobRuns).toEqual(["SlowJob", "next"]);
+  });
+
+  it("makes a jobs.db an older version left 0644 owner-only, with its -wal and -shm", async () => {
+    const files = ["jobs.db", "jobs.db-wal", "jobs.db-shm"].map((name) => join(dir, name));
+    // An empty file is an empty database, and an empty -wal or -shm file holds nothing yet.
+    for (const file of files) writeFileSync(file, "", { mode: 0o644 });
+    for (const file of files) chmodSync(file, 0o644);
+
+    await start();
+
+    expect(files.map((file) => (statSync(file).mode & 0o777).toString(8))).toEqual([
+      "600",
+      "600",
+      "600",
+    ]);
   });
 
   it("opens no port, so Sidequest's dashboard stays off", async () => {

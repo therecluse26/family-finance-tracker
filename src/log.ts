@@ -86,13 +86,36 @@ const CIRCULAR = "[circular]";
 // secret value it decrypts.
 const secretValues = new Set<string>();
 
+// The shortest written form of a value that the logger refuses, besides the value itself. A form of
+// a 1- or 2-byte value, such as a single base64 letter, would refuse most log lines.
+const SHORTEST_FORM = 6;
+
 export function registerSecretValue(value: string): void {
   if (value === "") return;
-  for (const form of [value, ...escapedForms(value)]) secretValues.add(form);
+  secretValues.add(value);
+  const forms = [JSON.stringify(value).slice(1, -1), ...urlForms(value), ...base64Forms(value)];
+  for (const form of forms) {
+    if (form.length >= SHORTEST_FORM) secretValues.add(form);
+  }
+}
+
+// The ways base64 writes the value inside a longer text, such as a Basic auth header. The value's
+// bytes can start at any of 3 offsets in a 3-byte group. For each offset, the form keeps only the
+// characters that hold the value's bits alone, in the standard and the URL alphabet.
+function base64Forms(value: string): string[] {
+  const bytes = Buffer.from(value, "utf8");
+  return [0, 1, 2].flatMap((offset) => {
+    const written = Buffer.concat([Buffer.alloc(offset), bytes]).toString("base64");
+    const form = written.slice(
+      Math.ceil((offset * 8) / 6),
+      Math.floor(((offset + bytes.length) * 8) / 6),
+    );
+    return [form, form.replaceAll("+", "-").replaceAll("/", "_")];
+  });
 }
 
 // The ways a URL or a form body writes the value when it escapes characters in it.
-function escapedForms(value: string): string[] {
+function urlForms(value: string): string[] {
   // encodeURIComponent throws on a lone surrogate, which no URL holds as written.
   if (!value.isWellFormed()) return [];
   const url = new URL("https://escaped.invalid/");
@@ -107,7 +130,7 @@ function escapedForms(value: string): string[] {
     url.hash.slice(1),
     encodeURIComponent(value),
     new URLSearchParams([["", value]]).toString().slice(1),
-  ].filter((form) => form !== "");
+  ];
 }
 
 // Whether the text holds a registered secret value, in any of its forms.

@@ -190,9 +190,11 @@ export {
   APP_DB_URL,
   closeDatabase,
   type Database,
+  makeFilesOwnerOnly,
   openDatabase,
   openDatabaseCopy,
   type Queries,
+  sqliteFiles,
 } from "./client.ts";
 export {
   listCardPaymentsSince,

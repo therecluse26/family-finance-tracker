@@ -94,6 +94,7 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
       ? undefined
       : await takeAppLock(options.runningLock, {
           warn: (message) => log.warn(message),
+          info: (message) => log.info(message),
         });
   try {
     const app = await launchUnderLock(options);

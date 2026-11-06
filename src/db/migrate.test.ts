@@ -231,6 +231,35 @@ describe("the database", () => {
     expect(await tables(database)).toEqual(tablesBefore);
   });
 
+  it.each<[string, FixtureMigration[], (message: string) => string]>([
+    [
+      "one migration",
+      [FIRST_MIGRATION, SECOND_MIGRATION, LATER_MIGRATION],
+      (message) => message.slice(0, message.indexOf(", so a newer version")),
+    ],
+    [
+      "2 migrations",
+      [EDITED_FIRST_MIGRATION, LATER_MIGRATION],
+      (message) => message.slice(message.indexOf("holds"), message.indexOf(" that")),
+    ],
+  ])("writes the refusal for %s as the setup guide quotes it", async (_kind, newer, quote) => {
+    const guide = readFileSync(
+      fileURLToPath(new URL("../../docs/self-hosting.md", import.meta.url)),
+      "utf8",
+    );
+    const database = await open();
+    await applyMigrations(database, folder("newer", newer));
+
+    const result = applyMigrations(database, folder("v2", [FIRST_MIGRATION, SECOND_MIGRATION]));
+
+    await expect(result).rejects.toThrow(NewerDatabaseError);
+    const message = await result.then(
+      () => "",
+      (error: Error) => error.message,
+    );
+    expect(guide).toContain(`"${quote(message)}"`);
+  });
+
   it("refuses, unchanged, to skip a shipped migration older than the newest one applied", async () => {
     const database = await open();
     await applyMigrations(database, folder("released", [FIRST_MIGRATION, SECOND_MIGRATION]));

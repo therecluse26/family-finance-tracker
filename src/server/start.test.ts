@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import {
   chmodSync,
   existsSync,
@@ -58,6 +59,7 @@ import { newMasterKey } from "../secrets/testing.ts";
 import { LockHeldError, lockText } from "./running-lock.ts";
 import { loadSecurity, type Security } from "./security-mode.ts";
 import { type RunningApp, startApp } from "./start.ts";
+import { exitOnSignal } from "./stop.ts";
 import { fetchWithHost } from "./testing.ts";
 
 // The app's own migrations, which come before the fixtures in every test folder.
@@ -620,6 +622,21 @@ describe("starting the app", () => {
 
       expect(existsSync(path)).toBe(false);
       expect(readFileSync(lockFile(), "utf8")).toBe(restore);
+    });
+
+    // As main sets it up: the stop handler gets the start's promise before the start ends.
+    it("releases the lock and exits when a stop signal comes during the start", async () => {
+      const signals = new EventEmitter();
+      const exit = vi.fn<(code: number) => void>();
+      const starting = startLocked();
+      exitOnSignal(starting, exit, signals);
+
+      signals.emit("SIGTERM", "SIGTERM");
+      expect(exit).not.toHaveBeenCalled();
+      await starting;
+
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledExactlyOnceWith(0));
+      expect(existsSync(lockFile())).toBe(false);
     });
   });
 

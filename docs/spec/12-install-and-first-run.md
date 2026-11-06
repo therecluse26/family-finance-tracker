@@ -12,7 +12,7 @@ A stranger installs the app with one folder, one command, and one link. `fft set
   - `PUID` and `PGID` change that UID and GID, for a NAS share that needs a set owner.
   - This also covers Railway, Render, and Fly, which mount volumes as root.
 - `GET /healthz` answers 200 once migrations finish ([Stack and architecture](10-stack-and-architecture.md)).
-- The Compose file uses `restart: unless-stopped` and a health check on `/healthz`.
+- The Compose file uses `restart: unless-stopped`, `init: true`, and a health check on `/healthz`. The init process passes a stop on to the app even while the app still loads, so a stop during the start leaves no running lock.
 - The image carries the generated third-party notices file.
 - The job runner stays a separate package in the image, as its license requires. It is not bundled into the server file ([Stack and architecture](10-stack-and-architecture.md)).
 - Settings show the app's version, a "Source code" link to that exact version, and the "Data sources" page for the Benchmark data.

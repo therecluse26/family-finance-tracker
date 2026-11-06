@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The image's smoke test with compose.yaml. It makes a self-hoster's folder from compose.yaml and
 # .env.example with a local APP_URL, runs `fft setup`, and starts the app. It checks that the app
-# runs as UID 1000, that PUID and PGID change it, and that the folders belong to that UID. It
-# also checks that a symbolic link in data/ hands nothing outside it to the app's user, and that
-# the entrypoint refuses a PUID or PGID of 0, a non-number, or a number above 2147483647. The
-# health check must run as the app's user.
+# runs as UID 1000, that PUID and PGID change it, and that the folders belong to that UID and are
+# owner-only (files 0600, folders 0700, umask 077). It also checks that a symbolic link in data/
+# hands nothing outside it to the app's user, and that the entrypoint refuses a PUID or PGID of 0,
+# a non-number, or a number above 2147483647. The health check must run as the app's user.
 # Usage: scripts/compose-smoke-test.sh <image>
 # Needs docker with Compose, curl, and jq. It uses port 3000 on 127.0.0.1.
 set -euo pipefail
@@ -46,6 +46,7 @@ echo "compose.yaml follows the spec"
 docker compose -f compose.yaml --profile caddy config --format json | jq --exit-status '
   .services.app.image == "ghcr.io/therecluse26/family-finance-tracker:1"
   and .services.app.restart == "unless-stopped"
+  and .services.app.init == true
   and (.services.app.healthcheck.test | join(" ") | contains("/healthz"))
   and ([.services.app.volumes[] | "\(.source | sub(".*/"; "")):\(.target)"] | sort
     == ["backups:/backups", "data:/data", "secrets:/run/secrets"])
@@ -67,13 +68,16 @@ start() {
 # Checks the IDs and the capabilities of the app's process, and the owner of every file in the
 # folders, symbolic links included.
 check_owner() {
-  local want="Uid: $1 $1 $1 $1
+  local want="Umask: 0077
+Uid: $1 $1 $1 $1
 Gid: $2 $2 $2 $2
 Groups:
 CapEff: 0000000000000000"
   local got
-  got=$(docker compose exec -T app cat /proc/1/status |
-    awk '$1 == "Uid:" || $1 == "Gid:" || $1 == "Groups:" || $1 == "CapEff:" { $1 = $1; print }')
+  # The init process is the container's first process. The app is its one child.
+  got=$(docker compose exec -T app sh -c 'set -- $(cat /proc/1/task/1/children); cat "/proc/$1/status"' |
+    awk '$1 == "Umask:" || $1 == "Uid:" || $1 == "Gid:" || $1 == "Groups:" || $1 == "CapEff:" {
+      $1 = $1; print }')
   [ "$got" = "$want" ] || fail "The app runs with these IDs, not $1:$2:"$'\n'"$got"
   # The health check runs with `docker exec`, as root. Its command, with the code swapped for
   # code that prints the IDs, must run as the app's user, with a HOME that user can read.
@@ -92,6 +96,15 @@ CapEff: 0000000000000000"
   [ -z "$others" ] || fail "These files do not belong to $1:$2:"$'\n'"$others"
   as_root test -f /folder/data/app.db || fail "The app made no data/app.db"
   as_root test -f /folder/secrets/master.key || fail "fft setup made no secrets/master.key"
+  # Owner-only: every file 0600 and every folder 0700, so no other user on the host reads them.
+  # app.db's -wal and -shm files and jobs.db must be there, so the check covers them.
+  for file in app.db-wal app.db-shm jobs.db; do
+    as_root test -f "/folder/data/$file" || fail "The app made no data/$file"
+  done
+  local open
+  open=$(as_root find -P /folder/data /folder/backups /folder/secrets \
+    \( \( -type f ! -perm 600 \) -o \( -type d ! -perm 700 \) \) -exec stat -c '%a %n' {} +)
+  [ -z "$open" ] || fail "These files are not owner-only:"$'\n'"$open"
 }
 
 echo "The app runs as UID 1000, and the folders belong to it"

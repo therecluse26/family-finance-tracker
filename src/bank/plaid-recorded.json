@@ -15,6 +15,14 @@
         "name": "Plaid Checking",
         "official_name": "Plaid Gold Standard 0% Interest Checking",
         "type": "depository",
+        "verification_name": "FAKE HOLDER ONE",
+        "verification_insights": {
+          "name_match_score": 95,
+          "network_status": { "has_numbers_match": true, "is_numbers_match_verified": true },
+          "previous_returns": { "has_previous_administrative_return": false },
+          "account_number_format": "valid"
+        },
+        "verification_status": "automatically_verified",
         "subtype": "checking"
       },
       {
@@ -252,13 +260,13 @@
           "merchant_entity_id": null,
           "payment_channel": "other",
           "payment_meta": {
-            "by_order_of": null,
-            "payee": "EXAMPLE CO",
-            "payer": null,
+            "by_order_of": "FAKE ORDERER ONE",
+            "payee": "FAKE PAYEE ONE",
+            "payer": "FAKE PAYER ONE",
             "payment_method": "ACH",
             "payment_processor": null,
             "ppd_id": "9000000005",
-            "reason": null,
+            "reason": "PAY FOR FAKE PERSON ONE",
             "reference_number": "9000000004"
           },
           "account_owner": "FAKE OWNER TWO",

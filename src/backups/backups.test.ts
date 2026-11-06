@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   createReadStream,
   existsSync,
   mkdirSync,
@@ -613,6 +614,61 @@ describe("the backup folder", () => {
     expect(await chooseBackupFolder({ mounted, fallback })).toBe(fallback);
     expect(statSync(fallback).isDirectory()).toBe(true);
   });
+
+  it("makes /data/backups owner-only under a loose umask, and one made before too", async () => {
+    const fallback = join(dir, "data", "backups");
+    const before = process.umask(0o022);
+    try {
+      await chooseBackupFolder({ mounted: join(dir, "backups"), fallback });
+      const made = statSync(fallback).mode & 0o777;
+      chmodSync(fallback, 0o755);
+      await chooseBackupFolder({ mounted: join(dir, "backups"), fallback });
+
+      expect([made.toString(8), (statSync(fallback).mode & 0o777).toString(8)]).toEqual([
+        "700",
+        "700",
+      ]);
+    } finally {
+      process.umask(before);
+    }
+  });
+
+  it("makes each backup an older version left 0644 owner-only, and no other file", async () => {
+    const fallback = join(dir, "data", "backups");
+    mkdirSync(fallback, { recursive: true });
+    const backup = join(fallback, "app-20261102T080000Z-daily.db.gz");
+    const notes = join(fallback, "notes.txt");
+    for (const file of [backup, notes]) {
+      writeFileSync(file, "made-up");
+      chmodSync(file, 0o644);
+    }
+
+    await chooseBackupFolder({ mounted: join(dir, "backups"), fallback });
+
+    expect([backup, notes].map((file) => (statSync(file).mode & 0o777).toString(8))).toEqual([
+      "600",
+      "644",
+    ]);
+  });
+
+  // /proc is a mount of its own on every Linux system. The app changes nothing in it.
+  it.runIf(process.platform === "linux")(
+    "makes an older /data/backups and its backups owner-only while /backups is in use",
+    async () => {
+      const fallback = join(dir, "data", "backups");
+      mkdirSync(fallback, { recursive: true });
+      chmodSync(fallback, 0o755);
+      const backup = join(fallback, "app-20261102T080000Z-daily.db.gz");
+      writeFileSync(backup, "made-up");
+      chmodSync(backup, 0o644);
+
+      expect(await chooseBackupFolder({ mounted: "/proc", fallback })).toBe("/proc");
+      expect([fallback, backup].map((file) => (statSync(file).mode & 0o777).toString(8))).toEqual([
+        "700",
+        "600",
+      ]);
+    },
+  );
 
   it("falls back to /data/backups when /backups is missing", async () => {
     const fallback = join(dir, "data", "backups");
