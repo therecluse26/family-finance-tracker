@@ -273,7 +273,10 @@ describe("the month's Budgets", () => {
     await runMonthStart(bank.database, at("2027-01-01"));
     expect(await budgets("2027-01")).toMatchObject({
       Utilities: "130 formula",
-      "Phone and internet": "70 formula",
+      // Internet's fixed day is the 30th, so the late Dec 1 bill does not move it (spec 06, Monthly
+      // series). Its Dec 30 bill has not posted by Jan 1 and can still post within its margin, so
+      // January counts it beside its own Jan 30 bill.
+      "Phone and internet": "140 formula",
     });
   });
 
@@ -290,8 +293,9 @@ describe("the month's Budgets", () => {
 
     expect((await budgets("2026-12")).Utilities).toBe("240 formula");
     await runMonthStart(bank.database, at("2027-01-01"));
-    // January expects the next bill a month after Dec 30.
-    expect((await budgets("2027-01")).Utilities).toBe("120 formula");
+    // The Dec 30 bill met Jan 1, so January expects none: the next is Feb 1 (spec 06, Monthly
+    // series).
+    expect((await budgets("2027-01")).Utilities).toBe("0 formula");
   });
 
   it("replaces a loan payment's expected interest with its actual interest when it posts: $100 to $98", async () => {
@@ -343,8 +347,9 @@ describe("the month's Budgets", () => {
     await followBills(bank.database, at("2026-12-06"));
     expect((await budgets("2026-12")).Utilities).toBe("200 Member edit");
 
+    // December's bill posted early on Nov 30, so January's Jan 1 bill is next.
     await setCharges(
-      [...electricTo("2026-11-01"), ["2026-11-30", 120], ["2026-12-30", 120]],
+      [...electricTo("2026-11-01"), ["2026-11-30", 120]],
       internetTo("2026-10-30"),
       at("2026-12-31"),
     );

@@ -3,6 +3,7 @@ import { type Database, listPostedParts, listSpendingTransactions } from "../db/
 import { type Merchant, sameMerchant } from "../merchants/index.ts";
 import { type MonthTotals, monthOf, totalsByMonth } from "../money-movement/index.ts";
 import {
+  chargeSchedule,
   lastActiveDay,
   nextExpected,
   type RecurringCharge,
@@ -66,13 +67,14 @@ function timesDue(charge: RecurringCharge, month: string, today: string): number
   const last = charge.priceHistory.findLast((entry) => entry.date <= today);
   if (charge.status === "ended" || last === undefined) return 0;
   const after = `${monthAfter(month)}-01`;
+  const schedule = chargeSchedule(charge);
   let due = 0;
   for (
-    let previous = last.date, date = nextExpected(charge.schedule, previous);
+    let previous = last.date, date = nextExpected(schedule, previous);
     date < after;
-    previous = date, date = nextExpected(charge.schedule, date)
+    previous = date, date = nextExpected(schedule, date)
   ) {
-    if (lastActiveDay(charge.schedule, previous) < today) break;
+    if (lastActiveDay(schedule, previous) < today) break;
     due += 1;
   }
   return due;

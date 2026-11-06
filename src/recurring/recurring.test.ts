@@ -147,7 +147,11 @@ describe("Recurring charges", () => {
         ["Leap Gym", "monthly", 3],
         ["Streamly", "monthly", 3],
       ]);
-      expect(all.map((each) => each.nextExpectedDate)).toEqual(["2024-04-29", "2026-04-28"]);
+      // Streamly fits the 29th and the 30th with 3 days off each; a tie takes the earlier day.
+      expect(all.map((each) => [each.fixedDay, each.nextExpectedDate])).toEqual([
+        [29, "2024-04-29"],
+        [29, "2026-04-29"],
+      ]);
     });
 
     it("needs 3 Transactions on a weekly, 2-week, or monthly schedule", async () => {
@@ -491,9 +495,11 @@ describe("Recurring charges", () => {
           ["2026-07-03 1549", "2026-08-03 1549", "2026-09-03 1549", "2026-10-04 1999"],
         ],
       ]);
+      // A day late does not move the fixed day, the 3rd.
       expect((await charges())[0]).toMatchObject({
         latestAmount: 1_999,
-        nextExpectedDate: "2026-11-04",
+        fixedDay: 3,
+        nextExpectedDate: "2026-11-03",
       });
     });
 
@@ -507,6 +513,72 @@ describe("Recurring charges", () => {
       expect((await charges()).map((each) => each.priceHistory.at(-1))).toEqual([
         { transactionId: expect.any(String), date: "2026-10-04", amount: 1_599 },
       ]);
+    });
+  });
+
+  describe("a monthly series", () => {
+    // Each Recurring charge's fixed day, next expected date, and status.
+    const dates = async () =>
+      (await charges()).map((each) => [each.fixedDay, each.nextExpectedDate, each.status]);
+
+    it("keeps a bill on the 15th that posts the Tuesday after a Monday holiday", async () => {
+      // Saturday Feb 15, 2025 is followed by Washington's Birthday on Monday Feb 17, so Tuesday Feb
+      // 18 is the business day after: the business-day shift allows Feb 16 to Feb 20.
+      now = new Date("2025-02-20T14:00:00.000Z");
+      await sync(
+        charge("h1", "2024-10-15", 8_500, { merchantName: "Power Co" }),
+        charge("h2", "2024-11-15", 8_500, { merchantName: "Power Co" }),
+        charge("h3", "2024-12-16", 8_500, { merchantName: "Power Co" }),
+        charge("h4", "2025-01-15", 8_500, { merchantName: "Power Co" }),
+        charge("h5", "2025-02-18", 8_500, { merchantName: "Power Co" }),
+      );
+
+      expect((await charges())[0]?.priceHistory.length).toBe(5);
+      expect(await dates()).toEqual([[15, "2025-03-15", "active"]]);
+      // Saturday Mar 15 shifts to Friday Mar 14 or Monday Mar 17: active through Mar 19.
+      now = new Date("2025-03-19T14:00:00.000Z");
+      expect(await dates()).toEqual([[15, "2025-03-15", "active"]]);
+      now = new Date("2025-03-20T14:00:00.000Z");
+      expect(await dates()).toEqual([[15, "2025-03-15", "inactive"]]);
+    });
+
+    it("does not drift with early and late months: the 13th, the 17th, then the 15th", async () => {
+      now = new Date("2026-08-14T14:00:00.000Z");
+      await sync(
+        charge("d1", "2026-05-15", 1_549),
+        charge("d2", "2026-06-15", 1_549),
+        charge("d3", "2026-07-15", 1_549),
+        charge("d4", "2026-08-13", 1_549),
+      );
+      expect(await dates()).toEqual([[15, "2026-09-15", "active"]]);
+
+      now = new Date("2026-09-18T14:00:00.000Z");
+      await sync(charge("d5", "2026-09-17", 1_549));
+      expect(await dates()).toEqual([[15, "2026-10-15", "active"]]);
+
+      now = new Date("2026-10-16T14:00:00.000Z");
+      await sync(charge("d6", "2026-10-15", 1_549));
+      expect(await dates()).toEqual([[15, "2026-11-15", "active"]]);
+      expect((await charges())[0]?.priceHistory.length).toBe(6);
+    });
+
+    it("keeps a fixed day of 31 through February and a 30-day month", async () => {
+      now = new Date("2025-03-01T14:00:00.000Z");
+      await sync(
+        charge("e1", "2024-12-31", 2_000),
+        charge("e2", "2025-01-31", 2_000),
+        charge("e3", "2025-02-28", 2_000),
+      );
+      expect(await dates()).toEqual([[31, "2025-03-31", "active"]]);
+
+      now = new Date("2025-04-01T14:00:00.000Z");
+      await sync(charge("e4", "2025-03-31", 2_000));
+      expect(await dates()).toEqual([[31, "2025-04-30", "active"]]);
+
+      now = new Date("2025-05-01T14:00:00.000Z");
+      await sync(charge("e5", "2025-04-30", 2_000));
+      expect(await dates()).toEqual([[31, "2025-05-31", "active"]]);
+      expect((await charges())[0]?.priceHistory.length).toBe(5);
     });
   });
 
@@ -559,10 +631,15 @@ describe("Recurring charges", () => {
           ["2026-03-05 1549", "2026-04-05 1549", "2026-05-05 1549", "2026-08-06 1600"],
         ],
       ]);
-      // Active until the next expected date, Sep 6, plus 2 days.
-      now = new Date("2026-09-08T14:00:00.000Z");
-      expect((await charges())[0]?.status).toBe("active");
-      now = new Date("2026-09-09T14:00:00.000Z");
+      // The fixed day stays the 5th. Sep 5 is a Saturday and Monday Sep 7 is Labor Day, so the
+      // latest date the business-day shift allows is Tuesday Sep 8: active until 2 days after it.
+      now = new Date("2026-09-10T14:00:00.000Z");
+      expect((await charges())[0]).toMatchObject({
+        fixedDay: 5,
+        nextExpectedDate: "2026-09-05",
+        status: "active",
+      });
+      now = new Date("2026-09-11T14:00:00.000Z");
       expect((await charges())[0]?.status).toBe("inactive");
     });
 

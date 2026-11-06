@@ -1,10 +1,15 @@
 import {
   addDays,
+  type ChargeSchedule,
   daysBetween,
+  daysOffFixedDay,
   fitsSchedule,
+  fixedDayOf,
   inWindow,
   isLastDayOfMonth,
+  isMonthly,
   lastActiveDay,
+  type Monthly,
   nextExpected,
   onSchedule,
   type Schedule,
@@ -31,7 +36,7 @@ export type SeriesTxn = {
 export type Status = "active" | "inactive" | "ended";
 
 // A series the replay found. Its Transactions are in date order.
-export type Series<S extends SeriesSchedule = Schedule> = {
+export type Series<S extends SeriesSchedule = ChargeSchedule> = {
   schedule: S;
   txns: SeriesTxn[];
   status: Exclude<Status, "ended">;
@@ -70,11 +75,12 @@ export const fewestToFind = (schedule: Schedule): number => FEWEST[schedule];
 const FEWEST_TWICE_A_MONTH = 3;
 
 // Days from the previous Transaction to the next, at least and at most, a little wider than each
-// schedule's margin. Only a quick first cut: the window decides.
+// schedule's margin. Only a quick first cut: the window decides. Monthly expected dates are 28 to
+// 31 days apart, and the margin with the business-day shift reaches up to 5 days each way.
 const DAYS_APART = {
   weekly: [5, 9],
   "every 2 weeks": [12, 16],
-  monthly: [26, 34],
+  monthly: [18, 41],
   yearly: [330, 400],
 } as const;
 const DAYS_APART_TWICE_A_MONTH = [8, 23] as const;
@@ -112,8 +118,11 @@ function chainEndingAt(
   schedule: SeriesSchedule,
   band: number,
 ): SeriesTxn[] {
-  const [fewestDays, mostDays] =
-    typeof schedule === "object" ? DAYS_APART_TWICE_A_MONTH : DAYS_APART[schedule];
+  const [fewestDays, mostDays] = isMonthly(schedule)
+    ? DAYS_APART.monthly
+    : typeof schedule === "object"
+      ? DAYS_APART_TWICE_A_MONTH
+      : DAYS_APART[schedule];
   const chain = [txn];
   for (let current = txn; ; ) {
     const amounts = chain.map((each) => each.amount);
@@ -154,17 +163,81 @@ function daysOff(schedule: SeriesSchedule, chain: readonly SeriesTxn[]): number 
   return total;
 }
 
+// Whether a free Transaction from `days[1]` to `days[0]` days before `txn` is within `band` of its
+// amount: a quick first cut before trying each fixed day. `free` is in date order.
+function earlierNear(
+  txn: SeriesTxn,
+  free: readonly SeriesTxn[],
+  [fewestDays, mostDays]: readonly [number, number],
+  band: number,
+): boolean {
+  const earliest = addDays(txn.date, -mostDays);
+  const latest = addDays(txn.date, -fewestDays);
+  for (let at = free.length - 1; at >= 0; at -= 1) {
+    const earlier = free[at];
+    if (earlier === undefined || earlier.date < earliest) return false;
+    if (earlier.date <= latest && withinPercent([txn.amount, earlier.amount], band)) return true;
+  }
+  return false;
+}
+
+const datesOf = (txns: readonly SeriesTxn[]) => txns.map((txn) => txn.date);
+
+// The fixed day a monthly series' Transactions give it (spec 06, Monthly series).
+const monthlyOf = (txns: readonly SeriesTxn[]): Monthly => ({
+  fixedDay: fixedDayOf(datesOf(txns)),
+});
+
+// The best monthly series that ends at `txn` (spec 06, Monthly series): on each fixed day `txn`
+// lands on, the chain of Transactions in the months before it, each within the margin of its
+// month's expected date. It takes the chain with the most Transactions, then the fewest days off
+// its fixed day, then the earlier day. Undefined under 3 Transactions.
+function monthlyEndingAt(
+  txn: SeriesTxn,
+  free: readonly SeriesTxn[],
+  band: number,
+): Series<Monthly> | undefined {
+  if (!earlierNear(txn, free, DAYS_APART.monthly, band)) return undefined;
+  let best: { chain: SeriesTxn[]; off: number } | undefined;
+  for (let fixedDay = 1; fixedDay <= 31; fixedDay += 1) {
+    const schedule = { fixedDay };
+    if (!fitsSchedule(schedule, txn.date)) continue;
+    const chain = chainEndingAt(txn, free, schedule, band);
+    if (chain.length < FEWEST.monthly) continue;
+    const off = daysOffFixedDay(fixedDay, datesOf(chain));
+    if (
+      best === undefined ||
+      chain.length > best.chain.length ||
+      (chain.length === best.chain.length && off < best.off)
+    ) {
+      best = { chain, off };
+    }
+  }
+  if (best === undefined) return undefined;
+  return { schedule: monthlyOf(best.chain), txns: best.chain, status: "active" };
+}
+
+// A monthly series' fixed day after a Transaction joins it: the one all its Transactions give.
+function refitFixedDay<S extends SeriesSchedule>(series: Series<S>): void {
+  if (isMonthly(series.schedule)) series.schedule = monthlyOf(series.txns) as S;
+}
+
 // A Recurring charge (spec 06, Finding a series): weekly, every 2 weeks, and monthly need 3
 // Transactions within 7.5% of each other; yearly needs 2, within 15%. Shorter schedules are tried
 // first. A frequent shop never forms one.
-export const RECURRING_CHARGE_RULE: SeriesRule<Schedule> = {
+export const RECURRING_CHARGE_RULE: SeriesRule<ChargeSchedule> = {
   band: BAND,
   skipsFrequentShops: true,
   newSeries(txn, free) {
-    for (const schedule of ["weekly", "every 2 weeks", "monthly", "yearly"] as const) {
-      const chain = chainEndingAt(txn, free, schedule, schedule === "yearly" ? WIDE_BAND : BAND);
+    for (const schedule of ["weekly", "every 2 weeks"] as const) {
+      const chain = chainEndingAt(txn, free, schedule, BAND);
       if (chain.length >= FEWEST[schedule]) return { schedule, txns: chain, status: "active" };
     }
+    const monthly = monthlyEndingAt(txn, free, BAND);
+    if (monthly !== undefined) return monthly;
+    const yearly = chainEndingAt(txn, free, "yearly", WIDE_BAND);
+    if (yearly.length >= FEWEST.yearly)
+      return { schedule: "yearly", txns: yearly, status: "active" };
     return undefined;
   },
 };
@@ -175,24 +248,41 @@ export const withinChargeBand = (amounts: readonly number[]) => withinPercent(am
 // The earlier Transactions that make a weekly, 2-week, or monthly schedule with `txn`: each lands
 // one interval before it, within the margin, and within 7.5% of its amount. The yearly schedule
 // never counts here (spec 06, New Recurring charge). `earlier` is in date order. Each one comes
-// once, with the shortest schedule it fits.
+// once, with the shortest schedule it fits. A monthly pair lands on one fixed day in two months in
+// a row, and takes the fixed day the two give.
 export function earlierOnSchedule(
   txn: SeriesTxn,
   earlier: readonly SeriesTxn[],
-): { txn: SeriesTxn; schedule: Schedule }[] {
-  const found: { txn: SeriesTxn; schedule: Schedule }[] = [];
+): { txn: SeriesTxn; schedule: ChargeSchedule }[] {
+  const found: { txn: SeriesTxn; schedule: ChargeSchedule }[] = [];
   const earliest = addDays(txn.date, -DAYS_APART.monthly[1]);
   for (let at = earlier.length - 1; at >= 0; at -= 1) {
     const each = earlier[at];
     if (each === undefined || each.date < earliest) break;
     if (!isBefore(each, txn) || each.date === txn.date) continue;
     if (!withinChargeBand([txn.amount, each.amount])) continue;
-    const schedule = (["weekly", "every 2 weeks", "monthly"] as const).find((one) =>
-      inWindow(window(one, each.date), txn.date),
-    );
+    const schedule =
+      (["weekly", "every 2 weeks"] as const).find((one) =>
+        inWindow(window(one, each.date), txn.date),
+      ) ?? monthlyPair(each, txn);
     if (schedule !== undefined) found.push({ txn: each, schedule });
   }
   return found.reverse();
+}
+
+// The monthly schedule of `earlier` and `later` when they land on one fixed day in two months in a
+// row.
+function monthlyPair(earlier: SeriesTxn, later: SeriesTxn): Monthly | undefined {
+  for (let fixedDay = 1; fixedDay <= 31; fixedDay += 1) {
+    const schedule = { fixedDay };
+    if (
+      fitsSchedule(schedule, earlier.date) &&
+      inWindow(window(schedule, earlier.date), later.date)
+    ) {
+      return monthlyOf([earlier, later]);
+    }
+  }
+  return undefined;
 }
 
 // The twice-a-month schedules whose fixed dates `date` is within the margin of. A date on or near
@@ -231,16 +321,7 @@ function twiceAMonthEndingAt(
 ): Series<TwiceAMonth> | undefined {
   // A quick first cut before trying each pair of fixed days: the chain needs an earlier free
   // Transaction about half a month before, within the band.
-  const [fewestDays, mostDays] = DAYS_APART_TWICE_A_MONTH;
-  const earliest = addDays(txn.date, -mostDays);
-  const latest = addDays(txn.date, -fewestDays);
-  let previous = false;
-  for (let at = free.length - 1; at >= 0 && !previous; at -= 1) {
-    const earlier = free[at];
-    if (earlier === undefined || earlier.date < earliest) break;
-    previous = earlier.date <= latest && withinPercent([txn.amount, earlier.amount], WIDE_BAND);
-  }
-  if (!previous) return undefined;
+  if (!earlierNear(txn, free, DAYS_APART_TWICE_A_MONTH, WIDE_BAND)) return undefined;
 
   let best: { series: Series<TwiceAMonth>; off: number } | undefined;
   for (const schedule of twiceAMonthSchedules(txn.date)) {
@@ -280,10 +361,11 @@ export const INCOME_RULE: SeriesRule<SeriesSchedule> = {
       }
     }
     if (twiceAMonth !== undefined) return twiceAMonth;
-    for (const schedule of ["monthly", "yearly"] as const) {
-      const chain = chainEndingAt(txn, free, schedule, WIDE_BAND);
-      if (chain.length >= FEWEST[schedule]) return { schedule, txns: chain, status: "active" };
-    }
+    const monthly = monthlyEndingAt(txn, free, WIDE_BAND);
+    if (monthly !== undefined) return monthly;
+    const yearly = chainEndingAt(txn, free, "yearly", WIDE_BAND);
+    if (yearly.length >= FEWEST.yearly)
+      return { schedule: "yearly", txns: yearly, status: "active" };
     return undefined;
   },
 };
@@ -310,8 +392,9 @@ function continuing(
   through: string,
 ): Set<SeriesTxn> {
   const joined = new Set<SeriesTxn>();
+  const series = { ...found, txns: [...found.txns] };
   for (let latest = last(found); ; ) {
-    const range = window(found.schedule, latest.date);
+    const range = window(series.schedule, latest.date);
     if (range.from > through) return joined;
     const candidates: SeriesTxn[] = [];
     for (let at = firstOnOrAfter(ordered, range.from); at < ordered.length; at += 1) {
@@ -324,6 +407,8 @@ function continuing(
     const pick = nearest(candidates, latest.amount);
     if (pick === undefined || pick.date > through) return joined;
     joined.add(pick);
+    series.txns.push(pick);
+    refitFixedDay(series);
     latest = pick;
   }
 }
@@ -401,6 +486,8 @@ function atFrequentShop<S extends SeriesSchedule>(
 // - It goes inactive once its last active day passes with no Transaction.
 // - An inactive one revives with a later Transaction within the rule's band of the latest amount,
 //   within the margin of the last date plus a whole number of intervals.
+// - A monthly series' fixed day is worked out again from all its Transactions each time one joins,
+//   so it stays the one its stored price history gives.
 // - A Transaction that does none of these may end a new series. One Merchant may have more than one
 //   series at different amounts, so no new series starts within the band of an active one's latest
 //   amount. Under the Recurring charge rule, no new series starts at a frequent shop: 3 or more
@@ -464,6 +551,7 @@ export function replayMerchant<S extends SeriesSchedule>(
       const pick = nearest(candidates, last(each).amount);
       if (pick === undefined) continue;
       each.txns.push(pick);
+      refitFixedDay(each);
       taken.add(pick.id);
       if (pick === txn) {
         continued = true;
@@ -484,6 +572,7 @@ export function replayMerchant<S extends SeriesSchedule>(
     )[0];
     if (revived !== undefined) {
       revived.txns.push(txn);
+      refitFixedDay(revived);
       revived.status = "active";
       taken.add(txn.id);
       continue;

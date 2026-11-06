@@ -6,7 +6,7 @@ import {
   listPairedLoanPayments,
   listUntrackedLoanPaymentsSince,
 } from "../db/index.ts";
-import { recurringCharges } from "./charges.ts";
+import { chargeSchedule, recurringCharges } from "./charges.ts";
 import { paydayAfter, paydays } from "./income.ts";
 import { householdToday } from "./merchant-days.ts";
 import { addDays, addMonths, nextExpected } from "./schedules.ts";
@@ -266,7 +266,7 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
     .flatMap((charge): Row[] => {
       const account = byId.get(charge.accountId);
       const onCard = account !== undefined && isCard(account);
-      const after = (date: string) => nextExpected(charge.schedule, date);
+      const after = (date: string) => nextExpected(chargeSchedule(charge), date);
       return datesThrough(charge.nextExpectedDate, to, after).flatMap((date) => {
         // An expected date of today or before, with no charge yet, shows on today. Only one
         // before today is late.

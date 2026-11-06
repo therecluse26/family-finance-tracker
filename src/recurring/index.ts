@@ -1,6 +1,7 @@
 // The recurring module's interface (spec 06, Recurring charges; spec 05, Steady Income). Other
 // modules import from here.
 export {
+  chargeSchedule,
   endCharge,
   findRecurringCharges,
   type RecurringCharge,
@@ -22,6 +23,7 @@ export { groupOf as merchantGroupOf, householdToday } from "./merchant-days.ts";
 export {
   addDays,
   addMonths,
+  type ChargeSchedule,
   daysBetween,
   lastActiveDay,
   nextExpected,

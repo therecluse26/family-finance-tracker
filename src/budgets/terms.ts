@@ -7,6 +7,7 @@ import { monthOf } from "../money-movement/index.ts";
 import {
   addDays,
   addMonths,
+  chargeSchedule,
   daysBetween,
   lastActiveDay,
   nextExpected,
@@ -73,7 +74,7 @@ export function chargeInMonth(
   const priced = charge.priceHistory.findLast((entry) => entry.date <= pricedOn) ?? last;
   if (last === undefined || priced === undefined) return undefined;
   const asOf = today < start ? today : start;
-  if (asOf > lastActiveDay(charge.schedule, last.date)) return undefined;
+  if (asOf > lastActiveDay(chargeSchedule(charge), last.date)) return undefined;
   return { amount: priced.amount, count: chargeCountIn(charge, month, last.date) };
 }
 
@@ -85,13 +86,14 @@ export function chargeInMonth(
 function chargeCountIn(charge: RecurringCharge, month: string, last: string): number {
   const start = `${month}-01`;
   const after = `${monthAfter(month)}-01`;
+  const schedule = chargeSchedule(charge);
   let expected = 0;
   for (
-    let previous = last, date = nextExpected(charge.schedule, last);
+    let previous = last, date = nextExpected(schedule, last);
     date < after;
-    previous = date, date = nextExpected(charge.schedule, date)
+    previous = date, date = nextExpected(schedule, date)
   ) {
-    if (date >= start || lastActiveDay(charge.schedule, previous) >= start) expected += 1;
+    if (date >= start || lastActiveDay(schedule, previous) >= start) expected += 1;
   }
   const posted = charge.priceHistory.filter((entry) => entry.date.startsWith(month)).length;
   return Math.max(expected, posted);

@@ -11,7 +11,13 @@ import { log } from "../log.ts";
 import { type Merchant, merchantKey } from "../merchants/index.ts";
 import { findIncomeSeries } from "./income.ts";
 import { groupOf, householdToday } from "./merchant-days.ts";
-import { lastActiveDay, type Schedule } from "./schedules.ts";
+import {
+  type ChargeSchedule,
+  fixedDayOf,
+  lastActiveDay,
+  type Schedule,
+  scheduleName,
+} from "./schedules.ts";
 import {
   factsOf,
   RECURRING_CHARGE_RULE,
@@ -31,6 +37,9 @@ export type RecurringCharge = {
   merchant: Merchant;
   category: string | null;
   schedule: Schedule;
+  // A monthly one's fixed day of the month (spec 06, Monthly series), from its price history. 31
+  // is the last day of every month. Null on the other schedules.
+  fixedDay: number | null;
   nextExpectedDate: string;
   // Whole cents spent.
   latestAmount: number;
@@ -86,7 +95,7 @@ export async function findRecurringCharges(database: Database, now = new Date())
         id: previous?.id ?? crypto.randomUUID(),
         merchantId: merchant.id,
         merchantName: merchant.name,
-        schedule: series.schedule,
+        schedule: scheduleName(series.schedule),
         ...factsOf(series.schedule, series.txns),
         priceHistory: series.txns.map((txn) => ({
           transactionId: txn.id,
@@ -107,26 +116,41 @@ export async function findRecurringCharges(database: Database, now = new Date())
   });
 }
 
+// The schedule a Recurring charge's dates follow: a monthly one's from its fixed day. Every caller
+// of the next expected date and the last active day reads it.
+export function chargeSchedule(
+  charge: Pick<RecurringCharge, "schedule" | "fixedDay">,
+): ChargeSchedule {
+  if (charge.schedule !== "monthly") return charge.schedule;
+  if (charge.fixedDay === null) throw new Error("A monthly Recurring charge has a fixed day.");
+  return { fixedDay: charge.fixedDay };
+}
+
 // The status on `today`: an active Recurring charge whose last active day has passed since the
 // last checks is inactive.
-function statusOn(charge: StoredRecurringCharge, today: string): Status {
+function statusOn(charge: RecurringCharge, today: string): Status {
   const last = charge.priceHistory.at(-1);
   if (charge.status !== "active" || last === undefined) return charge.status;
-  return today > lastActiveDay(charge.schedule, last.date) ? "inactive" : "active";
+  return today > lastActiveDay(chargeSchedule(charge), last.date) ? "inactive" : "active";
 }
 
 function chargeOf(stored: StoredRecurringCharge, today: string): RecurringCharge {
-  return {
+  const charge: RecurringCharge = {
     id: stored.id,
     merchant: { id: stored.merchantId, name: stored.merchantName },
     category: stored.category,
     schedule: stored.schedule,
+    fixedDay:
+      stored.schedule === "monthly"
+        ? fixedDayOf(stored.priceHistory.map((entry) => entry.date))
+        : null,
     nextExpectedDate: stored.nextExpectedDate,
     latestAmount: stored.latestAmount,
     priceHistory: stored.priceHistory,
     accountId: stored.accountId,
-    status: statusOn(stored, today),
+    status: stored.status,
   };
+  return { ...charge, status: statusOn(charge, today) };
 }
 
 // Every Recurring charge, by next expected date, with its status on the Household's today.

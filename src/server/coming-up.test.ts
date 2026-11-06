@@ -408,7 +408,12 @@ describe("Coming up on the demo household", () => {
     expect(utilities).toEqual([
       expect.objectContaining({ date: "2026-11-11", late: true, amount: -10_981 }),
     ]);
-    expect(view.rows.filter((row) => row.late)).toEqual(utilities);
+    // Streamflix is expected Sunday Nov 8, so the business-day shift lets it post Monday Nov 9: it
+    // is late too, and stays active through Nov 11 (spec 06, Monthly series).
+    expect(view.rows.filter((row) => row.late).map((row) => row.what)).toEqual([
+      "City of Mapleford Utilities",
+      "Streamflix",
+    ]);
     // It comes first, on today's position, moves checking, and counts in the big number.
     const [late] = utilities;
     expect(view.rows[0]).toEqual(late);

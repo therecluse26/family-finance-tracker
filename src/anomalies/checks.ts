@@ -60,9 +60,10 @@ const FREQUENT_DAYS = 60;
 // A Duplicate charge's purchase dates are at most this many days apart.
 const DUPLICATE_DAYS = 2;
 
-// More days than a monthly interval and its margin: the earlier Transactions a New Recurring charge
-// looks at. earlierOnSchedule keeps those on a schedule.
-const SCHEDULE_DAYS = 40;
+// More days than a monthly interval and its margin with the business-day shift reach, 41: the
+// earlier Transactions a New Recurring charge looks at. earlierOnSchedule keeps those on a
+// schedule.
+const SCHEDULE_DAYS = 42;
 
 // One posted Spending Transaction, as the checks read it. The amount is the whole cents spent.
 type Spent = {

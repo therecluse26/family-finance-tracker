@@ -11,7 +11,14 @@ import {
 import { log } from "../log.ts";
 import { type Merchant, merchantKey } from "../merchants/index.ts";
 import { groupOf, householdToday } from "./merchant-days.ts";
-import { addMonths, lastActiveDay, nextExpected, type SeriesSchedule } from "./schedules.ts";
+import {
+  addMonths,
+  fixedDayOf,
+  isMonthly,
+  lastActiveDay,
+  nextExpected,
+  type SeriesSchedule,
+} from "./schedules.ts";
 import { factsOf, INCOME_RULE, replayMerchant, type SeriesTxn } from "./series.ts";
 
 // Steady Income (spec 05, Steady Income): the Household's regular Income per month, from repeating
@@ -38,6 +45,8 @@ export type IncomeSeries = {
   schedule: IncomeSchedule;
   // A twice-a-month series' two fixed days of the month. 31 is the last day of every month.
   fixedDays: [number, number] | null;
+  // A monthly series' fixed day of the month (spec 06, Monthly series), from its history.
+  fixedDay: number | null;
   nextExpectedDate: string;
   // Whole cents received.
   latestAmount: number;
@@ -53,6 +62,8 @@ export type Payday = {
   schedule: IncomeSchedule;
   // A twice-a-month series' two fixed days of the month.
   fixedDays: [number, number] | null;
+  // A monthly series' fixed day of the month.
+  fixedDay: number | null;
   date: string;
   amount: number;
 };
@@ -67,10 +78,13 @@ export type SteadyIncome = {
   typed: number | null;
 };
 
+// A monthly series' fixed day is not stored: its history gives it (seriesOf).
 const storedSchedule = (schedule: Exclude<SeriesSchedule, "yearly">) =>
-  typeof schedule === "object"
-    ? { schedule: "twice a month" as const, fixedDays: [...schedule.days] as [number, number] }
-    : { schedule, fixedDays: null };
+  typeof schedule !== "object"
+    ? { schedule, fixedDays: null }
+    : isMonthly(schedule)
+      ? { schedule: "monthly" as const, fixedDays: null }
+      : { schedule: "twice a month" as const, fixedDays: [...schedule.days] as [number, number] };
 
 // Finds every Income series again from posted Income on checking and savings Accounts, grouped by
 // payer, and stores them in place of the earlier ones. Yearly series never count, so they are not
@@ -125,22 +139,32 @@ export async function findIncomeSeries(database: Database, now = new Date()): Pr
   });
 }
 
-function scheduleOf(stored: Pick<StoredIncomeSeries, "schedule" | "fixedDays">): SeriesSchedule {
-  if (stored.schedule !== "twice a month") return stored.schedule;
-  if (stored.fixedDays === null) throw new Error("A twice-a-month series has two fixed days.");
-  return { days: stored.fixedDays };
+function scheduleOf(
+  series: Pick<IncomeSeries, "schedule" | "fixedDays" | "fixedDay">,
+): SeriesSchedule {
+  if (series.schedule === "monthly") {
+    if (series.fixedDay === null) throw new Error("A monthly series has a fixed day.");
+    return { fixedDay: series.fixedDay };
+  }
+  if (series.schedule !== "twice a month") return series.schedule;
+  if (series.fixedDays === null) throw new Error("A twice-a-month series has two fixed days.");
+  return { days: series.fixedDays };
 }
 
 // The status on `today`: an active series whose last active day has passed since the last checks
 // is inactive.
 function seriesOf(stored: StoredIncomeSeries, today: string): IncomeSeries {
   const last = stored.history.at(-1);
-  const lapsed = last !== undefined && today > lastActiveDay(scheduleOf(stored), last.date);
+  const fixedDay =
+    stored.schedule === "monthly" ? fixedDayOf(stored.history.map((entry) => entry.date)) : null;
+  const schedule = scheduleOf({ ...stored, fixedDay });
+  const lapsed = last !== undefined && today > lastActiveDay(schedule, last.date);
   return {
     id: stored.id,
     payer: { id: stored.merchantId, name: stored.merchantName },
     schedule: stored.schedule,
     fixedDays: stored.fixedDays,
+    fixedDay,
     nextExpectedDate: stored.nextExpectedDate,
     latestAmount: stored.latestAmount,
     history: stored.history,
@@ -241,6 +265,7 @@ export async function paydays(database: Database, now = new Date()): Promise<Pay
       payer: series.payer,
       schedule: series.schedule,
       fixedDays: series.fixedDays,
+      fixedDay: series.fixedDay,
       date: series.nextExpectedDate,
       amount: series.latestAmount,
     }))

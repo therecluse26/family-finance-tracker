@@ -8,7 +8,7 @@ import { startCategorization } from "../categorization/index.ts";
 import { addConnection, listConnections, storeAlerts } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
-import { startRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
+import { recurringCharges, startRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
 import {
   type Alert,
   ANOMALY_CHECKS_CAP,
@@ -464,6 +464,48 @@ describe("the Anomaly checks", () => {
       expect(await laterTexts("New Recurring charge")).toEqual([
         "New Recurring charge? Showbox, $9.99 on Sep 3 and Oct 3. Next expected Nov 3.",
       ]);
+    });
+
+    it("fires for a monthly pair that only the business-day shift fits, next on the fixed day", async () => {
+      // Saturday Aug 1 may post from Wednesday Jul 29, 2 days before Friday Jul 31. Sep 3 is 2 days
+      // after Sep 1. The 1st is the only fixed day both land on.
+      await sync("fake-capital-one", {
+        added: [showbox("sb-jul", "2026-07-29"), showbox("sb-sep", "2026-09-03")],
+      });
+
+      expect(await laterTexts("New Recurring charge")).toEqual([
+        "New Recurring charge? Showbox, $9.99 on Jul 29 and Sep 3. Next expected Oct 1.",
+      ]);
+    });
+
+    it("never fires for a monthly one that misses a month and revives", async () => {
+      const charges = async () =>
+        (await recurringCharges(bank.database, now))
+          .filter((charge) => charge.merchant.name === "Showbox")
+          .map((charge) => [charge.status, charge.priceHistory.length]);
+      now = new Date("2026-11-04T14:00:00.000Z");
+      await sync("fake-capital-one", {
+        added: [
+          showbox("sb-aug", "2026-08-03"),
+          showbox("sb-sep", "2026-09-01"),
+          showbox("sb-oct", "2026-10-01"),
+        ],
+      });
+      // November's charge never comes. Sunday Nov 1 shifts to Friday Oct 30 or Monday Nov 2, the
+      // latest date the shift allows: missed 2 days after it.
+      expect(await charges()).toEqual([["active", 3]]);
+      now = new Date("2026-11-05T14:00:00.000Z");
+      expect(await charges()).toEqual([["inactive", 3]]);
+
+      // December's charge revives it, and January's continues it. Neither fires a New Recurring
+      // charge, as Dec 1 and Jan 1 would as a new pair.
+      now = new Date("2026-12-02T14:00:00.000Z");
+      await sync("fake-capital-one", { added: [showbox("sb-dec", "2026-12-01")] });
+      expect(await charges()).toEqual([["active", 4]]);
+      now = new Date("2027-01-02T14:00:00.000Z");
+      await sync("fake-capital-one", { added: [showbox("sb-jan", "2027-01-01")] });
+      expect(await charges()).toEqual([["active", 5]]);
+      expect(await laterTexts("New Recurring charge")).toEqual([]);
     });
 
     const taqueria = (id: string, date: string, spent: number) =>

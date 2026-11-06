@@ -112,6 +112,24 @@ describe("Steady Income", () => {
     ]);
   });
 
+  it("keeps monthly Income on the 1st active when it is paid the Friday before Labor Day", async () => {
+    // Sunday Jun 1 is paid on Friday May 30, and Labor Day, Monday Sep 1, on Friday Aug 29: 3 days
+    // early, within the margin of the business day before it (spec 06, Monthly series).
+    now = new Date("2025-09-04T14:00:00.000Z");
+    await sync(
+      pay("m1", "2025-04-01", 300_000, "Corner Bakery"),
+      pay("m2", "2025-05-01", 300_000, "Corner Bakery"),
+      pay("m3", "2025-05-30", 300_000, "Corner Bakery"),
+      pay("m4", "2025-07-01", 300_000, "Corner Bakery"),
+      pay("m5", "2025-08-01", 300_000, "Corner Bakery"),
+      pay("m6", "2025-08-29", 300_000, "Corner Bakery"),
+    );
+
+    expect(await predicted()).toEqual([["Corner Bakery", "monthly", "2025-10-01", 300_000]]);
+    expect(await income()).toMatchObject({ detected: 300_000, detectedFrom: "Income series" });
+    expect((await paydays(bank.database, now))[0]).toMatchObject({ fixedDay: 1 });
+  });
+
   it("finds a twice-a-month series on the 1st and the 15th, each within 2 days", async () => {
     now = new Date("2026-11-03T14:00:00.000Z");
     await sync(
