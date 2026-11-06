@@ -39,7 +39,7 @@ export type GoalView = {
   words: string;
   // The ID of the Member who wrote it, or null once that Member is gone.
   authorId: string | null;
-  // That Member's name, or null once that Member is gone.
+  // That Member's name, which stays once they are removed (spec 09, Members).
   author: string | null;
   // The Goal's date, written YYYY-MM-DD.
   date: string;

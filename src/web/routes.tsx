@@ -6,6 +6,7 @@ import { Budgets } from "./pages/Budgets.tsx";
 import { Chat } from "./pages/Chat.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { Goals } from "./pages/Goals.tsx";
+import { Join } from "./pages/Join.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { RecurringCharges } from "./pages/RecurringCharges.tsx";
@@ -22,6 +23,7 @@ import { Banks } from "./pages/settings/Banks.tsx";
 import { Categories } from "./pages/settings/Categories.tsx";
 import { DataSources } from "./pages/settings/DataSources.tsx";
 import { Household } from "./pages/settings/Household.tsx";
+import { Members } from "./pages/settings/Members.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
 import { TopMerchants } from "./pages/TopMerchants.tsx";
@@ -34,6 +36,7 @@ import { Shell } from "./Shell.tsx";
 
 const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   household: Household,
+  members: Members,
   "my-login": MyLogin,
   banks: Banks,
   categories: Categories,
@@ -78,6 +81,8 @@ const pages: RouteObject[] = [...MAIN_MENU, ...MORE_MENU]
 export const routes: RouteObject[] = [
   { path: "/setup", Component: Setup },
   { path: "/sign-in", Component: SignIn },
+  // An invite link's page, outside the app's own pages: it never leads to the wizard.
+  { path: "/join", Component: Join },
   {
     path: "/",
     Component: Shell,

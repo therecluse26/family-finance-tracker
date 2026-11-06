@@ -33,6 +33,7 @@ import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
 import { masterKeyRoutes } from "./master-key.ts";
+import { memberRoutes } from "./members.ts";
 import { moneyMovementRoutes } from "./money-movement.ts";
 import { monthlyReviewRoutes } from "./monthly-reviews.ts";
 import { noticeRoutes } from "./notices.ts";
@@ -210,12 +211,18 @@ export function createApp(
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
+  const members = memberRoutes(database, auth, security.appUrl);
   return (
     new Hono<ServerEnv>()
       .use(thrownValuesAsErrors)
       // The only route before the security check: it answers any source and any Host.
       .get("/healthz", (c) => c.json({ status: "ok" }))
       .use(securityCheck(security))
+      // Joining by invite link needs no session, so Better Auth's own check, which lets a request
+      // with no cookie and no Origin through, is not enough: these routes answer only the app's
+      // own pages, and only JSON.
+      .use("/api/auth/invite/*", sameOriginChanges(security.appUrl.origin))
+      .use("/api/auth/invite/*", jsonOnly)
       .all("/api/auth/*", (c) => auth.handle(c.req.raw, c.var.clientAddress))
       // The wizard's progress, which every page reads, before any Member can sign in. It says only
       // which step comes next.
@@ -249,6 +256,7 @@ export function createApp(
         c.set("removing", removing);
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
+        c.set("members", members);
         await next();
       })
       .use("/api/*", masterKeyFirst)

@@ -34,9 +34,10 @@ const account = (more: Partial<PrivacyAccount> & { id: string }): PrivacyAccount
 
 const FACTS: PrivacyFacts = {
   members: [
-    { name: "Dana Whitfield", email: "dana.w@example.com" },
-    { name: "Ravi Okafor", email: "ravi@example.org" },
+    { name: "Dana Whitfield", email: "dana.w@example.com", labelNumber: 0 },
+    { name: "Ravi Okafor", email: "ravi@example.org", labelNumber: 1 },
   ],
+  removedMembers: [],
   accounts: [
     account({ id: "a1", name: "Ally Online Savings", subtype: "savings", mask: "4821" }),
     account({ id: "a2", name: "Rainy day fund", subtype: "savings", mask: "7730" }),
@@ -225,8 +226,8 @@ describe("the privacy filter's labels", () => {
     const twins = privacyFilter({
       ...FACTS,
       members: [
-        { name: "Sam Lee", email: "sam.lee@example.com" },
-        { name: "Sam Ortiz", email: "sam.o@example.com" },
+        { name: "Sam Lee", email: "sam.lee@example.com", labelNumber: 0 },
+        { name: "Sam Ortiz", email: "sam.o@example.com", labelNumber: 1 },
       ],
     });
 
@@ -248,6 +249,19 @@ describe("the privacy filter's labels", () => {
     ).toBe("Dana Whitfield spent less than Ravi Okafor. Member C and Member Ab stay.");
     expect(filter.showMemberNames(filter.text("Dana and Ravi"))).toBe(
       "Dana Whitfield and Ravi Okafor",
+    );
+  });
+
+  it("labels each Member by their own label number, and shows a removed Member's kept name for theirs", () => {
+    const after = privacyFilter({
+      ...FACTS,
+      members: [{ name: "Ravi Okafor", email: "ravi@example.org", labelNumber: 1 }],
+      removedMembers: [{ labelNumber: 0, name: "Dana Whitfield" }],
+    });
+
+    expect(after.text("Ravi paid")).toBe("Member B paid");
+    expect(after.showMemberNames("Member A paid and Member B saved. Member C stays.")).toBe(
+      "Dana Whitfield paid and Ravi Okafor saved. Member C stays.",
     );
   });
 });
@@ -358,9 +372,9 @@ describe("the privacy filter on names written with or without accents", () => {
   const accented = privacyFilter({
     ...FACTS,
     members: [
-      { name: "José Ortega", email: "jo@example.com" },
-      { name: "Zoë Brandt", email: "zb@example.com" },
-      { name: "Bjørn Ødegaard", email: "bo@example.com" },
+      { name: "José Ortega", email: "jo@example.com", labelNumber: 0 },
+      { name: "Zoë Brandt", email: "zb@example.com", labelNumber: 1 },
+      { name: "Bjørn Ødegaard", email: "bo@example.com", labelNumber: 2 },
     ],
   });
 
@@ -378,7 +392,7 @@ describe("the privacy filter on names written with or without accents", () => {
   it("matches an accented name in the text to a Member's plain name", () => {
     const plain = privacyFilter({
       ...FACTS,
-      members: [{ name: "Jose Ortega", email: "jo@example.com" }],
+      members: [{ name: "Jose Ortega", email: "jo@example.com", labelNumber: 0 }],
     });
 
     expect(plain.text("José Ortega and JOSÉ")).toBe("Member A and Member A");
@@ -400,9 +414,9 @@ describe("the privacy filter on names of three words or with a hyphen", () => {
   const household = privacyFilter({
     ...FACTS,
     members: [
-      { name: "Zo\u00EB O'Neil-Park", email: "zoe@example.com" },
-      { name: "Marcus Bell", email: "marcus@example.com" },
-      { name: "Luis Ortega Ruiz", email: "luis@example.com" },
+      { name: "Zo\u00EB O'Neil-Park", email: "zoe@example.com", labelNumber: 0 },
+      { name: "Marcus Bell", email: "marcus@example.com", labelNumber: 1 },
+      { name: "Luis Ortega Ruiz", email: "luis@example.com", labelNumber: 2 },
     ],
   });
 
@@ -920,7 +934,7 @@ describe("the privacy filter on the Household summary's typed parts", () => {
 describe("the privacy filter's check of the whole request", () => {
   const will = privacyFilter({
     ...FACTS,
-    members: [{ name: "Will Avery", email: "wa@example.com" }],
+    members: [{ name: "Will Avery", email: "wa@example.com", labelNumber: 0 }],
     accounts: [account({ id: "w1", mask: "1000" })],
   });
 

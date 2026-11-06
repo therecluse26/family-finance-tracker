@@ -19,7 +19,12 @@ import {
   type UIMessageChunk,
   wrapLanguageModel,
 } from "ai";
-import { type Database, listAccounts, listMembersByJoinOrder } from "../db/index.ts";
+import {
+  type Database,
+  listAccounts,
+  listMembersByJoinOrder,
+  listRemovedMembers,
+} from "../db/index.ts";
 import { readHouseholdFacts } from "../household/index.ts";
 import type { Logger } from "../log.ts";
 import type { AiTier, ModelCheck, TierModels } from "./ai-view.ts";
@@ -57,13 +62,15 @@ const NO_MORE_TOOLS = { error: "No more lookups for this question." };
 
 // What the filter hides, read fresh for each request, so a new Member or Account counts at once.
 export async function readPrivacyFacts(database: Database): Promise<PrivacyFacts> {
-  const [members, accounts, facts] = await Promise.all([
+  const [members, removedMembers, accounts, facts] = await Promise.all([
     listMembersByJoinOrder(database),
+    listRemovedMembers(database),
     listAccounts(database),
     readHouseholdFacts(database),
   ]);
   return {
     members,
+    removedMembers,
     accounts: accounts.map(({ id, name, memberName, institutionName, kind, subtype, mask }) => ({
       id,
       name,

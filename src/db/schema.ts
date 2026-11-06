@@ -148,6 +148,33 @@ export const signInTries = sqliteTable(
   (table) => [index("sign_in_tries_key_at").on(table.key, table.at)],
 );
 
+// The open invite links (spec 09, Invites). A link holds its token after "#". The app keeps only
+// the token's SHA-256 hash, so a copy of app.db lets no one join. A link is deleted when it is used
+// or cancelled, or when the Member who made it is removed, and stops working when it expires.
+export const invites = sqliteTable(
+  "invites",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull().unique(),
+    madeBy: text("made_by")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    createdAt: moment("created_at").notNull(),
+    expiresAt: moment("expires_at").notNull(),
+  },
+  (table) => [index("invites_expires_at").on(table.expiresAt)],
+);
+
+// Each removed Member: the number of the label the AI knew them by, and their name (spec 09,
+// Members). Labels follow the order Members joined, "Member A" for number 0, and a removed
+// Member's number is never given again, so every other Member keeps their label. The screen shows
+// this name for the label in AI text from before the removal, such as a Chat answer.
+export const removedMembers = sqliteTable("removed_members", {
+  labelNumber: integer("label_number").primaryKey(),
+  name: text("name").notNull(),
+  removedAt: moment("removed_at").notNull(),
+});
+
 // The first-run wizard's steps after the first Member, each one done or skipped (spec 12, The
 // first-run wizard). Steps 1 and 2 need no row: they are done once a Member exists.
 export const setupSteps = sqliteTable("setup_steps", {
@@ -1494,6 +1521,9 @@ export const goals = sqliteTable(
     id: text("id").primaryKey(),
     words: text("words").notNull(),
     authorId: text("author_id").references(() => members.id, { onDelete: "set null" }),
+    // The author's name, written when that Member is removed: a removed Member's Goals keep their
+    // name (spec 09, Members). Empty while the author is a Member.
+    authorName: text("author_name"),
     // The Goal's date, in the Household time zone.
     date: calendarDate("date").notNull(),
     status: text("status", { enum: ["active", "done", "dropped"] }).notNull(),

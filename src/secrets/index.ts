@@ -1,5 +1,6 @@
 // The secrets module's interface. Other modules import from here. It is the only module that uses
 // node:crypto for secrets.
+export { linkTokenHash, newLinkToken, sameLinkTokenHash } from "./link-tokens.ts";
 export {
   DEFAULT_MASTER_KEY_FILE,
   findMasterKey,

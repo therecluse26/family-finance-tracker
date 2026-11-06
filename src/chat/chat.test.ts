@@ -26,6 +26,7 @@ import {
   listGoals,
   loginTables,
   type NewBudget,
+  removeMember,
   storeAlerts,
   storeFirstDraft,
 } from "../db/index.ts";
@@ -251,6 +252,37 @@ describe("Chat", () => {
         ["AI", "Dana Whitfield spent **$480** on Restaurants."],
       ]);
       expect(thread?.answering).toBe(false);
+    });
+
+    it("still names each Member after one is removed, and the AI keeps calling the others by the same label", async () => {
+      stub.reply = "Member A paid and Member B saved.";
+      const id = await started("Who paid?", RAVI);
+      await answered(id, null, RAVI);
+      expect(await ai.memberLabels()).toEqual(
+        new Map([
+          ["m1", "Member A"],
+          ["m2", "Member B"],
+        ]),
+      );
+
+      expect(await removeMember(test.database, "m1", NOW)).toBe("removed");
+
+      // The stored answer shows the removed Member's kept name, and the other Member's own name.
+      const thread = await talk.thread(id);
+      expect(thread?.messages.map(({ name, text }) => [name, text])).toEqual([
+        ["Ravi Okafor", "Who paid?"],
+        ["AI", "Dana Whitfield paid and Ravi Okafor saved."],
+      ]);
+      expect(await ai.memberLabels()).toEqual(new Map([["m2", "Member B"]]));
+
+      // The next prompt calls Ravi "Member B", as the earlier answer does.
+      await answered(id, "What did Ravi Okafor save?", RAVI);
+      const [, , , ...turns] = prompts().at(-1) ?? [];
+      expect(turns.map((turn) => [turn.role, textsOf(turn).join("")])).toEqual([
+        ["user", "Who paid?"],
+        ["assistant", "Member A paid and Member B saved."],
+        ["user", "What did Member B save?"],
+      ]);
     });
 
     it("sends the fixed rules, the summary with the cache mark, the tools, Chat's task, and the turns, with at most 1,500 reply tokens", async () => {

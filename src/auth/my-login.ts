@@ -78,7 +78,8 @@ export async function storedTwoFactor(
   };
 }
 
-const newTotpIdentifier = (memberId: string) => `new-totp-${memberId}`;
+// The pending TOTP secret of a Member who changes their TOTP.
+export const newTotpIdentifier = (memberId: string) => `new-totp-${memberId}`;
 
 // The house rules for Better Auth's sign-in routes, and the routes that let a signed-in Member
 // change their own password, TOTP, and backup codes. Each change asks for a fresh code.

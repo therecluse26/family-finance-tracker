@@ -6,10 +6,12 @@ import { type Database, loginTables } from "../db/index.ts";
 import { type Logger, log } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { firstMember } from "./first-member.ts";
+import { invites, makeInvite } from "./invites.ts";
 import {
   APP_NAME,
   BACKUP_CODE_COUNT,
   myLogin,
+  newTotpIdentifier,
   TOTP_DIGITS,
   TOTP_PERIOD_SECONDS,
 } from "./my-login.ts";
@@ -38,6 +40,9 @@ const ROUTES = new Set([
   "POST /first-member/check-code",
   "POST /first-member/new-totp",
   "POST /first-member/create",
+  "POST /invite/check",
+  "POST /invite/new-totp",
+  "POST /invite/accept",
 ]);
 
 // A TOTP code is 6 digits. A backup code is two groups of 5 letters and digits.
@@ -58,6 +63,14 @@ export type Auth = {
   // signed in on this request. A wrong code counts as a failed sign-in, and a backup code is used
   // up. Past the failed sign-in limit, every code is "too many tries" without being checked.
   checkFreshCode(request: Request, clientAddress: string, code: string): Promise<FreshCode>;
+  // A new invite link's token, made by this Member, and when it stops working (spec 09, Invites).
+  // The app keeps only its hash, so this is the one time anyone sees it.
+  makeInvite(madeBy: string, at: Date): Promise<{ token: string; expiresAt: Date }>;
+  // The one credential-removal hook, as a Member is removed (spec 09, Members): ends every session
+  // of the Member at once, and deletes their password, TOTP, backup codes, and a TOTP secret waiting
+  // for its first code. It runs after the Member's row is deleted, whose foreign keys already took
+  // most of these, and is safe to run again. Passkeys (T97) join here.
+  removeLogin(memberId: string): Promise<void>;
 };
 
 export type FreshCode = "fresh" | "wrong" | "too many tries";
@@ -141,6 +154,7 @@ function buildBetterAuth(options: AuthOptions) {
     plugins: [
       myLogin({ database, secrets, freshCode: (headers, code) => fresh.check(headers, code) }),
       firstMember({ database, secrets }),
+      invites({ database, secrets }),
       signInLimit(database),
       // After the sign-in limit, so that a used code counts as a failed sign-in.
       totpOnce(database),
@@ -213,6 +227,19 @@ export function createAuth(options: AuthOptions): Auth {
         if (isAPIError(error) && error.status === "TOO_MANY_REQUESTS") return "too many tries";
         throw error;
       }
+    },
+
+    makeInvite: (madeBy, at) => makeInvite(options.database, madeBy, at),
+
+    async removeLogin(memberId) {
+      const context = await auth.$context;
+      await context.internalAdapter.deleteUserSessions(memberId);
+      await context.internalAdapter.deleteAccounts(memberId);
+      await context.adapter.deleteMany({
+        model: "twoFactor",
+        where: [{ field: "userId", value: memberId }],
+      });
+      await context.internalAdapter.deleteVerificationByIdentifier(newTotpIdentifier(memberId));
     },
   };
   instances.set(made, auth);

@@ -324,6 +324,15 @@ export {
   storeInsightCardDone,
 } from "./insight-cards.ts";
 export {
+  addInvite,
+  cancelInvite,
+  claimInvite,
+  listOpenInviteHashes,
+  listOpenInvites,
+  type NewInvite,
+  type OpenInvite,
+} from "./invites.ts";
+export {
   type AiLinkAnswer,
   type AiLinkKind,
   type AnyLink,
@@ -391,7 +400,14 @@ export {
   readLastMasterKeyCheck,
   recordMasterKeyCheck,
 } from "./master-key-checks.ts";
-export { listMemberNamesById, listMembersByJoinOrder } from "./members.ts";
+export {
+  listMemberNamesById,
+  listMembers,
+  listMembersByJoinOrder,
+  listRemovedMembers,
+  type MemberRemoval,
+  removeMember,
+} from "./members.ts";
 export {
   applyMigrations,
   checkMigrations,

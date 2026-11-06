@@ -65,6 +65,8 @@ export type Goal = {
   words: string;
   // The Member who wrote it, or null once that Member is gone.
   authorId: string | null;
+  // The name of the Member who wrote it, kept once that Member is removed.
+  authorName: string | null;
   date: string;
   status: GoalStatus;
   endedOn: string | null;
@@ -537,6 +539,7 @@ async function goalsWithProgress(database: Database, now: Date, save: boolean): 
       id: goal.id,
       words: goal.words,
       authorId: goal.authorId,
+      authorName: goal.authorName,
       date: goal.date,
       status: goal.status,
       endedOn: goal.endedOn,

@@ -1276,6 +1276,49 @@ export const api = new Hono<ServerEnv>()
       "Cache-Control": "no-store",
     });
   })
+  // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
+  .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
+  // "Make an invite link": any Member. The answer holds the link once; the app keeps its hash.
+  .post("/invites", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    const made = await c.var.members.makeInvite(c.var.member.id);
+    if (made === "wizard not done") {
+      return c.json({ error: "Finish the first-run wizard first." }, 409);
+    }
+    c.header("Cache-Control", "no-store");
+    return c.json({ invite: made }, 200);
+  })
+  // Cancel on an open invite link.
+  .post("/invites/:id/cancel", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    if (!(await c.var.members.cancelInvite(c.req.param("id")))) {
+      return c.json({ error: "No open invite link has this ID." }, 404);
+    }
+    return c.json({ cancelled: true }, 200);
+  })
+  // "Remove": any Member removes any Member, themselves included, with a fresh TOTP or backup
+  // code, since removing a Member is a sensitive action (spec 09). The app refuses to remove the
+  // last Member.
+  .post("/members/:id/remove", jsonOnly, async (c) => {
+    const body = codeBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    const fresh = await c.var.checkFreshCode(body.data.code);
+    if (fresh === "too many tries") {
+      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    }
+    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+    const id = c.req.param("id");
+    const removed = await c.var.members.remove(id);
+    if (removed === "no such Member") return c.json({ error: "No Member has this ID." }, 404);
+    if (removed === "last Member") {
+      return c.json({ error: "The app cannot remove the last Member." }, 409);
+    }
+    return c.json({ removed: true, you: id === c.var.member.id }, 200);
+  })
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.
   .get("/benchmarks", async (c) => c.json(await c.var.benchmarks.benchmarks()))

@@ -16,7 +16,12 @@ type ToolResultOutput = Extract<
   { type: "tool-result" }
 >["output"];
 
-export type PrivacyMember = { name: string; email: string };
+// A Member, with the number of their label: 0 is "Member A" (src/db/members.ts).
+export type PrivacyMember = { name: string; email: string; labelNumber: number };
+
+// A removed Member's label number and name. The filter never looks for the name, but AI text from
+// before the removal shows it in place of the label.
+export type RemovedMember = { labelNumber: number; name: string };
 
 export type PrivacyAccount = {
   id: string;
@@ -32,6 +37,7 @@ export type PrivacyAccount = {
 // What the filter hides. Members come in the order they joined.
 export type PrivacyFacts = {
   members: readonly PrivacyMember[];
+  removedMembers: readonly RemovedMember[];
   accounts: readonly PrivacyAccount[];
   zipCode: string | undefined;
   ages: readonly number[];
@@ -79,7 +85,8 @@ export type PrivacyFilter = {
   params(params: CallOptions): CallOptions;
   // Each Account's label, by its ID.
   accountLabels: ReadonlyMap<string, string>;
-  // AI text for the screen: each "Member A" label becomes that Member's name.
+  // AI text for the screen: each "Member A" label becomes that Member's name, or a removed
+  // Member's kept name.
   showMemberNames(text: string): string;
 };
 
@@ -534,19 +541,13 @@ function wholePhrase(phrase: string): RegExp {
   return new RegExp(`${WORD_BEFORE}${words}${WORD_AFTER}`, "giu");
 }
 
-// "Member A" for the first Member to join, then B to Z, then AA, AB, and so on.
-export function memberLabel(index: number): string {
+// "Member A" for label number 0, the first Member to join, then B to Z, then AA, AB, and so on.
+export function memberLabel(labelNumber: number): string {
   let letters = "";
-  for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+  for (let n = labelNumber + 1; n > 0; n = Math.floor((n - 1) / 26)) {
     letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters;
   }
   return `Member ${letters}`;
-}
-
-function labelIndex(letters: string): number {
-  let n = 0;
-  for (const letter of letters) n = n * 26 + (letter.charCodeAt(0) - 64);
-  return n - 1;
 }
 
 function fieldWords(name: string): string[] {
@@ -600,10 +601,10 @@ function promptTexts(messages: Prompt): string[] {
 }
 
 export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
-  const members = facts.members.map((member, index) => ({
+  const members = facts.members.map((member) => ({
     ...member,
     full: member.name.trim(),
-    label: memberLabel(index),
+    label: memberLabel(member.labelNumber),
   }));
 
   // Each Member's name as letters, in these forms: the whole name; the first word; every other
@@ -1385,10 +1386,20 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     };
   }
 
+  // Each label's name on the screen. A label is never given again, so one from before a removal
+  // still means the removed Member.
+  const shownNames = new Map<string, string>([
+    ...facts.removedMembers.map(({ labelNumber, name }): [string, string] => [
+      memberLabel(labelNumber),
+      name.trim(),
+    ]),
+    ...members.map(({ label, full }): [string, string] => [label, full]),
+  ]);
+
   function showMemberNames(aiText: string): string {
     return aiText.replace(
       new RegExp(`${WORD_BEFORE}[Mm]ember ([A-Z]{1,3})${WORD_AFTER}`, "gu"),
-      (label, letters: string) => members[labelIndex(letters)]?.full || label,
+      (label, letters: string) => shownNames.get(`Member ${letters}`) || label,
     );
   }
 

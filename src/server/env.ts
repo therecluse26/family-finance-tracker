@@ -23,6 +23,7 @@ import type { DataExportRoutes } from "./data-export-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
+import type { MemberRoutes } from "./members-views.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
 import type { MonthlyReviewRoutes } from "./monthly-reviews-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
@@ -76,6 +77,8 @@ export type ServerEnv = {
     backups: BackupRoutes;
     // Settings, Backups and data: "Download my data".
     dataExport: DataExportRoutes;
+    // Settings, Members: the Members, invite links, and removing a Member.
+    members: MemberRoutes;
     // Each Category's Benchmark.
     benchmarks: BenchmarkRoutes;
     // Each Category's Budget for a month.

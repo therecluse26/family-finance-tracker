@@ -201,7 +201,10 @@ export function householdAi(options: AiOptions): HouseholdAi {
     accountLabels: async () => (await filter()).accountLabels,
     memberLabels: async () =>
       new Map(
-        (await listMemberNamesById(database)).map(({ id }, index) => [id, memberLabel(index)]),
+        (await listMemberNamesById(database)).map(({ id, labelNumber }) => [
+          id,
+          memberLabel(labelNumber),
+        ]),
       ),
     toolResult: async (data) => (await filter()).json(plainData(data)),
   };

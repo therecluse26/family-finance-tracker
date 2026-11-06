@@ -207,7 +207,7 @@ async function* goalsCsv(
     yield csvLine([
       csvText(goal.id),
       csvText(goal.words),
-      csvText(names.members.get(goal.authorId ?? "") ?? null),
+      csvText(names.members.get(goal.authorId ?? "") ?? goal.authorName),
       csvText(goal.date),
       csvText(goal.status),
       csvText(goal.endedOn),

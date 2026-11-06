@@ -84,7 +84,8 @@ export function goalRoutes(database: Database, writing?: GoalWriting): GoalRoute
     const names = new Map((await listMemberNamesById(database)).map(({ id, name }) => [id, name]));
     return goals.map((goal) => ({
       ...goal,
-      author: goal.authorId === null ? null : (names.get(goal.authorId) ?? null),
+      // A removed Member's Goals keep their name (spec 09, Members).
+      author: (goal.authorId === null ? undefined : names.get(goal.authorId)) ?? goal.authorName,
     }));
   }
 
