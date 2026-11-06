@@ -122,9 +122,9 @@ function Repair(props: { banner: StatusLines["repairs"][number]; onChanged: () =
   );
 }
 
-// The "Finish setup" list: Banks, if the wizard's Banks step was skipped, and each optional extra
-// (AI, Alerts, Invite Members), until each is done, with a link to where it is done (spec 12, Order
-// and resume rules). Every Member sees it.
+// The "Finish setup" list: Banks while the Household has no Connection, and each optional extra
+// (AI, Alerts, Invite Members) until it is done, with a link to where it is done (spec 12, The
+// "Finish setup" list). Every Member sees it.
 export function FinishSetupList(props: { steps: readonly FinishSetupItem[] }) {
   if (props.steps.length === 0) return null;
   return (
@@ -151,7 +151,7 @@ export function FinishSetupList(props: { steps: readonly FinishSetupItem[] }) {
 
 export function StatusLineList(props: {
   lines: StatusLines;
-  // The "Finish setup" list of skipped wizard steps.
+  // The "Finish setup" list: Banks while the Household has no Connection, and the extras not done.
   finishSetup?: ReactNode;
   onClose: (id: string) => void;
   // Retry on the notice of a stopped First run or bank-added-later job.

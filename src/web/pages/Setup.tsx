@@ -349,6 +349,25 @@ function HouseholdStep(props: { onBack: () => void; onSaved: () => void }) {
   );
 }
 
+// The step bar and the name of the step on the screen. The server's progress says which steps were
+// skipped, so a skipped Banks step shows as not done after Skip for now and after a reload alike.
+export function WizardHeader(props: {
+  shown: WizardStep;
+  reached: WizardStep;
+  progress: SetupProgressView | undefined;
+}) {
+  return (
+    <>
+      <Stepper
+        shown={props.shown}
+        reached={props.reached}
+        skipped={skippedWizardSteps(props.progress)}
+      />
+      <h2 className="mt-2 text-xl">{STEP_LABELS[props.shown]}</h2>
+    </>
+  );
+}
+
 export function Setup() {
   const navigate = useNavigate();
   // The furthest step the Member can open, and the step on the screen, which Back moves.
@@ -408,10 +427,7 @@ export function Setup() {
     <main className="mx-auto max-w-md p-6">
       <h1 className="text-2xl font-semibold">Set up Family Finance Tracker</h1>
       {shown === undefined || reached === undefined ? null : (
-        <>
-          <Stepper shown={shown} reached={reached} skipped={skippedWizardSteps(progress)} />
-          <h2 className="mt-2 text-xl">{STEP_LABELS[shown]}</h2>
-        </>
+        <WizardHeader shown={shown} reached={reached} progress={progress} />
       )}
       {shown === "setup link" ? (
         <SetupLink
