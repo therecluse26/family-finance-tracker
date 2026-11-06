@@ -78,24 +78,31 @@ describe("the Alert list page", () => {
       <AlertRows alerts={ALERTS} states={{}} today={TODAY} zone={ZONE} onNotAProblem={() => {}} />,
     );
     const rows = [
-      ...html.matchAll(/<li class="mt-4[^>]*>(.*?)<\/li>(?=<li class="mt-4|<\/ul>$)/gs),
+      ...html.matchAll(
+        /<li [^>]*data-kind="[^"]*"[^>]*>(.*?)<\/li>(?=<li [^>]*data-kind|<\/ul>$)/gs,
+      ),
     ].map((match) =>
       // An amount kept whole sits inside the words, so its span adds no space.
       text((match[1] ?? "").replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/g, "$1")),
     );
 
+    // Each Alert's kind icon, its text, then its date, kind and mark, then its press. A merged
+    // Alert puts the icon and the date line under its heading, and each part has its own press.
     expect(rows).toEqual([
       // 1 AM UTC on Nov 5 is Nov 4 in New York. The Alerts step has not decided it yet.
-      "Nov 4 · Price increase Streamly went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3. Not a problem",
-      "Nov 4 · Over Budget · sent 2 Categories are over Budget Groceries is $40.00 over its Budget. Not a problem Dining is $12.00 over its Budget. AI Plan two meals at home this week. Not a problem",
-      "Nov 2 · Large purchase · held back (weekly cap) Alert held. Not a problem",
-      "Dec 30, 2025 · Duplicate charge · found in history Alert found. Not a problem",
+      "◆ Streamly went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3. Nov 4 · Price increase Not a problem",
+      "▲ 2 Categories are over Budget Nov 4 · Over Budget · sent Groceries is $40.00 over its Budget. Not a problem Dining is $12.00 over its Budget. AI Plan two meals at home this week. Not a problem",
+      "● Alert held. Nov 2 · Large purchase · held back (weekly cap) Not a problem",
+      "◆ Alert found. Dec 30, 2025 · Duplicate charge · found in history Not a problem",
     ]);
+    // The icon is color with a word: the kind always shows beside it, and the icon is hidden from
+    // screen readers.
+    expect(html).toContain('<span aria-hidden="true" class="mr-1.5 text-critical">▲</span>');
+    expect(html).toContain('<span aria-hidden="true" class="mr-1.5 text-serious">◆</span>');
+    expect(html).toContain('<span aria-hidden="true" class="mr-1.5 text-accent">●</span>');
     // A signed amount never breaks after its sign (spec 07, Number formats).
     expect(html).toContain('(<span class="whitespace-nowrap">+$2.50</span>, +16%)');
-    expect(alertLine(ALERTS[0] as AlertView, TODAY, ZONE)).toBe(
-      "Nov 2 · Large purchase · held back (weekly cap)",
-    );
+    expect(alertLine(ALERTS[0] as AlertView, TODAY, ZONE)).toBe("Nov 2 · Large purchase");
   });
 
   it('says "No Alerts yet." with no Alerts', () => {
@@ -123,7 +130,7 @@ describe("the Alert list page", () => {
 
     for (const each of merged.parts) {
       const button = AlertPart({ part: each, state: {}, today: TODAY, zone: ZONE, onNotAProblem })
-        .props.children[2].props.children[0];
+        .props.children[1].props.children[0];
       button.props.onClick();
     }
 
