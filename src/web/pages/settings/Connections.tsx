@@ -385,7 +385,9 @@ export function LinkFailed(props: {
 }) {
   return (
     <div className="mt-3 rounded-control border border-critical/40 bg-white p-3.5" role="alert">
-      <p className="font-semibold text-critical">The bank was not linked</p>
+      <p className="font-semibold">
+        <StatusText tone="critical">The bank was not linked</StatusText>
+      </p>
       <p className="mt-1">{props.problem.words} Nothing was saved, and no Item was spent.</p>
       {props.problem.code === null ? null : (
         <p className="mt-1 text-small text-muted">Plaid code: {props.problem.code}</p>
@@ -972,6 +974,11 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
   );
 }
 
+// Repair is filled in the serious orange, as the boards draw it beside a Connection that needs a
+// Member. White on it reads at 5.0:1.
+const REPAIR_BUTTON =
+  "inline-flex h-[38px] items-center justify-center whitespace-nowrap rounded-control bg-serious px-4 text-sm font-semibold text-white hover:bg-[#92400e] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-serious disabled:cursor-not-allowed disabled:opacity-50";
+
 // Repair or Add accounts: Plaid Link in update mode for one Connection (spec 02, Repair and New
 // accounts at a bank). When Link finishes, the server syncs the Connection at once.
 export function UpdateMode(props: {
@@ -1034,9 +1041,15 @@ export function UpdateMode(props: {
 
   return (
     <>
-      <Button type="button" variant="outlined" size="small" onClick={open} disabled={busy}>
-        {props.addAccounts ? "Add accounts" : "Repair"}
-      </Button>
+      {props.addAccounts ? (
+        <Button type="button" variant="outlined" size="small" onClick={open} disabled={busy}>
+          Add accounts
+        </Button>
+      ) : (
+        <button type="button" className={REPAIR_BUTTON} onClick={open} disabled={busy}>
+          Repair
+        </button>
+      )}
       <ErrorLine error={error} />
       {done === undefined ? null : (
         <p className="mt-1">

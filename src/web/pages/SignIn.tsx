@@ -170,7 +170,11 @@ export function SignIn() {
   return (
     <AuthFrame
       title={step === "password" ? "Sign in" : "Enter your code"}
-      note="This is the only place the app asks for a code. Saving keys, exporting data and removing a bank never ask again."
+      note={
+        step === "password"
+          ? undefined
+          : "Once you are signed in, the app does not ask for this code again. Saving keys, exporting data and removing a bank never need it."
+      }
     >
       {step === "password" ? (
         <form onSubmit={submitPassword}>

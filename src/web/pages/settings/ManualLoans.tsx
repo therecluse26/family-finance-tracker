@@ -9,6 +9,7 @@ import { accountEdits } from "../../account-edits.ts";
 import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import {
   BUTTONS,
   DETAILS,
@@ -144,7 +145,11 @@ export function ManualLoanForm(props: {
             ))
           : null}
       </fieldset>
-      {refused ? <p className="mt-2 text-critical">{NOT_A_MANUAL_LOAN}</p> : null}
+      {refused ? (
+        <p className="mt-2">
+          <StatusText tone="critical">{NOT_A_MANUAL_LOAN}</StatusText>
+        </p>
+      ) : null}
       <label className={LABEL}>
         Current balance
         <input

@@ -16,7 +16,7 @@ import {
   USAGE_LIMIT_LINKS,
 } from "../../../ai/ai-view.ts";
 import { tablePrice } from "../../../ai/prices.ts";
-import { capLine, centsOfNanos } from "../../../ai/usage-view.ts";
+import { capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel, type StatusTone } from "../../../format.ts";
 import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
@@ -70,7 +70,6 @@ export function statusLine(status: AiStatus, today: string): string {
   }
 }
 
-// What the app sends each AI provider so it does not train on the Household's data or keep it.
 // The tone of each AI status: its icon and color beside the words.
 const STATUS_TONE: Record<AiStatus["state"], StatusTone> = {
   on: "good",
@@ -79,6 +78,7 @@ const STATUS_TONE: Record<AiStatus["state"], StatusTone> = {
   "key rejected": "critical",
 };
 
+// What the app sends each AI provider so it does not train on the Household's data or keep it.
 export function dataUseLine(provider: AiProviderName, baseUrl: string | null): string {
   const gateway = onGateway(baseUrl)
     ? " Through Cloudflare AI Gateway, the app also asks Cloudflare to keep no prompt text."
@@ -426,16 +426,23 @@ export async function saveCostCap(
   return { usage: ((await res.json()) as { usage: AiUsageView }).usage, saved: COST_CAP_SAVED };
 }
 
-// The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap).
-// How much of the AI cost cap this month's calls spent, for the bar beside the words. A $0 cap is
-// full once any call cost something.
-function spentShare(usage: AiUsageView): number {
-  const spent = centsOfNanos(usage.totalNanos);
-  if (usage.capCents === 0) return spent > 0 ? 1 : 0;
-  return spent / usage.capCents;
+// Billionths of a dollar in a cent: the unit of an AI call's cost against the cap's unit.
+const NANOS_PER_CENT = 1_000_000_000 / 100;
+
+// How much of the AI cost cap this month's calls spent, for the bar beside the words. It compares
+// the exact amounts the server's cap check does (`atCap`): billionths of a dollar against the cap,
+// so the bar is full just when AI pauses. A $0 cap is full at once.
+export function spentShare(usage: AiUsageView): number {
+  if (usage.capCents === 0) return 1;
+  return usage.totalNanos / (usage.capCents * NANOS_PER_CENT);
 }
 
-export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsageView) => void }) {
+// The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap).
+export function CostCapForm(props: {
+  usage: AiUsageView;
+  today: string;
+  onSaved: (usage: AiUsageView) => void;
+}) {
   const { usage } = props;
   const [cap, setCap] = useState(String(usage.capCents / 100));
   const [busy, setBusy] = useState(false);
@@ -460,12 +467,26 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   }
 
   return (
-    <SettingCard id="ai-cost-cap" title="AI cost cap">
+    <SettingCard
+      id="ai-cost-cap"
+      title="AI cost cap"
+      status={
+        usage.pausedUntil === null ? undefined : (
+          <StatusText tone="serious">
+            AI paused until {dateLabel(usage.pausedUntil, props.today)}
+          </StatusText>
+        )
+      }
+    >
       <form onSubmit={submit}>
         <p className="mt-1.5 tabular-nums">
           This month: {capLine(usage.totalNanos, usage.capCents)}
         </p>
-        <Meter share={spentShare(usage)} className="mt-2.5 max-w-[520px]" />
+        <Meter
+          share={spentShare(usage)}
+          tone={usage.pausedUntil === null ? "accent" : "serious"}
+          className="mt-2.5 max-w-[520px]"
+        />
         <Field
           label="AI cost cap, in dollars a month"
           value={cap}
@@ -493,8 +514,6 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   );
 }
 
-// The AI settings page's fields, which Settings, AI shows (spec 08, AI settings page). The first-run
-// wizard's Finish step links here as an optional extra.
 // What the privacy filter takes out of each call (spec 08, Privacy filter), on a grey card.
 function AiPrivacyNote() {
   return (
@@ -506,14 +525,18 @@ function AiPrivacyNote() {
         What the AI never sees
       </h3>
       <p className="mt-1.5 text-small text-ink-soft">
-        Your ZIP code and ages are never sent. The app takes Member names, email addresses, and
-        Account and card numbers out of the text it writes for each call. What you type in Chat is
-        best effort: the app hides the names and numbers it spots, but not all of them.
+        The ZIP code and ages are never sent. In the text the app writes for each call, "Member A",
+        "Member B", and so on replace the names of the Household's current Members, and Member email
+        addresses and Account and card numbers are removed. The filter does not look for a removed
+        Member's name. What you type in Chat is best effort: the app hides names and numbers it
+        spots, but not all of them.
       </p>
     </section>
   );
 }
 
+// The AI settings page's fields, which Settings, AI shows (spec 08, AI settings page). The first-run
+// wizard's Finish step links here as an optional extra.
 export function AiSettingsFields() {
   const [ai, setAi] = useState<AiView | null | undefined>();
   const [usage, setUsage] = useState<AiUsageView | undefined>();
@@ -572,7 +595,9 @@ export function AiSettingsFields() {
               }}
             />
           </SettingCard>
-          {usage === undefined ? null : <CostCapForm usage={usage} onSaved={setUsage} />}
+          {usage === undefined ? null : (
+            <CostCapForm usage={usage} today={today} onSaved={setUsage} />
+          )}
           <AiPrivacyNote />
           {ai === null ? null : <RemoveAiProvider onRemoved={() => setAi(null)} />}
         </>
