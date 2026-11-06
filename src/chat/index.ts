@@ -1,6 +1,7 @@
 // The chat module's interface (spec 08, Chat). Other modules import from here.
 export {
   ANSWERS_PER_HOUR,
+  alertThreadTitle,
   CHAT_TASK,
   CHAT_TURNS,
   type Chat,

@@ -1,8 +1,9 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { calendarDateIn, dateLabel, STATUS_ICON, type StatusTone } from "../../format.ts";
 import type { AlertPartView, AlertView } from "../../server/alerts-views.ts";
 import { api } from "../api.ts";
+import { askAiAbout } from "../chat.ts";
 import { keepAmountsWhole } from "../components/Amounts.tsx";
 import { Button } from "../components/Button.tsx";
 import { Card } from "../components/Card.tsx";
@@ -14,7 +15,8 @@ import { browserZone } from "./Accounts.tsx";
 
 // The Alert list (spec 07, Alert list; spec 06, The Alert list): every Alert, newest first,
 // including those held back by the weekly cap and those found in history. A merged Alert shows each
-// part's line under one heading, and each part takes its own "Not a problem" press.
+// part's line under one heading, and each part takes its own "Not a problem" press. Each Alert has
+// one "Ask the AI" press (spec 06, "Ask the AI"), which opens the Member's Chat thread about it.
 
 // Newest first, by when each Alert's first part was created.
 export function newestFirst(alerts: readonly AlertView[]): AlertView[] {
@@ -70,8 +72,25 @@ function AlertMeta(props: { alert: AlertView; today: string; zone: string }) {
 
 export type PartState = { busy?: boolean; error?: string };
 
+// "Ask the AI" on one Alert: its press, and its state, keyed by the Alert's ID.
+export type AskAi = { state: PartState; onAsk(): void };
+
+function AskAiButton(props: { ask: AskAi }) {
+  return (
+    <Button
+      type="button"
+      variant="outlined"
+      disabled={props.ask.state.busy === true}
+      onClick={props.ask.onAsk}
+    >
+      Ask the AI
+    </Button>
+  );
+}
+
 // One part: its text, the AI's advice, and its own "Not a problem" press. An Alert of one part
-// gives it its kind's icon and its date line; a merged Alert shows those under its heading.
+// gives it its kind's icon, its date line, and the Alert's "Ask the AI" press; a merged Alert shows
+// those under its heading.
 export function AlertPart(props: {
   part: AlertPartView;
   state: PartState;
@@ -80,6 +99,7 @@ export function AlertPart(props: {
   onNotAProblem(part: AlertPartView): void;
   kind?: AlertView["kind"];
   meta?: ReactNode;
+  ask?: AskAi;
 }) {
   const { part, state } = props;
   const pressed = part.notAProblem[0];
@@ -98,6 +118,7 @@ export function AlertPart(props: {
         {props.meta}
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {props.ask === undefined ? null : <AskAiButton ask={props.ask} />}
         <Button
           type="button"
           variant="outlined"
@@ -113,6 +134,7 @@ export function AlertPart(props: {
         )}
       </div>
       <ErrorLine error={state.error} />
+      <ErrorLine error={props.ask?.state.error} />
     </li>
   );
 }
@@ -120,9 +142,12 @@ export function AlertPart(props: {
 export function AlertRows(props: {
   alerts: readonly AlertView[];
   states: Readonly<Record<string, PartState>>;
+  // Each Alert's "Ask the AI" state, by the Alert's ID.
+  asks: Readonly<Record<string, PartState>>;
   today: string;
   zone: string;
   onNotAProblem(part: AlertPartView): void;
+  onAskAi(alert: AlertView): void;
 }) {
   if (props.alerts.length === 0) {
     return (
@@ -136,6 +161,7 @@ export function AlertRows(props: {
       {newestFirst(props.alerts).map((alert) => {
         const meta = <AlertMeta alert={alert} today={props.today} zone={props.zone} />;
         const merged = alert.heading !== null;
+        const ask: AskAi = { state: props.asks[alert.id] ?? {}, onAsk: () => props.onAskAi(alert) };
         return (
           <li
             key={alert.id}
@@ -143,12 +169,16 @@ export function AlertRows(props: {
             data-kind={alert.kind}
           >
             {merged ? (
-              <div className="mb-3">
-                <p className="font-semibold">
-                  <KindIcon kind={alert.kind} />
-                  {alert.heading}
-                </p>
-                {meta}
+              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2.5">
+                <div className="min-w-0 flex-[1_1_320px]">
+                  <p className="font-semibold">
+                    <KindIcon kind={alert.kind} />
+                    {alert.heading}
+                  </p>
+                  {meta}
+                </div>
+                <AskAiButton ask={ask} />
+                <ErrorLine error={ask.state.error} />
               </div>
             ) : null}
             <ul>
@@ -160,7 +190,7 @@ export function AlertRows(props: {
                   today={props.today}
                   zone={props.zone}
                   onNotAProblem={props.onNotAProblem}
-                  {...(merged || index > 0 ? {} : { kind: alert.kind, meta })}
+                  {...(merged || index > 0 ? {} : { kind: alert.kind, meta, ask })}
                 />
               ))}
             </ul>
@@ -183,7 +213,9 @@ export const alertListRequests = {
 export function AlertList() {
   const [alerts, setAlerts] = useState<AlertView[] | undefined>();
   const [states, setStates] = useState<Record<string, PartState>>({});
+  const [asks, setAsks] = useState<Record<string, PartState>>({});
   const [error, setError] = useState<string | undefined>();
+  const navigate = useNavigate();
   const zone = browserZone();
   const today = calendarDateIn(new Date(), zone);
 
@@ -222,6 +254,13 @@ export function AlertList() {
     }
   }
 
+  async function askAi(alert: AlertView) {
+    setAsks((all) => ({ ...all, [alert.id]: { busy: true } }));
+    const asked = await askAiAbout(alert.id);
+    if ("threadId" in asked) return navigate(`/chat/${asked.threadId}`);
+    setAsks((all) => ({ ...all, [alert.id]: { error: asked.error } }));
+  }
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
   useEffect(() => {
     void load();
@@ -236,9 +275,11 @@ export function AlertList() {
         <AlertRows
           alerts={alerts}
           states={states}
+          asks={asks}
           today={today}
           zone={zone}
           onNotAProblem={(part) => void notAProblem(part)}
+          onAskAi={(alert) => void askAi(alert)}
         />
       )}
       <p className="text-small text-muted">

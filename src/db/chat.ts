@@ -1,6 +1,6 @@
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { chatMessages, chatThreads, members } from "./schema.ts";
+import { chatAlertThreads, chatMessages, chatThreads, members } from "./schema.ts";
 
 // Chat threads and their messages in app.db (spec 08, Chat). The chat module decides; these
 // functions store and read.
@@ -50,6 +50,55 @@ export async function storeChatThread(
     await tx.insert(chatMessages).values(message);
   });
   return { threadId, messageId: message.id };
+}
+
+// The thread "Ask the AI" started for this Member on this Alert, still there: its ID.
+async function alertThreadId(
+  database: Database,
+  link: { alertId: string; memberId: string },
+): Promise<string | undefined> {
+  const [row] = await database
+    .select({ threadId: chatAlertThreads.threadId })
+    .from(chatAlertThreads)
+    .where(
+      and(eq(chatAlertThreads.alertId, link.alertId), eq(chatAlertThreads.memberId, link.memberId)),
+    );
+  return row?.threadId;
+}
+
+// Stores a new thread "Ask the AI" started on an Alert (spec 06, "Ask the AI"), with no message
+// yet, unless the Member already has one for the Alert: then it stores nothing and returns that
+// one. It holds no transaction across a wait, which would hold app.db's write lock: the thread goes
+// first, then its link, whose unique index takes one of two presses at once. The press that loses
+// deletes its own thread.
+export async function storeAlertThread(
+  database: Database,
+  thread: { title: string; note: Record<string, unknown> },
+  link: { alertId: string; memberId: string },
+  at: Date,
+): Promise<{ threadId: string; started: boolean }> {
+  const found = await alertThreadId(database, link);
+  if (found !== undefined) return { threadId: found, started: false };
+  const threadId = crypto.randomUUID();
+  await database
+    .insert(chatThreads)
+    .values({ id: threadId, ...thread, createdAt: at, lastMessageAt: at });
+  try {
+    const linked = await database
+      .insert(chatAlertThreads)
+      .values({ threadId, ...link })
+      .onConflictDoNothing()
+      .returning({ threadId: chatAlertThreads.threadId });
+    if (linked.length === 1) return { threadId, started: true };
+  } catch (error) {
+    // Such as the Alert deleted since it was read.
+    await database.delete(chatThreads).where(eq(chatThreads.id, threadId));
+    throw error;
+  }
+  await database.delete(chatThreads).where(eq(chatThreads.id, threadId));
+  const taken = await alertThreadId(database, link);
+  if (taken === undefined) throw new Error("The Member's thread for the Alert was deleted.");
+  return { threadId: taken, started: false };
 }
 
 // Every thread, newest first by its last message.

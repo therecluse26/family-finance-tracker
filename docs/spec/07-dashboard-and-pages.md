@@ -220,7 +220,7 @@ Using this page is never required.
 
 - Every Alert, newest first, including Alerts held back by the weekly cap and Alerts found in loaded history.
 - **Each row:** the date, the kind, the template text, the AI's advice when there is any, and one of these marks: "sent", "held back (weekly cap)", or "found in history".
-- Each Alert has a "Not a problem" button. Its effect is in [Anomalies and Alerts](06-anomalies-and-alerts.md).
+- Each Alert has an "Ask the AI" button and a "Not a problem" button. Their effects are in [Anomalies and Alerts](06-anomalies-and-alerts.md#ask-the-ai). A merged Alert has one "Ask the AI" button under its heading, and a "Not a problem" button on each part.
 
 ### Budgets page
 

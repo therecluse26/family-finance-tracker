@@ -23,6 +23,8 @@ function refusalView(refusal: ChatRefusal): ChatRefusalView {
       return { status: 404, error: "No Chat thread has this ID." };
     case "note gone":
       return { status: 404, error: "This note is no longer in the AI box." };
+    case "no alert":
+      return { status: 404, error: "No Alert has this ID." };
     case "busy":
       return { status: 409, error: "The AI is still answering in this thread." };
     case "rate cap":
@@ -88,6 +90,11 @@ export function chatRoutes(database: Database, chat: Chat | undefined): ChatRout
       if (chat === undefined) return off;
       const started = await chat.start(member, input);
       return refused(started) ? refusalView(started) : started;
+    },
+    async askAboutAlert(member, alertId) {
+      if (chat === undefined) return off;
+      const asked = await chat.askAboutAlert(member, alertId);
+      return refused(asked) ? refusalView(asked) : asked;
     },
     async answer(member, threadId, input) {
       if (chat === undefined) return off;

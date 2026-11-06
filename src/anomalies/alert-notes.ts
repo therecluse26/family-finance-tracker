@@ -117,6 +117,16 @@ function noteWords(
   }
 }
 
+// An Alert's short title, such as "Card interest on Ally credit card", from its parts' facts, oldest
+// first: the one part's title, or the merged heading (spec 06, Merging).
+export function alertTitle(
+  kind: AlertKind,
+  facts: readonly [AlertFacts, ...AlertFacts[]],
+  today: string,
+): string {
+  return facts.length === 1 ? noteWords(facts[0], today).title : mergedHeading(kind, facts.length);
+}
+
 // One note for an Alert of one part or more, oldest part first.
 function noteOf(parts: [AlertNoteRow, ...AlertNoteRow[]], today: string, timeZone: string) {
   const [first] = parts;

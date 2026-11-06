@@ -225,6 +225,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   exported(schema.insightCards, "every column"),
   exported(schema.chatThreads, "every column"),
   exported(schema.chatMessages, "every column"),
+  exported(schema.chatAlertThreads, "every column"),
   // The AI provider and its models. The API key and the gateway token are Master-key secrets. A
   // base URL may hold a sign-in name and password.
   exported(

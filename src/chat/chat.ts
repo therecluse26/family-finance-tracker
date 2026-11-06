@@ -13,13 +13,21 @@ import {
   listChatMessages,
   listChatThreads,
   readChatThread,
+  storeAlertThread,
   storeChatMessage,
   storeChatThread,
 } from "../db/index.ts";
 import { log } from "../log.ts";
 import { type ChatProposal, chatProposals } from "../proposals/index.ts";
 import { lookupTools } from "./lookup-tools.ts";
-import { type ChatNoteView, type NoteKind, noteParts, readNote, storedNote } from "./note.ts";
+import {
+  type ChatNoteView,
+  listedAlert,
+  type NoteKind,
+  noteParts,
+  readNote,
+  storedNote,
+} from "./note.ts";
 import { proposalTools } from "./proposal-tools.ts";
 
 // Chat (spec 08, Chat; spec 07, Chat page): shared threads, each answer streamed from its route as
@@ -87,11 +95,20 @@ export type ChatThread = {
 
 // Why a message or an answer did not start. Nothing was stored.
 export type ChatRefusal =
-  | { refused: "not found" | "note gone" | "busy" | "rate cap" | "nothing to answer" | "empty" }
+  | {
+      refused:
+        | "not found"
+        | "note gone"
+        | "no alert"
+        | "busy"
+        | "rate cap"
+        | "nothing to answer"
+        | "empty";
+    }
   | { refused: "paused"; pause: AiPause };
 
 // A note from the AI box, by its kind and ID.
-export type NoteRef = { kind: NoteKind; id: string };
+export type NoteRef = { kind: Exclude<NoteKind, "Alert">; id: string };
 
 export type Chat = {
   // Why Chat would pause now, such as "waits for history" or "send anyway?", or undefined.
@@ -103,6 +120,14 @@ export type Chat = {
     member: ChatMember,
     input: { text: string; note: NoteRef | null; sendAnyway: boolean },
   ): Promise<{ threadId: string } | ChatRefusal>;
+  // "Ask the AI" on an Alert in the Alert list (spec 06, "Ask the AI"): the Member's thread about
+  // the Alert with this ID, with the Alert attached and no message yet. `started` is false when the
+  // Member's thread for it was already there. It makes no AI call: the Member's first question
+  // goes through answer().
+  askAboutAlert(
+    member: ChatMember,
+    alertId: string,
+  ): Promise<{ threadId: string; started: boolean } | ChatRefusal>;
   // The answer to a new message, or with text null, to the thread's last message when it is a
   // Member's with no answer: "Try again", "Send anyway", or a new thread's first answer.
   answer(
@@ -124,6 +149,9 @@ const memberText = (text: string) => text.toWellFormed().replace(CONTROL, " ").t
 // The thread's title: its first Member message on one line, cut to 60 characters.
 export const titleOf = (text: string) =>
   Array.from(memberText(text).replace(/\s+/gu, " ")).slice(0, TITLE_LENGTH).join("").trim();
+
+// A thread "Ask the AI" started: "About: " and the Alert's short title, cut the same way.
+export const alertThreadTitle = (alertTitle: string) => titleOf(`About: ${alertTitle}`);
 
 // Where the turns the next call sends start in a thread of `count` messages. A thread whose last
 // message is a Member's with no answer sends it and the 9 before it; otherwise the next call sends
@@ -161,6 +189,9 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
   // live in memory: a restart ends every answer.
   const answering = new Set<string>();
   const started = new Map<string, number[]>();
+  // Each "Ask the AI" press while it runs, by the Member and the Alert ID sent, so presses at once,
+  // such as a double click, share one.
+  const asking = new Map<string, Promise<{ threadId: string; started: boolean } | ChatRefusal>>();
 
   const recent = (memberId: string, at: number) =>
     (started.get(memberId) ?? []).filter((time) => time > at - HOUR_MS);
@@ -265,6 +296,23 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
     return streamed.ready ? streamed.response : { refused: "paused", pause: streamed.pause };
   }
 
+  // One "Ask the AI" press. Starting the thread makes no AI call, so it starts at the AI cost cap
+  // too: Chat then asks "Send anyway?" before each message. Any other pause starts nothing.
+  async function askOnce(
+    member: ChatMember,
+    alertId: string,
+  ): Promise<{ threadId: string; started: boolean } | ChatRefusal> {
+    const pause = await ai.pauseFor("chat");
+    if (pause !== undefined && pause !== "send anyway?") return { refused: "paused", pause };
+    const listed = await listedAlert(database, ai, alertId, now());
+    if (listed === undefined) return { refused: "no alert" };
+    const thread = { title: alertThreadTitle(listed.note.title), note: listed.note };
+    const link = { alertId: listed.alertId, memberId: member.id };
+    const stored = await storeAlertThread(database, thread, link, now());
+    if (stored.started) log.info("A Member started a Chat thread", { note: "Alert" });
+    return stored;
+  }
+
   return {
     pause: () => ai.pauseFor("chat"),
 
@@ -311,6 +359,16 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
       );
       log.info("A Member started a Chat thread", { note: note?.kind ?? null });
       return { threadId };
+    },
+
+    askAboutAlert(member, alertId) {
+      // Taken before any wait, so a second press at once joins the first.
+      const key = JSON.stringify([member.id, alertId]);
+      const running = asking.get(key);
+      if (running !== undefined) return running;
+      const press = askOnce(member, alertId).finally(() => asking.delete(key));
+      asking.set(key, press);
+      return press;
     },
 
     async answer(member, threadId, { text, sendAnyway }) {
