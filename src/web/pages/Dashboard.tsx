@@ -19,7 +19,7 @@ import type {
   AiBoxReviewLinkView,
   AiBoxView,
 } from "../../server/ai-box-views.ts";
-import type { NumberTilesView } from "../../server/bank-views.ts";
+import type { HistoryStatusView, NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
 import type { ComingUpView } from "../../server/coming-up-views.ts";
 import type { FinishSetupItem } from "../../server/setup-views.ts";
@@ -55,12 +55,14 @@ import {
   leftText,
   leftToSpend,
   loadDashboard,
+  loadHistoryStatus,
   lowestLine,
   meterLine,
   type NumberTile,
   numberTiles,
   paceLine,
   projectedSpending,
+  readHistoryAgain,
   retryHistoryJobs,
   rowNote,
   type StatusLines,
@@ -79,6 +81,8 @@ import {
   WAITS_FOR_HISTORY,
 } from "../goals.ts";
 import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
+import { answerOrder, type PollPlan, type PollState, usePolling } from "../polling.ts";
+import { SignedOut } from "../requests.ts";
 import { FINISH_SETUP_LINKS } from "../setup-gate.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
@@ -157,6 +161,8 @@ export function StatusLineList(props: {
   // Retry on the notice of a stopped First run or bank-added-later job.
   onRetry: () => void;
   onChanged: () => void;
+  // Whether the page still reads the history loading progress again (HISTORY_POLL).
+  live?: PollState;
 }) {
   const { repairs, loading, others } = props.lines;
   return (
@@ -182,13 +188,34 @@ export function StatusLineList(props: {
         </ul>
       )}
       {loading.length === 0 ? null : (
-        <ul aria-label="History loading" className="mt-4 flex flex-col gap-2">
-          {loading.map((line) => (
-            <li key={line.connectionId} className="rounded border border-gray-200 px-3 py-2">
-              {line.text}
-            </li>
-          ))}
-        </ul>
+        <section
+          aria-labelledby="history-loading"
+          className="mt-4 rounded border border-gray-200 px-3 py-2"
+          data-slot="history-loading"
+        >
+          <h2 id="history-loading" className="font-semibold">
+            Your history is loading
+            {props.live === "polling" ? (
+              <span className="ml-2 text-sm font-normal text-gray-600">Live</span>
+            ) : null}
+          </h2>
+          <p className="text-sm text-gray-600">
+            Numbers on this page grow as each bank sends older Transactions. The app tells you when
+            all of it is in.
+          </p>
+          <ul aria-label="History loading" className="mt-2 flex flex-col gap-1">
+            {loading.map((line) => (
+              <li key={line.connectionId}>
+                <span className="font-medium">{line.bankName}</span> {line.text}
+              </li>
+            ))}
+          </ul>
+          {props.live === "gave up" ? (
+            <p className="mt-1 text-sm text-gray-600">
+              This page stopped checking. Reload it to see newer progress.
+            </p>
+          ) : null}
+        </section>
       )}
       {props.finishSetup ?? null}
       <NoticeList
@@ -1003,6 +1030,8 @@ export function DashboardReport(props: {
   openGroup?: string;
   // The AI box note whose reason shows when it first draws.
   whyOpen?: string;
+  // Whether the page still reads the history loading progress again.
+  live?: PollState;
 }) {
   const { data } = props;
   return (
@@ -1012,11 +1041,12 @@ export function DashboardReport(props: {
         line={headerLine(data.month, data.connections, data.timeZone)}
       />
       <StatusLineList
-        lines={statusLines(data.notices, data.connections, data.history, data.month.today)}
+        lines={statusLines(data.notices, data.connections, data.history)}
         finishSetup={<FinishSetupList steps={data.setup.finishSetup} />}
         onClose={props.onClose}
         onRetry={props.onRetry}
         onChanged={props.onChanged}
+        {...(props.live === undefined ? {} : { live: props.live })}
       />
       <DashboardColumns
         ai={
@@ -1048,18 +1078,49 @@ export function DashboardReport(props: {
 // How often the page checks whether the Household's date changed, to switch month on the 1st.
 const DATE_CHECK_MS = 60_000;
 
-export function Dashboard() {
-  const [data, setData] = useState<DashboardData | undefined>();
-  const [error, setError] = useState<string | undefined>();
+// While a history load runs, the dashboard reads GET /api/history-status again every 5 seconds, for
+// at most 10 minutes. Each read is that one request; the whole page is read again only when a load
+// ends.
+export const HISTORY_POLL: PollPlan = { everyMs: 5_000, maxReads: 120 };
 
-  async function load() {
+export function Dashboard() {
+  const navigate = useNavigate();
+  const [data, setData] = useState<DashboardData | undefined>();
+  // The history progress read since the page was last read whole.
+  const [history, setHistory] = useState<HistoryStatusView | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  // A poll's whole read and a Member action's can overlap: an older answer never replaces a newer.
+  const [order] = useState(answerOrder);
+
+  // Reads the whole page. Answers whether it read; an ended session goes to sign-in.
+  async function load(): Promise<boolean> {
+    const newest = order.begin();
     try {
-      setData(await loadDashboard());
+      const read = await loadDashboard();
+      if (!newest()) return true;
+      setData(read);
+      setHistory(undefined);
       setError(undefined);
-    } catch {
-      setError("The dashboard did not load.");
+      return true;
+    } catch (failure) {
+      if (failure instanceof SignedOut) void navigate("/sign-in", { replace: true });
+      else setError("The dashboard did not load.");
+      return false;
     }
   }
+
+  const shownHistory = history ?? data?.history;
+  const live = usePolling(
+    (shownHistory?.loading.length ?? 0) > 0,
+    () =>
+      readHistoryAgain(shownHistory, {
+        history: loadHistoryStatus,
+        whole: load,
+        show: setHistory,
+        signedOut: () => navigate("/sign-in", { replace: true }),
+      }),
+    HISTORY_POLL,
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
   useEffect(() => {
@@ -1100,7 +1161,8 @@ export function Dashboard() {
         <h1 className="text-2xl font-semibold">Dashboard</h1>
       ) : (
         <DashboardReport
-          data={data}
+          data={shownHistory === undefined ? data : { ...data, history: shownHistory }}
+          live={live}
           onClose={close}
           onRetry={() => void retry()}
           onChanged={() => void load()}

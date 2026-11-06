@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addConnection,
   deleteRemovedConnection,
+  historyProgress,
   listUnhandledTransactions,
   markConnectionRemoved,
   readConnection,
@@ -148,6 +149,30 @@ describe("the first history load", () => {
       aiMayRun: true,
       loading: [],
     });
+  });
+
+  it("counts the progress of only the Connections whose history still loads", async () => {
+    const loaded = await connect("fake-a", T0);
+    const loading = await connect("fake-b", T0);
+    page("fake-a", ["a1", "a2"], true, "2024-01-05");
+    page("fake-b", ["b1"], false, "2025-06-10");
+    await syncAt(loaded, at(MINUTE));
+    await syncAt(loading, at(MINUTE));
+
+    // The count reads only the Connections it is given, so a poll never counts a loaded history.
+    expect(await historyProgress(bank.database, [loading])).toEqual(
+      new Map([[loading, { transactions: 1, oldestDate: "2025-06-10" }]]),
+    );
+    expect(await historyProgress(bank.database, [])).toEqual(new Map());
+    expect((await historyStatus(bank.database, at(MINUTE))).loading).toEqual([
+      {
+        connectionId: loading,
+        bankName: "Bank fake-b",
+        transactions: 1,
+        oldestDate: "2025-06-10",
+        holdsBackAi: true,
+      },
+    ]);
   });
 
   it("does not end the wait before any Connection is made", async () => {

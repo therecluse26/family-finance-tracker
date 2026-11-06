@@ -478,8 +478,9 @@ describe("the dashboard's status lines", () => {
       "▲ Second Fake Bank has disconnected. Use Repair to link it again Repair",
     ]);
     expect(html).toContain('href="/settings/banks"');
+    expect(slotText(html, "history-loading")).toContain("Your history is loading");
     expect(listItems(html, "History loading")).toEqual([
-      "Loading history for Third Fake Bank: 1,240 Transactions so far, back to Mar 3, 2025",
+      "Third Fake Bank 1,240 Transactions · back to Mar 2025",
     ]);
     // A notice about a past event has a close button; one about a condition does not. A Repair
     // notice shows once, as its banner.
@@ -513,7 +514,7 @@ describe("the dashboard's status lines", () => {
     ]);
     const buttons = buttonsOf(
       <StatusLineList
-        lines={statusLines(shown.notices, shown.connections, shown.history, shown.month.today)}
+        lines={statusLines(shown.notices, shown.connections, shown.history)}
         onClose={() => {}}
         onRetry={onRetry}
         onChanged={() => {}}

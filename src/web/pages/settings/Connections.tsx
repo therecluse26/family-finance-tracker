@@ -1,10 +1,27 @@
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import type { LinkedAccount } from "../../../bank/adapter.ts";
 import { CONFIRM_ITEMS_FROM } from "../../../bank/connect-view.ts";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
-import type { AccountView, ConnectionView } from "../../../server/bank-views.ts";
+import {
+  calendarDateIn,
+  dateLabel,
+  dollarsAndCents,
+  monthLabel,
+  timeLabel,
+} from "../../../format.ts";
+import type { AccountView, ConnectionView, HistoryStatusView } from "../../../server/bank-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import type { PollState } from "../../polling.ts";
+import { SignedOut } from "../../requests.ts";
+import {
+  CONNECTIONS_UNREAD,
+  type ConnectionsPage,
+  createConnectionsPage,
+  type HistoryLoadingView,
+  Refused,
+} from "./connections-page.ts";
 
 // Settings → Banks: the Connections, and "Link a new bank" through Plaid Link (spec 02, Linking a
 // new bank and The 10 lifetime Items). The browser never sees an access token: it hands Link's
@@ -23,14 +40,96 @@ export type PlaidLinkMetadata = {
   accounts: { name: string; mask: string | null; type: string; subtype: string | null }[];
 };
 
+// Link's onExit error, or null when the Member closed Link. The app reads only the code and
+// Plaid's message for the Member, and checks both, since they come from a script the app does not
+// own.
+export type PlaidLinkExit = { error_code?: unknown; display_message?: unknown } | null;
+
 type PlaidLinkHandler = { open(): void; destroy(): void };
 type PlaidLink = {
   create(config: {
     token: string;
     onSuccess(publicToken: string, metadata: PlaidLinkMetadata): void;
-    onExit(error: { error_code?: string } | null): void;
+    onExit(error: PlaidLinkExit): void;
   }): PlaidLinkHandler;
 };
+
+// Why Link closed with an error: plain words, and Plaid's code when it is a well-formed one.
+export type LinkExitProblem = { words: string; code: string | null };
+
+// Plain words for the error codes Plaid Link most often closes with.
+const EXIT_WORDS: Record<string, string> = {
+  INSTITUTION_DOWN: "The bank is not answering Plaid right now. Try again in a few hours.",
+  INSTITUTION_NOT_RESPONDING:
+    "The bank is not answering Plaid right now. Try again in a few hours.",
+  INSTITUTION_NOT_AVAILABLE: "Plaid cannot reach this bank right now. Try again later.",
+  INSTITUTION_NO_LONGER_SUPPORTED: "Plaid no longer connects to this bank.",
+  PLANNED_MAINTENANCE: "The bank is down for planned upkeep. Try again later.",
+  INVALID_CREDENTIALS: "The bank did not accept the username or password.",
+  INVALID_MFA: "The bank did not accept the security code.",
+  INSUFFICIENT_CREDENTIALS: "The bank sign-in did not finish.",
+  ITEM_LOCKED:
+    "The bank locked the sign-in after too many tries. Unlock it on the bank's own site, then try again.",
+  USER_SETUP_REQUIRED:
+    "The bank needs you to finish something on its own site first, such as new terms. Do that, then try again.",
+  MFA_NOT_SUPPORTED: "Plaid cannot pass this bank's kind of security check.",
+  NO_ACCOUNTS: "Plaid found no Accounts it can connect at this bank.",
+  ITEM_NOT_SUPPORTED: "Plaid cannot connect this kind of Account.",
+  ACCESS_NOT_GRANTED: "The bank did not share the Accounts with Plaid.",
+  RATE_LIMIT_EXCEEDED: "Too many tries in a short time. Wait a few minutes, then try again.",
+  INTERNAL_SERVER_ERROR: "Plaid had a problem on its side. Try again later.",
+  INVALID_LINK_TOKEN: "The Plaid window was open too long. Try again.",
+};
+
+// Plaid's codes are upper case words joined by underscores.
+const PLAID_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+// Plaid's message for the Member is short; anything longer is cut.
+const MESSAGE_LIMIT = 200;
+
+// What to tell the Member when Link closes: undefined when the Member closed it (Link then gives no
+// error), or the plain words for Plaid's code, else Plaid's own message for the Member as plain
+// text, else a general line. Nothing else from the error is shown.
+export function linkExitProblem(exit: PlaidLinkExit): LinkExitProblem | undefined {
+  if (exit === null || typeof exit !== "object") return undefined;
+  const code =
+    typeof exit.error_code === "string" && PLAID_CODE.test(exit.error_code)
+      ? exit.error_code
+      : null;
+  const message =
+    typeof exit.display_message === "string" ? plainMessage(exit.display_message) : "";
+  const words =
+    (code === null ? undefined : EXIT_WORDS[code]) ??
+    (message === "" ? "Plaid closed before the bank was linked." : message);
+  return { words, code };
+}
+
+// Plaid's message as one line of plain text. Control characters become spaces, and runs of space
+// become one. Format characters go, so a right-to-left override cannot turn the app's own words
+// after it around, and nothing hides in a zero-width one. The two joiners stay: an emoji such as a
+// family is joined by one, and they reorder nothing. A long message is cut at MESSAGE_LIMIT code
+// points, between two graphemes, so the cut never splits an emoji or a letter from its marks.
+function plainMessage(text: string): string {
+  const line = text
+    .toWellFormed()
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/(?![\u200C\u200D])\p{Cf}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  let cut = "";
+  let points = 0;
+  for (const { segment } of new Intl.Segmenter("en", { granularity: "grapheme" }).segment(line)) {
+    const size = Array.from(segment).length;
+    if (points + size > MESSAGE_LIMIT) {
+      // One grapheme longer than the limit, such as a letter with hundreds of marks, is cut by
+      // code points.
+      if (cut === "") cut = Array.from(segment).slice(0, MESSAGE_LIMIT).join("");
+      break;
+    }
+    cut += segment;
+    points += size;
+  }
+  return cut.trim();
+}
 
 let loading: Promise<PlaidLink> | undefined;
 
@@ -62,8 +161,8 @@ async function openPlaidLink(
   linkToken: string,
   handlers: {
     onSuccess(publicToken: string, metadata: PlaidLinkMetadata): void;
-    // Link closed before it finished: `failed` is true when Plaid named an error.
-    onExit(failed: boolean): void;
+    // Link closed before it finished: `problem` is undefined when the Member closed it.
+    onExit(problem: LinkExitProblem | undefined): void;
   },
 ): Promise<void> {
   const plaid = await loadPlaidLink();
@@ -75,7 +174,7 @@ async function openPlaidLink(
     },
     onExit: (exit) => {
       handler.destroy();
-      handlers.onExit(exit !== null);
+      handlers.onExit(linkExitProblem(exit));
     },
   });
   handler.open();
@@ -105,6 +204,187 @@ async function refusal(res: Response): Promise<string> {
 
 const accountLabel = (account: AccountView) =>
   `${account.name}${account.mask === null ? "" : ` ··${account.mask}`}${account.closed ? " (Closed)" : ""}`;
+
+// An Account with its current balance, when the bank sent one.
+function AccountLine(props: { account: AccountView }) {
+  const { account } = props;
+  return (
+    <li>
+      {accountLabel(account)}
+      {account.currentBalance === null ? null : (
+        <span className="ml-2">{dollarsAndCents(account.currentBalance)}</span>
+      )}
+    </li>
+  );
+}
+
+const count = (n: number) => n.toLocaleString("en-US");
+
+// "312 Transactions so far, back to Aug 2025".
+export function historySoFar(loading: HistoryLoadingView | undefined): string {
+  const transactions = loading?.transactions ?? 0;
+  const so = `${count(transactions)} ${transactions === 1 ? "Transaction" : "Transactions"} so far`;
+  const oldest = loading?.oldestDate ?? null;
+  return oldest === null ? so : `${so}, back to ${monthLabel(oldest)}`;
+}
+
+// A Connection's sync state for its row (Settings → Banks): its first sync, its history load, or
+// when it last synced, in this browser's time zone. Null while it is removed, held, needs a Member,
+// or is Broken: its own note says so.
+export function syncState(
+  connection: ConnectionView,
+  loading: HistoryLoadingView | undefined,
+  poll: PollState,
+  now = new Date(),
+  zone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): { word: string; detail: string | null } | null {
+  if (connection.removed || connection.held) return null;
+  if (connection.health === "needs a member" || connection.health === "broken") return null;
+  const updates =
+    poll === "gave up" ? "Reload the page to see newer progress." : "Updates by itself.";
+  if (connection.lastSyncedAt === null) {
+    return { word: "First sync running", detail: `Getting the Accounts from the bank. ${updates}` };
+  }
+  if (!connection.historyLoaded) {
+    return { word: "Loading history", detail: `${historySoFar(loading)}. ${updates}` };
+  }
+  const at = new Date(connection.lastSyncedAt);
+  const day = calendarDateIn(at, zone);
+  const today = calendarDateIn(now, zone);
+  const time = timeLabel(at, zone);
+  return {
+    word: `Synced ${day === today ? time : `${dateLabel(day, today)}, ${time}`}`,
+    detail: null,
+  };
+}
+
+// "Opening Plaid" and "Saving the Connection": the Link panel's steps while the Member waits.
+export function LinkWaiting(props: { saving?: string }) {
+  return (
+    <div className="mt-3" role="status">
+      {props.saving === undefined ? (
+        <>
+          <p className="font-medium">Opening Plaid…</p>
+          <p className="mt-1 text-gray-600">Plaid's window opens over this page.</p>
+        </>
+      ) : (
+        <>
+          <p className="font-medium">Saving {props.saving}…</p>
+          <p className="mt-1 text-gray-600">
+            Plaid is confirming the bank. This takes a few seconds.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// After a bank is linked: its first sync runs, then its Accounts arrive, with no reload. The page
+// reads the Connection list meanwhile (SYNC_POLL) and hands this panel what it read.
+export function LinkProgress(props: {
+  bankName: string;
+  connection: ConnectionView | undefined;
+  accounts: AccountView[];
+  loading: HistoryLoadingView | undefined;
+  poll: PollState;
+}) {
+  const { connection, bankName } = props;
+  const name = connection?.bankName ?? bankName;
+  if (connection?.removed) return <p className="mt-3">{name} was removed.</p>;
+  if (connection?.held) {
+    return (
+      <p className="mt-3">
+        {name} is not in use: another Connection already covers this bank, so it never syncs.
+      </p>
+    );
+  }
+  if (connection?.health === "needs a member") {
+    return (
+      <div className="mt-3" role="status">
+        <p className="font-medium">{name} is linked</p>
+        <p className="mt-1">
+          The bank asked for a new sign-in before the first sync finished. Use Repair on {name} in
+          the list.
+        </p>
+      </div>
+    );
+  }
+  if (connection?.health === "broken") {
+    return (
+      <div className="mt-3" role="status">
+        <p className="font-medium">{name} is linked</p>
+        <p className="mt-1">
+          The bank disconnected before the first sync finished. Use Link again on {name} in the
+          list.
+        </p>
+      </div>
+    );
+  }
+  if (connection === undefined || connection.lastSyncedAt === null) {
+    return (
+      <div className="mt-3" role="status">
+        <p className="font-medium">{name} is linked</p>
+        {props.poll === "gave up" ? (
+          <p className="mt-1">
+            The first sync is taking longer than usual, so this page stopped checking. It still
+            runs: reload the page later to see the Accounts.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1">Getting your Accounts from the bank…</p>
+            <p className="mt-1 text-gray-600">
+              {connection?.health === "retrying"
+                ? "The bank did not answer the first time, so the app tries again by itself."
+                : "They show here in about a minute. You can leave this page; nothing stops."}
+            </p>
+          </>
+        )}
+      </div>
+    );
+  }
+  const found = props.accounts.length;
+  return (
+    <div className="mt-3" role="status">
+      <p className="font-medium">
+        {found === 0
+          ? `The first sync found no Accounts at ${name}`
+          : `${found} ${found === 1 ? "Account" : "Accounts"} found`}
+      </p>
+      <ul className="mt-1 list-[circle] pl-6 text-gray-700">
+        {props.accounts.map((account) => (
+          <AccountLine key={account.id} account={account} />
+        ))}
+      </ul>
+      {connection.historyLoaded ? null : (
+        <p className="mt-1 text-gray-600">History is loading: {historySoFar(props.loading)}.</p>
+      )}
+    </div>
+  );
+}
+
+// Link closed with an error (spec 02): plain words, and Plaid's code. No Item was spent, since
+// Plaid makes an Item only when Link succeeds.
+export function LinkFailed(props: {
+  problem: LinkExitProblem;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="mt-3" role="alert">
+      <p className="font-medium">The bank was not linked</p>
+      <p className="mt-1">{props.problem.words} Nothing was saved, and no Item was spent.</p>
+      {props.problem.code === null ? null : (
+        <p className="mt-1 text-gray-600">Plaid code: {props.problem.code}</p>
+      )}
+      <button className={BUTTON} type="button" onClick={props.onRetry}>
+        Try again
+      </button>
+      <button className="mt-4 ml-3 underline" type="button" onClick={props.onClose}>
+        Close
+      </button>
+    </div>
+  );
+}
 
 // The banks and Accounts already connected.
 export function ConnectionList(props: { connections: ConnectionView[]; accounts: AccountView[] }) {
@@ -170,76 +450,120 @@ export function LinkBank(props: {
   accounts: AccountView[];
   onLinked: () => void;
   replaces?: ConnectionView;
+  // What the page last read of each history load, and whether it still reads.
+  loading?: HistoryLoadingView[];
+  poll?: PollState;
 }) {
-  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<LinkStep>({ step: "closed" });
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [done, setDone] = useState<string | undefined>();
   const { itemsUsed, itemLimit } = props.plaid;
   const blocked = itemsUsed >= itemLimit;
   const needsConfirm = itemsUsed >= CONFIRM_ITEMS_FROM;
   const replaces = props.replaces?.id;
   const options = replaces === undefined ? { confirmed } : { confirmed, replaces };
 
+  const backTo = (problem: string) => {
+    setStep({ step: "before" });
+    setError(problem);
+  };
+
   async function finish(publicToken: string, metadata: PlaidLinkMetadata) {
     const result = linkResultOf(publicToken, metadata);
-    if (result === undefined) return setError("Plaid Link named no bank. Nothing was linked.");
-    setBusy(true);
+    if (result === undefined) return backTo("Plaid Link named no bank. Nothing was linked.");
+    // The name from Link shows only while the server saves; what follows names the server's.
+    setStep({ step: "saving", bankName: result.bankName });
     try {
       const res = await api.plaid.link.$post({ json: { ...result, ...options } });
-      if (!res.ok) {
-        setError(await refusal(res));
-        // After the exchange a refusal may still have added or removed a Connection.
-        if (res.status === 409) props.onLinked();
-        return;
+      const body = (await res.json().catch(() => ({}))) as LinkAnswer;
+      const linked = linkedConnection(body);
+      // After the exchange a refusal may still have added or removed a Connection.
+      if (res.ok || res.status === 409) props.onLinked();
+      if (linked === undefined || (!res.ok && res.status !== 409)) {
+        return backTo(typeof body.error === "string" ? body.error : "That did not work.");
       }
-      const body = (await res.json()) as {
-        connection: { bankName: string };
-        bankConfirmed?: boolean;
-      };
-      const unconfirmed =
-        body.bankConfirmed === false ? " Plaid did not confirm the bank's name, so check it." : "";
-      setDone(`Linked ${body.connection.bankName}. Its first sync has started.${unconfirmed}`);
-      setOpen(false);
-      props.onLinked();
+      const note = !res.ok
+        ? typeof body.error === "string"
+          ? body.error
+          : undefined
+        : body.bankConfirmed === false
+          ? "Plaid did not confirm the bank's name, so check it."
+          : undefined;
+      setStep({ step: "linked", ...linked, ...(note === undefined ? {} : { note }) });
     } catch {
-      setError("The server did not answer.");
-    } finally {
-      setBusy(false);
+      backTo("The server did not answer.");
     }
   }
 
   async function openLink() {
-    setBusy(true);
+    setStep({ step: "opening" });
     setError(undefined);
-    setDone(undefined);
     try {
       const res = await api.plaid["link-token"].$post({ json: options });
-      if (!res.ok) return setError(await refusal(res));
+      if (!res.ok) return backTo(await refusal(res));
       const { linkToken } = (await res.json()) as { linkToken: string };
       await openPlaidLink(linkToken, {
         onSuccess: (publicToken, metadata) => void finish(publicToken, metadata),
-        onExit: (failed) => {
-          if (failed) setError("Plaid Link closed before the bank was linked.");
-        },
+        onExit: (problem) =>
+          setStep(problem === undefined ? { step: "before" } : { step: "failed", problem }),
       });
     } catch {
-      setError("Plaid Link did not open. If this keeps happening over plain HTTP, use HTTPS.");
-    } finally {
-      setBusy(false);
+      backTo("Plaid Link did not open. If this keeps happening over plain HTTP, use HTTPS.");
     }
   }
+
+  const close = () => {
+    setStep({ step: "closed" });
+    setConfirmed(false);
+    setError(undefined);
+  };
 
   if (!props.plaid.secretSet) {
     return <p className="mt-4">Enter the Plaid keys to link a bank.</p>;
   }
   return (
     <div className="mt-4">
-      <button className={BUTTON} type="button" onClick={() => setOpen(true)} disabled={open}>
+      <button
+        className={BUTTON}
+        type="button"
+        onClick={() => setStep({ step: "before" })}
+        disabled={step.step !== "closed"}
+      >
         {props.replaces === undefined ? "Link a new bank" : "Link again"}
       </button>
-      {open ? (
+      {step.step === "opening" ? <LinkWaiting /> : null}
+      {step.step === "saving" ? <LinkWaiting saving={step.bankName} /> : null}
+      {step.step === "failed" ? (
+        <LinkFailed problem={step.problem} onRetry={() => void openLink()} onClose={close} />
+      ) : null}
+      {step.step === "linked" ? (
+        <>
+          <LinkProgress
+            bankName={step.bankName}
+            connection={props.connections.find((c) => c.id === step.connectionId)}
+            accounts={props.accounts.filter((a) => a.connectionId === step.connectionId)}
+            loading={props.loading?.find((l) => l.connectionId === step.connectionId)}
+            poll={props.poll ?? "ended"}
+          />
+          {step.note === undefined ? null : <p className="mt-1">{step.note}</p>}
+          {props.replaces === undefined ? (
+            <button
+              className={BUTTON}
+              type="button"
+              onClick={() => {
+                setConfirmed(false);
+                setStep({ step: "before" });
+              }}
+            >
+              Link another bank
+            </button>
+          ) : null}
+          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
+            Done
+          </button>
+        </>
+      ) : null}
+      {step.step === "before" ? (
         <div className="mt-3">
           {props.replaces === undefined ? null : (
             <p className="mt-2">
@@ -268,21 +592,48 @@ export function LinkBank(props: {
             <button
               className={BUTTON}
               type="button"
-              onClick={openLink}
-              disabled={busy || (needsConfirm && !confirmed)}
+              onClick={() => void openLink()}
+              disabled={needsConfirm && !confirmed}
             >
               Open Plaid Link
             </button>
           )}
-          <button className="mt-4 ml-3 underline" type="button" onClick={() => setOpen(false)}>
+          <button className="mt-4 ml-3 underline" type="button" onClick={close}>
             Cancel
           </button>
         </div>
       ) : null}
       <ErrorLine error={error} />
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
     </div>
   );
+}
+
+// The Link panel's steps after "Link a new bank" (the approved Link states): what the Member reads
+// before Plaid opens, Plaid opening, the server saving the Connection, the new Connection with its
+// first sync and then its Accounts, or Plaid's error. Each replaces the one before, in place.
+type LinkStep =
+  | { step: "closed" }
+  | { step: "before" }
+  | { step: "opening" }
+  | { step: "saving"; bankName: string }
+  | { step: "linked"; connectionId: string; bankName: string; note?: string }
+  | { step: "failed"; problem: LinkExitProblem };
+
+// What POST /api/plaid/link and the dev fake bank route answer.
+type LinkAnswer = {
+  connection?: { id?: unknown; bankName?: unknown };
+  bankConfirmed?: boolean;
+  error?: unknown;
+};
+
+// The new Connection in a link answer, when the server made one. A 409 may carry one too, such as
+// when Plaid linked another bank than the Broken Connection's.
+export function linkedConnection(
+  answer: LinkAnswer,
+): { connectionId: string; bankName: string } | undefined {
+  const { id, bankName } = answer.connection ?? {};
+  if (typeof id !== "string" || typeof bankName !== "string") return undefined;
+  return { connectionId: id, bankName };
 }
 
 type ImportPreviewView = { bankName: string; accounts: LinkedAccount[] };
@@ -412,15 +763,23 @@ export function ImportConnection(props: { plaid: PlaidView; onImported: () => vo
 // `pnpm dev` only: links the next demo bank through the fake adapter, by the normal link path, so
 // its first sync and follow-up jobs run. The server offers it only while the fake adapter runs,
 // which it never does in the built app.
-export function FakeBankLink(props: { offered: boolean; onLinked: () => void }) {
+export function FakeBankLink(props: {
+  offered: boolean;
+  onLinked: () => void;
+  // What the page last read, for the new Connection's first sync and Accounts.
+  connections?: ConnectionView[];
+  accounts?: AccountView[];
+  loading?: HistoryLoadingView[];
+  poll?: PollState;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [done, setDone] = useState<string | undefined>();
+  const [linked, setLinked] = useState<{ connectionId: string; bankName: string } | undefined>();
 
   async function link() {
     setBusy(true);
     setError(undefined);
-    setDone(undefined);
+    setLinked(undefined);
     try {
       // The built app's API has no dev routes, so the typed client does not name this one.
       const res = await fetch("/api/dev/fake-bank", {
@@ -429,8 +788,9 @@ export function FakeBankLink(props: { offered: boolean; onLinked: () => void }) 
         body: "{}",
       });
       if (!res.ok) return setError(await refusal(res));
-      const body = (await res.json()) as { connection: { bankName: string } };
-      setDone(`Linked ${body.connection.bankName}. Its first sync has started.`);
+      const made = linkedConnection((await res.json()) as LinkAnswer);
+      if (made === undefined) return setError("That did not work.");
+      setLinked(made);
       props.onLinked();
     } catch {
       setError("The server did not answer.");
@@ -446,39 +806,61 @@ export function FakeBankLink(props: { offered: boolean; onLinked: () => void }) 
         Link a fake bank (dev only)
       </button>
       <ErrorLine error={error} />
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
+      {linked === undefined ? null : (
+        <LinkProgress
+          bankName={linked.bankName}
+          connection={props.connections?.find((c) => c.id === linked.connectionId)}
+          accounts={(props.accounts ?? []).filter((a) => a.connectionId === linked.connectionId)}
+          loading={props.loading?.find((l) => l.connectionId === linked.connectionId)}
+          poll={props.poll ?? "ended"}
+        />
+      )}
     </div>
   );
 }
 
-// The Connections, with the ways to add one.
+// A refused read of the Connection list, the Accounts, or the history progress, with the server's
+// words.
+async function readJson<T>(res: Response): Promise<T> {
+  if (res.status === 401) throw new SignedOut();
+  if (!res.ok) throw new Refused(await refusal(res));
+  return (await res.json()) as T;
+}
+
+const CONNECTIONS_READS = {
+  connections: async () =>
+    readJson<{ connections: ConnectionView[]; fakeBank: boolean }>(await api.connections.$get()),
+  accounts: async () => readJson<{ accounts: AccountView[] }>(await api.accounts.$get()),
+  history: async () => readJson<HistoryStatusView>(await api["history-status"].$get()),
+};
+
+// The Connections, with the ways to add one. While a first sync or history load runs, the page
+// reads the list again by itself (SYNC_POLL), so a new bank's Accounts show with no reload. An
+// ended session sends the Member to sign-in.
 export function Connections(props: { plaid: PlaidView; onChanged: () => void }) {
-  const [connections, setConnections] = useState<ConnectionView[]>([]);
-  const [accounts, setAccounts] = useState<AccountView[]>([]);
-  const [fakeBank, setFakeBank] = useState(false);
-  const [error, setError] = useState<string | undefined>();
+  const navigate = useNavigate();
+  const [view, setView] = useState(CONNECTIONS_UNREAD);
+  const [page, setPage] = useState<ConnectionsPage | undefined>();
+  const { connections, accounts, loading, fakeBank, error, poll } = view;
 
-  const load = useCallback(() => {
-    Promise.all([api.connections.$get(), api.accounts.$get()])
-      .then(async ([connectionsRes, accountsRes]) => {
-        if (!connectionsRes.ok) return setError(await refusal(connectionsRes));
-        if (!accountsRes.ok) return setError(await refusal(accountsRes));
-        const listed = (await connectionsRes.json()) as {
-          connections: ConnectionView[];
-          fakeBank: boolean;
-        };
-        setConnections(listed.connections);
-        setFakeBank(listed.fakeBank);
-        setAccounts(((await accountsRes.json()) as { accounts: AccountView[] }).accounts);
-      })
-      .catch(() => setError("The server did not answer."));
-  }, []);
-
-  useEffect(load, [load]);
+  useEffect(() => {
+    const opened = createConnectionsPage(CONNECTIONS_READS, setView, () =>
+      navigate("/sign-in", { replace: true }),
+    );
+    setPage(opened);
+    opened.load();
+    return opened.stop;
+  }, [navigate]);
 
   // A change to the Connections can change N, so the Plaid settings load again too.
   const changed = () => {
-    load();
+    page?.load();
+    props.onChanged();
+  };
+
+  // A new bank's first sync starts at once: the page reads until its Accounts arrive.
+  const linked = () => {
+    page?.linked();
     props.onChanged();
   };
 
@@ -495,14 +877,18 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
             key={connection.id}
             connection={connection}
             accounts={accounts.filter((account) => account.connectionId === connection.id)}
+            loading={loading.find((each) => each.connectionId === connection.id)}
+            poll={poll}
             onChanged={changed}
             linkAgain={
               <LinkBank
                 plaid={props.plaid}
                 connections={connected.filter((other) => other.id !== connection.id)}
                 accounts={accounts}
-                onLinked={changed}
+                onLinked={linked}
                 replaces={connection}
+                loading={loading}
+                poll={poll}
               />
             }
           />
@@ -513,10 +899,19 @@ export function Connections(props: { plaid: PlaidView; onChanged: () => void }) 
         plaid={props.plaid}
         connections={connected}
         accounts={accounts}
-        onLinked={changed}
+        onLinked={linked}
+        loading={loading}
+        poll={poll}
       />
-      <ImportConnection plaid={props.plaid} onImported={changed} />
-      <FakeBankLink offered={fakeBank} onLinked={load} />
+      <ImportConnection plaid={props.plaid} onImported={linked} />
+      <FakeBankLink
+        offered={fakeBank}
+        onLinked={() => page?.linked()}
+        connections={connections}
+        accounts={accounts}
+        loading={loading}
+        poll={poll}
+      />
     </section>
   );
 }
@@ -568,8 +963,10 @@ export function UpdateMode(props: {
       await openPlaidLink(linkToken, {
         // Update mode keeps the access token, so Link's public token goes nowhere.
         onSuccess: () => void finished(),
-        onExit: (failed) => {
-          if (failed) setError("Plaid Link closed before it finished. Nothing changed.");
+        onExit: (problem) => {
+          if (problem === undefined) return;
+          const code = problem.code === null ? "" : ` Plaid code: ${problem.code}.`;
+          setError(`${problem.words} Nothing changed.${code}`);
         },
       });
     } catch {
@@ -604,8 +1001,12 @@ export function ConnectionItem(props: {
   onChanged: () => void;
   // Link again, shown while the Connection is Broken.
   linkAgain?: ReactNode;
+  // Its history load progress, and whether the page still reads it again.
+  loading?: HistoryLoadingView | undefined;
+  poll?: PollState;
 }) {
   const { connection } = props;
+  const state = syncState(connection, props.loading, props.poll ?? "ended");
   const [asking, setAsking] = useState<"remove" | "delete history" | undefined>();
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -648,9 +1049,15 @@ export function ConnectionItem(props: {
         : connection.held
           ? " (Not in use: another Connection already covers this bank, so it never syncs. Remove it.)"
           : (HEALTH_NOTES[connection.health] ?? null)}
+      {state === null ? null : <span className="ml-2 text-gray-600">{state.word}</span>}
+      {state === null || state.detail === null ? null : (
+        <p className="text-gray-600" role="status">
+          {state.detail}
+        </p>
+      )}
       <ul className="list-[circle] pl-6 text-gray-700">
         {props.accounts.map((account) => (
-          <li key={account.id}>{accountLabel(account)}</li>
+          <AccountLine key={account.id} account={account} />
         ))}
       </ul>
       {connection.removed || connection.held || !connection.actions.repairInApp ? null : (
