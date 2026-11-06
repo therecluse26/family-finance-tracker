@@ -15,6 +15,7 @@ import {
   sendWeeklySummaries,
   startWeeklySummary,
   summaryWeek,
+  WEEKLY_SUMMARY_RETRY_DELAYS_MS,
   WEEKLY_SUMMARY_STOPPED,
   WEEKLY_SUMMARY_TRIES_CAP,
   WeeklySummaryJob,
@@ -114,6 +115,8 @@ describe("the weekly summary job", () => {
   let bob: TestMember;
   let carol: TestMember;
   let now: Date;
+  // Each retry a run started: its week, and when it runs.
+  let retries: { weekStart: string; at: Date }[];
   // A password made when the test runs.
   let password: string;
 
@@ -154,6 +157,7 @@ describe("the weekly summary job", () => {
     test = await newTestAuth(APP_URL);
     stub = new StubSmtp();
     now = SUNDAY_8_AM;
+    retries = [];
     stops = [
       startNotify({
         database: test.database,
@@ -164,7 +168,13 @@ describe("the weekly summary job", () => {
           makeTransport: stub.makeTransport,
         },
       }).stop,
-      startWeeklySummary({ database: test.database, now: () => now }).stop,
+      startWeeklySummary({
+        database: test.database,
+        now: () => now,
+        startRetry: async (weekStart, at) => {
+          retries.push({ weekStart, at });
+        },
+      }).stop,
     ];
     await storeHouseholdFacts(test.database, {
       zipCode: "10001",
@@ -186,6 +196,16 @@ describe("the weekly summary job", () => {
     carol = await join("Carol");
     vi.setSystemTime(SUNDAY_8_AM);
   });
+
+  // Runs the latest retry a run started, at its time, as Sidequest would.
+  const runRetry = () => {
+    const retry = retries.at(-1);
+    if (retry === undefined) throw new Error("No retry was started.");
+    now = retry.at;
+    return sendWeeklySummaries(retry.weekStart);
+  };
+  const minutesAfter = (start: Date, minutes: number) =>
+    new Date(start.getTime() + minutes * 60_000);
 
   afterEach(() => {
     for (const stop of stops) stop();
@@ -294,25 +314,41 @@ describe("the weekly summary job", () => {
     // The server's reply quotes an address, which must reach no log line.
     stub.failWith = smtpError("EENVELOPE", 550, "550 No such user: alice@example.test");
 
+    // The first try, then a retry 5 minutes later, then one 30 minutes after that.
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 0, failed: 2, gaveUp: 0 });
     for (let attempt = 1; attempt < WEEKLY_SUMMARY_TRIES_CAP; attempt += 1) {
-      await expect(sendWeeklySummaries()).rejects.toThrow(
-        "Some weekly summary emails did not send. The job tries again.",
-      );
       expect((await sends()).map((row) => [row.state, row.tries])).toEqual([
         ["failed", attempt],
         ["failed", attempt],
       ]);
       expect(await stoppedNotices()).toEqual([]);
+      expect(retries).toHaveLength(attempt);
+      expect(retries.at(-1)).toEqual({
+        weekStart: "2026-11-01",
+        at: new Date(now.getTime() + (WEEKLY_SUMMARY_RETRY_DELAYS_MS[attempt - 1] ?? 0)),
+      });
+      if (attempt < WEEKLY_SUMMARY_TRIES_CAP - 1) {
+        expect(await runRetry()).toMatchObject({ sent: 0, failed: 2, gaveUp: 0 });
+      }
     }
-    // The last try gives up, raises one notice, and ends the job.
-    expect(await sendWeeklySummaries()).toMatchObject({ sent: 0, failed: 0, gaveUp: 2 });
+    expect(retries.map((retry) => retry.at)).toEqual([
+      minutesAfter(SUNDAY_8_AM, 5),
+      minutesAfter(SUNDAY_8_AM, 35),
+    ]);
+    // The last try gives up, raises one notice, and starts no retry.
+    expect(await runRetry()).toMatchObject({ sent: 0, failed: 0, gaveUp: 2 });
+    expect(retries).toHaveLength(WEEKLY_SUMMARY_TRIES_CAP - 1);
     expect((await sends()).map((row) => [row.state, row.tries])).toEqual([
       ["gave up", WEEKLY_SUMMARY_TRIES_CAP],
       ["gave up", WEEKLY_SUMMARY_TRIES_CAP],
     ]);
     expect(await stoppedNotices()).toEqual([{ closed: 0 }]);
     // A run after the give-up takes nothing and sends nothing, so it stops for good.
-    expect(await sendWeeklySummaries()).toMatchObject({ sent: 0, skipped: "all taken" });
+    expect(await sendWeeklySummaries("2026-11-01")).toMatchObject({
+      sent: 0,
+      skipped: "all taken",
+    });
+    expect(retries).toHaveLength(WEEKLY_SUMMARY_TRIES_CAP - 1);
     expect(await stoppedNotices()).toEqual([{ closed: 0 }]);
     expect(stub.emails).toEqual([]);
     const log = lines.join("");
@@ -333,12 +369,12 @@ describe("the weekly summary job", () => {
     // The Review list count cannot be read, so every build throws.
     await test.database.$client.execute("ALTER TABLE review_items RENAME TO review_items_gone");
 
-    for (let attempt = 1; attempt < WEEKLY_SUMMARY_TRIES_CAP; attempt += 1) {
-      await expect(sendWeeklySummaries()).rejects.toThrow(
-        "Some weekly summary emails did not send.",
-      );
+    expect(await sendWeeklySummaries()).toMatchObject({ failed: 1 });
+    for (let attempt = 2; attempt < WEEKLY_SUMMARY_TRIES_CAP; attempt += 1) {
+      expect(await runRetry()).toMatchObject({ failed: 1 });
     }
-    expect(await sendWeeklySummaries()).toMatchObject({ gaveUp: 1 });
+    expect(await runRetry()).toMatchObject({ gaveUp: 1 });
+    expect(retries).toHaveLength(WEEKLY_SUMMARY_TRIES_CAP - 1);
     expect(await sendWeeklySummaries()).toMatchObject({ skipped: "all taken" });
     expect(await sends()).toEqual([
       {
@@ -358,14 +394,114 @@ describe("the weekly summary job", () => {
     await saveSmtp();
     await storeWeeklySummarySwitch(test.database, alice.id, true);
     stub.failWith = smtpError("ECONNECTION", 0, "connect ECONNREFUSED");
-    await expect(sendWeeklySummaries()).rejects.toThrow();
+    expect(await sendWeeklySummaries()).toMatchObject({
+      failed: 1,
+      retryAt: minutesAfter(SUNDAY_8_AM, 5),
+    });
+    // The SMTP server is back 5 minutes later.
     stub.failWith = undefined;
-    expect(await sendWeeklySummaries()).toMatchObject({ sent: 1 });
+    expect(await runRetry()).toMatchObject({ sent: 1 });
     expect(await sendWeeklySummaries()).toMatchObject({ skipped: "all taken" });
     expect(stub.emails).toHaveLength(1);
     expect(await sends()).toEqual([
       { memberId: alice.id, weekStart: "2026-11-01", state: "sent", tries: 1 },
     ]);
+    expect(retries).toHaveLength(1);
+  });
+
+  it("sends a retry only while its week is the current one", async () => {
+    await saveSmtp();
+    await storeWeeklySummarySwitch(test.database, alice.id, true);
+    stub.failWith = smtpError("ECONNECTION", 0, "connect ECONNREFUSED");
+    // The app was off for most of the week: its start at 7:58 AM on the next Sunday sends that
+    // week's summary, and the send fails.
+    now = new Date("2026-11-15T12:58:00.000Z");
+    expect(await sendWeeklySummaries()).toMatchObject({ failed: 1 });
+    stub.failWith = undefined;
+    // The retry comes at 8:03 AM, after the next week's summary time: it sends nothing.
+    expect(await runRetry()).toMatchObject({ sent: 0, skipped: "week over" });
+    expect(stub.emails).toEqual([]);
+    expect(await sends()).toEqual([
+      { memberId: alice.id, weekStart: "2026-11-01", state: "failed", tries: 1 },
+    ]);
+  });
+
+  it("marks only the Member whose send worked as sent, and retries only the Member whose send failed", async () => {
+    await saveSmtp();
+    await storeWeeklySummarySwitch(test.database, alice.id, true);
+    await storeWeeklySummarySwitch(test.database, bob.id, true);
+    stub.failWith = smtpError("ECONNECTION", 0, "connect ECONNREFUSED");
+    stub.failRecipients = new Set(["bob@example.test"]);
+
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 1, failed: 1, gaveUp: 0 });
+    expect(await sends()).toEqual([
+      { memberId: alice.id, weekStart: "2026-11-01", state: "sent", tries: 0 },
+      { memberId: bob.id, weekStart: "2026-11-01", state: "failed", tries: 1 },
+    ]);
+    stub.failWith = undefined;
+    expect(await runRetry()).toMatchObject({ sent: 1, failed: 0 });
+    expect(stub.emails.map((email) => email.bcc[0])).toEqual([
+      "alice@example.test",
+      "bob@example.test",
+    ]);
+    expect(await sends()).toEqual([
+      { memberId: alice.id, weekStart: "2026-11-01", state: "sent", tries: 0 },
+      { memberId: bob.id, weekStart: "2026-11-01", state: "sent", tries: 1 },
+    ]);
+  });
+
+  it("leaves a week taken by a stopped send as it is when another Member's send works or fails", async () => {
+    await saveSmtp();
+    // A stop during Carol's send this week, and during Alice's last week.
+    await storeWeeklySummarySwitch(test.database, carol.id, true);
+    expect(await takeWeeklySummaries(test.database, [carol.id], "2026-11-01", now)).toEqual([
+      carol.id,
+    ]);
+    await storeWeeklySummarySwitch(test.database, alice.id, true);
+    expect(await takeWeeklySummaries(test.database, [alice.id], "2026-10-25", now)).toEqual([
+      alice.id,
+    ]);
+    await storeWeeklySummarySwitch(test.database, bob.id, true);
+
+    // Alice's send fails, and Bob's works.
+    stub.failWith = smtpError("ECONNECTION", 0, "connect ECONNREFUSED");
+    stub.failRecipients = new Set(["alice@example.test"]);
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 1, failed: 1 });
+    stub.failWith = undefined;
+    expect(await runRetry()).toMatchObject({ sent: 1, failed: 0 });
+    expect(await sendWeeklySummaries()).toMatchObject({ skipped: "all taken" });
+
+    // Carol gets no copy, and neither stopped week changes.
+    expect(stub.emails.map((email) => email.bcc[0])).toEqual([
+      "bob@example.test",
+      "alice@example.test",
+    ]);
+    expect(await sends()).toEqual([
+      { memberId: alice.id, weekStart: "2026-10-25", state: "sending", tries: 0 },
+      { memberId: carol.id, weekStart: "2026-11-01", state: "sending", tries: 0 },
+      { memberId: alice.id, weekStart: "2026-11-01", state: "sent", tries: 1 },
+      { memberId: bob.id, weekStart: "2026-11-01", state: "sent", tries: 0 },
+    ]);
+  });
+
+  it("takes a Member who turns it on during a retry for that week", async () => {
+    await saveSmtp();
+    await storeWeeklySummarySwitch(test.database, alice.id, true);
+    stub.failWith = smtpError("ECONNECTION", 0, "connect ECONNREFUSED");
+    expect(await sendWeeklySummaries()).toMatchObject({ failed: 1 });
+    stub.failWith = undefined;
+    await storeWeeklySummarySwitch(test.database, bob.id, true);
+    expect(await runRetry()).toMatchObject({ sent: 2 });
+    expect(stub.emails.map((email) => [email.bcc[0], email.subject])).toEqual([
+      ["alice@example.test", "Weekly summary: Nov 1 to Nov 7"],
+      ["bob@example.test", "Weekly summary: Nov 1 to Nov 7"],
+    ]);
+  });
+
+  it("refuses a job argument that is not a week's first date", async () => {
+    await expect(new WeeklySummaryJob().run(7)).rejects.toThrow(
+      "WeeklySummaryJob takes a week's first date, or nothing.",
+    );
   });
 
   it("deletes a removed Member's switch and sends with them, and sends the rest as before", async () => {

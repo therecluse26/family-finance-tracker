@@ -61,3 +61,13 @@ export function summaryWeek(now: Date, timeZone: string): SummaryWeek {
     nextTo: addDays(sunday, 6),
   };
 }
+
+// The week that starts on `from`, a Sunday written YYYY-MM-DD.
+export function weekFrom(from: string): SummaryWeek {
+  return {
+    from,
+    to: addDays(from, 6),
+    nextFrom: addDays(from, 7),
+    nextTo: addDays(from, 13),
+  };
+}

@@ -3,7 +3,7 @@ import {
   type Database,
   finishWeeklySummary,
   listWeeklySummaryMembers,
-  readLastWeeklySummary,
+  readLatestWeeklySummary,
   readSmtpSettings,
   readWeeklySummarySwitch,
   storeWeeklySummarySwitch,
@@ -11,35 +11,48 @@ import {
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
-import { Job } from "../jobs/index.ts";
+import { Job, type JobArgument, startJob } from "../jobs/index.ts";
 import { type Logger, log } from "../log.ts";
 import { endCondition, mailProblem, memberMail, raiseNotice } from "../notify/index.ts";
 import { addDays } from "../recurring/index.ts";
 import { buildWeeklySummary, type WeeklySummaryEmail } from "./build.ts";
 import type { WeeklySummarySettings, WeeklySummaryView } from "./view.ts";
-import { type SummaryWeek, summaryWeek } from "./week.ts";
+import { type SummaryWeek, summaryWeek, weekFrom } from "./week.ts";
 
 // The weekly summary email's job (spec 06, Weekly summary email). Only the schedule starts it, on
-// Sunday at 8:00 AM, Household time; a run missed while the app was off runs at the next start.
+// Sunday at 8:00 AM, Household time; a run missed while the app was off runs at the next start. A
+// run that has failed sends starts its own retry, later, for the same week.
 // - It sends the week's summary to each Member who turned it on, to their login email alone,
 //   through the Household's SMTP server. With no server saved, or a password the app cannot read,
 //   it sends nothing, and never sends that week later.
+// - It builds the text once a run, before it takes any Member's week, so a stop during the build
+//   loses no week. Every Member gets the same text.
 // - At most one summary per Member and week: each Member's week is taken in app.db before the
 //   send, in the same write as the check, so two runs at once, or a run after a restart, send no
 //   second copy. A stop during a send leaves that week unsent.
-// - It builds the text once a run. Every Member gets the same text.
-// - A failed build or send counts a try for each Member it was for, and the job throws, so
-//   Sidequest runs it again. At WEEKLY_SUMMARY_TRIES_CAP tries the app gives up on that Member's
+// - A failed build or send counts a try for each Member it was for. With tries left, the run
+//   starts a retry of the same week after WEEKLY_SUMMARY_RETRY_DELAYS_MS, so a short SMTP outage
+//   does not cost the week. At WEEKLY_SUMMARY_TRIES_CAP tries the app gives up on that Member's
 //   week and raises one System notice. A later run that sends and gives up on nothing ends it.
-// - The log holds counts, never an email address or the text.
+// - A retry sends only while its week is the current one: after the next Sunday 8:00 AM it sends
+//   nothing.
+// - The log holds counts and error codes, never an email address or the text.
 
 // A Member's summary for a week gives up after this many failed tries.
 export const WEEKLY_SUMMARY_TRIES_CAP = 3;
 
+// How long a retry waits after a failed try: the first, then the second.
+export const WEEKLY_SUMMARY_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
+
 // The System notice condition while the app has given up on a weekly summary.
 export const WEEKLY_SUMMARY_STOPPED = "weekly summary stopped";
 
-type Services = { database: Database; now: () => Date; logger: Logger };
+type Services = {
+  database: Database;
+  now: () => Date;
+  logger: Logger;
+  startRetry: (weekStart: string, at: Date) => Promise<void>;
+};
 
 let services: Services | undefined;
 
@@ -49,12 +62,16 @@ export function startWeeklySummary(options: {
   database: Database;
   now?: () => Date;
   logger?: Logger;
+  // Starts a retry of a week's summary at `at`. Tests pass their own.
+  startRetry?: (weekStart: string, at: Date) => Promise<void>;
 }): { stop(): void } {
   if (services !== undefined) throw new Error("The weekly summary is already running.");
   const started: Services = {
     database: options.database,
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? log,
+    startRetry:
+      options.startRetry ?? ((weekStart, at) => startJob(WeeklySummaryJob, [weekStart], { at })),
   };
   services = started;
   return {
@@ -64,9 +81,14 @@ export function startWeeklySummary(options: {
   };
 }
 
+// The schedule starts it with no argument, for the current week. A retry names its week's Sunday.
 export class WeeklySummaryJob extends Job {
-  override async run(): Promise<void> {
-    await sendWeeklySummaries();
+  override async run(...args: JobArgument[]): Promise<void> {
+    const [weekStart] = args;
+    if (weekStart !== undefined && typeof weekStart !== "string") {
+      throw new Error("WeeklySummaryJob takes a week's first date, or nothing.");
+    }
+    await sendWeeklySummaries(weekStart);
   }
 }
 
@@ -74,21 +96,27 @@ export class WeeklySummaryJob extends Job {
 export type SummaryRun = {
   week: SummaryWeek;
   sent: number;
-  // Failed with tries left: the job runs again.
+  // Failed with tries left: a retry runs later.
   failed: number;
   gaveUp: number;
-  skipped?: "no Member" | "not set up" | "password unreadable" | "all taken";
+  skipped?: "no Member" | "not set up" | "password unreadable" | "all taken" | "week over";
+  // When the retry runs, for a run with failed sends.
+  retryAt?: Date;
 };
 
 // Sends the week's summary to each Member who wants it and has not had it. Safe to run twice, and
-// twice at once.
-export async function sendWeeklySummaries(): Promise<SummaryRun> {
+// twice at once. `weekStart` names a retry's week: it sends only while that week is the current one.
+export async function sendWeeklySummaries(weekStart?: string): Promise<SummaryRun> {
   if (services === undefined) throw new Error("The weekly summary is not running.");
-  const { database, logger } = services;
+  const { database, logger, startRetry } = services;
   const now = services.now();
   const timeZone = (await householdTimeZone(database)) ?? "UTC";
   const week = summaryWeek(now, timeZone);
   const done: SummaryRun = { week, sent: 0, failed: 0, gaveUp: 0 };
+  if (weekStart !== undefined && weekStart !== week.from) {
+    logger.info("Skipped the weekly summary", { reason: "week over" });
+    return { ...done, week: weekFrom(weekStart), skipped: "week over" };
+  }
 
   const wanting = await listWeeklySummaryMembers(database);
   if (wanting.length === 0) return { ...done, skipped: "no Member" };
@@ -97,6 +125,17 @@ export async function sendWeeklySummaries(): Promise<SummaryRun> {
     logger.info("Skipped the weekly summary", { reason: mail, members: wanting.length });
     return { ...done, skipped: mail };
   }
+
+  // The build only reads, so it comes before the take: a stop during it leaves no week taken.
+  let email: WeeklySummaryEmail | undefined;
+  try {
+    email = await buildWeeklySummary({ database, week, timeZone, address: mail.address, now });
+  } catch (error) {
+    logger.warn("The weekly summary did not build", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  }
+
   const taken = new Set(
     await takeWeeklySummaries(
       database,
@@ -107,15 +146,6 @@ export async function sendWeeklySummaries(): Promise<SummaryRun> {
   );
   const members = wanting.filter((member) => taken.has(member.id));
   if (members.length === 0) return { ...done, skipped: "all taken" };
-
-  let email: WeeklySummaryEmail | undefined;
-  try {
-    email = await buildWeeklySummary({ database, week, timeZone, address: mail.address, now });
-  } catch (error) {
-    logger.warn("The weekly summary did not build", {
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
-  }
 
   const failed: string[] = [];
   if (email === undefined) {
@@ -134,6 +164,7 @@ export async function sendWeeklySummaries(): Promise<SummaryRun> {
       done.sent += 1;
     }
   }
+  let fewestTries: number | undefined;
   for (const counted of await countWeeklySummaryFailures(
     database,
     failed,
@@ -141,8 +172,12 @@ export async function sendWeeklySummaries(): Promise<SummaryRun> {
     WEEKLY_SUMMARY_TRIES_CAP,
     now,
   )) {
-    if (counted.state === "gave up") done.gaveUp += 1;
-    else done.failed += 1;
+    if (counted.state === "gave up") {
+      done.gaveUp += 1;
+    } else {
+      done.failed += 1;
+      fewestTries = Math.min(fewestTries ?? counted.tries, counted.tries);
+    }
   }
   logger.info("Sent the weekly summary", {
     sent: done.sent,
@@ -160,29 +195,48 @@ export async function sendWeeklySummaries(): Promise<SummaryRun> {
   } else if (done.sent > 0) {
     await endCondition(WEEKLY_SUMMARY_STOPPED);
   }
-  if (done.failed > 0) {
-    throw new Error("Some weekly summary emails did not send. The job tries again.");
+  // A failed send with tries left: the retry waits for the Member with the fewest tries so far.
+  if (fewestTries !== undefined) {
+    const delay =
+      WEEKLY_SUMMARY_RETRY_DELAYS_MS[fewestTries - 1] ?? WEEKLY_SUMMARY_RETRY_DELAYS_MS.at(-1);
+    done.retryAt = new Date(now.getTime() + (delay ?? 0));
+    await startRetry(week.from, done.retryAt);
   }
   return done;
 }
 
+// A summary still "sending" or "failed" this long after its last change has no retry coming: the
+// app stopped during a send, or the email server went away between tries. It did not send.
+export const WEEKLY_SUMMARY_STALE_MS = 60 * 60_000;
+
 // The signed-in Member's own switch for Settings, Alerts. Every write names the Member from the
-// session, so a Member changes only their own.
-export function weeklySummarySettings(database: Database): WeeklySummarySettings {
+// session, so a Member changes only their own. The row shows the Member's latest week: sent, still
+// sending (a retry may come), or not sent.
+export function weeklySummarySettings(
+  database: Database,
+  now: () => Date = () => new Date(),
+): WeeklySummarySettings {
   async function view(memberId: string): Promise<WeeklySummaryView> {
     const timeZone = (await householdTimeZone(database)) ?? "UTC";
-    const last = await readLastWeeklySummary(database, memberId);
+    const latest = await readLatestWeeklySummary(database, memberId);
+    const stateOf = (row: NonNullable<typeof latest>) => {
+      if (row.state === "sent") return "sent" as const;
+      if (row.state === "gave up") return "did not send" as const;
+      return now().getTime() - row.at.getTime() < WEEKLY_SUMMARY_STALE_MS
+        ? ("sending" as const)
+        : ("did not send" as const);
+    };
     return {
       on: await readWeeklySummarySwitch(database, memberId),
       emailSetUp: (await readSmtpSettings(database)) !== undefined,
       last:
-        last === undefined
+        latest === undefined
           ? null
           : {
-              from: last.weekStart,
-              to: addDays(last.weekStart, 6),
-              state: last.state,
-              on: calendarDateIn(last.at, timeZone),
+              from: latest.weekStart,
+              to: addDays(latest.weekStart, 6),
+              state: stateOf(latest),
+              on: calendarDateIn(latest.at, timeZone),
             },
     };
   }

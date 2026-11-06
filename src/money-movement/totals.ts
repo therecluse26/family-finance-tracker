@@ -35,18 +35,37 @@ export type MonthTotals = {
   byCategoryGroup: Record<CategoryGroup, number>;
 };
 
+// A posted part, as listPostedParts gives it.
+export type PostedPart = Awaited<ReturnType<typeof listPostedParts>>[number];
+
 // Every month with a posted Transaction, oldest first. Pending Transactions are left out.
 export async function totalsByMonth(database: Database): Promise<MonthTotals[]> {
-  const months = new Map<
+  return totalsByPeriod(await listPostedParts(database), monthOf).map(({ period, ...totals }) => ({
+    month: period,
+    ...totals,
+  }));
+}
+
+// One period's totals, by the same rules as a month's.
+export type PeriodTotals = Omit<MonthTotals, "month"> & { period: string };
+
+// The totals of each period, by the rules of totalsByMonth: `periodOf` names a part's period, or
+// null to leave it out. Each period with a part, in the order of its name.
+export function totalsByPeriod(
+  parts: readonly PostedPart[],
+  periodOf: (part: PostedPart) => string | null,
+): PeriodTotals[] {
+  const periods = new Map<
     string,
-    Omit<MonthTotals, "byCategoryGroup"> & { uncategorized: number }
+    Omit<PeriodTotals, "byCategoryGroup"> & { uncategorized: number }
   >();
-  for (const part of await listPostedParts(database)) {
-    const month = monthOf(part);
-    let totals = months.get(month);
+  for (const part of parts) {
+    const period = periodOf(part);
+    if (period === null) continue;
+    let totals = periods.get(period);
     if (totals === undefined) {
-      totals = { month, spending: 0, income: 0, saving: 0, byCategory: {}, uncategorized: 0 };
-      months.set(month, totals);
+      totals = { period, spending: 0, income: 0, saving: 0, byCategory: {}, uncategorized: 0 };
+      periods.set(period, totals);
     }
     switch (part.type) {
       case "Spending":
@@ -70,8 +89,8 @@ export async function totalsByMonth(database: Database): Promise<MonthTotals[]> 
         break;
     }
   }
-  return [...months.values()]
-    .sort((a, b) => a.month.localeCompare(b.month))
+  return [...periods.values()]
+    .sort((a, b) => a.period.localeCompare(b.period))
     .map(({ uncategorized, ...totals }) => {
       const byCategory = Object.fromEntries(
         Object.entries(totals.byCategory).map(([category, cents]) => [

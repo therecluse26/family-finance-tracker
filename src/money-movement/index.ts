@@ -58,7 +58,15 @@ export {
   registerReimbursementPicker,
 } from "./reimbursements.ts";
 export { readSplit, type SplitPart } from "./splits.ts";
-export { type MonthTotals, monthOf, totalsByMonth } from "./totals.ts";
+export {
+  type MonthTotals,
+  monthOf,
+  type PeriodTotals,
+  type PostedPart,
+  purchaseDate,
+  totalsByMonth,
+  totalsByPeriod,
+} from "./totals.ts";
 export {
   isCardReward,
   registerUnclearPairJudge,

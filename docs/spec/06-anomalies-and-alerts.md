@@ -293,8 +293,8 @@ Each Member can turn on a short email about the Household's last 7 days. It goes
 - Sunday at 8:00 AM, Household time. Email does not wait for quiet hours, but 8 AM is when they end, so the summary never arrives in the night.
 - Only this schedule starts it. A sync, a start of the app, or a change of settings never starts one.
 - **The app was off:** if the app was off at 8:00 AM on Sunday, its next start sends that week's summary, with the same dates, until the next Sunday at 8:00 AM. After that, only the newer week's summary goes. A Member never gets a summary for an older week.
-- A Member who turns the switch on after the week's summary went out gets the next week's.
-- **At most one per Member per week.** Before it sends, the app records the Member and the week in app.db, under a unique key. The check and the record are one write, so two runs at once, or a run after a restart, send no second copy. If the app stops during a send, that week's summary is not sent again, because the app cannot know whether it went.
+- A Member who turns the switch on after the week's summary went out gets the next week's. While a retry of the week's summary waits ([When it fails](#when-it-fails)), a Member who turns the switch on gets that week's summary in the retry.
+- **At most one per Member per week.** Before it sends, the app records the Member and the week in app.db, under a unique key. The check and the record are one write, so two runs at once, or a run after a restart, send no second copy. If the app stops during a send, that week's summary is not sent again, because the app cannot know whether it went. The app builds the summary before it records any Member's week, so a stop during the build loses no week.
 
 ### What it holds
 
@@ -302,14 +302,15 @@ The subject is "Weekly summary: {first date} to {last date}", such as "Weekly su
 
 | Part | What it says | Link |
 |---|---|---|
-| Spending | The Spending posted in the 7 days, net of Refunds and Reimbursements, never below $0. Then the direction against usual, such as "▲ $72 above usual". The usual is the median of the 12 Sunday-to-Saturday weeks before. A week before the history starts is left out. With no such week, the part has no usual. | The Transactions page, for Spending posted on those dates |
+| Spending | The Spending in the 7 days, by the rule for every total: net of Refunds and Reimbursements, with no Category below $0, on its purchase date ([Categorization](04-categorization.md#which-month-a-transaction-counts-in)). Then the direction against usual, such as "▲ $72 above usual". The usual is the median of the 12 Sunday-to-Saturday weeks before. As the dashboard's usual counts the month the history starts in, the usual counts the week the history starts in, and leaves out each week before it. With no such week, the part has no usual. | The Transactions page, for Spending posted on those dates |
 | Budgets | Each Budget that is Over Budget or On pace in the month of the last date, with its Spending and its Budget. With none, "Every Budget is on track." Before the first Budget draft, "No Budgets yet." | The Budgets page |
 | Alerts | How many Alerts were created in the 7 days: how many were sent, and how many were held back (weekly cap). A merged Alert counts once. An Alert found in history does not count. | The Alert list |
 | Review list | How many items are open in the Review list when it is built. | The Review list |
 | Coming up | Each active Recurring charge whose next expected date is in the 7 days after the last date, Sunday to Saturday: its date, its Merchant, and its latest amount. At most 10, then "and {count} more". With none, "No Recurring charges are due." | The Recurring charges page |
 
 - A last line says how to turn the summary off: the Settings, Alerts page, with its link.
-- **Posted only:** the Spending part counts posted Transactions only, as the checks do ([When checks run](#when-checks-run)). The Transactions page filters dates by the posted date, so its link lists the same Transactions.
+- **Posted only:** the Spending part counts posted Transactions only, as every total does.
+- **The link's dates:** the Transactions page filters dates by the posted date. A purchase made late in the week that posts after it counts in the summary, but its link lists it in the next week. Reason: the Spending part must match the Budgets part and the dashboard, which count by purchase date. The page has no filter by purchase date.
 - **One build a run:** the app builds the summary's text once for each week. Every Member who gets it gets the same text. A Household with 5 years of history builds it in less than 1 s.
 
 **Example:**
@@ -324,14 +325,18 @@ The subject is "Weekly summary: {first date} to {last date}", such as "Weekly su
 - The summary follows the rules for an Alert email. It goes only through the Household's SMTP server, to the one Member.
 - It names Categories and Merchants, as Alerts do. It names no Account and no Member, and holds no account or card number.
 - Each Merchant name is made plain first: a space for each control character, so a name cannot start a line of its own.
-- The log never holds a Member's email address or the summary's text. It holds counts only.
+- The log never holds a Member's email address or the summary's text. It holds counts and error codes only.
 
 ### When it fails
 
-- **A send fails:** the app counts a try for that Member and week. The job runs again later, up to 3 tries in all. After the third failed try, the app gives up on that week's summary for that Member. It raises one System notice: "The app could not send some weekly summary emails, and gave up on them. Check the SMTP settings in Settings, Alerts." The next summary that sends ends it.
+- **A send fails:** the app counts a try for that Member and week. It tries again for that week 5 minutes later, then 30 minutes after that: 3 tries in all. Reason: a mail server that restarts, or a router that reboots, at 8:00 AM must not cost the week. After the third failed try, the app gives up on that week's summary for that Member. It raises one System notice: "The app could not send some weekly summary emails, and gave up on them. Check the SMTP settings in Settings, Alerts." The next summary that sends ends it.
+- A retry sends only while its week is the current one. After the next Sunday at 8:00 AM, it sends nothing.
 - **The build fails:** each Member waiting for that summary counts a try, as for a failed send.
-- **The SMTP password cannot be read:** the app sends no summary that week. The Delivery job's own System notice tells Members to enter the password again ([Sending Alerts](#sending-alerts)).
-- **What the Member sees:** the switch row shows the last result of that Member's summary. "✓ Last sent Sunday, Nov 8", or "▲ The summary for Nov 1 to Nov 7 did not send. Check the email server below."
+- **The SMTP password cannot be read:** the app sends no summary that week. The Delivery job's own System notice tells Members to enter the password again ([Sending Alerts](#sending-alerts)). If this happens between tries, the retries send nothing.
+- **What the Member sees:** the switch row shows that Member's latest week:
+  - sent: "✓ Last sent Sunday, Nov 8";
+  - a try failed, and a retry waits: "◆ Sending the summary for Nov 1 to Nov 7. The app tries again if a send fails.";
+  - the app gave up, or no retry came within 1 hour, as after a stop during a send: "▲ The summary for Nov 1 to Nov 7 did not send. Check the email server below."
 - The app never retries a week after it gives up, and never sends a week late after the next Sunday at 8:00 AM.
 
 ## Sources

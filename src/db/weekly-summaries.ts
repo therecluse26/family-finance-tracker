@@ -129,26 +129,25 @@ export async function countWeeklySummaryFailures(
   }));
 }
 
-// A Member's latest summary that ended: sent, or given up. Undefined before the first.
-export async function readLastWeeklySummary(
+// A Member's latest week's summary, in any state. Undefined before the first. `at` is its last
+// change.
+export async function readLatestWeeklySummary(
   database: Database,
   memberId: string,
-): Promise<{ weekStart: string; state: "sent" | "gave up"; at: Date } | undefined> {
+): Promise<
+  | { weekStart: string; state: "sending" | "failed" | "sent" | "gave up"; tries: number; at: Date }
+  | undefined
+> {
   const [row] = await database
     .select({
       weekStart: weeklySummarySends.weekStart,
       state: weeklySummarySends.state,
+      tries: weeklySummarySends.tries,
       at: weeklySummarySends.updatedAt,
     })
     .from(weeklySummarySends)
-    .where(
-      and(
-        eq(weeklySummarySends.memberId, memberId),
-        inArray(weeklySummarySends.state, ["sent", "gave up"]),
-      ),
-    )
+    .where(eq(weeklySummarySends.memberId, memberId))
     .orderBy(desc(weeklySummarySends.weekStart))
     .limit(1);
-  if (row === undefined) return undefined;
-  return { weekStart: row.weekStart, state: row.state === "sent" ? "sent" : "gave up", at: row.at };
+  return row;
 }

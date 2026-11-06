@@ -6,9 +6,9 @@ export type WeeklySummaryView = {
   on: boolean;
   // False while no SMTP server is saved: the app sends no summary.
   emailSetUp: boolean;
-  // The Member's latest summary that ended: its 7 days, whether it was sent or given up, and the
-  // Household's date when it ended. Null before the first.
-  last: { from: string; to: string; state: "sent" | "gave up"; on: string } | null;
+  // The Member's latest week's summary: its 7 days, whether it was sent, is still sending (a retry
+  // may come), or did not send, and the Household's date of its last change. Null before the first.
+  last: { from: string; to: string; state: "sent" | "sending" | "did not send"; on: string } | null;
 };
 
 export type WeeklySummarySettings = {

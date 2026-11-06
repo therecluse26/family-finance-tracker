@@ -8,8 +8,8 @@ import { HINT } from "./settings-ui.tsx";
 
 // Settings, Alerts: the Member's own "Weekly summary email" switch, a row of the My channels card
 // (spec 06, Weekly summary email). The switch saves at once, and changes only the signed-in
-// Member's own setting. With no SMTP server saved, the row says so; it shows the Member's last
-// summary that ended, sent or given up.
+// Member's own setting. With no SMTP server saved, the row says so. It shows the Member's latest
+// week: sent, still sending, or not sent.
 
 // The page's write, exactly as it sends it. It sends a JSON body: the server answers 415 to a write
 // without one.
@@ -90,6 +90,13 @@ export function WeeklySummaryRow(props: { initial: WeeklySummaryView; today?: st
       {last === null ? null : last.state === "sent" ? (
         <p className="mt-1.5 text-small">
           <StatusText tone="good">Last sent {dayLabel(last.on, today)}</StatusText>
+        </p>
+      ) : last.state === "sending" ? (
+        <p className="mt-1.5 text-small">
+          <StatusText tone="serious">
+            Sending the summary for {dateLabel(last.from, today)} to {dateLabel(last.to, today)}.
+            The app tries again if a send fails.
+          </StatusText>
         </p>
       ) : (
         <p className="mt-1.5 text-small">

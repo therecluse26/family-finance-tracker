@@ -10,10 +10,18 @@ export {
   type SummaryRun,
   sendWeeklySummaries,
   startWeeklySummary,
+  WEEKLY_SUMMARY_RETRY_DELAYS_MS,
+  WEEKLY_SUMMARY_STALE_MS,
   WEEKLY_SUMMARY_STOPPED,
   WEEKLY_SUMMARY_TRIES_CAP,
   WeeklySummaryJob,
   weeklySummarySettings,
 } from "./sending.ts";
 export type { WeeklySummarySettings, WeeklySummaryView } from "./view.ts";
-export { SUMMARY_TIME, SUNDAY_MORNING, type SummaryWeek, summaryWeek } from "./week.ts";
+export {
+  SUMMARY_TIME,
+  SUNDAY_MORNING,
+  type SummaryWeek,
+  summaryWeek,
+  weekFrom,
+} from "./week.ts";

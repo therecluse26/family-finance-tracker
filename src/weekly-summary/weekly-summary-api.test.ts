@@ -9,7 +9,12 @@ import { StubSmtp, smtpError } from "../notify/testing.ts";
 import { createApp } from "../server/app.ts";
 import { loadSecurity } from "../server/security-mode.ts";
 import { type App, TestBrowser } from "../server/testing.ts";
-import { sendWeeklySummaries, startWeeklySummary, type WeeklySummaryView } from "./index.ts";
+import {
+  sendWeeklySummaries,
+  startWeeklySummary,
+  WEEKLY_SUMMARY_STALE_MS,
+  type WeeklySummaryView,
+} from "./index.ts";
 
 // Settings → Alerts: each Member's own weekly summary email switch (spec 06, Weekly summary email),
 // through the app's HTTP interface. Members use example.test addresses, and the SMTP server is a
@@ -149,7 +154,7 @@ describe("the weekly summary email switch", () => {
     expect(await viewOf(tab)).toMatchObject({ on: false });
   });
 
-  it("says when the email server is saved, and shows the Member's last summary: sent, or given up", async () => {
+  it("says when the email server is saved, and shows the Member's own latest week: sent, sending, or not sent", async () => {
     const alicesTab = await signedIn(alice);
     const bobsTab = await signedIn(bob);
     expect((await turn(alicesTab, true)).status).toBe(200);
@@ -177,6 +182,7 @@ describe("the weekly summary email switch", () => {
       updatedBy: null,
     });
     let now = new Date("2026-11-08T13:00:00.000Z");
+    const retries: { weekStart: string; at: Date }[] = [];
     const stops = [
       startNotify({
         database: test.database,
@@ -187,24 +193,53 @@ describe("the weekly summary email switch", () => {
           makeTransport: stub.makeTransport,
         },
       }).stop,
-      startWeeklySummary({ database: test.database, now: () => now }).stop,
+      startWeeklySummary({
+        database: test.database,
+        now: () => now,
+        startRetry: async (weekStart, at) => {
+          retries.push({ weekStart, at });
+        },
+      }).stop,
     ];
+    const retry = () => {
+      const last = retries.at(-1);
+      if (last === undefined) throw new Error("No retry was started.");
+      now = last.at;
+      vi.setSystemTime(now);
+      return sendWeeklySummaries(last.weekStart);
+    };
     try {
+      vi.setSystemTime(now);
       await sendWeeklySummaries();
       const sent = { from: "2026-11-01", to: "2026-11-07", state: "sent", on: "2026-11-08" };
       expect(await viewOf(alicesTab)).toMatchObject({ last: sent });
+      expect(await viewOf(bobsTab)).toMatchObject({ last: sent });
 
-      // The next week every send fails, up to the cap.
+      // Bob turns it off. The next week Alice's send fails: her row shows a week still sending,
+      // and Bob's still shows his own last week.
+      expect((await turn(bobsTab, false)).status).toBe(200);
       stub.failWith = smtpError("ECONNECTION", 0, "connect ECONNREFUSED");
       now = new Date("2026-11-15T13:00:00.000Z");
-      await expect(sendWeeklySummaries()).rejects.toThrow();
-      // A failed try with tries left shows the last summary that ended.
-      expect(await viewOf(alicesTab)).toMatchObject({ last: sent });
-      await expect(sendWeeklySummaries()).rejects.toThrow();
-      await sendWeeklySummaries();
-      const gaveUp = { from: "2026-11-08", to: "2026-11-14", state: "gave up", on: "2026-11-15" };
-      expect(await viewOf(alicesTab)).toMatchObject({ last: gaveUp });
-      expect(await viewOf(bobsTab)).toMatchObject({ last: gaveUp });
+      vi.setSystemTime(now);
+      expect(await sendWeeklySummaries()).toMatchObject({ failed: 1 });
+      const nextWeek = { from: "2026-11-08", to: "2026-11-14", on: "2026-11-15" };
+      expect(await viewOf(alicesTab)).toMatchObject({ last: { ...nextWeek, state: "sending" } });
+      expect(await viewOf(bobsTab)).toMatchObject({ last: sent });
+
+      // An hour on with no retry, as after a stop, it did not send.
+      vi.setSystemTime(new Date(now.getTime() + WEEKLY_SUMMARY_STALE_MS));
+      expect(await viewOf(alicesTab)).toMatchObject({
+        last: { ...nextWeek, state: "did not send" },
+      });
+
+      // The retries fail too, up to the cap.
+      expect(await retry()).toMatchObject({ failed: 1 });
+      expect(await viewOf(alicesTab)).toMatchObject({ last: { ...nextWeek, state: "sending" } });
+      expect(await retry()).toMatchObject({ gaveUp: 1 });
+      expect(await viewOf(alicesTab)).toMatchObject({
+        last: { ...nextWeek, state: "did not send" },
+      });
+      expect(await viewOf(bobsTab)).toMatchObject({ last: sent });
     } finally {
       for (const stop of stops) stop();
     }

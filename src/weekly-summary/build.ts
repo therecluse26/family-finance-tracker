@@ -9,7 +9,9 @@ import {
   statusText,
   wholeDollars,
 } from "../format.ts";
+import { purchaseDate, totalsByPeriod } from "../money-movement/index.ts";
 import { addDays, recurringCharges } from "../recurring/index.ts";
+import { median } from "../server/usual.ts";
 import { plainLine } from "../summary/index.ts";
 import type { SummaryWeek } from "./week.ts";
 
@@ -31,51 +33,39 @@ const WEEK_DAYS = 7;
 
 export type WeeklySummaryEmail = { subject: string; text: string };
 
-// The median of whole-cent amounts, rounded to the cent; null with none.
-function median(amounts: readonly number[]): number | null {
-  if (amounts.length === 0) return null;
-  const sorted = [...amounts].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  const high = sorted[middle] ?? 0;
-  if (sorted.length % 2 === 1) return high;
-  return Math.round(((sorted[middle - 1] ?? 0) + high) / 2);
-}
-
-// The Spending posted in each 7-day window, net of Refunds and Reimbursements, never below $0: the
-// summary's own 7 days, and the USUAL_WEEKS weeks before them, those before the history starts
-// left out. One read of the posted parts.
+// The Spending in each 7-day window, by the app's Spending rule (totalsByPeriod): net of Refunds
+// and Reimbursements, no Category below $0, each part on its purchase date, and a linked Refund on
+// its Spending's. The windows are the summary's own 7 days, and the USUAL_WEEKS weeks before them.
+// As the Dashboard's usual leaves out each month before the history's first, the usual leaves out
+// each week that ends before it: a first week the history starts in counts. One read of the posted
+// parts.
 async function weekSpending(
   database: Database,
   from: string,
 ): Promise<{ spent: number; usual: number | null }> {
   const parts = await listPostedParts(database);
-  const firstPosted = parts.reduce<string | undefined>(
-    (first, part) => (first === undefined || part.postedDate < first ? part.postedDate : first),
-    undefined,
-  );
+  const first = parts.reduce<string | undefined>((earliest, part) => {
+    const date = purchaseDate(part);
+    return earliest === undefined || date < earliest ? date : earliest;
+  }, undefined);
   const earliest = addDays(from, -USUAL_WEEKS * WEEK_DAYS);
   const to = addDays(from, WEEK_DAYS - 1);
-  // Each window's net, by its index: 0 for the summary's own week, 1 for the week before, and on.
-  const nets = new Array<number>(USUAL_WEEKS + 1).fill(0);
   const fromDay = Date.parse(`${from}T00:00:00Z`);
-  for (const part of parts) {
-    if (part.postedDate < earliest || part.postedDate > to) continue;
-    if (part.type !== "Spending" && part.type !== "Refund" && part.type !== "Reimbursement") {
-      continue;
-    }
-    const days = (Date.parse(`${part.postedDate}T00:00:00Z`) - fromDay) / 86_400_000;
-    const index = days >= 0 ? 0 : Math.ceil(-days / WEEK_DAYS);
-    // Spending is money out, so its amount is negative; a Refund's is positive.
-    nets[index] = (nets[index] ?? 0) - part.amount;
+  // Each window by its index: 0 for the summary's own week, 1 for the week before, and on.
+  const totals = totalsByPeriod(parts, (part) => {
+    const date = purchaseDate(part);
+    if (date < earliest || date > to) return null;
+    const days = (Date.parse(`${date}T00:00:00Z`) - fromDay) / 86_400_000;
+    return String(days >= 0 ? 0 : Math.ceil(-days / WEEK_DAYS));
+  });
+  const spentIn = (index: number) =>
+    totals.find((each) => each.period === String(index))?.spending ?? 0;
+  const before: number[] = [];
+  for (let index = 1; index <= USUAL_WEEKS; index += 1) {
+    const lastDay = addDays(from, -(index - 1) * WEEK_DAYS - 1);
+    if (first !== undefined && lastDay >= first) before.push(spentIn(index));
   }
-  const weeks = nets.map((net) => Math.max(0, net));
-  const before = weeks
-    .slice(1)
-    .filter(
-      (_, index) =>
-        firstPosted !== undefined && addDays(from, -(index + 1) * WEEK_DAYS) >= firstPosted,
-    );
-  return { spent: weeks[0] ?? 0, usual: median(before) };
+  return { spent: spentIn(0), usual: median(before) };
 }
 
 // Each Budget that is Over Budget or On pace in `month`: one line each.

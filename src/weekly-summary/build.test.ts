@@ -37,7 +37,14 @@ const CARD = fakeAccount({
 const $ = (dollars: number) => Math.round(dollars * 100);
 const at = (date: string) => new Date(`${date}T15:00:00.000Z`);
 
-type TxnSpec = { id: string; date: string; parts: NewPart[]; pending?: boolean };
+type TxnSpec = {
+  id: string;
+  date: string;
+  parts: NewPart[];
+  pending?: boolean;
+  // The purchase date, when the bank gives one.
+  bought?: string;
+};
 
 const spend = (id: string, date: string, dollars: number, category: Category): TxnSpec => ({
   id,
@@ -80,6 +87,7 @@ describe("the weekly summary's text", () => {
           amount: txn.parts.reduce((sum, part) => sum + part.amount, 0),
           postedDate: txn.date,
           pending: txn.pending ?? false,
+          authorizedDate: txn.bought ?? null,
         }),
       ),
     });
@@ -191,14 +199,21 @@ describe("the weekly summary's text", () => {
       monthly("Clothing", 5_000),
     ]);
     await load([
-      // The history starts on Wednesday, Oct 7, so the week of Oct 4 is before it and left out.
+      // The history starts on Wednesday, Oct 7. As the Dashboard counts the month the history
+      // starts in, the usual counts the week it starts in: the median of $50, $100, $200 and $260
+      // is $150. Without that week it would be $200.
       spend("oct-7", "2026-10-07", 50, "Groceries"),
-      spend("oct-14", "2026-10-14", 200, "Groceries"),
+      spend("oct-14", "2026-10-14", 100, "Groceries"),
       spend("oct-21", "2026-10-21", 200, "Groceries"),
       spend("oct-28", "2026-10-28", 150, "Groceries"),
       spend("oct-31", "2026-10-31", 50, "Clothing"),
-      // The summary's 7 days: $240 + $40 - a $30 Refund = $250. At $240, the first is no Large
-      // purchase, so the projection counts it.
+      // Bought on Saturday, Oct 31, posted on Monday: it counts on its purchase date, in the week
+      // before, as in October's totals.
+      { ...spend("bought-oct-31", "2026-11-02", 60, "Groceries"), bought: "2026-10-31" },
+      // The summary's 7 days, by the app's Spending rule: Groceries $240 - a $30 Refund = $210;
+      // Restaurants $40 + $10 bought on Saturday and posted on Sunday = $50; and Clothing, a $20
+      // Refund with no Spending that week, counts $0, not -$20. In all, $260. At $240, the first is
+      // no Large purchase, so the projection counts it.
       spend("nov-3", "2026-11-03", 240, "Groceries"),
       {
         id: "refund",
@@ -206,6 +221,12 @@ describe("the weekly summary's text", () => {
         parts: [{ type: "Refund", amount: $(30), category: "Groceries" }],
       },
       spend("nov-7", "2026-11-07", 40, "Restaurants"),
+      { ...spend("bought-nov-7", "2026-11-08", 10, "Restaurants"), bought: "2026-11-07" },
+      {
+        id: "clothing-refund",
+        date: "2026-11-06",
+        parts: [{ type: "Refund", amount: $(20), category: "Clothing" }],
+      },
       // Neither counts: a pending charge, and a Transfer.
       { ...spend("pending", "2026-11-06", 77, "Clothing"), pending: true },
       {
@@ -259,12 +280,12 @@ describe("the weekly summary's text", () => {
       [
         "Your weekly summary for Sunday, Nov 1 to Saturday, Nov 7.",
         "",
-        "Spending: $250, ▲ $50 above usual.",
+        "Spending: $260, ▲ $110 above usual.",
         `See it: ${APP_URL}/transactions?type=Spending&from=2026-11-01&to=2026-11-07`,
         "",
         "Budgets in November 2026:",
         "- Groceries: ◆ on pace for $788, $210 of $700 so far.",
-        "- Restaurants: ▲ Over Budget, $40 of $30.",
+        "- Restaurants: ▲ Over Budget, $50 of $30.",
         `See them: ${APP_URL}/budgets`,
         "",
         "Alerts: 1 Alert sent, 1 held back (weekly cap).",

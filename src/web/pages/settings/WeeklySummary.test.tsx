@@ -33,7 +33,7 @@ describe("Settings, Alerts: the weekly summary email switch", () => {
     expect(text(paint(OFF))).not.toContain("Needs the email server");
   });
 
-  it("shows the Member's last summary: sent, or given up", () => {
+  it("shows the Member's latest week: sent, still sending, or not sent", () => {
     const sent = paint({
       on: true,
       emailSetUp: true,
@@ -44,12 +44,22 @@ describe("Settings, Alerts: the weekly summary email switch", () => {
     const gaveUp = paint({
       on: true,
       emailSetUp: true,
-      last: { from: "2026-11-01", to: "2026-11-07", state: "gave up", on: "2026-11-08" },
+      last: { from: "2026-11-01", to: "2026-11-07", state: "did not send", on: "2026-11-08" },
     });
     expect(text(gaveUp)).toContain(
       "▲ The summary for Nov 1 to Nov 7 did not send. Check the email server below.",
     );
     expect(text(gaveUp)).not.toContain("Last sent");
+
+    const sending = paint({
+      on: true,
+      emailSetUp: true,
+      last: { from: "2026-11-08", to: "2026-11-14", state: "sending", on: "2026-11-15" },
+    });
+    expect(text(sending)).toContain(
+      "◆ Sending the summary for Nov 8 to Nov 14. The app tries again if a send fails.",
+    );
+    expect(text(sending)).not.toMatch(/Last sent|did not send/);
 
     const lastYear = paint({
       on: true,

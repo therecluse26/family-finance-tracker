@@ -631,7 +631,7 @@ export {
   countWeeklySummaryFailures,
   finishWeeklySummary,
   listWeeklySummaryMembers,
-  readLastWeeklySummary,
+  readLatestWeeklySummary,
   readWeeklySummarySwitch,
   storeWeeklySummarySwitch,
   takeWeeklySummaries,
