@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { encode } from "uqr";
 import { totpSecretOf } from "../requests.ts";
 
 // Shared form pieces.
@@ -61,11 +62,33 @@ export function PasteField(props: {
   );
 }
 
-// A new TOTP secret for an authenticator app: the link a phone opens, and the secret to type in.
+// The otpauth:// link as a QR code, drawn in the browser. The TOTP secret never leaves the page.
+function TotpQrCode(props: { totpURI: string }) {
+  const { size, data } = encode(props.totpURI, { border: 4 });
+  const squares = data.flatMap((row, y) =>
+    row.flatMap((dark, x) => (dark ? [`M${x} ${y}h1v1h-1z`] : [])),
+  );
+  return (
+    <svg
+      role="img"
+      aria-label="QR code for your authenticator app"
+      viewBox={`0 0 ${size} ${size}`}
+      shapeRendering="crispEdges"
+      className="mt-2 h-48 w-48 bg-white"
+    >
+      <path d={squares.join("")} fill="#000" />
+    </svg>
+  );
+}
+
+// A new TOTP secret for an authenticator app: a QR code to scan, the link a phone opens, and the
+// secret to type in.
 export function NewTotp(props: { totpURI: string }) {
   return (
     <div className="mt-3 rounded border border-gray-300 p-3">
       <p>Add this to your authenticator app.</p>
+      <p className="mt-2">Scan this QR code with your phone:</p>
+      <TotpQrCode totpURI={props.totpURI} />
       <p className="mt-2">
         On this phone:{" "}
         <a className="text-blue-700 underline" href={props.totpURI}>
