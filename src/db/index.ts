@@ -200,6 +200,7 @@ export {
   listCardPaymentsSince,
   listDueAccounts,
   listPairedLoanPayments,
+  listTransferTargets,
   listUntrackedLoanPaymentsSince,
 } from "./coming-up.ts";
 export {

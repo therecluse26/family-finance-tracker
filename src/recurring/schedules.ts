@@ -88,9 +88,8 @@ function fixedDatesAround(schedule: FixedDays, date: string): string[] {
   return [-1, 0, 1].flatMap((months) => days.map((day) => dayOfMonth(date, months, day)));
 }
 
-// The fixed date nearest `date`. On a monthly schedule, it is the expected date `date` met: the
-// margin and the business-day shift reach at most 5 days from it, and the months are farther
-// apart.
+// The fixed date nearest `date`: the expected date `date` met. The margin and the business-day
+// shift reach at most 5 days from it, and fixed dates are at least 10 days apart.
 function nearestFixedDate(schedule: FixedDays, date: string): string {
   let nearest = date;
   let gap = Number.POSITIVE_INFINITY;
@@ -103,7 +102,7 @@ function nearestFixedDate(schedule: FixedDays, date: string): string {
 
 // For one date, on each fixed day 1 to 31: the days from the expected date it met to it (negative
 // when early), and whether it lands within that date's margin and business-day shift. Finding a
-// monthly series asks this of the same dates on every fixed day many times, so each date's answers
+// series on fixed days asks this of the same dates on every fixed day many times, so each date's answers
 // are worked out once. They never change: the dates and the business days are fixed. The cache
 // starts over when it holds more dates than about 50 years.
 type FixedDayTable = { readonly off: Int8Array; readonly fits: Uint8Array };
@@ -153,23 +152,34 @@ function fixedDateOf(schedule: FixedDays, date: string): string {
   return addDays(date, -(fixedDayTableOf(date).off[schedule.fixedDay] ?? 0));
 }
 
-// The fixed date `count` fixed dates after the one nearest `date`.
+// The fixed date `count` fixed dates after the one nearest `date`. Finding twice-a-month series
+// asks this of the same dates on every pair of days many times, so each answer is kept, as the
+// fixed-day tables are. The cache starts over at about 100 pairs of days on 1,000 dates.
+const FIXED_DATES_AFTER_MOST = 100_000;
+const fixedDatesAfter = new Map<string, string>();
+
 function fixedDateAfter(schedule: FixedDays, date: string, count: number): string {
+  const key = `${isMonthly(schedule) ? schedule.fixedDay : schedule.days.join(",")} ${date} ${count}`;
+  const cached = fixedDatesAfter.get(key);
+  if (cached !== undefined) return cached;
   let fixed = fixedDateOf(schedule, date);
   for (let step = 0; step < count; step += 1) {
     const current = fixed;
     fixed = fixedDatesAround(schedule, current).find((each) => each > current) ?? current;
   }
+  if (fixedDatesAfter.size >= FIXED_DATES_AFTER_MOST) fixedDatesAfter.clear();
+  fixedDatesAfter.set(key, fixed);
   return fixed;
 }
 
 // The first and last date a Transaction expected on `expected` may land on: within the margin of
-// it. On a monthly schedule, an expected date that is not a business day also allows the margin of
-// the business day before it and of the business day after it (spec 06, Monthly series). At most 3
-// days in a row are closed, so those margins overlap: the dates run from 2 days before the business
-// day before to 2 days after the business day after.
+// it. On fixed days, monthly or twice a month, an expected date that is not a business day also
+// allows the margin of the business day before it and of the business day after it (spec 06,
+// Monthly series; spec 05, Steady Income). At most 3 days in a row are closed, so those margins
+// overlap: the dates run from 2 days before the business day before to 2 days after the business
+// day after.
 function marginOf(schedule: SeriesSchedule, expected: string): { from: string; to: string } {
-  if (isMonthly(schedule) && !isBusinessDay(expected)) {
+  if (onFixedDays(schedule) && !isBusinessDay(expected)) {
     return {
       from: addDays(addBusinessDays(expected, -1), -MARGIN_DAYS),
       to: addDays(addBusinessDays(expected, 1), MARGIN_DAYS),
@@ -197,12 +207,13 @@ export function inWindow(range: { from: string; to: string }, date: string): boo
 }
 
 // Whether `date` can be part of a series on this schedule. Each Transaction of a series on fixed
-// days lands within the margin of a fixed date, and a monthly one's within the business-day shift;
-// any date fits the other schedules.
+// days lands within the margin of a fixed date, with the business-day shift; any date fits the
+// other schedules.
 export function fitsSchedule(schedule: SeriesSchedule, date: string): boolean {
   if (!onFixedDays(schedule)) return true;
-  if (isMonthly(schedule)) return fixedDayTableOf(date).fits[schedule.fixedDay] === 1;
-  return inWindow(marginOf(schedule, fixedDateOf(schedule, date)), date);
+  const { fits } = fixedDayTableOf(date);
+  if (isMonthly(schedule)) return fits[schedule.fixedDay] === 1;
+  return fits[schedule.days[0]] === 1 || fits[schedule.days[1]] === 1;
 }
 
 // The total days from each of `dates` to the nearest date of `fixedDay`: the expected date each
@@ -235,6 +246,54 @@ export function fixedDayOf(dates: readonly string[]): number {
   return best?.fixedDay ?? 1;
 }
 
+// The two days of a twice-a-month schedule are 12 to 18 days apart, such as the 1st and the 15th,
+// or the 15th and the last day.
+const TWICE_A_MONTH_DAYS_APART = [12, 18] as const;
+
+// Every pair of fixed days a twice-a-month schedule may have, later days first.
+const TWICE_A_MONTH_PAIRS: readonly TwiceAMonth[] = (() => {
+  const pairs: TwiceAMonth[] = [];
+  const [fewest, most] = TWICE_A_MONTH_DAYS_APART;
+  for (let later = 31; later >= 1; later -= 1) {
+    for (let apart = fewest; apart <= most && later - apart >= 1; apart += 1) {
+      pairs.push({ days: [later - apart, later] });
+    }
+  }
+  return pairs.sort((a, b) => b.days[1] - a.days[1] || b.days[0] - a.days[0]);
+})();
+
+// The twice-a-month schedules whose fixed dates `date` lands within the margin of, with the
+// business-day shift, later days first.
+export const twiceAMonthSchedulesOf = (date: string): TwiceAMonth[] =>
+  TWICE_A_MONTH_PAIRS.filter((pair) => fitsSchedule(pair, date));
+
+// A twice-a-month series' two fixed days (spec 05, Steady Income): the pairs whose expected dates
+// are the fewest total days from the series' Transactions, `dates`, as for a monthly series' fixed
+// day. Each is a pair every Transaction lands within the margin of, with the business-day shift,
+// when one is. More than one pair ties when the Transactions cannot tell them apart: in February,
+// the 28th and the last day. The first, which the series takes, has the later days, so the next
+// expected date and the last active day are the latest the tied pairs give; the next Transaction
+// may land on any of them, and then the pair is picked again.
+export function twiceAMonthDaysOf(dates: readonly string[]): TwiceAMonth[] {
+  const tables = dates.map(fixedDayTableOf);
+  let best: { pairs: TwiceAMonth[]; days: number; fits: boolean } | undefined;
+  for (const pair of TWICE_A_MONTH_PAIRS) {
+    const [first, second] = pair.days;
+    let fits = true;
+    let days = 0;
+    for (const { off, fits: fitsDay } of tables) {
+      fits &&= fitsDay[first] === 1 || fitsDay[second] === 1;
+      days += Math.min(Math.abs(off[first] ?? 0), Math.abs(off[second] ?? 0));
+    }
+    if (best === undefined || (fits && !best.fits) || (fits === best.fits && days < best.days)) {
+      best = { pairs: [pair], days, fits };
+    } else if (fits === best.fits && days === best.days) {
+      best.pairs.push(pair);
+    }
+  }
+  return best?.pairs ?? [];
+}
+
 // The next expected date: the last Transaction's date plus one interval. On fixed days, the fixed
 // date after the one the last Transaction met: for a monthly series, the fixed day in the month
 // after.
@@ -243,8 +302,8 @@ export function nextExpected(schedule: SeriesSchedule, last: string): string {
 }
 
 // The first and last date within the margin of `count` intervals after `date`. Weekly, every 2
-// weeks, twice a month, and monthly allow 2 days each way, and monthly also the business-day
-// shift. Yearly allows 11 to 13 months after the previous one, so a month each way.
+// weeks, twice a month, and monthly allow 2 days each way, and twice a month and monthly also the
+// business-day shift. Yearly allows 11 to 13 months after the previous one, so a month each way.
 export function window(
   schedule: SeriesSchedule,
   date: string,
@@ -257,8 +316,9 @@ export function window(
 }
 
 // The last day a series stays active with no new Transaction: the next expected date plus 2 days;
-// for a monthly one, 2 days after the latest date the business-day shift allows; for a yearly
-// one, 13 months after its last Transaction. It goes inactive the day after.
+// for one on fixed days, monthly or twice a month, 2 days after the latest date the business-day
+// shift allows; for a yearly one, 13 months after its last Transaction. It goes inactive the day
+// after.
 export function lastActiveDay(schedule: SeriesSchedule, last: string): string {
   return window(schedule, last, 1).to;
 }

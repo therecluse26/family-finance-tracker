@@ -99,15 +99,31 @@ export async function listPairedLoanPayments(
     .orderBy(asc(paying.postedDate), asc(paying.id));
 }
 
+// Of these Transactions, each that is the paying side of a Transfer pair, with the Account of the
+// side that brings the money in.
+export async function listTransferTargets(
+  database: Database,
+  transactionIds: readonly string[],
+): Promise<{ transactionId: string; accountId: string }[]> {
+  if (transactionIds.length === 0) return [];
+  const receiving = alias(transactions, "receiving_side");
+  return database
+    .select({ transactionId: transferLinks.outTransactionId, accountId: receiving.accountId })
+    .from(transferLinks)
+    .innerJoin(receiving, eq(receiving.id, transferLinks.inTransactionId))
+    .where(inArray(transferLinks.outTransactionId, [...transactionIds]));
+}
+
 // The untracked loan payments (spec 03, Untracked loans) posted on `from` or later, oldest first:
 // shown, posted money out under a LOAN_PAYMENTS_* code other than a card payment, in no Transfer
 // pair, and linked to no Manual loan. Each with its Merchant, which names the lender.
 export async function listUntrackedLoanPaymentsSince(
   database: Database,
   from: string,
-): Promise<{ lender: string | null; postedDate: string; amount: number }[]> {
+): Promise<{ id: string; lender: string | null; postedDate: string; amount: number }[]> {
   const lines = await database
     .select({
+      id: transactions.id,
       merchantName: transactions.merchantName,
       merchantCleanName: transactions.merchantCleanName,
       postedDate: transactions.postedDate,

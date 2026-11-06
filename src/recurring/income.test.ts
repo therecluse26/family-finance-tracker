@@ -4,8 +4,10 @@ import { connectionRemoving, syncConnection, type TxnRecord } from "../bank/inde
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
-import { startMoneyMovement } from "../money-movement/index.ts";
+import { addBusinessDays, isBusinessDay, startMoneyMovement } from "../money-movement/index.ts";
 import {
+  addDays,
+  addMonths,
   findIncomeSeries,
   paydays,
   startRecurringCharges,
@@ -201,6 +203,120 @@ describe("Steady Income", () => {
     expect(await fixedDays()).toEqual([[15, 31]]);
     expect(await predicted()).toEqual([["Acme Corp", "twice a month", "2026-11-15", 180_000]]);
     expect((await income()).detected).toBe(360_000);
+  });
+
+  // Day `day` of `month`, written YYYY-MM. A day the month lacks means its last day.
+  const dayOf = (month: string, day: number) => {
+    const [year = 0, number = 1] = month.split("-").map(Number);
+    const last = new Date(Date.UTC(year, number, 0)).getUTCDate();
+    return `${month}-${String(Math.min(day, last)).padStart(2, "0")}`;
+  };
+  // The `count` months from `first`, written YYYY-MM.
+  const monthsFrom = (first: string, count: number) =>
+    Array.from({ length: count }, (_, index) => addMonths(`${first}-01`, index).slice(0, 7));
+  // The Friday before a weekend day. A weekday stays.
+  const fridayBefore = (date: string) => {
+    const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+    return weekday === 6 ? addDays(date, -1) : weekday === 0 ? addDays(date, -2) : date;
+  };
+  // Syncs each paycheck on its own day, and reads Steady Income on every day from `from` to `to`.
+  // Returns each day it is not `expected` from one Income series.
+  const wrongDays = async (paychecks: TxnRecord[], from: string, to: string, expected: number) => {
+    const wrong: string[] = [];
+    for (let day = paychecks[0]?.postedDate ?? to; day <= to; day = addDays(day, 1)) {
+      now = new Date(`${day}T17:00:00.000Z`);
+      const paid = paychecks.filter((paycheck) => paycheck.postedDate === day);
+      if (paid.length > 0) await sync(...paid);
+      if (day < from) continue;
+      const figure = await income();
+      const series = await bank.database.$client.execute("SELECT id FROM income_series");
+      if (
+        figure.detected !== expected ||
+        figure.detectedFrom !== "Income series" ||
+        series.rows.length !== 1
+      ) {
+        wrong.push(day);
+      }
+    }
+    return wrong;
+  };
+
+  it("reads a payer on the 15th and the 28th found in February as the 28th, and keeps it all year", {
+    timeout: 60_000,
+  }, async () => {
+    const paychecks = monthsFrom("2026-02", 13).flatMap((month, index) => [
+      pay(`p${index}a`, dayOf(month, 15), 180_000),
+      pay(`p${index}b`, dayOf(month, 28), 180_000),
+    ]);
+
+    // Found on Mar 15: Feb 28 is the 28th and the last day alike, so both pairs tie until Mar 28.
+    expect(await wrongDays(paychecks, "2026-03-15", "2027-02-28", 360_000)).toEqual([]);
+    expect(await fixedDays()).toEqual([[15, 28]]);
+    expect(await predicted()).toEqual([["Acme Corp", "twice a month", "2027-03-15", 180_000]]);
+  });
+
+  it("keeps a payer on the 1st and the 15th who pays the business day before a holiday or weekend", {
+    timeout: 60_000,
+  }, async () => {
+    const paychecks = [
+      pay("p1", "2023-11-01", 250_000),
+      pay("p2", "2023-11-15", 250_000),
+      pay("p3", "2023-12-01", 250_000),
+      pay("p4", "2023-12-15", 250_000),
+      // Monday, Jan 1 is New Year's Day: paid Friday, Dec 29, 3 days early.
+      pay("p5", "2023-12-29", 250_000),
+      // Monday, Jan 15 is Martin Luther King, Jr. Day: paid Friday, Jan 12.
+      pay("p6", "2024-01-12", 250_000),
+      pay("p7", "2024-02-01", 250_000),
+      pay("p8", "2024-02-15", 250_000),
+    ];
+
+    expect(await wrongDays(paychecks, "2023-12-01", "2024-02-20", 500_000)).toEqual([]);
+    expect(await fixedDays()).toEqual([[1, 15]]);
+    expect(await predicted()).toEqual([["Acme Corp", "twice a month", "2024-03-01", 250_000]]);
+  });
+
+  it("keeps a payer on the 15th and the 30th who pays the Friday before a weekend, from September", {
+    timeout: 60_000,
+  }, async () => {
+    const paychecks = monthsFrom("2025-09", 14).flatMap((month, index) => [
+      pay(`p${index}a`, fridayBefore(dayOf(month, 15)), 180_000),
+      pay(`p${index}b`, fridayBefore(dayOf(month, 30)), 180_000),
+    ]);
+
+    expect(await wrongDays(paychecks, "2025-10-15", "2026-10-31", 360_000)).toEqual([]);
+    expect(await fixedDays()).toEqual([[15, 30]]);
+  });
+
+  // The business day before or after a date that is not one. A business day stays.
+  const businessDayBefore = (date: string) =>
+    isBusinessDay(date) ? date : addBusinessDays(date, -1);
+  const businessDayAfter = (date: string) =>
+    isBusinessDay(date) ? date : addBusinessDays(date, 1);
+
+  it("keeps a payer on the 15th and the last day who pays the business day before, from May", {
+    timeout: 60_000,
+  }, async () => {
+    // May 15, Fri May 30, Fri Jun 13, Mon Jun 30: the first 3 are 14 days apart, but every 2 weeks
+    // would be more days off than the 15th and the last day.
+    const paychecks = monthsFrom("2025-05", 13).flatMap((month, index) => [
+      pay(`p${index}a`, businessDayBefore(dayOf(month, 15)), 180_000),
+      pay(`p${index}b`, businessDayBefore(dayOf(month, 31)), 180_000),
+    ]);
+
+    expect(await wrongDays(paychecks, "2025-06-13", "2026-05-31", 360_000)).toEqual([]);
+  });
+
+  it("keeps a payer on the 1st and the 15th who pays the business day after, from March", {
+    timeout: 60_000,
+  }, async () => {
+    // Mon Mar 3, Mon Mar 17, Apr 1, Apr 15, ...
+    const paychecks = monthsFrom("2025-03", 13).flatMap((month, index) => [
+      pay(`p${index}a`, businessDayAfter(dayOf(month, 1)), 180_000),
+      pay(`p${index}b`, businessDayAfter(dayOf(month, 15)), 180_000),
+    ]);
+
+    expect(await wrongDays(paychecks, "2025-04-01", "2026-03-20", 360_000)).toEqual([]);
   });
 
   it("picks the schedule whose expected dates are fewer days off, when both fit", async () => {

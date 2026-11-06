@@ -6,6 +6,7 @@ import { startCategorization } from "../categorization/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { setTransactionType, startMoneyMovement } from "../money-movement/index.ts";
 import {
+  addMonths,
   endCharge,
   findRecurringCharges,
   recurringCharges,
@@ -236,6 +237,54 @@ describe("Recurring charges", () => {
 
       expect(await charges()).toEqual([]);
     });
+
+    // Card interest, in Interest and fees: monthly, near one amount, with a rise of more than 5%.
+    const interest = (id: string, postedDate: string, spent: number, merchantName: string) =>
+      charge(id, postedDate, spent, {
+        merchantName,
+        description: "INTEREST CHARGE ON PURCHASES",
+        category: {
+          name: "BANK_FEES_INTEREST_CHARGE",
+          confidence: "VERY_HIGH",
+          version: "v2",
+          mcc: null,
+        },
+      });
+
+    it("forms no Recurring charge from Spending in Interest and fees, so no Price increase", async () => {
+      await sync(
+        interest("i1", "2026-06-28", 2_889, "Interest Charge On Purchases"),
+        interest("i2", "2026-07-28", 3_057, "Interest Charge On Purchases"),
+        interest("i3", "2026-08-28", 2_934, "Interest Charge On Purchases"),
+        interest("i4", "2026-09-28", 2_747, "Interest Charge On Purchases"),
+        interest("i5", "2026-10-28", 3_227, "Interest Charge On Purchases"),
+        // An ATM fee a year apart, at one amount: a yearly pair, in Interest and fees too.
+        ...["2025-11-02", "2026-10-27"].map((date) =>
+          charge(`atm-${date}`, date, 350, {
+            merchantName: "ATM Fee",
+            category: { name: "BANK_FEES_ATM_FEES", confidence: "HIGH", version: "v2", mcc: null },
+          }),
+        ),
+      );
+
+      // Price increase reads only Recurring charges' price histories.
+      expect(await charges()).toEqual([]);
+    });
+
+    it("keeps a subscription at a Merchant that also has interest lines", async () => {
+      await sync(
+        charge("s1", "2026-08-03", 999, { merchantName: "Everyday Card" }),
+        charge("s2", "2026-09-03", 999, { merchantName: "Everyday Card" }),
+        charge("s3", "2026-10-03", 999, { merchantName: "Everyday Card" }),
+        interest("i1", "2026-08-25", 2_889, "Everyday Card"),
+        interest("i2", "2026-09-25", 3_057, "Everyday Card"),
+        interest("i3", "2026-10-25", 2_934, "Everyday Card"),
+      );
+
+      expect(await found()).toEqual([
+        ["monthly", "active", ["2026-08-03 999", "2026-09-03 999", "2026-10-03 999"]],
+      ]);
+    });
   });
 
   describe("a frequent shop", () => {
@@ -456,6 +505,121 @@ describe("Recurring charges", () => {
       await sync(...txns);
 
       expect(await summary()).toEqual([]);
+    });
+
+    it("forms no yearly series at a monthly bill whose amount moves, and finds one monthly one", async () => {
+      // A utility bill on the 11th. Each month is a year from one within 15%, but the months
+      // between differ by more than 7.5%, until the last three.
+      const firstYear = [
+        8_000, 16_000, 10_000, 20_000, 12_000, 18_000, 9_000, 15_000, 11_000, 21_000, 13_000,
+        17_000,
+      ];
+      const amounts = [
+        ...firstYear,
+        ...firstYear.slice(0, 9).map((amount) => Math.round(amount * 1.05)),
+        19_000,
+        19_500,
+        19_200,
+      ];
+      await sync(
+        ...amounts.map((amount, index) => {
+          const date = addMonths("2024-11-11", index);
+          return charge(`power-${date}`, date, amount, { merchantName: "Power Co" });
+        }),
+      );
+
+      expect(await found()).toEqual([
+        ["monthly", "active", ["2026-08-11 19000", "2026-09-11 19500", "2026-10-11 19200"]],
+      ]);
+    });
+
+    it("keeps a yearly subscription at a Merchant with a monthly one, and a second yearly one", async () => {
+      const suite = (id: string, postedDate: string, spent: number) =>
+        charge(id, postedDate, spent, { merchantName: "Cloud Suite" });
+      await sync(
+        // A monthly plan: its Transactions between the yearly ones belong to another series.
+        ...Array.from({ length: 22 }, (_, index) => {
+          const date = addMonths("2025-01-05", index);
+          return suite(`plan-${date}`, date, 999);
+        }),
+        suite("year-1", "2025-03-01", 9_900),
+        suite("year-2", "2026-03-01", 9_900),
+        suite("add-on-1", "2025-09-15", 4_900),
+        suite("add-on-2", "2026-09-15", 4_900),
+      );
+
+      const firsts = (await found()).map(([schedule, status, prices]) => [
+        schedule,
+        status,
+        prices?.[0],
+      ]);
+      expect(firsts).toEqual([
+        ["monthly", "active", "2025-01-05 999"],
+        ["yearly", "active", "2025-03-01 9900"],
+        ["yearly", "active", "2025-09-15 4900"],
+      ]);
+    });
+
+    // Yearly plans at one Merchant, such as an app store, at prices more than 15% apart.
+    const plans = (prices: [string, number][]) =>
+      prices.flatMap(([day, spent]) =>
+        ["2025", "2026"].map((year) =>
+          charge(`plan-${year}-${day}`, `${year}-${day}`, spent, { merchantName: "App Store" }),
+        ),
+      );
+    const yearlyFirsts = async () =>
+      (await found()).map(([schedule, status, prices]) => [schedule, status, prices?.[0]]);
+
+    it("keeps 4 yearly subscriptions at different prices at one Merchant", async () => {
+      // Between each plan's two Transactions fall the other 3 plans' Transactions, but each of those
+      // plans' prices shows up only once in the year: they are another series' Transactions.
+      await sync(
+        ...plans([
+          ["01-10", 2_999],
+          ["03-05", 5_999],
+          ["05-20", 9_999],
+          ["08-14", 14_999],
+        ]),
+      );
+
+      expect(await yearlyFirsts()).toEqual([
+        ["yearly", "active", "2025-01-10 2999"],
+        ["yearly", "active", "2025-03-05 5999"],
+        ["yearly", "active", "2025-05-20 9999"],
+        ["yearly", "active", "2025-08-14 14999"],
+      ]);
+    });
+
+    it("keeps 3 yearly subscriptions at one Merchant with 1 other purchase between", async () => {
+      await sync(
+        ...plans([
+          ["01-10", 2_999],
+          ["05-05", 5_999],
+          ["09-20", 9_999],
+        ]),
+        charge("one-off", "2025-07-01", 499, { merchantName: "App Store" }),
+      );
+
+      expect(await yearlyFirsts()).toEqual([
+        ["yearly", "active", "2025-01-10 2999"],
+        ["yearly", "active", "2025-05-05 5999"],
+        ["yearly", "active", "2025-09-20 9999"],
+      ]);
+    });
+
+    it("counts a yearly pair whose price shows up again in the year as visits", async () => {
+      // The 59.99 plan's price shows up twice more in the year between, so it is not a series of
+      // its own, and with them the 29.99 plan has 3 other Transactions between its two.
+      await sync(
+        ...plans([
+          ["01-10", 2_999],
+          ["03-05", 5_999],
+        ]),
+        charge("again-1", "2025-06-12", 6_100, { merchantName: "App Store" }),
+        charge("again-2", "2025-09-12", 5_900, { merchantName: "App Store" }),
+      );
+
+      expect(await yearlyFirsts()).toEqual([["yearly", "active", "2025-03-05 5999"]]);
     });
 
     it("ends a series once later Transactions show a frequent shop", async () => {
