@@ -1,34 +1,27 @@
-import { and, asc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import type { Database } from "./client.ts";
 import { insightCards, transactions } from "./schema.ts";
 
-// SQLite takes at most 32,766 values in one statement.
-const IDS_PER_QUERY = 500;
-
-// Whether any of these Transactions is newly posted and shown: a sync first stored it as posted at
-// `since` or later, and it is not pending and not hidden. A Member's edit or a change to a posted
-// Transaction does not make it new. One short query per 500 IDs, which stops at the first it finds.
+// Whether a posted Transaction has arrived since `since`, the start of the last Insight card run,
+// or ever with no last run: a sync first stored it as posted after then, and it is not hidden. A
+// Member's edit or a change to a posted Transaction does not make it new. One query on the
+// posted_seen_at index, which stops at the first it finds, whatever the number of Transactions.
 export async function holdsNewPostedTransaction(
   database: Database,
-  ids: readonly string[],
-  since: Date,
+  since: Date | undefined,
 ): Promise<boolean> {
-  for (let start = 0; start < ids.length; start += IDS_PER_QUERY) {
-    const [found] = await database
-      .select({ id: transactions.id })
-      .from(transactions)
-      .where(
-        and(
-          inArray(transactions.id, ids.slice(start, start + IDS_PER_QUERY)),
-          gte(transactions.postedSeenAt, since),
-          eq(transactions.pending, false),
-          isNull(transactions.hiddenReason),
-        ),
-      )
-      .limit(1);
-    if (found !== undefined) return true;
-  }
-  return false;
+  const [found] = await database
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        isNotNull(transactions.postedSeenAt),
+        since === undefined ? undefined : gt(transactions.postedSeenAt, since),
+        isNull(transactions.hiddenReason),
+      ),
+    )
+    .limit(1);
+  return found !== undefined;
 }
 
 // The current Insight cards in app.db (spec 08, Insight cards), and each card's Done mark. The

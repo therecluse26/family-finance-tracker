@@ -1,0 +1,1 @@
+CREATE INDEX `transactions_posted_seen_at` ON `transactions` (`posted_seen_at`);

@@ -6,6 +6,7 @@ import { BACKUP_SCHEDULE, BackupJob } from "../backups/index.ts";
 import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
 import { MonthStartJob } from "../budgets/index.ts";
+import { INSIGHT_CARD_CHECK_SCHEDULE, InsightCardCheckJob } from "../insights/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
 import { MonthlyReviewDueJob, MonthlyReviewJob, ON_THE_FIRST } from "../monthly-review/index.ts";
 import { AiBackJob } from "../redo/index.ts";
@@ -25,6 +26,7 @@ export {
   BackupJob,
   BudgetTailoringJob,
   CpiFetchJob,
+  InsightCardCheckJob,
   MonthlyReviewDueJob,
   MonthlyReviewJob,
   MonthStartJob,
@@ -72,4 +74,12 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // and tries again at its retry times. Most minutes it finds nothing due. Its job logs only when
   // it does something.
   { name: "monthly review check", schedule: everyMinute, job: MonthlyReviewJob, quiet: true },
+  // Starts the day's Insight card run at 6 AM, Household time, with no sync, when a new posted
+  // Transaction has arrived since the last run (spec 08, When AI does not run). A 6 AM missed while
+  // the app was down runs at the next start. Otherwise its job makes no AI call.
+  {
+    name: "insight card check",
+    schedule: INSIGHT_CARD_CHECK_SCHEDULE,
+    job: InsightCardCheckJob,
+  },
 ];

@@ -28,7 +28,7 @@ import { applyMigrations, closeDatabase, type Database, openDatabase } from "../
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { goalWriting } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
-import { startInsightCards } from "../insights/index.ts";
+import { requestInsightCardCheck, startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -132,6 +132,9 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
         ...Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
         // Budget tailoring retries in its own job, which runs each waiting run.
         "budget tailoring": requestTailoringJob,
+        // The Insight cards retry in the Insight card check job, as a run the 6 AM check started
+        // has no Transaction left for a follow-up step.
+        "insight cards": requestInsightCardCheck,
         // The Monthly review's check each minute finds its own retry due, so its retry starts
         // nothing more.
         "monthly review": async () => undefined,
@@ -152,7 +155,8 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
     const redrafts = startRedrafts({ database, ai });
     const overspending = startOverspendingChecks({ database });
     const alertSending = startAlertSending({ database, ai });
-    // The follow-up job's last step: the day's Insight card run, on the Writer tier.
+    // The day's Insight card run, on the Writer tier: the follow-up job's last step, and the daily
+    // Insight card check job.
     const insights = startInsightCards({ database, ai });
     const monthlyReview = startMonthlyReview({ database, ai });
     // The first AI run, and the redo of no-AI work each time AI comes back.

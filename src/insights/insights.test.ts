@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AiGates, aiCost, aiSettings, householdAi, RETRY_DELAYS_MS } from "../ai/index.ts";
+import {
+  type AiGates,
+  aiCost,
+  aiSettings,
+  householdAi,
+  RETRY_DELAYS_MS,
+  runAiRetries,
+  startAiRetries,
+} from "../ai/index.ts";
 import { newAiKey, type StubMessage, StubModels } from "../ai/testing.ts";
 import { markNotAProblem } from "../anomalies/index.ts";
 import { fakeAccount, fakeTxn } from "../bank/fake.ts";
@@ -15,44 +23,28 @@ import {
   storeMonthlyReview,
 } from "../db/index.ts";
 import { followUpAgain, runFollowUp } from "../follow-up/index.ts";
-import { saveHouseholdFacts } from "../household/index.ts";
+import { householdTimeZone, saveHouseholdFacts } from "../household/index.ts";
+import { scheduledTasks } from "../jobs/list.ts";
+import { createScheduler } from "../jobs/scheduler.ts";
 import type { LogFields, Logger } from "../log.ts";
 import { tickPlanItem } from "../monthly-review/index.ts";
 import { fixtureReview } from "../monthly-review/testing.ts";
 import { propose, skipProposal } from "../proposals/index.ts";
-import { householdHourOn } from "./cards.ts";
 import {
+  INSIGHT_CARD_CHECK_SCHEDULE,
   INSIGHT_CARDS_REPLY,
   INSIGHT_CARDS_TASK,
+  InsightCardCheckJob,
   insightCards,
   markInsightCard,
   startInsightCards,
 } from "./index.ts";
 
-describe("householdHourOn", () => {
-  it("finds 6 AM on the Household's day, in summer and winter time", () => {
-    const sixOn = (iso: string, timeZone: string) =>
-      householdHourOn(new Date(iso), 6, timeZone).toISOString();
-    expect(sixOn("2026-07-01T15:00:00.000Z", "America/New_York")).toBe("2026-07-01T10:00:00.000Z");
-    expect(sixOn("2026-11-04T23:00:00.000Z", "America/New_York")).toBe("2026-11-04T11:00:00.000Z");
-    expect(sixOn("2026-11-05T09:00:00.000Z", "America/Los_Angeles")).toBe(
-      "2026-11-05T14:00:00.000Z",
-    );
-    // At 03:00 UTC on Nov 5, it is still Nov 4 in Los Angeles.
-    expect(sixOn("2026-11-05T03:00:00.000Z", "America/Los_Angeles")).toBe(
-      "2026-11-04T14:00:00.000Z",
-    );
-    // The day the clocks go back, and a zone east of UTC.
-    expect(sixOn("2026-11-01T20:00:00.000Z", "America/New_York")).toBe("2026-11-01T11:00:00.000Z");
-    expect(sixOn("2026-03-08T20:00:00.000Z", "America/New_York")).toBe("2026-03-08T10:00:00.000Z");
-    expect(sixOn("2026-11-04T23:00:00.000Z", "Asia/Tokyo")).toBe("2026-11-04T21:00:00.000Z");
-  });
-});
-
-// Insight cards (spec 08, Insight cards; Failures; Limits on each call), through the follow-up
-// job's last step: Transactions arrive through the fake adapter, and the AI is AI SDK test models
-// behind the real privacy filter, on a fake clock. No test calls an AI provider. The Household is
-// in New York: on Nov 4, 2026, 6 AM there is 11:00 UTC.
+// Insight cards (spec 08, Insight cards; When AI does not run; Failures; Limits on each call),
+// through the daily Insight card check job and the follow-up job's last step: Transactions arrive
+// through the fake adapter, and the AI is AI SDK test models behind the real privacy filter, on a
+// fake clock. No test calls an AI provider. The Household is in New York: on Nov 4, 2026, 6 AM
+// there is 11:00 UTC.
 
 const BANK = "fake-insight-bank";
 const CARD = fakeAccount({
@@ -65,8 +57,11 @@ const CARD = fakeAccount({
 const PRICE = { input: 1_000_000, output: 2_000_000 };
 const at = (iso: string) => new Date(iso);
 // Nov 4, 2026, Household time.
+const THREE_AM = at("2026-11-04T08:00:00.000Z");
 const BEFORE_SIX = at("2026-11-04T10:59:00.000Z");
 const SIX = at("2026-11-04T11:00:00.000Z");
+const EIGHT_PM = at("2026-11-05T01:00:00.000Z");
+const NEXT_SIX = at("2026-11-05T11:00:00.000Z");
 const NEXT_DAY = at("2026-11-05T11:30:00.000Z");
 
 type ReplyCard = Record<string, unknown>;
@@ -131,14 +126,38 @@ describe("Insight cards", () => {
   const runs = () => stub.calls.length - saveCalls;
   const cardRows = () => listInsightCards(bank.database);
 
-  // A sync that brings one new Transaction, posted unless `fields` says otherwise, then the
+  // The daily Insight card check at 6 AM, which is also the Insight cards' AI retry.
+  const sixAmCheck = () => new InsightCardCheckJob().run();
+
+  // A sync that brings one new Transaction, posted unless `fields` says otherwise, with no
   // follow-up job.
-  const sync = async (fields: Partial<TxnRecord> = {}) => {
+  const arrive = async (fields: Partial<TxnRecord> = {}) => {
     txns += 1;
     bank.fake.addPages(BANK, {
       added: [
         fakeTxn({
           id: `t${txns}`,
+          accountId: CARD.id,
+          amount: -2_500,
+          postedDate: "2026-11-03",
+          merchantName: "Corner Bistro",
+          ...fields,
+        }),
+      ],
+    });
+    await syncConnection(connectionId, clock);
+  };
+  // A sync, then the follow-up job.
+  const sync = async (fields: Partial<TxnRecord> = {}) => {
+    await arrive(fields);
+    return runFollowUp(clock);
+  };
+  // A sync whose only page changes a stored Transaction, then the follow-up job.
+  const change = async (id: string, fields: Partial<TxnRecord>) => {
+    bank.fake.addPages(BANK, {
+      changed: [
+        fakeTxn({
+          id,
           accountId: CARD.id,
           amount: -2_500,
           postedDate: "2026-11-03",
@@ -209,22 +228,14 @@ describe("Insight cards", () => {
     bank.close();
   });
 
-  it("runs once a day, on the first sync after 6 AM Household time that brings a new posted Transaction", async () => {
-    // Before 6 AM, a posted Transaction starts no run.
+  it("runs once a day after 6 AM: the 6 AM check runs for a posted Transaction stored at 3 AM, with no sync after 6 AM", async () => {
+    vi.setSystemTime(THREE_AM);
+    // Before 6 AM, a follow-up job makes no run.
     expect(await sync()).toBeUndefined();
     expect(runs()).toBe(0);
 
     vi.setSystemTime(SIX);
-    // A sync that brings only a pending Transaction, or only hides one, starts no run.
-    await sync({ pending: true });
-    bank.fake.addPages(BANK, { removed: [{ id: "t1" }] });
-    await syncConnection(connectionId, clock);
-    await runFollowUp(clock);
-    expect(runs()).toBe(0);
-    expect(await cardRows()).toEqual([]);
-
-    // The first posted one at 6 AM or later: one call writes every card.
-    await sync();
+    await sixAmCheck();
     expect(runs()).toBe(1);
     expect((await cardRows()).map((row) => row.title)).toEqual([
       "Card 1 title",
@@ -232,59 +243,107 @@ describe("Insight cards", () => {
       "Card 3 title",
       "Card 4 title",
     ]);
+    // The cards carry the moment the run started.
+    expect((await cardRows())[0]?.writtenAt).toEqual(SIX);
 
-    // Later syncs that day make no call.
+    // With a run written today, a second check and later follow-up jobs that bring new posted
+    // Transactions make no run.
+    await sixAmCheck();
     vi.setSystemTime(at("2026-11-04T22:00:00.000Z"));
     await sync();
     await sync();
     expect(runs()).toBe(1);
+  });
 
-    // The next day, not before 6 AM.
-    vi.setSystemTime(at("2026-11-05T10:59:00.000Z"));
+  it("runs the next day's 6 AM check for a Transaction stored at 8 PM, after the day's run", async () => {
+    vi.setSystemTime(SIX);
     await sync();
     expect(runs()).toBe(1);
-    vi.setSystemTime(NEXT_DAY);
-    await sync();
+
+    vi.setSystemTime(EIGHT_PM);
+    expect(await sync()).toBeUndefined();
+    expect(runs()).toBe(1);
+
+    // Not before 6 AM: neither the check nor a follow-up job.
+    vi.setSystemTime(at("2026-11-05T10:59:00.000Z"));
+    await sixAmCheck();
+    await sync({ pending: true });
+    expect(runs()).toBe(1);
+
+    vi.setSystemTime(NEXT_SIX);
+    await sixAmCheck();
     expect(runs()).toBe(2);
   });
 
-  it("starts no run from a Member's edit or a change to a posted Transaction, and does from a pending one that turns posted", async () => {
-    const txn = (id: string, fields: Partial<TxnRecord> = {}) =>
-      fakeTxn({
-        id,
-        accountId: CARD.id,
-        amount: -2_500,
-        postedDate: "2026-11-03",
-        merchantName: "Corner Bistro",
-        ...fields,
-      });
-    // Before 6 AM: t1 posted, t2 pending.
+  it("makes no AI call at 6 AM with no posted Transaction since the last run: a Member's edit, a change, or a pending one is not new, and one that posts is new from then", async () => {
+    vi.setSystemTime(SIX);
     await sync();
     await sync({ pending: true });
-    expect(runs()).toBe(0);
+    expect(runs()).toBe(1);
 
-    vi.setSystemTime(SIX);
+    vi.setSystemTime(EIGHT_PM);
     // A Member's edit makes t1 unhandled again, with no sync.
     const found = await bank.database.$client.execute(
       "SELECT id FROM transactions WHERE provider_transaction_id = 't1'",
     );
     await followUpAgain(bank.database, [String(found.rows[0]?.id)]);
     await runFollowUp(clock);
-    expect(runs()).toBe(0);
-
     // A sync whose only page changes the posted t1.
-    bank.fake.addPages(BANK, { changed: [txn("t1", { amount: -3_000 })] });
+    await change("t1", { amount: -3_000 });
+
+    vi.setSystemTime(NEXT_SIX);
+    await sixAmCheck();
+    expect(runs()).toBe(1);
+    expect(await change("t1", { amount: -3_500 })).toBeUndefined();
+    expect(runs()).toBe(1);
+
+    // At 9 AM the pending t2 posts: it arrived now, so the follow-up job runs.
+    vi.setSystemTime(at("2026-11-05T14:00:00.000Z"));
+    await change("t2", { pending: false });
+    expect(runs()).toBe(2);
+    expect(await cardRows()).toHaveLength(4);
+  });
+
+  it("counts only posted Transactions that are shown: a pending one, or a posted one the bank removed, starts no run", async () => {
+    vi.setSystemTime(THREE_AM);
+    await arrive({ pending: true });
+    await arrive();
+    bank.fake.addPages(BANK, { removed: [{ id: "t2" }] });
     await syncConnection(connectionId, clock);
-    await runFollowUp(clock);
+
+    vi.setSystemTime(SIX);
+    await sixAmCheck();
+    expect(await runFollowUp(clock)).toBeUndefined();
     expect(runs()).toBe(0);
     expect(await cardRows()).toEqual([]);
 
-    // A sync that turns the pending t2 posted.
-    bank.fake.addPages(BANK, { changed: [txn("t2", { pending: false })] });
-    await syncConnection(connectionId, clock);
-    await runFollowUp(clock);
+    // The pending t1 posts, and arrives now.
+    await change("t1", { pending: false });
     expect(runs()).toBe(1);
-    expect(await cardRows()).toHaveLength(4);
+  });
+
+  it("runs the 6 AM check once at the next start when the app was down at 6 AM", async () => {
+    const task = scheduledTasks.find((each) => each.name === "insight card check");
+    expect(task?.schedule).toBe(INSIGHT_CARD_CHECK_SCHEDULE);
+    const scheduler = createScheduler({
+      database: bank.database,
+      tasks: task === undefined ? [] : [task],
+      timeZone: () => householdTimeZone(bank.database),
+      now: clock,
+      startTask: (started) => new started.job().run(),
+    });
+    // The last tick before the app stops, at 3 AM, finds the next run at 6 AM.
+    vi.setSystemTime(THREE_AM);
+    await arrive();
+    expect(await scheduler.tick()).toEqual([]);
+
+    // The app is down at 6 AM. The tick at the next start, at 9 AM, runs the check once.
+    vi.setSystemTime(at("2026-11-04T14:00:00.000Z"));
+    expect(await scheduler.tick()).toEqual(["insight card check"]);
+    expect(runs()).toBe(1);
+    vi.setSystemTime(at("2026-11-04T14:01:00.000Z"));
+    expect(await scheduler.tick()).toEqual([]);
+    expect(runs()).toBe(1);
   });
 
   it("counts the new posted Transactions a sync stored before it failed", async () => {
@@ -386,60 +445,80 @@ describe("Insight cards", () => {
     ).toBe(false);
   });
 
-  it("retries a 3-card reply after 1, 5, and 30 minutes, then keeps the last cards, and a later sync that day runs again", async () => {
+  it("retries a 3-card reply after 1, 5, and 30 minutes in the Insight card check job, then keeps the last cards, and a later follow-up job that day runs again", async () => {
+    stops.push(
+      startAiRetries({ database: bank.database, runners: { "insight cards": sixAmCheck } }).stop,
+    );
     vi.setSystemTime(SIX);
     await sync();
     const kept = (await cardRows()).map((row) => row.id);
 
-    vi.setSystemTime(NEXT_DAY);
+    vi.setSystemTime(EIGHT_PM);
+    await arrive();
+    vi.setSystemTime(NEXT_SIX);
     stub.reply = reply(cards(3));
-    expect(await sync()).toEqual({ stoppedAt: "insight card check", again: expect.any(Date) });
+    await sixAmCheck();
     expect(runs()).toBe(2);
     expect(await readAiRetry(bank.database, "insight cards")).toMatchObject({ failures: 1 });
 
-    // Each retry is one call: the step stops again until the last retry fails, then ends.
+    // Each retry is one call, until the last retry fails.
     for (const delay of RETRY_DELAYS_MS) {
       const before = runs();
       // The follow-up job a sync starts early makes no call while the retry waits.
-      expect(await runFollowUp(clock)).toMatchObject({ stoppedAt: "insight card check" });
+      expect(await sync()).toBeUndefined();
+      expect(await runAiRetries(clock())).toEqual([]);
       expect(runs()).toBe(before);
       vi.setSystemTime(Date.now() + delay);
-      const run = await runFollowUp(clock);
+      expect(await runAiRetries(clock())).toEqual(["insight cards"]);
       expect(runs()).toBe(before + 1);
-      if (delay !== RETRY_DELAYS_MS.at(-1))
-        expect(run).toMatchObject({ stoppedAt: "insight card check" });
-      else expect(run).toBeUndefined();
     }
     expect(await readAiRetry(bank.database, "insight cards")).toBeUndefined();
     expect((await cardRows()).map((row) => row.id)).toEqual(kept);
-    // Nothing is left for the step: no job runs it again by itself.
+    // The no-AI path is the end: nothing runs the check again by itself.
     const calls = runs();
-    expect(await runFollowUp(clock)).toBeUndefined();
+    vi.setSystemTime(Date.now() + 60 * 60_000);
+    expect(await runAiRetries(clock())).toEqual([]);
     expect(runs()).toBe(calls);
 
-    // The failed run did not use up the day: the next sync that brings a posted Transaction runs.
+    // The failed run did not use up the day: the next follow-up job that day runs, though its sync
+    // only changes a Transaction.
     stub.reply = reply(cards(5));
-    await sync();
+    await change("t1", { amount: -3_000 });
     expect(runs()).toBe(calls + 1);
     expect(await cardRows()).toHaveLength(5);
   });
 
-  it("makes no call while AI is held back, keeps the last cards, and the next sync that day runs", async () => {
+  it("makes no call while AI is held back and keeps the last cards; the next follow-up job that day tries once more, with no loop", async () => {
+    stops.push(
+      startAiRetries({ database: bank.database, runners: { "insight cards": sixAmCheck } }).stop,
+    );
     vi.setSystemTime(SIX);
     await sync();
     const kept = (await cardRows()).map((row) => row.id);
 
-    vi.setSystemTime(NEXT_DAY);
+    vi.setSystemTime(EIGHT_PM);
+    await arrive();
+    vi.setSystemTime(NEXT_SIX);
     historyLoaded = false;
-    expect(await sync()).toBeUndefined();
+    await sixAmCheck();
     expect(runs()).toBe(1);
     expect((await cardRows()).map((row) => row.id)).toEqual(kept);
     expect((await insightCards(bank.database)).map((each) => each.id)).toEqual(kept);
+    // The no-AI path waits for no retry, and nothing runs the check again by itself.
+    expect(await readAiRetry(bank.database, "insight cards")).toBeUndefined();
+    vi.setSystemTime(NEXT_DAY);
+    expect(await runAiRetries(clock())).toEqual([]);
+    expect(runs()).toBe(1);
 
+    // The next follow-up job that day tries once more, though its sync only changes a Transaction.
     historyLoaded = true;
-    await sync();
+    await change("t1", { amount: -3_000 });
     expect(runs()).toBe(2);
     expect((await cardRows()).map((row) => row.id)).not.toEqual(kept);
+    // Then the day is used up.
+    await sync();
+    await sixAmCheck();
+    expect(runs()).toBe(2);
   });
 
   it("sends one Writer call with at most 1,000 reply tokens and no cache mark: the summary, then the task, then the feedback", async () => {
@@ -616,7 +695,7 @@ describe("Insight cards", () => {
     expect((await cardRows())[0]?.month).toBe("2026-11");
   });
 
-  it("logs a step that throws by its error's name only, and the job goes on", async () => {
+  it("logs a check that throws by its error's name only, and the job goes on", async () => {
     vi.setSystemTime(SIX);
     await bank.database.$client.execute("DROP TABLE insight_cards");
 
@@ -630,5 +709,8 @@ describe("Insight cards", () => {
     // Nothing is left for the step, so no job runs it again by itself.
     expect(await runFollowUp(clock)).toBeUndefined();
     expect(runs()).toBe(0);
+    // The 6 AM check logs the same way and never fails, so Sidequest never runs it again.
+    await expect(sixAmCheck()).resolves.toBeUndefined();
+    expect(lines.filter((line) => line.level === "error")).toHaveLength(2);
   });
 });

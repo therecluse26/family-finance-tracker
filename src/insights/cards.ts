@@ -13,6 +13,7 @@ import {
 import { registerFollowUpStep } from "../follow-up/index.ts";
 import { calendarDateIn, MINUS, percent, wholeDollars } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
+import { daily, Job, startJobUnlessWaiting } from "../jobs/index.ts";
 import { type Logger, log } from "../log.ts";
 import { listReviews, readReview } from "../monthly-review/index.ts";
 import {
@@ -27,10 +28,11 @@ import { householdSummary, plainLine, proposalParts } from "../summary/index.ts"
 // Insight cards (spec 08, Insight cards; Every AI use): at most once a day, the Writer tier writes
 // 4 to 7 cards for the dashboard's AI box from the Household summary and the feedback since the
 // last run. One call writes every card and picks every picture, and a new run replaces the whole
-// set. The run is the follow-up job's last step: the first sync after 6 AM, Household time, that
-// brings new posted Transactions starts it. A run that ends on the no-AI path does not use up the
-// day, so the next qualifying sync that day tries again. Until a run writes new cards, the last
-// cards stay, while AI is paused too.
+// set. A run is due after 6 AM, Household time, when a new posted Transaction has arrived since
+// the last run, even before 6 AM (spec 08, When AI does not run). The check runs each day at
+// 6 AM, with no sync, and as the follow-up job's last step; both ask checkInsightCards. A run that
+// ends on the no-AI path does not use up the day, so the next follow-up job that day tries again.
+// Until a run writes new cards, the last cards stay, while AI is paused too.
 
 // The Household's hour, 0 to 23, from which the day's run may start.
 export const INSIGHT_CARDS_HOUR = 6;
@@ -128,61 +130,27 @@ function hourIn(now: Date, timeZone: string): number {
 // Whether today's run is still to come: it is 6 AM or later, Household time, and no run wrote the
 // current cards today.
 export async function insightCardsDue(database: Database, now: Date): Promise<boolean> {
-  const timeZone = await timeZoneOf(database);
-  if (hourIn(now, timeZone) < INSIGHT_CARDS_HOUR) return false;
   const [last] = await listInsightCards(database);
+  return dueAfter(last, now, await timeZoneOf(database));
+}
+
+function dueAfter(last: InsightCardRow | undefined, now: Date, timeZone: string): boolean {
+  if (hourIn(now, timeZone) < INSIGHT_CARDS_HOUR) return false;
   return (
     last === undefined || calendarDateIn(last.writtenAt, timeZone) !== calendarDateIn(now, timeZone)
   );
 }
 
-// The moment of `hour` o'clock on the Household's calendar day of `now`. 6 AM is never in a
-// daylight saving gap, so two steps find the offset.
-export function householdHourOn(now: Date, hour: number, timeZone: string): Date {
-  const day = calendarDateIn(now, timeZone);
-  const wall = Date.parse(`${day}T${String(hour).padStart(2, "0")}:00:00.000Z`);
-  const offsetAt = (moment: number) => {
-    const parts = Object.fromEntries(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        hourCycle: "h23",
-        year: "numeric",
-        month: "numeric",
-        day: "numeric",
-        hour: "numeric",
-        minute: "numeric",
-        second: "numeric",
-      })
-        .formatToParts(new Date(moment))
-        .map((part) => [part.type, Number(part.value)]),
-    );
-    const shown = Date.UTC(
-      parts.year ?? 0,
-      (parts.month ?? 1) - 1,
-      parts.day ?? 1,
-      parts.hour ?? 0,
-      parts.minute ?? 0,
-      parts.second ?? 0,
-    );
-    return shown - moment;
-  };
-  const first = wall - offsetAt(wall);
-  return new Date(wall - offsetAt(first));
-}
-
-// The follow-up step's check: a run when it is due and the job brings a Transaction a sync first
-// stored as posted at 6 AM today or later, Household time (spec 08: "the first sync after 6 AM
-// that brings new posted Transactions"). A Member's edit or a change to a posted Transaction makes
-// it unhandled again, but not new.
-export async function checkInsightCards(
-  options: InsightCardOptions,
-  unhandled: readonly string[],
-): Promise<InsightCardRun> {
+// The Insight card check, which the 6 AM check and the follow-up step share: a run when it is due
+// and a new posted Transaction has arrived since the last run started, or ever before the first
+// run. A posted Transaction arrives when a sync first stores it as posted, so a Member's edit or a
+// change to a posted Transaction does not make it new. Otherwise it makes no AI call. A run that
+// ended on the no-AI path wrote no cards, so the Transactions it saw are still new.
+export async function checkInsightCards(options: InsightCardOptions): Promise<InsightCardRun> {
   const { database, now = () => new Date() } = options;
-  const at = now();
-  if (!(await insightCardsDue(database, at))) return "not due";
-  const six = householdHourOn(at, INSIGHT_CARDS_HOUR, await timeZoneOf(database));
-  if (!(await holdsNewPostedTransaction(database, unhandled, six))) return "not due";
+  const [last] = await listInsightCards(database);
+  if (!dueAfter(last, now(), await timeZoneOf(database))) return "not due";
+  if (!(await holdsNewPostedTransaction(database, last?.writtenAt))) return "not due";
   return writeInsightCards(options);
 }
 
@@ -287,10 +255,12 @@ async function feedbackParts(
 }
 
 // One Insight card run, at any hour: one Writer call that writes every card and picks every
-// picture. Cards that pass the schema replace the whole set. A pause, an AI error with no retry
-// left, or a call the privacy filter refuses takes the no-AI path: the last cards stay.
+// picture. Cards that pass the schema replace the whole set, marked with the moment the run
+// started: a Transaction stored after it is new to the next run. A pause, an AI error with no
+// retry left, or a call the privacy filter refuses takes the no-AI path: the last cards stay.
 export async function writeInsightCards(options: InsightCardOptions): Promise<InsightCardRun> {
   const { database, ai, now = () => new Date(), logger = log } = options;
+  const startedAt = now();
   const current = await listInsightCards(database);
   const summary = await householdSummary({ database, ai, now, logger }).today();
   const feedback = await feedbackParts(database, current, now());
@@ -310,7 +280,7 @@ export async function writeInsightCards(options: InsightCardOptions): Promise<In
   }
   if (!reply.ready) return "retryAt" in reply ? { retryAt: reply.retryAt } : "no AI";
 
-  const writtenAt = now();
+  const writtenAt = startedAt;
   const month = calendarDateIn(writtenAt, await timeZoneOf(database)).slice(0, 7);
   const cards: NewInsightCard[] = [];
   for (const [index, card] of reply.output.cards.entries()) {
@@ -335,26 +305,61 @@ export async function writeInsightCards(options: InsightCardOptions): Promise<In
   return "written";
 }
 
-// Registers the Insight card check as the follow-up job's last step. A failed call waits for its
-// AI retry, which starts a follow-up job: the step leaves the job's Transactions unhandled until
-// then. Any other failure ends like the no-AI path, with one log line: the next qualifying sync
-// tries again, and the job never runs the step again by itself. The start calls it before jobs run.
+// The daily Insight card check's time, 6 AM Household time (spec 10, Job list).
+export const INSIGHT_CARD_CHECK_SCHEDULE = daily(
+  `${String(INSIGHT_CARDS_HOUR).padStart(2, "0")}:00`,
+);
+
+let running: InsightCardOptions | undefined;
+
+// The check with every failure caught. A failure other than a failed call ends like the no-AI
+// path, with one log line: the next follow-up job that day tries again, and nothing runs the check
+// again by itself. A failed call's AI retry starts the Insight card check job.
+async function checkOnce(options: InsightCardOptions): Promise<void> {
+  try {
+    await checkInsightCards(options);
+  } catch (error) {
+    // Only the error's name: a failed query's message holds its values.
+    (options.logger ?? log).error("The Insight card check failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+// Registers the Insight card check as the follow-up job's last step, and gives the daily Insight
+// card check job its options. The step handles every Transaction it is given, whatever the check
+// finds: the rule reads every new posted Transaction, not only the job's. The start calls it
+// before jobs run.
 export function startInsightCards(options: InsightCardOptions): { stop(): void } {
-  const logger = options.logger ?? log;
-  const stop = registerFollowUpStep("insight card check", async (unhandled) => {
-    let run: InsightCardRun;
-    try {
-      run = await checkInsightCards(options, unhandled);
-    } catch (error) {
-      // Only the error's name: a failed query's message holds its values.
-      logger.error("The Insight card check failed", {
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-      return undefined;
-    }
-    return typeof run === "object" ? { handled: [], again: run.retryAt } : undefined;
+  if (running !== undefined) throw new Error("The Insight cards are already running.");
+  const unregister = registerFollowUpStep("insight card check", async () => {
+    await checkOnce(options);
+    return undefined;
   });
-  return { stop };
+  running = options;
+  return {
+    stop() {
+      unregister();
+      if (running === options) running = undefined;
+    },
+  };
+}
+
+// The daily Insight card check at 6 AM, Household time, with no sync (spec 08, When AI does not
+// run), and the Insight cards' AI retry. When the app is down at 6 AM, the start-up tick runs it
+// once. It makes no AI call unless a run is due and a new posted Transaction has arrived since the
+// last run. It never fails, so Sidequest never runs it again. It is safe to run twice: a second
+// run finds the day's run written, or no new posted Transaction.
+export class InsightCardCheckJob extends Job {
+  override async run(): Promise<void> {
+    if (running === undefined) throw new Error("The Insight cards are not running.");
+    await checkOnce(running);
+  }
+}
+
+// Starts the Insight card check job, unless one already waits: the Insight cards' AI retry.
+export function requestInsightCardCheck(): Promise<boolean> {
+  return startJobUnlessWaiting(InsightCardCheckJob, []);
 }
 
 // --- The AI box ---------------------------------------------------------------------------------

@@ -764,7 +764,7 @@ export const transactions = sqliteTable(
     historyLoad: integer("history_load", { mode: "boolean" }).notNull().default(false),
     // When a sync first stored the Transaction as posted: a new posted record, or a pending one
     // that turned posted. A change to a posted one, or a Member's edit, keeps it. The day's Insight
-    // card run starts only from a sync that brings one (spec 08, Insight cards).
+    // card run starts only when one arrived since the last run (spec 08, When AI does not run).
     postedSeenAt: moment("posted_seen_at"),
   },
   (table) => [
@@ -775,6 +775,8 @@ export const transactions = sqliteTable(
     index("transactions_account_posted_date").on(table.accountId, table.postedDate),
     // Transfer pairing reads the Transactions of one amount around some dates.
     index("transactions_amount_posted_date").on(table.amount, table.postedDate),
+    // The Insight card check asks for a posted Transaction stored since the last run.
+    index("transactions_posted_seen_at").on(table.postedSeenAt),
   ],
 );
 
@@ -1712,7 +1714,8 @@ export const insightCards = sqliteTable(
     id: text("id").primaryKey(),
     // The card's place in the AI's order, from 1.
     position: integer("position").notNull(),
-    // When the run wrote it, and the Household's month then, YYYY-MM, which its picture shows.
+    // When the run that wrote it started, as its Household summary is from then, and the
+    // Household's month then, YYYY-MM, which its picture shows.
     writtenAt: moment("written_at").notNull(),
     month: text("month").notNull(),
     group: text("card_group", { enum: ["worth_acting_on", "heads_up", "good_news"] }).notNull(),
