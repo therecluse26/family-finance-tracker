@@ -77,23 +77,25 @@ export type HistoryStatus = {
 export async function historyStatus(database: Database, now = new Date()): Promise<HistoryStatus> {
   const { ended, connections, holding } = await waitAt(database, now);
   const holdingIds = new Set(holding.map((connection) => connection.id));
-  const progress = await historyProgress(database);
+  const loading = connections.filter(
+    (connection) =>
+      !connection.historyLoaded &&
+      (connection.health === "healthy" || connection.health === "retrying"),
+  );
+  const progress = await historyProgress(
+    database,
+    loading.map((connection) => connection.id),
+  );
   return {
     waitEnded: ended,
     aiMayRun: holding.length === 0,
-    loading: connections
-      .filter(
-        (connection) =>
-          !connection.historyLoaded &&
-          (connection.health === "healthy" || connection.health === "retrying"),
-      )
-      .map((connection) => ({
-        connectionId: connection.id,
-        bankName: connection.bankName,
-        transactions: progress.get(connection.id)?.transactions ?? 0,
-        oldestDate: progress.get(connection.id)?.oldestDate ?? null,
-        holdsBackAi: holdingIds.has(connection.id),
-      })),
+    loading: loading.map((connection) => ({
+      connectionId: connection.id,
+      bankName: connection.bankName,
+      transactions: progress.get(connection.id)?.transactions ?? 0,
+      oldestDate: progress.get(connection.id)?.oldestDate ?? null,
+      holdsBackAi: holdingIds.has(connection.id),
+    })),
   };
 }
 

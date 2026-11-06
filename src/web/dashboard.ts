@@ -99,19 +99,28 @@ export type RepairBanner = { notice: NoticeView; connection: ConnectionView | un
 
 export type StatusLines = {
   repairs: RepairBanner[];
-  // "Loading history for <bank>", with its progress, one per Connection.
-  loading: { connectionId: string; text: string }[];
+  // "Your history is loading": each bank with its progress, one per Connection.
+  loading: { connectionId: string; bankName: string; text: string }[];
   // Every other open System notice.
   others: NoticeView[];
 };
 
 const count = (n: number) => n.toLocaleString("en-US");
 
-export function loadingLine(loading: HistoryStatusView["loading"][number], today: string): string {
-  const so = `${count(loading.transactions)} ${loading.transactions === 1 ? "Transaction" : "Transactions"} so far`;
-  const back =
-    loading.oldestDate === null ? "" : `, back to ${dateLabel(loading.oldestDate, today)}`;
-  return `Loading history for ${loading.bankName}: ${so}${back}`;
+// One history load's progress: "1,240 Transactions · back to Mar 2025".
+export function loadingLine(loading: HistoryStatusView["loading"][number]): string {
+  const so = `${count(loading.transactions)} ${loading.transactions === 1 ? "Transaction" : "Transactions"}`;
+  return loading.oldestDate === null ? so : `${so} · back to ${monthLabel(loading.oldestDate)}`;
+}
+
+// Whether a Connection's history load ended between two reads: it left the loading list. The
+// dashboard then reads every box again, since their numbers now count the whole history.
+export function historyLoadEnded(
+  before: Pick<HistoryStatusView, "loading">,
+  after: Pick<HistoryStatusView, "loading">,
+): boolean {
+  const still = new Set(after.loading.map((each) => each.connectionId));
+  return before.loading.some((each) => !still.has(each.connectionId));
 }
 
 // The lines above the boxes (spec 07, Header and status lines). A notice that asks for Repair is
@@ -120,7 +129,6 @@ export function statusLines(
   notices: readonly NoticeView[],
   connections: readonly ConnectionView[],
   history: Pick<HistoryStatusView, "loading">,
-  today: string,
 ): StatusLines {
   const byId = new Map(connections.map((connection) => [connection.id, connection]));
   return {
@@ -129,7 +137,8 @@ export function statusLines(
       .map((notice) => ({ notice, connection: byId.get(notice.repairConnectionId ?? "") })),
     loading: history.loading.map((each) => ({
       connectionId: each.connectionId,
-      text: loadingLine(each, today),
+      bankName: each.bankName,
+      text: loadingLine(each),
     })),
     others: notices.filter((notice) => notice.repairConnectionId === null),
   };
@@ -519,6 +528,9 @@ export async function loadDashboard(now = new Date()): Promise<DashboardData> {
 
 // Closes an event notice for every Member.
 export const closeNotice = (id: string) => api.notices[":id"].close.$post({ param: { id } });
+
+// The history load progress alone, which the dashboard reads again while a load runs.
+export const loadHistoryStatus = () => read<HistoryStatusView>(api["history-status"].$get());
 
 // Retry on the notice of a stopped First run or bank-added-later job: starts it again.
 export const retryHistoryJobs = () => api["history-jobs"].retry.$post();
