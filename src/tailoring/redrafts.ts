@@ -53,16 +53,6 @@ function running(): Services {
   return services;
 }
 
-// Triggers check one at a time: a check reads the waiting run and the inputs, and its writes must
-// not overlap another's transaction on app.db, which fails with SQLITE_BUSY. The app is one Node
-// process (ADR 0002), so this queue covers every trigger.
-let queue: Promise<unknown> = Promise.resolve();
-function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
-  const run = queue.then(work);
-  queue = run.catch(() => {});
-  return run;
-}
-
 // True when `to` differs from `from` by more than 10% of `from`.
 const movedFrom = (from: number, to: number) =>
   Math.abs(to - from) * 100 > Math.abs(from) * MOVE_PERCENT;
@@ -84,32 +74,28 @@ async function ask(trigger: RedraftTrigger): Promise<"asked" | "waits" | undefin
 }
 
 // The Income redraft check. True when it asked for a redraft.
-export function checkIncomeRedraft(): Promise<boolean> {
+export async function checkIncomeRedraft(): Promise<boolean> {
   const { database, now } = running();
-  return oneAtATime(async () => {
-    const base = await readRedraftBase(database);
-    if (base === undefined || base.redraftWaits) return false;
-    const income = (await steadyIncome(database, now())).amount;
-    if (!movedFrom(base.pending.steadyIncome, income)) return false;
-    return (await ask("Income")) === "asked";
-  });
+  const base = await readRedraftBase(database);
+  if (base === undefined || base.redraftWaits) return false;
+  const income = (await steadyIncome(database, now())).amount;
+  if (!movedFrom(base.pending.steadyIncome, income)) return false;
+  return (await ask("Income")) === "asked";
 }
 
 // The Benchmark redraft check, as the app starts. True when it asked for a redraft.
-export function checkBenchmarkRedraft(): Promise<boolean> {
+export async function checkBenchmarkRedraft(): Promise<boolean> {
   const { database, now } = running();
-  return oneAtATime(async () => {
-    const base = await readRedraftBase(database);
-    if (base === undefined) return false;
-    if (benchmarkSnapshot().ce.dataYear <= base.pending.ceDataYear) return false;
-    const at = now();
-    const last = base.benchmarkRedraftAt;
-    if (last !== null && at.getTime() - last.getTime() < BENCHMARK_REDRAFT_MS) return false;
-    const asked = await ask("Benchmark");
-    // A redraft already waiting drafts with the new Benchmarks, so it counts as this year's.
-    if (asked !== undefined) await markBenchmarkRedraft(database, at);
-    return asked === "asked";
-  });
+  const base = await readRedraftBase(database);
+  if (base === undefined) return false;
+  if (benchmarkSnapshot().ce.dataYear <= base.pending.ceDataYear) return false;
+  const at = now();
+  const last = base.benchmarkRedraftAt;
+  if (last !== null && at.getTime() - last.getTime() < BENCHMARK_REDRAFT_MS) return false;
+  const asked = await ask("Benchmark");
+  // A redraft already waiting drafts with the new Benchmarks, so it counts as this year's.
+  if (asked !== undefined) await markBenchmarkRedraft(database, at);
+  return asked === "asked";
 }
 
 // True when any Category's 12-month average moves more than 10% with the Connection's
@@ -148,26 +134,22 @@ async function averagesMoved(
 
 // The New bank redraft check, as a bank added later finishes its history load. True when it
 // asked for a redraft. A redraft that waits, or runs, takes it: the hook runs once per bank.
-export function checkNewBankRedraft(connectionId: string): Promise<boolean> {
+export async function checkNewBankRedraft(connectionId: string): Promise<boolean> {
   const { database, now } = running();
-  return oneAtATime(async () => {
-    const base = await readRedraftBase(database);
-    if (base === undefined) return false;
-    if (!(await averagesMoved(database, connectionId, now()))) return false;
-    return (await ask("New bank")) === "asked";
-  });
+  const base = await readRedraftBase(database);
+  if (base === undefined) return false;
+  if (!(await averagesMoved(database, connectionId, now()))) return false;
+  return (await ask("New bank")) === "asked";
 }
 
 // The Facts redraft: every edit of the Household facts asks for one, once the first draft is
 // stored. True when it asked for a redraft. A redraft that waits, or runs, takes it: no later check
 // would find the edit.
-export function factsRedraft(): Promise<boolean> {
+export async function factsRedraft(): Promise<boolean> {
   const { database } = running();
-  return oneAtATime(async () => {
-    const base = await readRedraftBase(database);
-    if (base === undefined) return false;
-    return (await ask("Facts")) === "asked";
-  });
+  const base = await readRedraftBase(database);
+  if (base === undefined) return false;
+  return (await ask("Facts")) === "asked";
 }
 
 // A Member typed or cleared Steady Income: the Income redraft check runs. It never fails the

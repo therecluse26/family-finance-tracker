@@ -5,7 +5,13 @@ import { fileURLToPath } from "node:url";
 import { type Client, createClient, type ResultSet } from "@libsql/client";
 import { sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { closeDatabase, type Database, openDatabase } from "./client.ts";
+import {
+  closeDatabase,
+  type Database,
+  type DatabaseOptions,
+  openDatabase,
+  type Queries,
+} from "./client.ts";
 import { applyMigrations } from "./migrate.ts";
 
 // Test support: a new migrated app.db, app.db's settings, and migration folders in drizzle-kit's
@@ -14,10 +20,10 @@ import { applyMigrations } from "./migrate.ts";
 export type TestDatabase = { database: Database; path: string; close(): void };
 
 // A new app.db in a new folder, with the app's own migrations applied.
-export async function newTestDatabase(): Promise<TestDatabase> {
+export async function newTestDatabase(options?: DatabaseOptions): Promise<TestDatabase> {
   const dir = mkdtempSync(join(tmpdir(), "fft-db-"));
   const path = join(dir, "app.db");
-  const database = await openDatabase(`file:${path}`);
+  const database = await openDatabase(`file:${path}`, options);
   await applyMigrations(database, SHIPPED_FOLDER);
   return {
     database,
@@ -135,6 +141,19 @@ export async function readEverySetting(client: Pick<Client, "execute">): Promise
     values[name] = rows.length === 1 && rows[0]?.length === 1 ? rows[0][0] : rows;
   }
   return { values, unreadable };
+}
+
+// Runs each statement in a transaction, so on app.db's write connection, which a read on the
+// database never uses. A failed statement throws the driver's own error, as the client does.
+export function onTransaction(tx: Queries): Pick<Client, "execute"> {
+  const execute = async (statement: string) => {
+    try {
+      return await tx.run(sql.raw(statement));
+    } catch (error) {
+      throw error instanceof Error && error.cause !== undefined ? error.cause : error;
+    }
+  };
+  return { execute: execute as Client["execute"] };
 }
 
 // Reads every setting on a plain libSQL connection, with none of the driver setup's options.
