@@ -175,6 +175,91 @@ describe("Merchant names", () => {
   });
 });
 
+// Card payment lines (spec 04, Names): a line under Plaid's credit card payment code is named for
+// the bank it pays, never for its payment words or the card's last 4.
+describe("card payment lines", () => {
+  const cardPayment = (description: string, fields: { merchantName?: string } = {}) =>
+    cleanMerchant({
+      description,
+      merchantName: fields.merchantName ?? null,
+      merchantId: null,
+      category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+    });
+
+  it.each([
+    ["CHASE CARD ENDING IN 4821", "Chase card payment"],
+    ["CAPITAL ONE MOBILE PYMT", "Capital One card payment"],
+    ["THANK YOU-MOBILE", "Card payment"],
+    // The demo Household's lines, on the checking Account and on each card.
+    ["CAPITAL ONE MOBILE PMT", "Capital One card payment"],
+    ["PAYMENT TO CHASE CARD ENDING IN 4821", "Chase card payment"],
+    ["SYNCHRONY BANK PAYMENT ACCT ENDING 4821", "Synchrony Bank card payment"],
+    ["Payment Thank You-Mobile", "Card payment"],
+    ["PAYMENT - THANK YOU", "Card payment"],
+    ["PAYMENT RECEIVED - THANK YOU", "Card payment"],
+    // More payment words, dates, and masks.
+    ["CITI AUTOPAY 260105 ONLINE", "Citi card payment"],
+    ["DISCOVER E-PAYMENT 10/05", "Discover card payment"],
+    ["AMEX EPAYMENT ACH PMT", "Amex card payment"],
+    ["BANK OF AMERICA ONLINE PMT XXXX4821", "Bank Of America card payment"],
+    ["CHASE CREDIT CRD AUTOPAY PPD ID: 4760039224", "Chase card payment"],
+  ])("names %j %j", (description, name) => {
+    expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
+  });
+
+  it("keeps no digit of the card in the name, in any script or form", () => {
+    for (const description of [
+      "CHASE CARD ENDING IN ４８２１",
+      "CHASE CARD ENDING IN ٤٨٢١",
+      "CHASE CARD ENDING IN 4​8​2​1",
+      "CHASE CARD ENDING IN 4-8-2-1",
+      "CHASE4821 CARD",
+      "CHASE CARD ENDING IN *4821",
+      "CHASE CARD ENDING IN X4821",
+    ]) {
+      expect(cardPayment(description).merchant?.name, description).toBe("Chase card payment");
+    }
+  });
+
+  it("names the card payment even when the provider names a Merchant", () => {
+    expect(cardPayment("CHASE CARD ENDING IN 4821", { merchantName: "Chase" }).merchant).toEqual({
+      id: null,
+      name: "Chase card payment",
+    });
+  });
+
+  it("leaves a line under any other code to the usual rules", () => {
+    expect(
+      cleanMerchant({
+        description: "CHASE CARD ENDING IN 4821",
+        merchantName: null,
+        merchantId: null,
+        category: { name: "TRANSFER_OUT_ACCOUNT_TRANSFER" },
+      }).merchant?.name,
+    ).toBe("Chase Card Ending In");
+  });
+
+  // K7's hard lines carry no card payment code, and their names stay as they were.
+  it.each([
+    ["VENMO PAYMENT 1234567890 WEB ID", "Venmo"],
+    ["ZELLE PAYMENT TO 5551234", "Zelle"],
+    ["PAYPAL *INST XFER", "PayPal"],
+    ["CASH APP*SENT", "Cash App"],
+    ["VENMO CASHOUT", "Venmo"],
+    ["VENMO *MORGAN LEE", "Morgan Lee"],
+    ["ZELLE PAYMENT TO JOHN SMITH", "John Smith"],
+    ["PAYPAL *ETSY SHOP", "Etsy Shop"],
+    ["CASH APP*JOHN SMITH", "John Smith"],
+    ["PURCHASE 1005 BLUEBIRD BOOKS", "Bluebird Books"],
+    ["BEST BUY CO", "Best Buy Co"],
+    ["XXXX4821", null],
+    ["REF#12345678", null],
+    ["(800) 555-1212", null],
+  ])("keeps the K7 line %j as %j", (description, name) => {
+    expect(fromBank(description).merchant?.name ?? null).toBe(name);
+  });
+});
+
 // Payment-app lines (spec 03, Payment apps): the person a line names is the Merchant; with no
 // person, the payment app is.
 describe("payment-app lines", () => {

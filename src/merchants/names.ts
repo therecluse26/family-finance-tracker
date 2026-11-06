@@ -157,6 +157,36 @@ export function cleanDescription(description: string): { name: string; unsure: b
   return { name: titleCase(parts.join(" ")), unsure };
 }
 
+// Plaid's code for a credit card payment, on the Account that pays and on the card it pays.
+const CARD_PAYMENT_CODE = "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT";
+
+// The words a card payment line adds around the bank's name, such as "card ending in", "mobile
+// pymt", "autopay", "online", and "thank you". They name the payment, not the bank.
+const CARD_PAYMENT_WORDS = new Set(
+  (
+    "ach acct account auto autopay bill card cards ccd conf cr credit crd debit des e end ending " +
+    "epay epayment from id in internet mob mobile online onln pay paymt payment payments pmt ppd " +
+    "pymnt pymt received ref thank thanks to transfer web xfer you"
+  ).split(" "),
+);
+// What a masked card number leaves once its digits go, such as the "XXXX" of "XXXX4821".
+const CARD_MASK = /^x+$/i;
+
+// The name of a card payment line (spec 04, Names): "<bank> card payment", where the bank is what
+// the line names once the payment words, masks, and every run of digits go, or "Card payment" when
+// it names no bank. Digits in any script go, with the format characters that may split them, so a
+// card's last 4 never stays in the name.
+function cardPaymentName(description: string): string {
+  const text = description.replace(/\p{Cf}/gu, "").replace(/\p{N}+/gu, " ");
+  const bank = cleanDescription(text)
+    .name.split(/[^\p{L}\p{M}&']+/u)
+    .filter(
+      (word) =>
+        /\p{L}/u.test(word) && !CARD_PAYMENT_WORDS.has(word.toLowerCase()) && !CARD_MASK.test(word),
+    );
+  return bank.length === 0 ? "Card payment" : `${bank.join(" ")} card payment`;
+}
+
 // A name counts as fixed when it has 1 to 4 words and no word is only digits or symbols.
 export function isFixedName(name: string): boolean {
   const parts = words(name);
@@ -167,7 +197,8 @@ export function isFixedName(name: string): boolean {
 // a payment-app line that names a person, that person is the Merchant, with no Merchant ID, so two
 // people never share the app's ID. In one that names no one, such as `VENMO PAYMENT`, the payment
 // app is the Merchant (spec 04, Identity). A line that names another Merchant is an ordinary
-// purchase.
+// purchase. A card payment line, under Plaid's credit card payment code, is "<bank> card payment",
+// whatever Merchant name the provider gives it.
 export function cleanMerchant(txn: {
   description: string;
   merchantName: string | null;
@@ -179,6 +210,9 @@ export function cleanMerchant(txn: {
   const line = paymentAppLine({ ...txn, providerCategory: txn.category?.name ?? null });
   if (line !== undefined && typeof line.party === "object") {
     return { merchant: { id: null, name: line.party.person }, needsAi: false };
+  }
+  if (txn.category?.name === CARD_PAYMENT_CODE) {
+    return { merchant: { id, name: cardPaymentName(txn.description) }, needsAi: false };
   }
   const providerName = txn.merchantName?.replace(/\s+/g, " ").trim() ?? "";
   if (providerName !== "") return { merchant: { id, name: providerName }, needsAi: false };

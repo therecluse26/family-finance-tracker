@@ -22,7 +22,7 @@ import {
 } from "../db/index.ts";
 import { registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
-import { merchantKey } from "../merchants/index.ts";
+import { isPaymentApp, merchantKey } from "../merchants/index.ts";
 import { endCondition, raiseNotice } from "../notify/index.ts";
 import {
   addDays,
@@ -53,9 +53,14 @@ export const ANOMALY_CHECKS_CAP = 3;
 export const ANOMALY_CHECKS_STOPPED = "anomaly checks stopped";
 
 // Frequent purchases (spec 06, Rules behind the table): 3 or more other Transactions at the
-// Merchant in the 60 days before the earlier one.
+// Merchant near the earlier one. For a Duplicate charge, in the 60 days before it; for a New
+// Recurring charge, in the 60 days before or after it.
 const FREQUENT_COUNT = 3;
 const FREQUENT_DAYS = 60;
+
+// Spending in this Category never forms a Recurring charge, so it never fires a New Recurring
+// charge (spec 06, Finding a series). Card interest sends the Card interest or fee Alert instead.
+const INTEREST_AND_FEES = "Interest and fees";
 
 // A Duplicate charge's purchase dates are at most this many days apart.
 const DUPLICATE_DAYS = 2;
@@ -211,16 +216,16 @@ async function readFacts(database: Database, now: Date): Promise<Facts> {
   return facts;
 }
 
-// Whether 3 or more Transactions in `list` that `counts` keeps are dated in the 60 days before
-// `date`.
-function frequentBefore(
+// Whether 3 or more Transactions in `list` that `counts` keeps are dated from `from` up to `to`.
+// `list` is one Merchant's, sorted by `dateOf`, so this reads only that window.
+function frequentWithin(
   list: readonly Spent[],
   dateOf: (txn: Spent) => string,
-  date: string,
+  from: string,
+  to: string,
   counts: (txn: Spent) => boolean = () => true,
 ): boolean {
-  const within = between(list, dateOf, addDays(date, -FREQUENT_DAYS), addDays(date, -1));
-  return within.filter(counts).length >= FREQUENT_COUNT;
+  return between(list, dateOf, from, to).filter(counts).length >= FREQUENT_COUNT;
 }
 
 const isEarlier = (a: Spent, b: Spent, dateOf: (txn: Spent) => string) =>
@@ -230,9 +235,13 @@ const isEarlier = (a: Spent, b: Spent, dateOf: (txn: Spent) => string) =>
 // Merchant, for the same amount to the cent, with a purchase date 0 to 2 days away. The nearest
 // one pairs with it. Never for a frequent purchase: 3 or more other Transactions at that Merchant
 // at that amount in the 60 days before the earlier one. Never for a Transaction of a Duplicate
-// charge a Member marked "Not a problem": it is cleared. The pair, earlier first.
+// charge a Member marked "Not a problem": it is cleared. Never when the Merchant is the payment app,
+// as in a payment-app line that names no person or shop: two of those for one amount are often
+// payments to different people (spec 06, A payment app as the Merchant). The pair, earlier first.
 function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
-  if (txn.group === null) return undefined;
+  if (txn.group === null || (txn.merchant !== null && isPaymentApp(txn.merchant))) {
+    return undefined;
+  }
   const sameAmount = facts.byAmount.get(amountKey(txn.group, txn.amount)) ?? [];
   const near = between(
     sameAmount,
@@ -251,7 +260,9 @@ function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
   const pair: [Spent, Spent] = isEarlier(partner, txn, byPurchaseDate)
     ? [partner, txn]
     : [txn, partner];
-  if (frequentBefore(sameAmount, byPurchaseDate, pair[0].purchaseDate)) return undefined;
+  const first = pair[0].purchaseDate;
+  const from = addDays(first, -FREQUENT_DAYS);
+  if (frequentWithin(sameAmount, byPurchaseDate, from, addDays(first, -1))) return undefined;
   return pair;
 }
 
@@ -275,11 +286,15 @@ function priceFrom(increase: { base: number; recurringCharge: string }, facts: F
 
 // A New Recurring charge: the Transaction and exactly one earlier Transaction from its Merchant
 // make a weekly, 2-week, or monthly schedule, within 7.5% of each other. Never for one that
-// continues or revives a Recurring charge, a Merchant and amount marked known, or a frequent
-// purchase: 3 or more other Transactions at that Merchant, at any amount, in the 60 days before the
-// earlier one, outside its Recurring charges.
+// continues or revives a Recurring charge, a Merchant and amount marked known, Spending in Interest
+// and fees, or a frequent purchase: 3 or more other Transactions at that Merchant, at any amount,
+// in the 60 days before or after the earlier one, outside its Recurring charges and the pair. The
+// window looks after the earlier one too, as for a frequent shop (spec 06, Finding a series), so a
+// shop's pair at the start of a history, where nothing comes before, fires nothing.
 function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: string } | undefined {
-  if (txn.group === null || facts.inCharges.has(txn.id)) return undefined;
+  if (txn.group === null || facts.inCharges.has(txn.id) || txn.category === INTEREST_AND_FEES) {
+    return undefined;
+  }
   const { group } = txn;
   if (
     facts.known.some(
@@ -302,9 +317,13 @@ function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: stri
   if (only === undefined || fits.length !== 1) return undefined;
   const earlier = facts.spent.get(only.txn.id);
   if (earlier === undefined) return undefined;
-  // A Recurring charge's Transactions are not visits, as when finding a series (spec 06).
-  const visit = (other: Spent) => !facts.inCharges.has(other.id);
-  if (frequentBefore(merchantTxns, byPostedDate, earlier.postedDate, visit)) return undefined;
+  // The pair and a Recurring charge's Transactions are not visits, as when finding a series
+  // (spec 06).
+  const visit = (other: Spent) =>
+    other.id !== earlier.id && other.id !== txn.id && !facts.inCharges.has(other.id);
+  const from = addDays(earlier.postedDate, -FREQUENT_DAYS);
+  const to = addDays(earlier.postedDate, FREQUENT_DAYS);
+  if (frequentWithin(merchantTxns, byPostedDate, from, to, visit)) return undefined;
   return { earlier, nextDate: nextExpected(only.schedule, txn.postedDate) };
 }
 
