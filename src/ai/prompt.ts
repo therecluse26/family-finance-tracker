@@ -28,8 +28,11 @@ export type AiMessage =
 export type SummaryPart = string | TypedValue;
 
 // One Transaction of a Quick batch, as plain fields, such as its Merchant, amount, and date. It
-// never holds the Transaction's ID: the AI answers each by its row number in the batch.
-export type BatchItem = Readonly<Record<string, string | number | boolean | null>>;
+// never holds the Transaction's ID: the AI answers each by its row number in the batch. Each
+// amount, date, and count the app made is a typed value (src/ai/typed.ts), so the privacy filter
+// keeps it as the app built it, as in a tool's result: the AI reads "48.21" even when an Account's
+// last 4 is 4821. Text, such as a bank description, still goes through the full filter.
+export type BatchItem = Readonly<Record<string, string | number | boolean | null | TypedValue>>;
 
 // The schema a structured reply must pass. Optional fields are .nullable(), never .optional(), for
 // OpenAI's strict mode. Counts, such as "4 to 7 cards", are part of it.
@@ -210,7 +213,9 @@ const isBatchItem = (item: unknown): item is BatchItem =>
     ([field, value]) =>
       field !== "row" &&
       !ID_FIELD.test(field) &&
-      (value === null || ["string", "number", "boolean"].includes(typeof value)),
+      (value === null ||
+        ["string", "number", "boolean"].includes(typeof value) ||
+        isTypedValue(value)),
   );
 
 // Whether every object in a JSON schema lists each of its fields as required: an optional field
@@ -379,8 +384,8 @@ export const holdsOtherEscape = (json: string) => json.replace(/\\[\\"]/g, "").i
 // A Quick batch with each text value filtered on its own, before any row is written as JSON (spec
 // 08, Privacy filter). A removal then never takes a row number, a field name, or the next field
 // with it, so each row stays one JSON object with its own row number. Each value is made plain
-// first, so the filter reads the characters the AI reads. The call path filters the whole request
-// again on its way out.
+// first, so the filter reads the characters the AI reads. A typed value passes as it is, as in the
+// filter's json. The call path filters the whole request again on its way out.
 export function filterBatch<OUTPUT>(
   call: AiCall<OUTPUT>,
   filter: (text: string) => string,
@@ -405,7 +410,8 @@ export function filterBatch<OUTPUT>(
 // "\n" and a lone surrogate as "\ud800", and that letter would break the filter's digit runs and
 // stick to a name. With every control character a space and every text well-formed, the JSON holds
 // no escape but \" and \\, which hold no letter or digit. A row that still holds another is
-// refused.
+// refused. A typed value goes as its marked object, as in a tool's result, and the privacy filter
+// sends its bare value in its place.
 function batchRow(row: number, item: BatchItem): string {
   const fields = Object.entries(item).map(([field, value]) => [
     plainField(field),

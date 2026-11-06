@@ -475,7 +475,7 @@ describe("the first AI run and the redo of no-AI work", () => {
       // The pick for the friend's money: the dinner, with high confidence.
       pick = (rows) => ({
         spendingRow:
-          rows.find((row) => row.kind === "Spending" && row.amount === "$60.00")?.row ?? null,
+          rows.find((row) => row.kind === "Spending" && row.amount === "60.00")?.row ?? null,
         confidence: "high",
       });
       await atTheCap();
@@ -646,7 +646,7 @@ describe("the first AI run and the redo of no-AI work", () => {
       async (confidence) => {
         pick = (rows) => ({
           spendingRow:
-            rows.find((row) => row.kind === "Spending" && row.amount === "$60.00")?.row ?? null,
+            rows.find((row) => row.kind === "Spending" && row.amount === "60.00")?.row ?? null,
           confidence,
         });
         await atTheCap();

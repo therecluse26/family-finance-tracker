@@ -290,7 +290,7 @@ describe("the Quick tier in the categorization step", () => {
           row: 1,
           merchant: "Merchant plain",
           description: "CARD PURCHASE PLAIN",
-          amount: "−$25.00",
+          amount: "-25.00",
           date: "2026-10-03",
           account: expect.any(String),
           providerCategory: "FOOD_AND_DRINK_RESTAURANT",
@@ -299,7 +299,7 @@ describe("the Quick tier in the categorization step", () => {
           row: 2,
           merchant: "Merchant with-mcc",
           description: "CARD PURCHASE WITH-MCC",
-          amount: "−$25.00",
+          amount: "-25.00",
           date: "2026-10-04",
           account: call?.rows[0]?.account,
           providerCategory: "GENERAL_SERVICES_OTHER",
@@ -688,6 +688,31 @@ describe("the Quick tier in the categorization step", () => {
       expect(read).not.toMatch(/dana|whitfield/i);
       // The model reads no escape that puts a letter inside a card number or before a name.
       for (const text of call?.texts ?? []) expect(text).not.toMatch(/\\[a-z]/i);
+    });
+
+    it("keeps an amount whose digits are an Account's last 4, and removes that last 4 from text", async () => {
+      await connectAi();
+      const savings = fakeAccount({ id: "acc-savings", subtype: "savings", mask: "4821" });
+      await sync({
+        accounts: [CARD, savings],
+        added: [
+          buy("same-digits", "2026-10-12", {
+            amount: -4_821,
+            description: "PURCHASE 4821 BLUEBIRD BOOKS",
+          }),
+        ],
+      });
+
+      const [fix] = callsOf("category fix");
+      expect(fix?.rows).toEqual([
+        expect.objectContaining({
+          row: 1,
+          description: "PURCHASE [removed] BLUEBIRD BOOKS",
+          amount: "-48.21",
+          date: "2026-10-12",
+        }),
+      ]);
+      for (const text of fix?.texts ?? []) expect(text).not.toMatch(/\\[a-z]/i);
     });
 
     it("keeps a cleanup row whole when its description is only a card number", async () => {

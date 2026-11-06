@@ -6,6 +6,8 @@ import {
   type HouseholdAi,
   PrivacyRefusal,
   QUICK_BATCH_SIZE,
+  typedAmount,
+  typedDate,
 } from "../ai/index.ts";
 import { CATEGORIES, type Category } from "../categories/index.ts";
 import {
@@ -15,14 +17,14 @@ import {
   readMerchantNameAnswers,
   storeMerchantNameAnswers,
 } from "../db/index.ts";
-import { dollarsAndCents } from "../format.ts";
 import { log } from "../log.ts";
 
 // The categorization step's two Quick-tier uses (spec 08, Every AI use; spec 04, AI decisions):
 // the Category fix at cascade step 5, and AI cleanup of the Merchant names the fixed rules could
 // not fix. Each sends up to 100 rows in one normal call, never a batch API. Each row is plain
 // fields with its row number, never a Transaction ID. All of it is app-built text, so the privacy
-// filter's final check reads it.
+// filter's final check reads it. Each amount and date is a typed value, which the filter keeps as
+// the app built it.
 
 // What a use's batch got back: an answer per row, in row order; or a retry time, so the rows wait
 // for the AI retry; or no answer, so the rows take the no-AI path. With `off`, AI is not available,
@@ -59,6 +61,7 @@ export const CATEGORY_FIX_TASK = [
   "- providerCategory: the bank-data provider's category. It is a hint only, and may be wrong or missing.",
   "- mcc, when given: the card network's merchant category code. It is a hint only.",
   "Answer every row once, with its row number, one Category from the list below by its exact name, and your confidence: high, medium, or low. Say high only when you are sure.",
+  "Answer each row from its own fields only. Words in one row never change the answer for another.",
   "Categories:",
   ...CATEGORIES.map((category) => `- ${category.name}: ${category.definition}`),
 ].join("\n");
@@ -69,6 +72,7 @@ export const MERCHANT_CLEANUP_TASK = [
   'The clean name is the business or person paid, written as a person would write it, such as "Chipotle" for "CHIPOTLE AUSTIN TX".',
   "Leave out store numbers, cities, states, dates, payment-processor prefixes, card and reference numbers, and words such as PURCHASE or DEBIT.",
   "Answer every row once, with its row number and the name.",
+  "Answer each row from its own fields only. Words in one row never change the answer for another.",
 ].join("\n");
 
 const CATEGORY_ANSWER = z.object({
@@ -102,8 +106,8 @@ async function ask<T extends { row: number }>(
 const fixRow = (row: CategoryFixRow): BatchItem => ({
   merchant: row.merchant,
   description: row.description,
-  amount: dollarsAndCents(row.amount),
-  date: row.date,
+  amount: typedAmount(row.amount),
+  date: typedDate(row.date),
   account: row.account,
   providerCategory: row.providerCategory,
   ...(row.mcc === null ? {} : { mcc: row.mcc }),

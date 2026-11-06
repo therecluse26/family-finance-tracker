@@ -610,6 +610,36 @@ describe("the privacy filter on typed values", () => {
     expect(filtered.account).toBe("Bank [removed] savings");
   });
 
+  it("sends a Quick batch row's typed values bare, as the app built them, and filters its text", () => {
+    const row = JSON.stringify({
+      row: 1,
+      description: "Card 4821 paid 48.21",
+      amount: typedAmount(-4821),
+      date: typedDate("2026-10-31"),
+      count: typedCount(4821),
+      account: label,
+    });
+    const userText = (providerOptions?: typeof MEMBER_TYPED) => [
+      { role: "user" as const, content: [{ type: "text" as const, text: row }], providerOptions },
+    ];
+    const sent = matching.params({ prompt: userText() });
+
+    const [part] = (sent.prompt[0]?.content ?? []) as { text: string }[];
+    expect(JSON.parse(part?.text ?? "")).toEqual({
+      row: 1,
+      description: "Card [removed] paid [removed]",
+      amount: "-48.21",
+      date: "2026-10-31",
+      count: 4821,
+      account: "Bank [removed] savings",
+    });
+    expect(JSON.stringify(sent)).not.toContain("typed value");
+    expect(part?.text).not.toMatch(/\\[^\\"]/);
+    // A Member who types a row gets no typed value: its text is filtered as text.
+    const typed = matching.params({ prompt: userText(MEMBER_TYPED) });
+    expect(JSON.stringify(typed)).not.toContain("48.21");
+  });
+
   it("filters a value marked typed outside a tool result, as any other object", () => {
     const sent = matching.params({
       prompt: [

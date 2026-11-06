@@ -232,10 +232,10 @@ describe("the Quick tier's link decisions", () => {
         aiConfidence: row.aiConfidence,
       }));
     const byAmount: Record<string, YesOrNo> = {
-      "$10.01": { answer: "yes", confidence: "high" },
-      "$10.02": { answer: "no", confidence: "high" },
-      "$10.03": { answer: "yes", confidence: "medium" },
-      "$10.04": { answer: "no", confidence: "low" },
+      "10.01": { answer: "yes", confidence: "high" },
+      "10.02": { answer: "no", confidence: "high" },
+      "10.03": { answer: "yes", confidence: "medium" },
+      "10.04": { answer: "no", confidence: "low" },
     };
 
     it("links on a high yes, drops a high no, and offers anything else, in one batch with no IDs", async () => {
@@ -251,10 +251,10 @@ describe("the Quick tier's link decisions", () => {
       expect(asked.pairs).toHaveLength(1);
       const rows = asked.pairs[0] ?? [];
       expect(rows.map((row) => row.out_amount).sort()).toEqual([
-        "$10.01",
-        "$10.02",
-        "$10.03",
-        "$10.04",
+        "10.01",
+        "10.02",
+        "10.03",
+        "10.04",
       ]);
       expect(rows[0]).toMatchObject({
         out_date: "2026-10-05",
@@ -469,13 +469,13 @@ describe("the Quick tier's link decisions", () => {
       expect(asked.loans[0]?.find((row) => row.payment_date === "2026-08-31")).toEqual({
         row: expect.any(Number),
         payment_date: "2026-08-31",
-        payment_amount: "$500.00",
+        payment_amount: "500.00",
         payment_merchant: expect.toBeOneOf([null, expect.any(String)]),
         payment_account: expect.any(String),
         lender: expect.stringContaining("Lakeside Credit"),
-        regular_payment: "$500.00",
+        regular_payment: "500.00",
         last_payment_date: "2026-08-01",
-        last_payment_amount: "$500.00",
+        last_payment_amount: "500.00",
         last_payment_merchant: expect.toBeOneOf([null, expect.any(String)]),
         last_payment_account: expect.any(String),
       });
@@ -572,7 +572,7 @@ describe("the Quick tier's link decisions", () => {
       });
 
     it("links a high pick, with the AI's evidence, and reduces the Spending", async () => {
-      pick = pickAmount("$60.00", "high");
+      pick = pickAmount("60.00", "high");
       await setUp();
 
       // One call: the money, then the Household's Spending from the 60 days before, newest first.
@@ -583,12 +583,12 @@ describe("the Quick tier's link decisions", () => {
           kind: "money in",
           date: "2026-10-02",
           spending_from: "2026-08-03",
-          amount: "$20.00",
+          amount: "20.00",
           description: expect.stringContaining("VENMO"),
           account: expect.any(String),
         },
-        expect.objectContaining({ row: 2, kind: "Spending", date: "2026-09-30", amount: "$25.00" }),
-        expect.objectContaining({ row: 3, kind: "Spending", date: "2026-09-28", amount: "$60.00" }),
+        expect.objectContaining({ row: 2, kind: "Spending", date: "2026-09-30", amount: "25.00" }),
+        expect.objectContaining({ row: 3, kind: "Spending", date: "2026-09-28", amount: "60.00" }),
       ]);
       expect(await spendingLinks()).toEqual([
         {
@@ -640,7 +640,7 @@ describe("the Quick tier's link decisions", () => {
           rows.find(
             (row) =>
               row.kind === "Spending" &&
-              row.amount === (money.date === "2026-10-02" ? "$90.00" : "$60.00"),
+              row.amount === (money.date === "2026-10-02" ? "90.00" : "60.00"),
           )?.row ?? null,
         confidence: "high",
       });
@@ -698,7 +698,7 @@ describe("the Quick tier's link decisions", () => {
     });
 
     it("keeps an AI pick of pending Spending when that Spending posts", async () => {
-      pick = pickAmount("$60.00", "medium");
+      pick = pickAmount("60.00", "medium");
       const held = dinner("held", -6_000, "2026-09-28");
       await sync({
         added: [
@@ -726,8 +726,8 @@ describe("the Quick tier's link decisions", () => {
     });
 
     it.each([
-      ["medium", "a pick", pickAmount("$60.00", "medium")],
-      ["low", "a pick", pickAmount("$25.00", "low")],
+      ["medium", "a pick", pickAmount("60.00", "medium")],
+      ["low", "a pick", pickAmount("25.00", "low")],
     ] as const)("leaves Income and an item that shows a %s pick", async (_, __, picker) => {
       pick = picker;
       await setUp();
@@ -753,7 +753,7 @@ describe("the Quick tier's link decisions", () => {
     });
 
     it("never asks about the same money twice", async () => {
-      pick = pickAmount("$60.00", "medium");
+      pick = pickAmount("60.00", "medium");
       await setUp();
       expect(asked.picks).toHaveLength(1);
 
@@ -788,7 +788,7 @@ describe("the Quick tier's link decisions", () => {
     });
 
     it("never ends a Member's link, even with a high pick of other Spending", async () => {
-      pick = pickAmount("$60.00", "medium");
+      pick = pickAmount("60.00", "medium");
       await setUp();
       const made = await linkByHand(
         bank.database,
@@ -806,7 +806,7 @@ describe("the Quick tier's link decisions", () => {
       // With the stored answer gone and a high pick waiting, the money is decided again: the hand
       // link holds, and nothing is asked.
       await bank.database.$client.execute("DELETE FROM ai_link_answers");
-      pick = pickAmount("$60.00", "high");
+      pick = pickAmount("60.00", "high");
       await sync({
         changed: [moneyIn("friend", 2_000, "2026-10-02", "VENMO *MORGAN LEE PAYMENT")],
       });
@@ -823,7 +823,7 @@ describe("the Quick tier's link decisions", () => {
     });
 
     it("never links, or offers, a pick a Member undid", async () => {
-      pick = pickAmount("$60.00", "high");
+      pick = pickAmount("60.00", "high");
       await setUp();
       const [link] = (
         await bank.database.$client.execute("SELECT id FROM spending_links")
@@ -852,7 +852,7 @@ describe("the Quick tier's link decisions", () => {
       ["links the money to a Manual loan", "loan"],
       ["pairs the Spending as a Transfer", "Transfer"],
     ] as const)("never ends a link a Member makes while the AI answers: %s", async (what, kind) => {
-      pick = pickAmount("$60.00", "high");
+      pick = pickAmount("60.00", "high");
       const sides = {
         "links the money to other Spending": async () => ({
           kind: "Reimbursement" as const,
@@ -924,7 +924,7 @@ describe("the Quick tier's link decisions", () => {
     });
 
     it("deletes its answers with a removed Connection's Transactions", async () => {
-      pick = pickAmount("$60.00", "medium");
+      pick = pickAmount("60.00", "medium");
       await setUp();
       expect(await answerRows()).toHaveLength(1);
       const birch = connections.get("birch") ?? "";
@@ -946,6 +946,37 @@ describe("the Quick tier's link decisions", () => {
       expect(await deleteRemovedConnection(bank.database, maple, NOW())).toBeDefined();
       expect(await answerRows()).toEqual([]);
     });
+  });
+
+  it("keeps an amount whose digits are an Account's last 4, and removes that last 4 from text", async () => {
+    // A savings Account at Cedar whose last 4 are the digits of the pair's amount.
+    bank.fake.addPages("cedar", {
+      accounts: [
+        OTHER_CARD,
+        fakeAccount({ id: "cedar-savings", subtype: "savings", mask: "4821" }),
+      ],
+    });
+    await syncConnection(connections.get("cedar") ?? "", NOW);
+    await sync({
+      added: [
+        txn("maple-out", CHECKING, -4_821, "2026-10-05", { description: "ONLINE DEBIT REF 4821" }),
+        txn("birch-in", CARD, 4_821, "2026-10-06"),
+      ],
+    });
+
+    expect(asked.pairs).toEqual([
+      [
+        expect.objectContaining({
+          row: 1,
+          out_date: "2026-10-05",
+          out_amount: "48.21",
+          out_description: "ONLINE DEBIT REF [removed]",
+          in_date: "2026-10-06",
+          in_amount: "48.21",
+        }),
+      ],
+    ]);
+    for (const text of sent.flat()) expect(text).not.toMatch(/\\[a-zA-Z]/);
   });
 
   it("sends no card number, Member name, or escape the model reads differently", async () => {

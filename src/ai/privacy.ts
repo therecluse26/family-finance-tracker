@@ -821,12 +821,12 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     return kept.length >= 2 && holdsAFact(kept.join(" "));
   }
 
-  // JSON data, filtered. In a tool result, a typed value passes as it is, still marked, so the
-  // final check knows it (src/ai/typed.ts). Anywhere else, such as in a tool input, a value marked
-  // typed is filtered as any other object is.
-  function json(value: unknown, inToolResult = false): unknown {
+  // JSON data, filtered. In a tool result or a Quick batch row, a typed value passes as it is,
+  // still marked, so the final check knows it (src/ai/typed.ts). Anywhere else, such as in a tool
+  // input, a value marked typed is filtered as any other object is.
+  function json(value: unknown, keepTyped = false): unknown {
     if (value === null || typeof value === "boolean" || value === undefined) return value;
-    if (inToolResult && typedIn(value) !== undefined) return value;
+    if (keepTyped && typedIn(value) !== undefined) return value;
     if (typeof value === "string") return text(value);
     if (typeof value === "number") {
       if (!Number.isFinite(value)) return value;
@@ -836,7 +836,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     if (typeof value !== "object" || isNeverSentToAi(value)) {
       throw new PrivacyRefusal("The privacy filter refused a value it cannot send.");
     }
-    if (Array.isArray(value)) return together(value.map((item) => json(item, inToolResult)));
+    if (Array.isArray(value)) return together(value.map((item) => json(item, keepTyped)));
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
       throw new PrivacyRefusal("The privacy filter takes only plain JSON data.");
@@ -849,7 +849,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
       return text(name);
     });
     const inner = entries.map(([, item]) => item);
-    const filtered = together(inner.map((item) => json(item, inToolResult)));
+    const filtered = together(inner.map((item) => json(item, keepTyped)));
     return Object.fromEntries(names.map((name, index) => [name, filtered[index]]));
   }
 
@@ -887,23 +887,33 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
   // A Quick batch row is one JSON object with its row number first (src/ai/prompt.ts). Its field
   // names and values are filtered one by one, as JSON data is, so a removal never takes a quote, a
   // field name, or the next field with it, and the row stays one JSON object. Its JSON then holds
-  // no escape but \" and \\, so the AI reads the characters the filter read. Only app-built text
-  // is read this way: a Member who types something like a row gets the filter's best effort on
-  // the text, never a refusal (spec 08, Privacy filter).
+  // no escape but \" and \\, so the AI reads the characters the filter read. Each amount, date,
+  // and count the app made is a typed value, which passes as it is, still marked, as in a tool
+  // result; a crossing at its edge is removed as there. Only app-built text is read this way: a
+  // Member who types something like a row gets the filter's best effort on the text, never a
+  // refusal (spec 08, Privacy filter).
   function rowOrText(input: string): string {
-    if (!input.startsWith('{"row":')) return text(input);
-    let row: unknown;
-    try {
-      row = JSON.parse(input);
-    } catch {
-      return text(input);
-    }
-    if (row === null || typeof row !== "object" || Array.isArray(row)) return text(input);
-    const out = JSON.stringify(json(row));
+    const row = rowIn(input);
+    if (row === undefined) return text(input);
+    const out = JSON.stringify(withoutJsonCrossings(json(row, true)));
     if (out.replace(/\\[\\"]/g, "").includes("\\")) {
       throw new PrivacyRefusal("The privacy filter wrote a row the AI would read differently.");
     }
     return out;
+  }
+
+  // A text's JSON object when the text is a Quick batch row, or undefined for any other text.
+  function rowIn(input: string): Record<string, unknown> | undefined {
+    if (!input.startsWith('{"row":')) return undefined;
+    let row: unknown;
+    try {
+      row = JSON.parse(input);
+    } catch {
+      return undefined;
+    }
+    return row === null || typeof row !== "object" || Array.isArray(row)
+      ? undefined
+      : (row as Record<string, unknown>);
   }
 
   function prompt(messages: Prompt): Prompt {
@@ -1142,15 +1152,28 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     return value;
   }
 
-  // Whether a summary message or a tool result, joined as the AI reads it, still holds a fact
-  // across the edge of a typed value. The final check refuses the call when one does.
+  // Whether a summary message, a Quick batch row, or a tool result, joined as the AI reads it,
+  // still holds a fact across the edge of a typed value. The final check refuses the call when one
+  // does.
   function holdsACrossing(messages: Prompt): boolean {
+    const crossesIn = (value: unknown) => {
+      const { joined, pieces } = jsonPieces(value);
+      return crossings(joined, pieces).length > 0;
+    };
     return messages.some((message) => {
       if (message.role === "user") {
         const parts = message.content.map((part) => {
           if (part.type !== "text") throw refusePart();
           return { text: part.text, typed: typedPartIn(part) !== undefined };
         });
+        if (
+          parts.some(({ text: each }) => {
+            const row = rowIn(each);
+            return row !== undefined && crossesIn(row);
+          })
+        ) {
+          return true;
+        }
         const { joined, pieces } = joinParts(parts);
         return crossings(joined, pieces).length > 0;
       }
@@ -1159,8 +1182,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         if (part.type !== "tool-result") return false;
         const { output } = part as unknown as { output: ToolResultOutput };
         if (output.type !== "json" && output.type !== "error-json") return false;
-        const { joined, pieces } = jsonPieces(output.value);
-        return crossings(joined, pieces).length > 0;
+        return crossesIn(output.value);
       });
     });
   }
@@ -1294,11 +1316,16 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     });
   }
 
-  // The prompt with each typed value in a tool result changed, such as to its bare value.
+  // The prompt with each typed value in a tool result or a Quick batch row changed, such as to its
+  // bare value. A row without one stays as it is.
   function changeTypedValues(messages: Prompt, change: (bare: string | number) => unknown): Prompt {
+    let changed = false;
     const inValue = (value: unknown): unknown => {
       const bare = typedIn(value);
-      if (bare !== undefined) return change(bare);
+      if (bare !== undefined) {
+        changed = true;
+        return change(bare);
+      }
       if (Array.isArray(value)) return value.map(inValue);
       if (value === null || typeof value !== "object") return value;
       return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, inValue(item)]));
@@ -1310,8 +1337,17 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         ? { ...part, output: { ...output, value: inValue(output.value) } }
         : part;
     };
+    const inRow = <Part extends { type: string; text?: string }>(part: Part): Part => {
+      const row = part.type === "text" ? rowIn(part.text ?? "") : undefined;
+      if (row === undefined) return part;
+      changed = false;
+      const written = JSON.stringify(inValue(row));
+      return changed ? { ...part, text: written } : part;
+    };
     return messages.map((message): Prompt[number] => {
       switch (message.role) {
+        case "user":
+          return { ...message, content: message.content.map(inRow) };
         case "assistant":
           return { ...message, content: message.content.map(inPart) };
         case "tool":
