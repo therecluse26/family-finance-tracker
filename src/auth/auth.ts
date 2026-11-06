@@ -7,6 +7,7 @@ import { type Logger, log } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { firstMember } from "./first-member.ts";
 import { invites, makeInvite } from "./invites.ts";
+import { loginResets, makeLoginReset } from "./login-resets.ts";
 import {
   APP_NAME,
   BACKUP_CODE_COUNT,
@@ -43,6 +44,9 @@ const ROUTES = new Set([
   "POST /invite/check",
   "POST /invite/new-totp",
   "POST /invite/accept",
+  "POST /login-reset/check",
+  "POST /login-reset/new-totp",
+  "POST /login-reset/finish",
 ]);
 
 // A TOTP code is 6 digits. A backup code is two groups of 5 letters and digits.
@@ -71,6 +75,11 @@ export type Auth = {
   // for its first code. It runs after the Member's row is deleted, whose foreign keys already took
   // most of these, and is safe to run again. Passkeys (T97) join here.
   removeLogin(memberId: string): Promise<void>;
+  // "Reset login" and `fft reset-login` (spec 09, Login reset): a new reset link's token for the
+  // Member, and when it stops working. The Member's sessions end, and their password, TOTP and
+  // backup codes are deleted, in the transaction that stores the link's hash; then the
+  // credential-removal hook runs. Undefined, with nothing changed, when no Member has the ID.
+  resetLogin(memberId: string, at: Date): Promise<{ token: string; expiresAt: Date } | undefined>;
 };
 
 export type FreshCode = "fresh" | "wrong" | "too many tries";
@@ -155,6 +164,7 @@ function buildBetterAuth(options: AuthOptions) {
       myLogin({ database, secrets, freshCode: (headers, code) => fresh.check(headers, code) }),
       firstMember({ database, secrets }),
       invites({ database, secrets }),
+      loginResets({ database, secrets }),
       signInLimit(database),
       // After the sign-in limit, so that a used code counts as a failed sign-in.
       totpOnce(database),
@@ -240,6 +250,12 @@ export function createAuth(options: AuthOptions): Auth {
         where: [{ field: "userId", value: memberId }],
       });
       await context.internalAdapter.deleteVerificationByIdentifier(newTotpIdentifier(memberId));
+    },
+
+    async resetLogin(memberId, at) {
+      const reset = await makeLoginReset(options.database, memberId, at);
+      if (reset !== undefined) await made.removeLogin(memberId);
+      return reset;
     },
   };
   instances.set(made, auth);

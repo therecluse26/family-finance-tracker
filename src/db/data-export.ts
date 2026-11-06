@@ -253,6 +253,7 @@ export const NEVER_EXPORTED_TABLES: ReadonlyMap<string, string> = new Map([
   ],
   [getTableName(schema.twoFactors), "TOTP secrets and backup codes."],
   [getTableName(schema.invites), "Open invite links, each with its token's hash."],
+  [getTableName(schema.loginResets), "Open reset links, each with its token's hash."],
   [getTableName(schema.rateLimits), "Login records: request counts by client address."],
   [getTableName(schema.signInTries), "Login records: failed sign-ins by Member and IP address."],
   [getTableName(schema.vapidKeys), "The VAPID keys, which are Master-key secrets."],

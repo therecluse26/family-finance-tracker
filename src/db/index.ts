@@ -381,6 +381,14 @@ export {
   readLoanHistory,
   storeLoanFields,
 } from "./loans.ts";
+export {
+  type FinishedLoginReset,
+  findMemberIdByEmail,
+  finishLoginReset,
+  listOpenLoginResetHashes,
+  type NewLoginReset,
+  startLoginReset,
+} from "./login-resets.ts";
 export { loginTables } from "./login-tables.ts";
 export {
   addManualLoan,

@@ -146,6 +146,13 @@ async function addDanasRows(other: string | null = null): Promise<void> {
     createdAt: AT,
     expiresAt: AT,
   });
+  await db.insert(schema.loginResets).values({
+    id: "reset-1",
+    memberId: dana,
+    tokenHash: "01",
+    createdAt: AT,
+    expiresAt: AT,
+  });
 }
 
 describe("removing a Member", () => {
@@ -171,7 +178,7 @@ describe("removing a Member", () => {
     for (const key of keys) expect(key).toMatch(/: (CASCADE(, not null)?|SET NULL)$/);
   });
 
-  it("deletes the Member's login rows, devices and invite links, keeps every other row with no Member, and keeps their name on their Goals and Chat messages", async () => {
+  it("deletes the Member's login rows, devices, invite links and reset link, keeps every other row with no Member, and keeps their name on their Goals and Chat messages", async () => {
     await addMemberRow("alex", "Alex");
     await addMemberRow("dana", "Dana");
     await addDanasRows("alex");
@@ -187,6 +194,7 @@ describe("removing a Member", () => {
       "push_devices",
       "push_sends",
       "invites",
+      "login_resets",
     ]) {
       expect(after[table], table).toEqual([]);
     }

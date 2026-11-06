@@ -65,6 +65,9 @@ export const signedOutAuth: Auth = {
     throw new Error("No Member is signed in to make an invite.");
   },
   removeLogin: async () => {},
+  resetLogin: async () => {
+    throw new Error("No Member is signed in to reset a login.");
+  },
 };
 
 export type TestMember = {

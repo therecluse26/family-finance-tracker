@@ -1319,6 +1319,26 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ removed: true, you: id === c.var.member.id }, 200);
   })
+  // "Reset login": any Member resets another Member's login with a fresh TOTP or backup code,
+  // since it is a sensitive action (spec 09). The answer holds the reset link once; the app keeps
+  // its hash. A Member's own login is refused before the code is checked, so no code is used up.
+  .post("/members/:id/reset-login", jsonOnly, async (c) => {
+    const body = codeBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    const id = c.req.param("id");
+    if (id === c.var.member.id) {
+      return c.json({ error: "Change your own login in Settings, My login." }, 409);
+    }
+    const fresh = await c.var.checkFreshCode(body.data.code);
+    if (fresh === "too many tries") {
+      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    }
+    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+    const reset = await c.var.members.resetLogin(id);
+    if (reset === "no such Member") return c.json({ error: "No Member has this ID." }, 404);
+    c.header("Cache-Control", "no-store");
+    return c.json({ reset }, 200);
+  })
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.
   .get("/benchmarks", async (c) => c.json(await c.var.benchmarks.benchmarks()))

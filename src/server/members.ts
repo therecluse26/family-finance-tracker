@@ -10,8 +10,8 @@ import type { AppUrl } from "./app-url.ts";
 import type { MemberRemovalResult, MemberRoutes } from "./members-views.ts";
 import { readSetupState } from "./setup.ts";
 
-// Settings, Members (spec 09, Members; Invites): the Members, the open invite links, making and
-// cancelling one, and removing a Member.
+// Settings, Members (spec 09, Members; Invites; Login reset): the Members, the open invite links,
+// making and cancelling one, removing a Member, and resetting another Member's login.
 export function memberRoutes(database: Database, auth: Auth, appUrl: AppUrl): MemberRoutes {
   // Removes Members one at a time, so the check that another Member stays and the removal run
   // together. The app is one Node process (ADR 0002), so this queue covers every request.
@@ -65,5 +65,14 @@ export function memberRoutes(database: Database, auth: Auth, appUrl: AppUrl): Me
         if (removal === "removed") await auth.removeLogin(id);
         return removal;
       }),
+
+    async resetLogin(id) {
+      const reset = await auth.resetLogin(id, new Date());
+      if (reset === undefined) return "no such Member";
+      return {
+        link: appUrl.address(`/reset#token=${reset.token}`),
+        expiresAt: reset.expiresAt.toISOString(),
+      };
+    },
   };
 }

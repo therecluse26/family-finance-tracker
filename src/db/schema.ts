@@ -165,6 +165,25 @@ export const invites = sqliteTable(
   (table) => [index("invites_expires_at").on(table.expiresAt)],
 );
 
+// The open reset links (spec 09, Login reset), at most one for each Member. A link holds its token
+// after "#", and the app keeps only the token's SHA-256 hash. A link is deleted when it is used,
+// when a new reset for the same Member replaces it, or when the Member is removed, and stops
+// working when it expires.
+export const loginResets = sqliteTable(
+  "login_resets",
+  {
+    id: text("id").primaryKey(),
+    memberId: text("member_id")
+      .notNull()
+      .unique()
+      .references(() => members.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    createdAt: moment("created_at").notNull(),
+    expiresAt: moment("expires_at").notNull(),
+  },
+  (table) => [index("login_resets_expires_at").on(table.expiresAt)],
+);
+
 // Each removed Member: the number of the label the AI knew them by, and their name (spec 09,
 // Members). Labels follow the order Members joined, "Member A" for number 0, and a removed
 // Member's number is never given again, so every other Member keeps their label. The screen shows

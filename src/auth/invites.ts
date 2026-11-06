@@ -4,19 +4,19 @@ import { setSessionCookie } from "better-auth/cookies";
 import * as z from "zod";
 import {
   addInvite,
-  addSignInTries,
   claimInvite,
   claimTotpStep,
-  countSignInTries,
   type Database,
   listOpenInviteHashes,
-  removeSignInTries,
-  removeSignInTriesUpTo,
 } from "../db/index.ts";
 import { registerSecretValue } from "../log.ts";
 import { linkTokenHash, newLinkToken, type Secrets, sameLinkTokenHash } from "../secrets/index.ts";
+import {
+  tryLinkToken,
+  WRONG_LINK_TOKEN_WINDOW_MS,
+  WRONG_LINK_TOKENS_ALLOWED,
+} from "./link-token-tries.ts";
 import { newBackupCodes, newTotpSecret, storedTwoFactor, totpURI } from "./my-login.ts";
-import { CLIENT_ADDRESS_HEADER } from "./sign-in-limit.ts";
 import { totpStepOf } from "./totp-once.ts";
 
 // Invite links (spec 09, Invites). Any Member makes one; the new Member joins through the routes
@@ -29,9 +29,8 @@ import { totpStepOf } from "./totp-once.ts";
 // - the logger refuses it wherever it appears.
 
 export const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
-export const WRONG_INVITE_TOKENS_ALLOWED = 5;
-export const WRONG_INVITE_TOKEN_WINDOW_MS = 15 * 60 * 1000;
-const ipKey = (address: string) => `invite-ip:${address}`;
+export const WRONG_INVITE_TOKENS_ALLOWED = WRONG_LINK_TOKENS_ALLOWED;
+export const WRONG_INVITE_TOKEN_WINDOW_MS = WRONG_LINK_TOKEN_WINDOW_MS;
 
 // How long a new TOTP secret waits for its first code, as in My login.
 const NEW_TOTP_WAIT_MS = 10 * 60 * 1000;
@@ -100,26 +99,17 @@ export function invites(options: { database: Database; secrets: Secrets }): Bett
   // The ID of the open invite whose token this is. Counts the token as wrong until it is checked;
   // a wrong token, and a token refused because too many were wrong, stay counted. Of tries at the
   // same time, only the first 5 in the window are checked.
-  async function tryToken(ctx: EndpointContext, entered: string): Promise<string> {
-    const address = (ctx.request?.headers ?? ctx.headers)?.get(CLIENT_ADDRESS_HEADER) ?? "";
-    const now = new Date();
-    const since = new Date(now.getTime() - WRONG_INVITE_TOKEN_WINDOW_MS);
-    await removeSignInTriesUpTo(database, since);
-    const [added] = await addSignInTries(database, [ipKey(address)], now);
-    if (added === undefined) throw new Error("No try was added.");
-    if (
-      (await countSignInTries(database, added.key, since, added.id)) > WRONG_INVITE_TOKENS_ALLOWED
-    ) {
-      throw APIError.from("TOO_MANY_REQUESTS", {
-        code: "TOO_MANY_WRONG_INVITE_TOKENS",
-        message: "Too many invite links that do not work. Wait 15 minutes, then try again.",
-      });
-    }
-    const inviteId = await openInviteOf(database, entered);
-    if (inviteId === undefined) throw notOpen();
-    await removeSignInTries(database, [added.id]);
-    return inviteId;
-  }
+  const tryToken = (ctx: EndpointContext, entered: string): Promise<string> =>
+    tryLinkToken(database, ctx, {
+      keyPrefix: "invite-ip:",
+      find: () => openInviteOf(database, entered),
+      tooMany: () =>
+        APIError.from("TOO_MANY_REQUESTS", {
+          code: "TOO_MANY_WRONG_INVITE_TOKENS",
+          message: "Too many invite links that do not work. Wait 15 minutes, then try again.",
+        }),
+      notOpen,
+    });
 
   // No two Members share an email address (spec 09, Members).
   async function refuseEmailInUse(

@@ -10,6 +10,7 @@ import { Join } from "./pages/Join.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { RecurringCharges } from "./pages/RecurringCharges.tsx";
+import { Reset } from "./pages/Reset.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
 import { MonthlyReviewPage, Reviews } from "./pages/Reviews.tsx";
 import { Setup } from "./pages/Setup.tsx";
@@ -83,6 +84,8 @@ export const routes: RouteObject[] = [
   { path: "/sign-in", Component: SignIn },
   // An invite link's page, outside the app's own pages: it never leads to the wizard.
   { path: "/join", Component: Join },
+  // A reset link's page, outside the app's own pages, for a Member who cannot sign in.
+  { path: "/reset", Component: Reset },
   {
     path: "/",
     Component: Shell,

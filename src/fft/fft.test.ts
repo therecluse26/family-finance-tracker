@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addMember, newTestAuth } from "../auth/testing.ts";
 import { setupCodeOf } from "../secrets/index.ts";
@@ -22,6 +23,7 @@ import { runFft } from "./fft.ts";
 // file and app.db.
 
 const APP_URL = "http://192.168.1.20:3000";
+const SHIPPED_FOLDER = fileURLToPath(new URL("../../drizzle", import.meta.url));
 const LINK =
   /^ {2}(\S+\/setup#code=([0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}))$/m;
 
@@ -50,6 +52,7 @@ describe("fft setup", () => {
     return runFft(args, {
       env: { APP_URL, FFT_MASTER_KEY_FILE: keyFile, ...env },
       databaseFile,
+      migrationsFolder: SHIPPED_FOLDER,
       out: (text) => {
         out += text;
       },
@@ -187,6 +190,7 @@ describe("fft setup --app-url", () => {
       const code = await runFft(["setup", "--app-url", "https://money.example.com"], {
         env: { FFT_MASTER_KEY_FILE: keyFile },
         databaseFile: join(dir, "app.db"),
+        migrationsFolder: SHIPPED_FOLDER,
         out: (text) => {
           out += text;
         },
@@ -213,6 +217,7 @@ describe("fft", () => {
     const code = await runFft(["reset"], {
       env: {},
       databaseFile: "/nonexistent/app.db",
+      migrationsFolder: SHIPPED_FOLDER,
       out: () => {},
       err: (text) => {
         err += text;

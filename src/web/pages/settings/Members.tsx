@@ -5,9 +5,10 @@ import type { InviteView, MemberView } from "../../../server/members-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
 
-// Settings, Members (spec 09, Members; Invites): every Member, "Make an invite link", the open
-// invite links with Cancel, and Remove on each Member. The app shows a new link once, for the
-// Member to copy and send by hand; it sends no email.
+// Settings, Members (spec 09, Members; Invites; Login reset): every Member, "Make an invite link",
+// the open invite links with Cancel, Remove on each Member, and "Reset login" on every other
+// Member. The app shows a new link once, for the Member to copy and send by hand; it sends no
+// email.
 
 // The requests the page sends, each with a JSON body, even an empty one: the routes take only JSON.
 // The routes read their body themselves, so each body goes in through a separate object.
@@ -19,6 +20,10 @@ export function cancelInviteLink(id: string) {
 export function removeMemberWithCode(id: string, code: string) {
   const remove = { param: { id }, json: { code } };
   return api.members[":id"].remove.$post(remove);
+}
+export function resetLoginWithCode(id: string, code: string) {
+  const reset = { param: { id }, json: { code } };
+  return api.members[":id"]["reset-login"].$post(reset);
 }
 
 async function errorOf(res: Response): Promise<string> {
@@ -32,7 +37,8 @@ function dayOf(iso: string): string {
   return dateLabel(calendarDateIn(new Date(iso), zone), calendarDateIn(new Date(), zone));
 }
 
-// One Member, with Remove. Remove asks for a fresh code first.
+// One Member, with Remove, and with Reset login unless it is the Member signed in. Each asks for a
+// fresh code first.
 export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean) => void }) {
   const { member } = props;
   const [asking, setAsking] = useState(false);
@@ -89,6 +95,7 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
           Remove
         </button>
       )}
+      {member.you ? null : <ResetLogin member={member} />}
     </li>
   );
 }
@@ -121,17 +128,118 @@ export function InviteLine(props: { invite: InviteView; onCancelled: () => void 
   );
 }
 
+// A new invite or reset link, shown once for the Member to copy.
+export function LinkToCopy(props: { made: { link: string; expiresAt: string } }) {
+  const { made } = props;
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  function copy() {
+    setError(undefined);
+    navigator.clipboard
+      .writeText(made.link)
+      .then(() => setCopied(true))
+      .catch(() => setError("The browser did not copy the link. Select it and copy it by hand."));
+  }
+
+  return (
+    <div className="mt-3 rounded border border-gray-300 p-3">
+      <p>Copy this link now. The app shows it only this once.</p>
+      <input className={`${FIELD} font-mono`} readOnly value={made.link} />
+      <button className={BUTTON} type="button" onClick={copy}>
+        Copy the link
+      </button>
+      {copied ? (
+        <p className="mt-2 text-green-700" role="status">
+          Copied.
+        </p>
+      ) : null}
+      <p className="mt-2">It works until {dayOf(made.expiresAt)}.</p>
+      <ErrorLine error={error} />
+    </div>
+  );
+}
+
+// "Reset login" on another Member. It asks for a fresh code, then shows the reset link once, for
+// the Member to hand over.
+export function ResetLogin(props: { member: MemberView }) {
+  const { member } = props;
+  const [asking, setAsking] = useState(false);
+  const [code, setCode] = useState("");
+  const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    resetLoginWithCode(member.id, code.trim())
+      .then(async (res) => {
+        setCode("");
+        if (!res.ok) return setError(await errorOf(res));
+        setMade(((await res.json()) as { reset: { link: string; expiresAt: string } }).reset);
+        setAsking(false);
+      })
+      .catch(() => setError("The server did not answer."))
+      .finally(() => setBusy(false));
+  }
+
+  if (made !== undefined) {
+    return (
+      <>
+        <p className="mt-2">
+          {member.name} is signed out on every device. Their old password, TOTP, and backup codes no
+          longer work. Give them this reset link to set a new login. It works once.
+        </p>
+        <LinkToCopy made={made} />
+      </>
+    );
+  }
+
+  if (!asking) {
+    return (
+      <button className={BUTTON} type="button" onClick={() => setAsking(true)}>
+        Reset login
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <p className="mt-2">
+        Resetting {member.name}'s login signs them out on every device at once, and their password,
+        TOTP, and backup codes stop working. The app makes a reset link for you to hand to them. It
+        works once, for 24 hours.
+      </p>
+      <label className="mt-3 block">
+        To reset, enter a code from your authenticator app, or a backup code
+        <input
+          className={FIELD}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
+      </label>
+      <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+        Reset {member.name}'s login
+      </button>
+      <ErrorLine error={error} />
+    </form>
+  );
+}
+
 // "Make an invite link", and the new link, shown once for the Member to copy.
 export function MakeInvite(props: { onMade: () => void }) {
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   function make() {
     setBusy(true);
     setError(undefined);
-    setCopied(false);
     makeInviteLink()
       .then(async (res) => {
         if (!res.ok) return setError(await errorOf(res));
@@ -140,13 +248,6 @@ export function MakeInvite(props: { onMade: () => void }) {
       })
       .catch(() => setError("The server did not answer."))
       .finally(() => setBusy(false));
-  }
-
-  function copy(link: string) {
-    navigator.clipboard
-      .writeText(link)
-      .then(() => setCopied(true))
-      .catch(() => setError("The browser did not copy the link. Select it and copy it by hand."));
   }
 
   return (
@@ -159,21 +260,7 @@ export function MakeInvite(props: { onMade: () => void }) {
       <button className={BUTTON} type="button" onClick={make} disabled={busy}>
         Make an invite link
       </button>
-      {made === undefined ? null : (
-        <div className="mt-3 rounded border border-gray-300 p-3">
-          <p>Copy this link now. The app shows it only this once.</p>
-          <input className={`${FIELD} font-mono`} readOnly value={made.link} />
-          <button className={BUTTON} type="button" onClick={() => copy(made.link)}>
-            Copy the link
-          </button>
-          {copied ? (
-            <p className="mt-2 text-green-700" role="status">
-              Copied.
-            </p>
-          ) : null}
-          <p className="mt-2">It works until {dayOf(made.expiresAt)}.</p>
-        </div>
-      )}
+      {made === undefined ? null : <LinkToCopy key={made.link} made={made} />}
       <ErrorLine error={error} />
     </div>
   );

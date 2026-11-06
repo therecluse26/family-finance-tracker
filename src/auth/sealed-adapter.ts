@@ -11,24 +11,29 @@ const SEALED: Record<string, Record<string, string>> = {
 
 type Row = Record<string, unknown>;
 
+const sealedFields = (model: string) => SEALED[model] ?? {};
+
+// The values as app.db holds them: each sealed column encrypted, bound to its row and column. For
+// a write the auth module makes itself, in a transaction with other rows.
+export function sealedValues(secrets: Secrets, model: string, rowId: unknown, values: Row): Row {
+  const sealed = { ...values };
+  for (const [field, column] of Object.entries(sealedFields(model))) {
+    const value = sealed[field];
+    if (typeof value !== "string") continue;
+    if (typeof rowId !== "string" || rowId === "") {
+      throw new Error(`The auth module cannot seal ${column} without its row ID.`);
+    }
+    sealed[field] = secrets.encrypt(value, { rowId, column });
+  }
+  return sealed;
+}
+
 // Wraps Better Auth's database adapter so the sealed columns are encrypted on each write and
 // decrypted on each read. Better Auth sees the values it wrote; app.db holds only ciphertext.
 export function sealedAdapter<A extends DBTransactionAdapter>(adapter: A, secrets: Secrets): A {
-  const sealedFields = (model: string) => SEALED[model] ?? {};
   const isSealed = (model: string, field: string) => field in sealedFields(model);
-
-  function seal(model: string, rowId: unknown, values: Row): Row {
-    const sealed = { ...values };
-    for (const [field, column] of Object.entries(sealedFields(model))) {
-      const value = sealed[field];
-      if (typeof value !== "string") continue;
-      if (typeof rowId !== "string" || rowId === "") {
-        throw new Error(`The auth module cannot seal ${column} without its row ID.`);
-      }
-      sealed[field] = secrets.encrypt(value, { rowId, column });
-    }
-    return sealed;
-  }
+  const seal = (model: string, rowId: unknown, values: Row) =>
+    sealedValues(secrets, model, rowId, values);
 
   function open<T>(model: string, row: T): T {
     if (row === null || typeof row !== "object") return row;

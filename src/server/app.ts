@@ -223,6 +223,9 @@ export function createApp(
       // own pages, and only JSON.
       .use("/api/auth/invite/*", sameOriginChanges(security.appUrl.origin))
       .use("/api/auth/invite/*", jsonOnly)
+      // So does setting a new login by reset link.
+      .use("/api/auth/login-reset/*", sameOriginChanges(security.appUrl.origin))
+      .use("/api/auth/login-reset/*", jsonOnly)
       .all("/api/auth/*", (c) => auth.handle(c.req.raw, c.var.clientAddress))
       // The wizard's progress, which every page reads, before any Member can sign in. It says only
       // which step comes next.

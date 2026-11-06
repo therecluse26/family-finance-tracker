@@ -6,6 +6,7 @@ import {
   MembersLists,
   makeInviteLink,
   removeMemberWithCode,
+  resetLoginWithCode,
 } from "./Members.tsx";
 
 // Settings, Members as the browser first paints it, and the exact request each button sends.
@@ -48,6 +49,9 @@ describe("Settings, Members", () => {
     expect(html).toContain("Alice (you)");
     expect(html).toContain("bob@example.com");
     expect(html.match(/Remove/g)).toHaveLength(2);
+    // On every other Member, not on the Member signed in.
+    expect(html.match(/Reset login/g)).toHaveLength(1);
+    expect(html.indexOf("Reset login")).toBeGreaterThan(html.indexOf("bob@example.com"));
     expect(html).toContain("Make an invite link");
     expect(html).toContain("It sends no email.");
     expect(html).toMatch(/Made Nov \d{1,2} by Alice\. Works until Nov \d{1,2}\./);
@@ -107,6 +111,17 @@ describe("Settings, Members: the request each button sends", () => {
       {
         method: "POST",
         path: "/api/members/member-2/remove",
+        type: "application/json",
+        body: '{"code":"123456"}',
+      },
+    ]);
+  });
+
+  it("Reset login sends the code as JSON for its Member", async () => {
+    expect(await sent(() => resetLoginWithCode("member-2", "123456"))).toEqual([
+      {
+        method: "POST",
+        path: "/api/members/member-2/reset-login",
         type: "application/json",
         body: '{"code":"123456"}',
       },

@@ -33,4 +33,8 @@ export type MemberRoutes = {
   cancelInvite(id: string): Promise<boolean>;
   // Removes a Member, after the route has checked a fresh code.
   remove(id: string): Promise<MemberRemovalResult>;
+  // "Reset login" on another Member, after the route has checked a fresh code and refused the
+  // Member's own login (spec 09, Login reset): the link, <APP_URL>/reset#token=…, and when it
+  // stops working.
+  resetLogin(id: string): Promise<{ link: string; expiresAt: string } | "no such Member">;
 };
