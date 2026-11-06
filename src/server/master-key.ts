@@ -51,7 +51,9 @@ export function masterKeyRoutes(database: Database, secrets: Secrets): MasterKey
       return (await saved()) ? undefined : secrets.showMasterKey();
     },
 
+    // Once the step is done, a later press, from any Member, changes nothing.
     async confirmSaved() {
+      if (await saved()) return;
       await markSetupStep(database, "master key", "done");
     },
 

@@ -8,6 +8,8 @@ import {
   type SetupState,
   savedSetupCode,
   saveSetupCode,
+  setupCodeRefused,
+  skippedWizardSteps,
 } from "./setup-gate.ts";
 
 // Page gating in the web app: until steps 1 to 4 are done, every page leads to the wizard.
@@ -131,5 +133,31 @@ describe("the setup code across a reload", () => {
     expect(savedSetupCode(blocked)).toBeUndefined();
     expect(() => forgetSetupCode(blocked)).not.toThrow();
     expect(savedSetupCode(undefined)).toBeUndefined();
+  });
+});
+
+describe("which refusals forget the kept setup code", () => {
+  it("forgets it on a wrong code, a code with the wrong form, or a Member already made", () => {
+    for (const status of [400, 401, 403]) expect(setupCodeRefused(status)).toBe(true);
+  });
+
+  it("keeps it after too many wrong codes and after a server error", () => {
+    for (const status of [429, 500, 502, 503, 504]) expect(setupCodeRefused(status)).toBe(false);
+  });
+});
+
+describe("the skipped wizard steps", () => {
+  const progress = (banks: SetupProgressView["steps"]["banks"]): SetupProgressView => ({
+    next: "finish",
+    steps: { banks, ai: null, alerts: null, "invite members": null },
+    finishSetup: [],
+    connections: 0,
+  });
+
+  it("names Banks only while the server records it as skipped", () => {
+    expect(skippedWizardSteps(progress("skipped"))).toEqual(["banks"]);
+    expect(skippedWizardSteps(progress("done"))).toEqual([]);
+    expect(skippedWizardSteps(progress(null))).toEqual([]);
+    expect(skippedWizardSteps(undefined)).toEqual([]);
   });
 });

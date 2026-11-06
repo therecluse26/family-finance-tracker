@@ -2,6 +2,8 @@ import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlaidView } from "../../bank/plaid-view.ts";
 import type { AccountView, ConnectionView } from "../../server/bank-views.ts";
+import type { SetupProgressView } from "../../server/setup-views.ts";
+import { skippedWizardSteps } from "../setup-gate.ts";
 import {
   BanksButtons,
   BanksStepView,
@@ -87,6 +89,36 @@ describe("the wizard's frame", () => {
       "Step 3 of 6 ✓ Setup link ✓ Your login ✓ Master key 4. Household 5. Banks 6. Finish",
     );
     expect(html).toContain('aria-current="step"');
+  });
+
+  it("shows a skipped Banks step as not done, after Skip for now and after a reload on Finish", () => {
+    // The server's answer to Skip for now, and to GET /api/setup/progress after a reload: both
+    // record Banks as skipped.
+    const afterSkip: SetupProgressView = {
+      next: "finish",
+      steps: { banks: "skipped", ai: null, alerts: null, "invite members": null },
+      finishSetup: ["banks", "ai", "alerts", "invite members"],
+      connections: 0,
+    };
+    const skipped = skippedWizardSteps(afterSkip);
+    const html = renderToString(<Stepper shown="finish" reached="finish" skipped={skipped} />);
+
+    expect(text(html)).toBe(
+      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5. Banks (skipped) 6. Finish",
+    );
+    expect(text(html)).not.toContain("✓ Banks");
+    // Back to Banks from Finish: still skipped, not done.
+    expect(
+      text(renderToString(<Stepper shown="banks" reached="finish" skipped={skipped} />)),
+    ).toContain("5. Banks (skipped)");
+    // Once a bank is linked, Banks is done.
+    const linked = skippedWizardSteps({
+      ...afterSkip,
+      steps: { ...afterSkip.steps, banks: "done" },
+    });
+    expect(
+      text(renderToString(<Stepper shown="finish" reached="finish" skipped={linked} />)),
+    ).toContain("✓ Household ✓ Banks 6. Finish");
   });
 
   it("opens the step before with Back, and the step after with Continue", () => {

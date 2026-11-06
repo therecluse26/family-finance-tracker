@@ -117,7 +117,7 @@ Open the link from step 3 in your browser. The first-run wizard has 6 steps. It 
 | 5. Banks | No | The Plaid keys, then link each bank. "Skip for now" lets you link them later. |
 | 6. Finish | | History starts loading. |
 
-AI, email Alerts, and invites for the rest of the Household are optional extras. The Finish step lists them, and so does a "Finish setup" list on the dashboard, until each is done. A skipped Banks step waits in the same list.
+AI, email Alerts, and invites for the rest of the Household are optional extras. The Finish step lists them, and so does a "Finish setup" list on the dashboard, until each is done. Banks waits in the same list while no bank is linked.
 
 ### 6. Protect the data
 

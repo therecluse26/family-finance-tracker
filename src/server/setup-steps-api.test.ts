@@ -13,6 +13,7 @@ import {
 import { createLogger } from "../log.ts";
 import { smtpSettings } from "../notify/index.ts";
 import { StubSmtp, smtpError } from "../notify/testing.ts";
+import { skippedWizardSteps } from "../web/setup-gate.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 import type { SetupProgressView } from "./setup-views.ts";
@@ -223,11 +224,68 @@ describe("the first-run wizard, steps 5 and 6", () => {
       connections: 1,
     });
 
-    // A done step stays done, even once its Connection is removed.
+    expect((await progressOf()).finishSetup).not.toContain("banks");
+
+    // A done step stays done once its Connection is removed, but the "Finish setup" list asks for a
+    // bank again.
     expect(await markConnectionRemoved(test.database, connectionId, new Date())).toMatchObject({
       removed: true,
     });
-    expect(await progressOf()).toMatchObject({ steps: { banks: "done" }, connections: 0 });
+    expect(await progressOf()).toMatchObject({
+      next: "finish",
+      steps: { banks: "done" },
+      finishSetup: ["banks", "ai", "alerts", "invite members"],
+      connections: 0,
+    });
+  });
+
+  it("lists Banks under Finish setup on an install that recorded Banks done with no Connection", async () => {
+    // The old wizard marked Banks done for an Unconnected account alone.
+    await finishRequiredSteps();
+    expect((await addUnconnectedAccount()).status).toBe(200);
+    await markSetupStep(test.database, "banks", "done");
+    await markSetupStep(test.database, "finish", "done");
+    const bobTab = await signedIn(bob);
+
+    for (const tab of [aliceTab, bobTab]) {
+      expect(await progressOf(tab)).toMatchObject({
+        next: null,
+        steps: { banks: "done" },
+        finishSetup: ["banks", "ai", "alerts", "invite members"],
+      });
+    }
+
+    await addConnection(test.database, {
+      provider: "fake",
+      bankId: "ins_fake_1",
+      bankName: "First Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
+    expect((await progressOf(bobTab)).finishSetup).toEqual(["ai", "alerts", "invite members"]);
+  });
+
+  it("records a skipped Banks step, which the step bar shows as not done, also after a reload", async () => {
+    await finishRequiredSteps();
+    const res = await skip("banks");
+    expect(res.status).toBe(200);
+    const answer = ((await res.json()) as { progress: SetupProgressView }).progress;
+    expect(answer.next).toBe("finish");
+    expect(skippedWizardSteps(answer)).toEqual(["banks"]);
+
+    // A reload on Finish reads progress again, in a new tab.
+    const reloaded = await progressOf(await signedIn(alice));
+    expect(reloaded.next).toBe("finish");
+    expect(skippedWizardSteps(reloaded)).toEqual(["banks"]);
+
+    await addConnection(test.database, {
+      provider: "fake",
+      bankId: "ins_fake_1",
+      bankName: "First Fake Bank",
+      origin: "linked",
+      syncMinute: 7,
+    });
+    expect(skippedWizardSteps(await progressOf())).toEqual([]);
   });
 
   it("does not count a removed Connection for Banks", async () => {

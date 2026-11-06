@@ -43,10 +43,16 @@ export function stepAfter(step: WizardStep): WizardStep | undefined {
   return WIZARD_STEPS[WIZARD_STEPS.indexOf(step) + 1];
 }
 
-// "Step N of 6", then each step's name. Steps before `reached` are done.
-export function Stepper(props: { shown: WizardStep; reached: WizardStep }) {
+// "Step N of 6", then each step's name. Steps before `reached` are done, except a skipped step,
+// which stays not done: it shows its number and "(skipped)", not a ✓.
+export function Stepper(props: {
+  shown: WizardStep;
+  reached: WizardStep;
+  skipped?: readonly WizardStep[];
+}) {
   const shownAt = WIZARD_STEPS.indexOf(props.shown);
   const reachedAt = WIZARD_STEPS.indexOf(props.reached);
+  const skipped = props.skipped ?? [];
   return (
     <nav aria-label="Setup steps" className="mt-2">
       <p className="text-gray-600">
@@ -59,8 +65,9 @@ export function Stepper(props: { shown: WizardStep; reached: WizardStep }) {
             aria-current={at === shownAt ? "step" : undefined}
             className={at === shownAt ? "font-semibold" : "text-gray-600"}
           >
-            {at < reachedAt ? "✓ " : `${at + 1}. `}
+            {at < reachedAt && !skipped.includes(step) ? "✓ " : `${at + 1}. `}
             {STEP_LABELS[step]}
+            {skipped.includes(step) ? " (skipped)" : null}
           </li>
         ))}
       </ol>

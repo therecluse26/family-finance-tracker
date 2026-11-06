@@ -52,8 +52,9 @@ const FINISH = "finish";
 // Steps 5 and 6, for the first Member only, and the "Finish setup" list (spec 12, Order and resume
 // rules). An item is done only on what the server knows: Banks once app.db holds a Connection; AI
 // once an AI provider is set; Alerts once a test email went out; Invite Members once an invite link
-// is made. A done item stays done, so it leaves the "Finish setup" list for good, wherever it was
-// done.
+// is made. A done item stays done, so an extra leaves the "Finish setup" list for good, wherever it
+// was done. Banks is listed while app.db holds no Connection that is not removed, even once its step
+// is done.
 export function setupRoutes(database: Database): SetupRoutes {
   async function progress(memberId: string): Promise<SetupProgressView> {
     const [state, steps, facts, firstMemberId] = await Promise.all([
@@ -77,7 +78,12 @@ export function setupRoutes(database: Database): SetupRoutes {
     return {
       next: !state.wizard && memberId === firstMemberId ? wizardStep : null,
       steps: status,
-      finishSetup: state.wizard ? [] : FINISH_SETUP_ITEMS.filter((item) => status[item] !== "done"),
+      // Banks stays in the list while no Connection exists now, even once the step is done.
+      finishSetup: state.wizard
+        ? []
+        : FINISH_SETUP_ITEMS.filter((item) =>
+            item === "banks" ? !facts.banks : status[item] !== "done",
+          ),
       connections: facts.connections,
     };
   }

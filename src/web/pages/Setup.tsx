@@ -13,6 +13,8 @@ import {
   forgetSetupCode,
   savedSetupCode,
   saveSetupCode,
+  setupCodeRefused,
+  skippedWizardSteps,
 } from "../setup-gate.ts";
 import {
   BackButton,
@@ -57,7 +59,7 @@ function SetupLink(props: {
     try {
       const res = await postJson("/api/auth/first-member/check-code", { setupCode: entered });
       if (!res.ok) {
-        forgetSetupCode();
+        if (setupCodeRefused(res.status)) forgetSetupCode();
         return setError(await refusalText(res, WRONG_SETUP_CODE));
       }
       // The code is kept exactly as the server took it, and sent again as it is.
@@ -407,7 +409,7 @@ export function Setup() {
       <h1 className="text-2xl font-semibold">Set up Family Finance Tracker</h1>
       {shown === undefined || reached === undefined ? null : (
         <>
-          <Stepper shown={shown} reached={reached} />
+          <Stepper shown={shown} reached={reached} skipped={skippedWizardSteps(progress)} />
           <h2 className="mt-2 text-xl">{STEP_LABELS[shown]}</h2>
         </>
       )}

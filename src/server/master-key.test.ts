@@ -129,6 +129,36 @@ describe("the Master key", () => {
       expect(await tab.setupNext()).toBe("household facts");
     });
 
+    it("changes nothing on I saved it after step 3 or after setup, from any Member", async () => {
+      const masterKeyRow = async () =>
+        (
+          await test.database.$client.execute(
+            "SELECT status, at FROM setup_steps WHERE step = 'master key'",
+          )
+        ).rows;
+      const aliceTab = await signedIn(alice);
+      expect((await aliceTab.savedIt()).status).toBe(200);
+      const saved = await masterKeyRow();
+      expect(saved).toEqual([expect.objectContaining({ status: "done" })]);
+
+      // After step 3.
+      vi.setSystemTime(Date.now() + 60_000);
+      expect((await aliceTab.savedIt()).status).toBe(200);
+      expect(await masterKeyRow()).toEqual(saved);
+
+      // After setup, from the first Member and from another Member.
+      await markSetupStep(test.database, "household facts", "done");
+      await markSetupStep(test.database, "finish", "done");
+      vi.setSystemTime(Date.now() + 60_000);
+      for (const tab of [aliceTab, await signedIn(bob)]) {
+        const res = await tab.savedIt();
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ saved: true });
+      }
+      expect(await masterKeyRow()).toEqual(saved);
+      expect((await aliceTab.shownKey()).status).toBe(410);
+    });
+
     it("asks for no paste-back: a body with a key is refused, and the step stays open", async () => {
       const tab = await signedIn(alice);
       const key = await shown(tab);

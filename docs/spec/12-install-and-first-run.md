@@ -145,6 +145,7 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 - Until steps 1 to 4 are done, every page leads to the wizard, except `/healthz`.
 - The Master key step comes before the Banks step on purpose, so no token is stored before the key is saved.
 - Only the Banks step can be skipped, with "Skip for now". A skipped Banks step appears in the "Finish setup" list on the dashboard until a Connection exists.
+- In the list of steps, a done step has a check mark. A skipped Banks step has no check mark: it shows "5. Banks (skipped)".
 - AI, Alerts, and Invite Members are not wizard steps. They are optional extras. Each one appears in the "Finish setup" list until it is done, and the Finish step lists the ones not yet done.
 - The wizard saves each step when the step is done. The next visit opens the first step that is neither done nor skipped.
 - Back opens the step before. A step whose work cannot change, such as the login or the saved Master key, then says that it is done and offers Continue.
@@ -157,7 +158,7 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 - Entered codes ignore letter case and dashes.
 - The page allows 5 wrong codes per 15 minutes.
 - After the server accepts the code, the page keeps it in the browser tab's session storage, exactly as the server accepted it. A reload then goes on to step 2 without the code from the terminal. The page checks the kept code with the server again before it uses it.
-- The page deletes the kept code when the first Member exists, and when the server refuses it. Closing the tab also deletes it.
+- The page deletes the kept code when the first Member exists, and when the server refuses the code itself: a wrong code, a code with the wrong form, or a code sent after the first Member exists. The page keeps the code after "too many wrong codes" and after a server error, because the code can still be right. Closing the tab also deletes it.
 
 **Step 2, Your login:** the step makes the first Member and signs them in. It shows the backup codes once. From then on, the setup code no longer works. Login rules are in [Members, login, and security](09-members-login-security.md#signing-in).
 
@@ -193,9 +194,9 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 **The "Finish setup" list:**
 
 - The dashboard shows it to every Member, once steps 1 to 4 are done ([Dashboard and pages](07-dashboard-and-pages.md#header-and-status-lines)).
-- It holds Banks while no Connection has existed, then AI, Alerts, and Invite Members, each until it is done.
-- An item is done only on what the server knows. Banks is done once a Connection exists. AI is done once an AI provider is set. Alerts is done once a test email goes out. Invite Members is done once an invite link is made.
-- A done item stays done, even if its Connection, provider, or invite goes away later.
+- It holds Banks while the Household has no Connection (a removed Connection does not count), then AI, Alerts, and Invite Members, each until it is done.
+- An item is done only on what the server knows. The Banks step is done once a Connection exists. AI is done once an AI provider is set. Alerts is done once a test email goes out. Invite Members is done once an invite link is made.
+- A done extra stays done, even if its provider or invite goes away later. A done Banks step also stays done, but Banks comes back to the list when the last Connection is removed.
 
 ## Updates
 

@@ -1,4 +1,9 @@
-import type { FinishSetupItem, SetupProgressView } from "../server/setup-views.ts";
+import {
+  type FinishSetupItem,
+  type SetupProgressView,
+  SKIPPABLE_SETUP_STEPS,
+  type SkippableSetupStep,
+} from "../server/setup-views.ts";
 import { api } from "./api.ts";
 
 // Until the first-run wizard's steps 1 to 4 are done, every page leads to the wizard (spec 12,
@@ -44,10 +49,11 @@ const MAX_SETUP_CODE_LENGTH = 64;
 
 type CodeStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-// This tab's sessionStorage, or undefined where the browser blocks it.
+// This tab's sessionStorage, or undefined where the browser blocks it. The window is read through
+// globalThis, because server tests also load this file.
 function tabStorage(): CodeStorage | undefined {
   try {
-    return typeof window === "undefined" ? undefined : window.sessionStorage;
+    return (globalThis as { window?: { sessionStorage: CodeStorage } }).window?.sessionStorage;
   } catch {
     return undefined;
   }
@@ -73,6 +79,13 @@ export function saveSetupCode(code: string, storage = tabStorage()): void {
   }
 }
 
+// A refusal that means the kept code can never work: a code with the wrong form (400), a wrong code
+// (401), or a Member already made (403). After too many wrong codes (429) or a server error, the
+// code may still be right, so the page keeps it.
+export function setupCodeRefused(status: number): boolean {
+  return status === 400 || status === 401 || status === 403;
+}
+
 export function forgetSetupCode(storage = tabStorage()): void {
   try {
     storage?.removeItem(SETUP_CODE_KEY);
@@ -89,6 +102,12 @@ export async function fetchSetupProgress(): Promise<SetupProgressView | undefine
   const res = await api.setup.progress.$get();
   if (!res.ok) return undefined;
   return ((await res.json()) as { progress: SetupProgressView }).progress;
+}
+
+// The wizard steps the first Member skipped, as the server records them. The step bar shows each one
+// as not done, after Skip for now and after a reload alike.
+export function skippedWizardSteps(progress: SetupProgressView | undefined): SkippableSetupStep[] {
+  return SKIPPABLE_SETUP_STEPS.filter((step) => progress?.steps[step] === "skipped");
 }
 
 // Opens the wizard's next step when the server names one. True when it did.

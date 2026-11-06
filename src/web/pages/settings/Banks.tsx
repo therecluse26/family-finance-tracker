@@ -193,8 +193,9 @@ export function SyncNow() {
 }
 
 // The Plaid keys, then the ways to add a bank or an Account: Import Plaid Connection, a new
-// Connection, an Unconnected account, and a Manual loan. Settings, Banks shows them, and so does
-// the first-run wizard's step 5 (spec 12, Step 5, Banks).
+// Connection, an Unconnected account, and a Manual loan. Settings, Banks shows them. The first-run
+// wizard's step 5 uses only the Plaid keys form and the link buttons (spec 12, The first-run
+// wizard).
 export function BankSources() {
   const [plaid, setPlaid] = useState<PlaidView | undefined>();
   const [error, setError] = useState<string | undefined>();
