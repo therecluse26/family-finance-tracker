@@ -720,9 +720,9 @@ describe("the number tiles", () => {
       "/accounts",
     ]);
     // More Spending or Debt is bad (orange); less Cash on hand is bad too; no change is grey.
-    expect(tiles).toContain('class="block text-sm text-orange-700">▲ $120 above usual');
-    expect(tiles).toContain('class="block text-sm text-gray-500">● about usual');
-    expect(tiles).toContain('class="block text-sm text-orange-700">▼ $655 below usual');
+    expect(tiles).toContain('class="block text-sm text-serious">▲ $120 above usual');
+    expect(tiles).toContain('class="block text-sm text-muted">● about usual');
+    expect(tiles).toContain('class="block text-sm text-serious">▼ $655 below usual');
   });
 
   it("says about usual within 2% of the usual, either way", () => {
@@ -818,7 +818,7 @@ describe('"A usual month"', () => {
     expect(slotText(html, "usual")).toBe("$3,000");
     // On pace for $3,120 against a usual of $3,000: $120 above, past the 2% band.
     expect(slotText(html, "usual-line")).toBe("October is on pace for $3,120, $120 above usual");
-    expect(html).toContain('class="text-orange-700" data-slot="usual-line"');
+    expect(html).toContain('class="text-serious" data-slot="usual-line"');
     expect(listItems(html, "Category groups")).toEqual([
       "Bills $1,500 of $2,000 ◆ 1 on pace to go over",
       "Shopping $800 of $700 ▲ 1 over",

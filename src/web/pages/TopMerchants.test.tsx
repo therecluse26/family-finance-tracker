@@ -43,8 +43,8 @@ describe("the Top Merchants page", () => {
     const rows = [...html.matchAll(/<li[^>]*>(.*?)<\/li>/gs)].map((match) => text(match[1] ?? ""));
 
     expect(rows).toEqual([
-      "1. Corner Grocer 142 Transactions · Groceries $12,480",
-      "2. Streamly 1 Transaction $15",
+      "1 Corner Grocer 142 Transactions · Groceries $12,480",
+      "2 Streamly 1 Transaction $15",
     ]);
     expect(merchantFacts(MERCHANTS[1] as TopMerchantView)).toBe("1 Transaction");
   });

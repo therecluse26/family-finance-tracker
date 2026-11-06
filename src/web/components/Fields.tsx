@@ -4,13 +4,14 @@ import { totpSecretOf } from "../requests.ts";
 
 // Shared form pieces.
 
-export const FIELD = "mt-1 block w-full rounded border border-gray-300 px-3 py-2";
-export const BUTTON = "mt-4 rounded bg-blue-700 px-4 py-2 text-white disabled:opacity-50";
+export const FIELD = "mt-1 block w-full rounded-control border border-field bg-white px-3 py-2";
+export const BUTTON =
+  "mt-4 rounded-control bg-accent px-4 py-2 font-semibold text-white hover:bg-accent-dark disabled:opacity-50";
 
 export function ErrorLine(props: { error: string | undefined }) {
   if (props.error === undefined) return null;
   return (
-    <p className="mt-3 text-red-700" role="alert">
+    <p className="mt-3 text-critical" role="alert">
       {props.error}
     </p>
   );
