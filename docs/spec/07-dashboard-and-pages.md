@@ -15,7 +15,7 @@ Layout ([prototype, variant H](https://github.com/therecluse26/family-finance-tr
 
 ### Header and status lines
 
-- The header shows the month's name, such as "October", and "Day N of M · synced <time>". The time is the latest finished sync.
+- The header shows the month's name, such as "October", and "Day N of M · synced <time>". The time is the latest finished sync of a Connection that is not removed.
 - On the 1st, the dashboard switches to the new month. The month just ended lives on in its [Monthly review](#reviews-page).
 - Above the boxes, the dashboard shows these lines when they apply. Each owner file defines when they appear and go:
   - a banner for each broken Connection, with **Repair** ([Accounts and bank sync](02-accounts-and-bank-sync.md));
@@ -111,7 +111,7 @@ Four tiles in a row (two by two on a phone):
 - **The 12-month usual:** the median of the last 12 complete months. For Cash on hand and Debt, the app uses the 12 month-end balances.
 - **Direction:** "▲ $X above usual" or "▼ $X below usual". Within 2% of the usual, the tile shows "● about usual" instead.
 - **Trend line:** a small line of 12 points. For Spending and Income, the last 12 complete months. For Cash on hand and Debt, the last 11 month-ends and today.
-- Debt counts Manual loan balances, which are the app's own estimates. When any Manual loan exists, the tile says "Debt includes N estimated loans". Balances before an Account's first sync are estimated too ([Accounts and bank sync](02-accounts-and-bank-sync.md)).
+- Debt counts Manual loan balances, which are the app's own estimates. When any Manual loan exists, the tile says "Debt includes N estimated loans". Balances before an Account's first sync are estimated too ([Accounts and bank sync](02-accounts-and-bank-sync.md)). When any month-end balance behind the usual of Cash on hand or Debt is from before an Account's first sync, the direction says "estimated usual" in place of "usual", as in "▲ $X above estimated usual" or "● about estimated usual".
 - Tapping Spending opens [Top Merchants](#top-merchants). Tapping Income opens the [Transactions page](#transactions-page) for last month's Income. Tapping Cash on hand or Debt opens the [Account list](#account-list).
 
 ### 5. "A usual month"
@@ -153,6 +153,7 @@ Four tiles in a row (two by two on a phone):
     - no other open loan in the Household, of any kind (connected with or without a minimum payment, paired or not, or Manual), has that lender's name;
     - the lender's untracked loan payments in those 3 months come at most once in each calendar month.
 - A Recurring charge or Income series whose interval is shorter than the window shows at every expected date in the window: its next date, then one interval after each.
+- A loan payment shows once. A Recurring charge whose last Transaction is a payment to a loan that has its own loan payment row does not show.
 - **The balance:** the combined current balance of all connected checking Accounts. Each row's "Checking after" is that balance after the row.
 - A Recurring charge that last landed on a credit card shows "on card" in "Checking after". It does not move the checking balance. The card's payment due does.
 - Paydays show in bold with a "+" amount.
@@ -170,7 +171,7 @@ The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with i
 Using this page is never required.
 
 - **Filters:** Account, Category, Merchant, date range, and type (Spending, Income, Transfer, Saving, Refund, Reimbursement).
-- **Each row:** the date, the Merchant, the amount, the Account, the Category or type, and a "pending" mark when pending. Newest first.
+- **Each row:** the date, the Merchant, the amount, the Account, the Category or type, and a "pending" mark when pending. Newest first, by the date each row shows.
 - **The detail view** shows:
   - how the Category was chosen: "hand-set", "Category rule", "Plaid" (the Bank-data provider's category), "Merchant history", "AI", or "AI, unsure". A no-AI guess shows "best guess";
   - the evidence for any link (Transfer, Refund, Reimbursement, or loan payment): the matched Transaction and each signal that matched ([Money movement](03-money-movement.md)), with **Undo**.
@@ -190,7 +191,7 @@ Using this page is never required.
   - "Not this", which opens the other choices for that kind, such as the Category list.
 - Accepting a Category guess makes a Category rule ([Categorization](04-categorization.md)). Every answer counts as hand-set.
 - An item closes when a Member answers it, or when a later event settles it. Otherwise it stays.
-- Newest first. With no items, the page says "Nothing to check."
+- Newest first. Items made at the same moment, such as by one follow-up job, run by their Transaction's date, newest first. With no items, the page says "Nothing to check."
 
 ### Recurring charges page
 

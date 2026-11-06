@@ -21,6 +21,7 @@ A Recurring charge is Spending with one Merchant that repeats at a steady interv
 
 - **Yearly** needs only 2 Transactions, 11 to 13 months apart, with amounts within 15% of each other.
 - Transfers never count. Only Spending counts. Income series use a variant of this rule ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#steady-income)).
+- Spending in Interest and fees never forms a Recurring charge. Card interest and fees send the Card interest or fee Alert ([Overspending Alerts](#overspending-alerts)), and loan interest is a part of a loan payment. So interest never sends a New Recurring charge or Price increase Alert.
 - A Merchant is identified as [Categorization](04-categorization.md) says: the provider's Merchant ID, else the clean name.
 - One Merchant may have more than one Recurring charge, at different amounts.
 - **A frequent shop never forms a Recurring charge.** When finding a new series, the app skips a Merchant with 3 or more other Transactions in the 60 days before or after the series' first Transaction that are not part of the series, at any amount. The window runs from 60 days before that Transaction to 60 days after it, so a shop's series cannot form at the start of a history, where nothing comes before. The series' part includes the later Transactions that would continue it. Another subscription at that Merchant does not count either, so one Merchant can still have two: neither the Transactions of its other Recurring charges, nor those of another series the rule finds on its own that has 2 or more Transactions in or near the window (within 70 days of it), at a steady amount (within 7.5% of each other). A shop's chance series continue at any amount, so their Transactions still count. A weekly grocery shop is an example. Existing Recurring charges in a database are found again by the next run, so a shop's series ends.
@@ -36,7 +37,7 @@ A monthly series is measured from a fixed day of the month, not from the previou
 - The fixed day is the day of the month whose expected dates are the fewest total days from the series' Transactions. A tie takes the earlier day.
 - Each month's expected date is the fixed day in that month. A day the month lacks means its last day.
 - **Business-day shift:** when an expected date is not a business day, a Transaction may also land within the margin of the business day before it or the business day after it. Business days follow the Federal Reserve calendar, as the Transfer windows do ([Money movement](03-money-movement.md#windows)): weekends and Federal Reserve holidays are closed.
-- Income series use the same rule for monthly Income ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#steady-income)).
+- Income series use the same rule for monthly Income, and for each of the two fixed days of twice-a-month Income ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#steady-income)).
 
 ### Continuing a series
 
@@ -80,14 +81,17 @@ An Anomaly is a Transaction, or a series of Transactions, that is unusual agains
 
 | Anomaly | Fires when | Never fires for | The Alert says | Sent |
 |---|---|---|---|---|
-| **Duplicate charge** | Two posted Spending Transactions have the same Account, the same Merchant, and the same amount to the cent. Their purchase dates are 0 to 2 days apart. | A frequent purchase at that amount. | "Possible duplicate charge: {amount} at {Merchant} on {Account}, on {date 1} and {date 2}." Example: "Possible duplicate charge: $42.50 at Shell on Chase Sapphire, on Oct 3 and Oct 4." | Always, outside the weekly cap |
+| **Duplicate charge** | Two posted Spending Transactions have the same Account, the same Merchant, and the same amount to the cent. Their purchase dates are 0 to 2 days apart. | A frequent purchase at that amount. A payment-app line whose Merchant is the payment app. | "Possible duplicate charge: {amount} at {Merchant} on {Account}, on {date 1} and {date 2}." Example: "Possible duplicate charge: $42.50 at Shell on Chase Sapphire, on Oct 3 and Oct 4." | Always, outside the weekly cap |
 | **Price increase** | A Transaction continues a Recurring charge. It is more than 5% and more than $1 above the base price. | A drop. A rise of 5% or less, or of $1 or less. | "{Merchant} went up from {base} to {amount} (+{difference}, +{percent}%) on {date}." Example: "Netflix went up from $15.49 to $17.99 (+$2.50, +16%) on Oct 3." | Within the cap, priority 2 |
-| **New Recurring charge** | A posted Transaction and exactly one earlier Transaction from the same Merchant fit a weekly, 2-week, or monthly schedule. Their amounts are within 7.5% of each other. | The yearly schedule. A Transaction that continues or revives a Recurring charge. A Merchant and amount marked known. A frequent purchase. | "New Recurring charge? {Merchant}, {amount} on {date 1} and {date 2}. Next expected {next date}." Example: "New Recurring charge? Hulu, $9.99 on Sep 3 and Oct 3. Next expected Nov 3." | Within the cap, priority 3 |
+| **New Recurring charge** | A posted Transaction and exactly one earlier Transaction from the same Merchant fit a weekly, 2-week, or monthly schedule. Their amounts are within 7.5% of each other. | The yearly schedule. A Transaction that continues or revives a Recurring charge. A Merchant and amount marked known. A frequent purchase. Spending in Interest and fees. | "New Recurring charge? {Merchant}, {amount} on {date 1} and {date 2}. Next expected {next date}." Example: "New Recurring charge? Hulu, $9.99 on Sep 3 and Oct 3. Next expected Nov 3." | Within the cap, priority 3 |
 | **Large purchase** | One posted Spending Transaction of at least $250. It is larger than 98% of the Household's purchases in the 12 months before it. | Recurring charges. Spending in the Bills group. Loan payments. Transfers. | "Large purchase: {amount} at {Merchant} on {date}. It is larger than 98% of your purchases in the last 12 months." With a Budget, it adds: "{Category}: {spent} of its {Budget} Budget for {month}." | Within the cap, priority 5 |
 
 **Rules behind the table:**
 
-- **A frequent purchase:** 3 or more other Transactions at that Merchant in the 60 days before the earlier Transaction. For a Duplicate charge, they have the same amount. For a New Recurring charge, they may be at any amount, and Transactions of the Merchant's Recurring charges do not count. A daily coffee is an example.
+- **A frequent purchase:** 3 or more other Transactions at that Merchant near the earlier Transaction. A daily coffee is an example.
+  - For a Duplicate charge, they are in the 60 days before the earlier Transaction, at the same amount.
+  - For a New Recurring charge, they are in the 60 days before or after the earlier Transaction, at any amount, as for a frequent shop ([Finding a series](#finding-a-series)). The later Transaction of the pair is not one of them. Transactions of the Merchant's Recurring charges do not count. The check counts the Transactions the app has when it runs, so a pair found in a history load sees all of its window.
+- **A payment app as the Merchant:** when a payment-app line names no person or shop, the payment app is the Merchant ([Categorization](04-categorization.md)). Two such lines for the same amount are often payments to different people, so they never fire a Duplicate charge. A line that names a person or a shop has that person or shop as its Merchant, and the Duplicate charge check applies as usual.
 - **The base price:** the median of the previous 3 Transactions in the Recurring charge. It counts only Transactions from the last Price increase onward. Example: $15.49, $15.49, $15.49, then $17.99 fires. The next $17.99 compares against $17.99 and fires nothing.
 - **Large purchase's 98%:** the purchases are the Spending Transactions in the 365 days before, with the same exclusions. At least 98% of them must be smaller.
 - **Loan payments** are payments on tracked loans and untracked loans, as [Money movement](03-money-movement.md#loans) defines them.
@@ -163,6 +167,7 @@ A Duplicate charge and card interest or a fee are outside the cap because that m
 
 - Every Member gets every Alert.
 - Each Member picks their own channels: push, email, both, or none.
+- Push on a device belongs to the one Member who turned it on. When another Member uses that browser, the page tells them that push on this device is on for another Member. Nothing they do there ends the first Member's push.
 - A new Member starts with both. The app skips a channel that is not set up: email without SMTP, or push with no device turned on.
 - On plain HTTP, email is the only channel ([Members, login, and security](09-members-login-security.md)).
 - [Stack and architecture](10-stack-and-architecture.md) covers web push and SMTP delivery.

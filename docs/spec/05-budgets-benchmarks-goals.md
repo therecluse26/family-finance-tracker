@@ -140,6 +140,8 @@ Steady Income (I) is the Household's regular Income per month. It sets the Bench
 - Amounts must be within 15% of each other, not 7.5%.
 - A monthly Income series is measured from a fixed day of the month, with the business-day shift, as a monthly Recurring charge is ([Monthly series](06-anomalies-and-alerts.md#monthly-series)).
 - It adds a twice-a-month schedule: two fixed days of the month, each within ±2 days. Examples: the 1st and the 15th, or the 15th and the last day.
+- The two fixed days are the pair whose expected dates are the fewest total days from all of the series' Transactions, as for the fixed day of a monthly series. The app picks them again as Transactions arrive. So a payer on the 15th and the 28th that is first found in February keeps the 28th, not the last day.
+- Each of the two fixed days has the same business-day shift as a monthly series. When its expected date is a weekend day or a Federal Reserve holiday, a Transaction may also land within ±2 days of the business day before it or the business day after it. Example: a payer on the 1st and the 15th pays on Friday, December 29, because January 1 is a Monday and a holiday. That is 3 days early, but it is on the business day before.
 - A series may fit both every 2 weeks and twice a month. Then the app picks the schedule whose expected dates are fewer total days from the actual dates.
 - Yearly series never count as steady Income.
 
@@ -174,6 +176,7 @@ Steady Income (I) is the Household's regular Income per month. It sets the Bench
 - The draft is the active Budget at once. Members can edit any Budget, or accept them all with one click. If nobody looks, the draft stays active.
 - **Bills Budgets** are computed again on the 1st of every month, Household time.
 - **A Category with no Budget** gets its first Budget on the 1st after it qualifies (below). The formula sets it, with no Proposal.
+- **An undone first Budget:** when a Member undoes an accepted Proposal that gave a Category its first Budget, the Category stays without a Budget. The formula does not give it a first Budget again on a later 1st. It gets a Budget again only when a Member sets one: by an edit, or by accepting a later Proposal for that Category.
 
 ### Which Categories get a Budget
 
@@ -392,7 +395,7 @@ The app computes every number. The AI never does. The target sets the kind of Go
 
 ### Done
 
-- The app sets a Goal to done when it meets its "Done when" rule.
+- The app sets a Goal to done when it meets its "Done when" rule. It checks every active Goal in each follow-up job and on the 1st, Household time. So a Goal is done on the day of the first check that finds its rule met, not on the day a Member opens the Goals list.
 - A done Goal shows "Done" for one month. Then it moves to the done list.
 - A passed deadline does not end a Goal. It stays active and shows Behind until it is done or a Member drops it.
 

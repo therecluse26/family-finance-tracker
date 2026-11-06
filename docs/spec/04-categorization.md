@@ -49,6 +49,7 @@ Upkeep stays with what it maintains: home repairs in Home and garden, and car re
   - cities;
   - dates.
 - A name counts as fixed when the result has 1 to 4 words. No word may be only digits or symbols.
+- **A card payment line,** which Plaid files under its credit card payment code, gets the name "<bank> card payment", such as "Chase card payment". The bank is what the line names after the rules remove payment words, such as "card ending in", "mobile pymt", "autopay", "online" and "thank you", and every run of digits. When the line names no bank, as in `THANK YOU-MOBILE` on the card's own Account, the name is "Card payment". A card's last 4 never stays in the name.
 - When an AI provider is set up, the AI cleans only the names the rules cannot fix. The app keeps each answer and reuses it for the same description text. So the AI sees each text once.
 - The cleanup rules run when a Transaction arrives, before matching, because Refund links need the Merchant. AI cleanup runs in the categorization step.
 
