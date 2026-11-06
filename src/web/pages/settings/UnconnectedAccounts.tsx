@@ -5,6 +5,7 @@ import type { UnconnectedAccountView } from "../../../server/bank-views.ts";
 import { accountEdits } from "../../account-edits.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 
 // Settings, Banks: Unconnected accounts (spec 02, Unconnected accounts). Any Member adds one and
 // edits it, and may type its true balance at any time. Its balance is an estimate from the
@@ -193,7 +194,7 @@ export function UnconnectedAccountList(props: {
 export function UnconnectedAccounts() {
   const [accounts, setAccounts] = useState<UnconnectedAccountView[] | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const today = calendarDateIn(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const zone = useHouseholdZone();
 
   async function load() {
     try {
@@ -213,8 +214,12 @@ export function UnconnectedAccounts() {
   return (
     <>
       <ErrorLine error={error} />
-      {accounts === undefined ? null : (
-        <UnconnectedAccountList accounts={accounts} today={today} onSaved={() => void load()} />
+      {accounts === undefined || zone === undefined ? null : (
+        <UnconnectedAccountList
+          accounts={accounts}
+          today={calendarDateIn(new Date(), zone)}
+          onSaved={() => void load()}
+        />
       )}
     </>
   );

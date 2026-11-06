@@ -18,9 +18,9 @@ import {
 import { tablePrice } from "../../../ai/prices.ts";
 import { capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel } from "../../../format.ts";
-import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 
 // Settings → AI: the Household's one AI provider (spec 08, AI settings page). The API key and the
 // gateway token are write-only: the page shows only whether each is set.
@@ -33,12 +33,9 @@ async function refusal(res: Response): Promise<string> {
   return typeof body.error === "string" ? body.error : "That did not work.";
 }
 
-// Today as a calendar date in the Household time zone, or in this browser's time zone while the
-// Household facts are loading. Never the date in UTC, which is tomorrow in the US each evening.
-export function todayHere(
-  now = new Date(),
-  zone = Intl.DateTimeFormat().resolvedOptions().timeZone,
-): string {
+// Today as a calendar date in `zone`, the Household time zone. Never the date in UTC, which is
+// tomorrow in the US each evening.
+export function todayHere(now: Date, zone: string): string {
   return calendarDateIn(now, zone);
 }
 
@@ -441,8 +438,7 @@ export function AiSettingsFields() {
   const [ai, setAi] = useState<AiView | null | undefined>();
   const [usage, setUsage] = useState<AiUsageView | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const [zone, setZone] = useState<string | undefined>();
-  const today = todayHere(new Date(), zone);
+  const zone = useHouseholdZone();
 
   // The check on save counts toward the month's cost, so a save loads the total again.
   const loadUsage = useCallback(() => {
@@ -456,14 +452,6 @@ export function AiSettingsFields() {
 
   useEffect(() => {
     loadUsage();
-    // The AI provider is set only after the wizard's step 4, so the Household has a time zone.
-    api.household
-      .$get()
-      .then(async (res) => {
-        if (!res.ok) return;
-        setZone(((await res.json()) as { facts: HouseholdFactsView | null }).facts?.timeZone);
-      })
-      .catch(() => {});
     api.ai.settings
       .$get()
       .then(async (res) => {
@@ -480,8 +468,8 @@ export function AiSettingsFields() {
         <>
           {ai === null ? (
             <p className="mt-2">No AI provider yet. Every AI use takes its no-AI path.</p>
-          ) : (
-            <AiStatusLine ai={ai} today={today} />
+          ) : zone === undefined ? null : (
+            <AiStatusLine ai={ai} today={todayHere(new Date(), zone)} />
           )}
           <AiProviderForm
             key={ai === null ? "none" : "set"}

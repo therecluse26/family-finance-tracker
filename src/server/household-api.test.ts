@@ -117,10 +117,35 @@ describe("the Household facts routes", () => {
     expect((await put(FACTS)).status).toBe(409);
   });
 
+  it("gives the Household time zone alone, with no ZIP code, ages or other field", async () => {
+    const timeZone = async () => {
+      const res = await browser.get("/api/household/time-zone");
+      expect(res.status).toBe(200);
+      return res.json();
+    };
+    expect(await timeZone()).toEqual({ timeZone: null });
+
+    await markSetupStep(test.database, "master key", "done");
+    expect((await put(FACTS)).status).toBe(200);
+    const answer = await timeZone();
+    expect(answer).toEqual({ timeZone: "America/Anchorage" });
+    const text = JSON.stringify(answer);
+    for (const fact of [FACTS.zipCode, "AK", "own", ...FACTS.ages.map(String)]) {
+      expect(text).not.toContain(fact);
+    }
+
+    // A new ZIP code in another time zone changes it at once.
+    expect((await put({ ...FACTS, zipCode: "96813" })).status).toBe(200);
+    expect(await timeZone()).toEqual({ timeZone: "Pacific/Honolulu" });
+  });
+
   it("answers no one who is signed out", async () => {
     const stranger = new TestBrowser(app, APP_URL, "192.168.1.21");
 
     expect((await stranger.get("/api/household")).status).toBe(401);
     expect((await stranger.send("PUT", "/api/household", FACTS)).status).toBe(401);
+    const zone = await stranger.get("/api/household/time-zone");
+    expect(zone.status).toBe(401);
+    expect(await zone.text()).not.toContain("timeZone");
   });
 });

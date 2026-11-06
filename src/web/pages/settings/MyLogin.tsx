@@ -1,6 +1,8 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { calendarDateIn, dateLabel } from "../../../format.ts";
 import { BackupCodes, BUTTON, ErrorLine, NewTotp, TextField } from "../../components/Fields.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import {
   addPasskey,
   deletePasskey,
@@ -19,6 +21,11 @@ import { postJson, refusalText } from "../../requests.ts";
 
 const CODE_LABEL = "A code from your authenticator app, or a backup code";
 const WRONG_CODE = "Wrong code.";
+
+// "Nov 4": the day a passkey was added, in `zone`, the Household time zone.
+export function addedOn(at: string, zone: string, now = new Date()): string {
+  return dateLabel(calendarDateIn(new Date(at), zone), calendarDateIn(now, zone));
+}
 
 function useAction() {
   const [busy, setBusy] = useState(false);
@@ -201,6 +208,7 @@ function ChangeBackupCodes() {
 function Passkeys() {
   const state = passkeyState();
   const [rows, setRows] = useState<PasskeyRow[] | undefined>();
+  const zone = useHouseholdZone();
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const action = useAction();
@@ -256,14 +264,14 @@ function Passkeys() {
         A passkey signs you in on its own, with no password and no code. It works only at this app's
         address.
       </p>
-      {rows === undefined ? null : rows.length === 0 ? (
+      {rows === undefined || zone === undefined ? null : rows.length === 0 ? (
         <p className="mt-2">You have no passkeys.</p>
       ) : (
         <ul className="mt-2">
           {rows.map((row) => (
             <li key={row.id} className="mt-1 flex items-center gap-3">
               <span>
-                {row.name ?? "Passkey"}, added {new Date(row.createdAt).toLocaleDateString()}
+                {row.name ?? "Passkey"}, added {addedOn(row.createdAt, zone)}
               </span>
               <button
                 className="rounded border border-gray-300 px-2 py-1 disabled:opacity-50"

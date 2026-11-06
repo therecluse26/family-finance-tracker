@@ -639,7 +639,7 @@ export function ConnectionItem(props: {
             To confirm, enter a code from your authenticator app, or a backup code
             <input
               className={FIELD}
-              inputMode="numeric"
+              inputMode="text"
               autoComplete="one-time-code"
               value={code}
               onChange={(e) => setCode(e.target.value)}

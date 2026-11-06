@@ -33,10 +33,11 @@ function render(element: React.JSX.Element): string {
 }
 
 const NOW = new Date("2026-11-04T17:00:00.000Z");
+const ZONE = "America/New_York";
 
 describe("Settings, About", () => {
   it("shows the version, the Source code link, the third-party notices, and the Data sources page", () => {
-    const html = render(<AboutDetails about={ABOUT} now={NOW} />);
+    const html = render(<AboutDetails about={ABOUT} zone={ZONE} now={NOW} />);
 
     expect(text(html)).toContain("Version 1.2.0");
     expect(html).toContain('href="https://github.com/some-fork/fft-fork/tree/v1.2.0"');
@@ -56,7 +57,11 @@ describe("Settings, About", () => {
       releaseNotes: "https://github.com/some-fork/fft-fork/releases/tag/v1.3.0",
     };
     const html = render(
-      <AboutDetails about={{ ...ABOUT, updateCheck: { ...NO_UPDATE, update } }} now={NOW} />,
+      <AboutDetails
+        about={{ ...ABOUT, updateCheck: { ...NO_UPDATE, update } }}
+        zone={ZONE}
+        now={NOW}
+      />,
     );
 
     expect(text(html)).toContain("Update available: version 1.3.0.");
@@ -71,7 +76,11 @@ describe("Settings, About", () => {
       releaseNotes: "https://github.com/some-fork/fft-fork/releases/tag/v2.0.0",
     };
     const html = render(
-      <AboutDetails about={{ ...ABOUT, updateCheck: { ...NO_UPDATE, update } }} now={NOW} />,
+      <AboutDetails
+        about={{ ...ABOUT, updateCheck: { ...NO_UPDATE, update } }}
+        zone={ZONE}
+        now={NOW}
+      />,
     );
 
     expect(text(html)).toContain("Update available: version 2.0.0.");
@@ -92,6 +101,7 @@ describe("Settings, About", () => {
             lastFailure: "rate limited",
           },
         }}
+        zone={ZONE}
         now={NOW}
       />,
     );
@@ -101,7 +111,11 @@ describe("Settings, About", () => {
     );
 
     const off = render(
-      <AboutDetails about={{ ...ABOUT, updateCheck: { ...NO_UPDATE, on: false } }} now={NOW} />,
+      <AboutDetails
+        about={{ ...ABOUT, updateCheck: { ...NO_UPDATE, on: false } }}
+        zone={ZONE}
+        now={NOW}
+      />,
     );
     expect(text(off)).toContain("The Update check is off.");
     expect(off).not.toMatch(/type="checkbox"[^>]*checked=""/);
@@ -116,6 +130,7 @@ describe("the Data sources page", () => {
           cpiFetchedAt: "2026-10-20T11:00:00.000Z",
           benchmarkNotice: "Sample numbers, not real data",
         }}
+        zone={ZONE}
         now={NOW}
       />,
     );
@@ -147,13 +162,17 @@ describe("the Data sources page", () => {
 
   it("says when the app has not fetched the CPI yet, and shows no label for a real snapshot", () => {
     const html = render(
-      <DataSourcesPage dataSources={{ cpiFetchedAt: null, benchmarkNotice: null }} now={NOW} />,
+      <DataSourcesPage
+        dataSources={{ cpiFetchedAt: null, benchmarkNotice: null }}
+        zone={ZONE}
+        now={NOW}
+      />,
     );
 
     expect(text(html)).toContain(
       "The app has not fetched the CPI from BLS yet. It uses the CPI values shipped with this release.",
     );
-    expect(cpiFetchText("2025-12-20T11:00:00.000Z", NOW)).toBe(
+    expect(cpiFetchText("2025-12-20T11:00:00.000Z", ZONE, NOW)).toBe(
       "The app last fetched the CPI from BLS on Dec 20, 2025.",
     );
   });

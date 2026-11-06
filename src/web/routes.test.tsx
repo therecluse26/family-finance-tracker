@@ -8,6 +8,8 @@ import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { routes } from "./routes.tsx";
 import { Shell } from "./Shell.tsx";
 
+const ZONE = "America/New_York";
+
 // Renders a route as the browser's first paint, before any request answers.
 function render(path: string): string {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
@@ -92,17 +94,17 @@ describe("the app shell", () => {
       "Download my data",
     ]);
     expect(html).toMatch(/<textarea[^>]*autoComplete="off"[^>]*spellCheck="false"/i);
-    expect(html).toMatch(/<input[^>]*inputMode="numeric"[^>]*autoComplete="one-time-code"/i);
+    expect(html).toMatch(/<input[^>]*inputMode="text"[^>]*autoComplete="one-time-code"/i);
   });
 
   it("shows the Master key in groups of 4, and who last checked it and when", () => {
     expect(grouped("0123456789abcdef")).toBe("0123 4567 89ab cdef");
-    expect(lastCheckText(null)).toBe("No one has checked the Master key yet.");
+    expect(lastCheckText(null, ZONE)).toBe("No one has checked the Master key yet.");
     const at = "2026-11-03T14:05:09.000Z";
-    expect(lastCheckText({ memberName: "Bob", at, matched: true }, new Date(at))).toMatch(
-      /^Bob last checked it on Nov \d+ at \d+:05 [AP]M\. It matched\.$/,
+    expect(lastCheckText({ memberName: "Bob", at, matched: true }, ZONE, new Date(at))).toMatch(
+      /^Bob last checked it on Nov 3 at 9:05 AM\. It matched\.$/,
     );
-    expect(lastCheckText({ memberName: null, at, matched: false }, new Date(at))).toMatch(
+    expect(lastCheckText({ memberName: null, at, matched: false }, ZONE, new Date(at))).toMatch(
       /^A removed Member last checked it on .+\. It did not match\.$/,
     );
   });

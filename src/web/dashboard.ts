@@ -72,15 +72,16 @@ export function dashboardMonth(now: Date, timeZone: string): DashboardMonth {
   };
 }
 
-// "Day 4 of 30 · synced 8:15 AM". The time is the latest finished sync of any Connection, with its
-// date when that was before today.
+// "Day 4 of 30 · synced 8:15 AM". The time is the latest finished sync of a Connection that is not
+// removed, with its date when that was before today.
 export function headerLine(
   month: DashboardMonth,
-  connections: readonly Pick<ConnectionView, "lastSyncedAt">[],
+  connections: readonly Pick<ConnectionView, "lastSyncedAt" | "removed">[],
   timeZone: string,
 ): string {
   const day = `Day ${month.day} of ${month.days}`;
   const latest = connections
+    .filter((connection) => !connection.removed)
     .map((connection) => connection.lastSyncedAt)
     .filter((at): at is string => at !== null)
     .sort()
@@ -257,6 +258,14 @@ export function directionOf(amount: number, usual: number | null, moreIs: "good"
     : directionAgainstUsual(changeAgainstUsual(amount, usual), moreIs);
 }
 
+// A tile's direction: "▲ $40 above estimated usual" or "● about estimated usual" when its usual
+// counts a month-end balance from before an Account's first sync.
+export function tileDirection(tile: NumberTile) {
+  const direction = directionOf(tile.tile.amount, tile.tile.usual, tile.moreIs);
+  if (direction === undefined || !tile.estimatedUsual) return direction;
+  return { ...direction, text: direction.text.replace(/usual$/, "estimated usual") };
+}
+
 // "September", from "2026-09".
 export const monthName = (month: string) => MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? "";
 
@@ -272,6 +281,8 @@ export type NumberTile = {
   to: string;
   // "Debt includes 2 estimated loans", while any Manual loan counts in the Debt.
   note?: string;
+  // The usual counts a month-end balance from before an Account's first sync.
+  estimatedUsual: boolean;
 };
 
 // The four tiles in their order (spec 07, 4. Number tiles). Spending opens Top Merchants; Income
@@ -286,6 +297,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       tile: view.spending,
       moreIs: "bad",
       to: "/top-merchants",
+      estimatedUsual: false,
     },
     {
       key: "income",
@@ -293,6 +305,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       tile: view.income,
       moreIs: "good",
       to: transactionsPath({ type: "Income", month: view.lastMonth }),
+      estimatedUsual: false,
     },
     {
       key: "cashOnHand",
@@ -300,6 +313,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       tile: view.cashOnHand,
       moreIs: "good",
       to: "/accounts",
+      estimatedUsual: view.cashOnHand.estimatedUsual,
     },
     {
       key: "debt",
@@ -307,6 +321,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       tile: view.debt,
       moreIs: "bad",
       to: "/accounts",
+      estimatedUsual: view.debt.estimatedUsual,
       ...(loans === 0
         ? {}
         : { note: `Debt includes ${loans} estimated ${loans === 1 ? "loan" : "loans"}` }),

@@ -517,6 +517,7 @@ export {
   handOutPushes,
   listWaitingPushes,
   type PushDeviceFields,
+  readPushDeviceMember,
   readVapidKeys,
   removeMemberPushDevices,
   removePushDevice,

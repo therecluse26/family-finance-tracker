@@ -38,7 +38,13 @@ const INVITE: InviteView = {
 const lists = (members: MemberView[], invites: InviteView[]) =>
   text(
     renderToString(
-      <MembersLists members={members} invites={invites} onChange={() => {}} onRemoved={() => {}} />,
+      <MembersLists
+        members={members}
+        invites={invites}
+        zone="America/New_York"
+        onChange={() => {}}
+        onRemoved={() => {}}
+      />,
     ),
   );
 

@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { householdZoneSaved } from "../../household-zone.ts";
 import { SteadyIncome } from "./SteadyIncome.tsx";
 
 // The Household facts (spec 05, Household facts): the wizard's step 4, and Settings, Household,
@@ -45,7 +46,9 @@ export function HouseholdFactsForm(props: {
         json: { zipCode: zipCode.trim(), ages: people.map((p) => Number(p.age)), rentOrOwn },
       });
       if (!res.ok) return setError(await refusal(res));
-      props.onSaved(((await res.json()) as { facts: HouseholdFactsView }).facts);
+      const saved = ((await res.json()) as { facts: HouseholdFactsView }).facts;
+      householdZoneSaved(saved.timeZone);
+      props.onSaved(saved);
     } catch {
       setError("The server did not answer.");
     } finally {

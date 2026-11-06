@@ -1262,6 +1262,8 @@ export const api = new Hono<ServerEnv>()
   })
   // The Household facts: the wizard's step 4, and Settings, Household (spec 05, Household facts).
   .get("/household", async (c) => c.json({ facts: await c.var.household.facts() }))
+  // The Household time zone alone, with no ZIP code or ages, for the pages that show times.
+  .get("/household/time-zone", async (c) => c.json({ timeZone: await c.var.household.timeZone() }))
   .put("/household", async (c) => {
     const body = householdFactsBody.safeParse(await jsonBody(c));
     if (!body.success) {
@@ -1666,6 +1668,12 @@ export const api = new Hono<ServerEnv>()
     if (added.added) return c.json({ added: true }, 200);
     const status = added.refusal === "unknown push service" ? 400 : 409;
     return c.json({ error: DEVICE_REFUSALS[added.refusal] }, status);
+  })
+  // Whose push is on in this browser. The endpoint goes in the body, never in the URL.
+  .post("/push/devices/owner", async (c) => {
+    const body = endpointBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send this browser's push endpoint." }, 400);
+    return c.json({ owner: await c.var.push.deviceOwner(c.var.member.id, body.data.endpoint) });
   })
   // "Turn off Alerts on this device": only the signed-in Member's own device.
   .delete("/push/devices", async (c) => {

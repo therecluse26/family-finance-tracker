@@ -19,10 +19,16 @@ export type DeviceRefusal = PushOff | "unknown push service" | "another Member's
 
 export type DeviceAdd = { added: true } | { added: false; refusal: DeviceRefusal };
 
+// Whose push is on at a browser's endpoint: the signed-in Member's, another Member's, or no
+// Member's (spec 06, Recipients and channels). It never names the other Member.
+export type DeviceOwner = "this Member" | "another Member" | "no Member";
+
 export type PushSettings = {
   view(): Promise<PushView>;
   // Turns Alerts on for the signed-in Member's device.
   addDevice(memberId: string, subscription: PushSubscriptionFields): Promise<DeviceAdd>;
+  // Whose push is on at this endpoint, as the signed-in Member sees it.
+  deviceOwner(memberId: string, endpoint: string): Promise<DeviceOwner>;
   // Turns Alerts off for one of the signed-in Member's own devices. False when they have none at
   // this endpoint.
   removeDevice(memberId: string, endpoint: string): Promise<boolean>;

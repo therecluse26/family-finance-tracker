@@ -44,7 +44,6 @@ import {
   type DashboardData,
   type DashboardMonth,
   dashboardMonth,
-  directionOf,
   type GroupBar,
   type GroupBudgetRow,
   groupBars,
@@ -65,6 +64,7 @@ import {
   rowNote,
   type StatusLines,
   statusLines,
+  tileDirection,
   type UsualGroup,
   usualMonthLine,
   type YearlyRow,
@@ -375,7 +375,7 @@ function TrendLine(props: { trend: NumberTile["tile"]["trend"] }) {
 
 function NumberTileItem(props: { tile: NumberTile }) {
   const { tile } = props;
-  const direction = directionOf(tile.tile.amount, tile.tile.usual, tile.moreIs);
+  const direction = tileDirection(tile);
   return (
     <li className="min-w-0 rounded border border-gray-200" data-slot="tile" data-tile={tile.key}>
       <Link className="block h-full rounded p-3 hover:bg-gray-50" to={tile.to}>

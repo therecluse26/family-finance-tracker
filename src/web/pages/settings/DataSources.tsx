@@ -6,6 +6,7 @@ import type { AboutView } from "../../../server/about-views.ts";
 import { api } from "../../api.ts";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { Markdown } from "../../components/Markdown.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 
 // The Data sources page in Settings, About (spec 05, The Data sources page). It renders the repo's
 // docs/data-sources.md, which the build bundles into the app, so the page and the file say the
@@ -15,20 +16,21 @@ import { Markdown } from "../../components/Markdown.tsx";
 // The document without its own "# Data sources" title, which the page shows as its heading.
 const DOCUMENT = DATA_SOURCES.replace(/^#\s+Data sources\s*\n/, "");
 
-export function cpiFetchText(cpiFetchedAt: string | null, now = new Date()): string {
+// The day the app last fetched the CPI, in `zone`, the Household time zone.
+export function cpiFetchText(cpiFetchedAt: string | null, zone: string, now = new Date()): string {
   if (cpiFetchedAt === null) {
     return "The app has not fetched the CPI from BLS yet. It uses the CPI values shipped with this release.";
   }
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const day = dateLabel(calendarDateIn(new Date(cpiFetchedAt), zone), calendarDateIn(now, zone));
   return `The app last fetched the CPI from BLS on ${day}.`;
 }
 
 export function DataSourcesPage(props: {
   dataSources: AboutView["dataSources"] | undefined;
+  zone: string | undefined;
   now?: Date;
 }) {
-  const { dataSources } = props;
+  const { dataSources, zone } = props;
   return (
     <>
       <h2 className="text-xl font-semibold">Data sources</h2>
@@ -42,8 +44,8 @@ export function DataSourcesPage(props: {
           {dataSources.benchmarkNotice}
         </p>
       )}
-      {dataSources === undefined ? null : (
-        <p className="mt-3">{cpiFetchText(dataSources.cpiFetchedAt, props.now)}</p>
+      {dataSources === undefined || zone === undefined ? null : (
+        <p className="mt-3">{cpiFetchText(dataSources.cpiFetchedAt, zone, props.now)}</p>
       )}
       <div className="mt-2">
         <Markdown text={DOCUMENT} topLevel={2} />
@@ -55,6 +57,7 @@ export function DataSourcesPage(props: {
 export function DataSources() {
   const [dataSources, setDataSources] = useState<AboutView["dataSources"] | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   useEffect(() => {
     api.about
@@ -68,7 +71,7 @@ export function DataSources() {
 
   return (
     <>
-      <DataSourcesPage dataSources={dataSources} />
+      <DataSourcesPage dataSources={dataSources} zone={zone} />
       <ErrorLine error={error} />
     </>
   );

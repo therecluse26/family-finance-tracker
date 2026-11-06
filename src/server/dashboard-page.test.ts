@@ -35,6 +35,7 @@ import {
   paceLine,
   projectedSpending,
   rowNote,
+  tileDirection,
   usualMonthLine,
   yearlyLine,
 } from "../web/dashboard.ts";
@@ -328,7 +329,8 @@ describe("the dashboard on the demo household", () => {
 
   // Cash on hand or Debt worked out by hand: today's current balances from the Account list, and
   // the sum of each Account's balance at each of the 12 month-ends. The demo history starts in May
-  // 2025, so every Account counts at every month-end.
+  // 2025, so every Account counts at every month-end. The usual is estimated when any month-end is
+  // before an Account's first saved balance, its first sync.
   async function balanceTile(ids: readonly string[], owed: boolean) {
     const flip = (cents: number) => (owed ? 0 - cents : cents);
     const listed = (await accounts()).filter((account) => ids.includes(account.id));
@@ -338,11 +340,17 @@ describe("the dashboard on the demo household", () => {
       for (const id of ids) sum += await balanceAt(id, lastDayOf(month));
       monthEnds.push({ at: month, amount: flip(sum) });
     }
+    let estimatedUsual = false;
+    for (const id of ids) {
+      const firstSync = (await listDailyBalances(test.database, id))[0]?.date ?? "";
+      if (YEAR.some((month) => lastDayOf(month) < firstSync)) estimatedUsual = true;
+    }
     const amount = flip(listed.reduce((sum, account) => sum + (account.currentBalance ?? 0), 0));
     return {
       amount,
       usual: middle(monthEnds.map((point) => point.amount)),
       trend: [...monthEnds.filter((point) => point.at >= "2025-11"), { at: "2026-10-20", amount }],
+      estimatedUsual,
     };
   }
 
@@ -494,6 +502,33 @@ describe("the dashboard on the demo household", () => {
       .map((account) => account.id);
     expect(cash).toHaveLength(3);
     expect(after.cashOnHand).toEqual(await balanceTile(cash, false));
+  });
+
+  it('says "estimated usual" on Cash on hand and Debt while a month-end is before an Account\'s first sync, and "usual" with a year of synced month-ends', async () => {
+    // Each demo Account first synced this month, so every month-end behind the usual is estimated.
+    const first = (await loadDashboard()).numberTiles;
+    expect(first.cashOnHand.estimatedUsual).toBe(true);
+    expect(first.debt.estimatedUsual).toBe(true);
+    const words = (view: typeof first) =>
+      numberTiles(view).map((tile) => tileDirection(tile)?.text ?? "");
+    const [spending, income, cash, debt] = words(first);
+    expect(spending).toMatch(/ usual$/);
+    expect(spending).not.toContain("estimated");
+    expect(income).not.toContain("estimated");
+    expect(cash).toMatch(/ estimated usual$/);
+    expect(debt).toMatch(/ estimated usual$/);
+
+    // A saved balance for each Account on Oct 31, 2025, the first month-end behind the usual.
+    await test.database.$client.execute(
+      "INSERT INTO daily_balances (account_id, date, current_balance, synced_at) SELECT account_id, '2025-10-31', current_balance, '2025-10-31T16:00:00.000Z' FROM daily_balances",
+    );
+    const synced = (await loadDashboard()).numberTiles;
+    expect(synced.cashOnHand.estimatedUsual).toBe(false);
+    expect(synced.debt.estimatedUsual).toBe(false);
+    for (const text of words(synced)) {
+      expect(text).toMatch(/ usual$/);
+      expect(text).not.toContain("estimated");
+    }
   });
 
   it("counts each Manual loan in Debt and says how many estimated loans the Debt includes", async () => {

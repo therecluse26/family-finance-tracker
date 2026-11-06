@@ -4,6 +4,7 @@ import { calendarDateIn, dateLabel } from "../../../format.ts";
 import type { AboutView, UpdateCheckView } from "../../../server/about-views.ts";
 import { api } from "../../api.ts";
 import { ErrorLine } from "../../components/Fields.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 
 // Settings, About (spec 07, Settings overview; spec 12, Updates): the version, the "Source code"
 // link to that exact version, the third-party notices, the Data sources page, "Update available",
@@ -11,9 +12,8 @@ import { ErrorLine } from "../../components/Fields.tsx";
 
 const LINK = "text-blue-700 underline";
 
-// "Nov 4", or "Nov 4, 2025" in another year, in this browser's time zone.
-function dayLabel(at: string, now: Date): string {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+// "Nov 4", or "Nov 4, 2025" in another year, in `zone`, the Household time zone.
+function dayLabel(at: string, zone: string, now: Date): string {
   return dateLabel(calendarDateIn(new Date(at), zone), calendarDateIn(now, zone));
 }
 
@@ -25,8 +25,8 @@ const FAILURE_WORDS: Record<string, string> = {
   "bad answer": "GitHub's answer named no release the app can read",
 };
 
-export function UpdateLines(props: { check: UpdateCheckView; now?: Date }) {
-  const { check } = props;
+export function UpdateLines(props: { check: UpdateCheckView; zone: string; now?: Date }) {
+  const { check, zone } = props;
   const now = props.now ?? new Date();
   if (!check.on) return <p className="mt-2">The Update check is off.</p>;
   const { update } = check;
@@ -36,7 +36,7 @@ export function UpdateLines(props: { check: UpdateCheckView; now?: Date }) {
         <p className="mt-2">
           {check.checkedAt === null
             ? "The app has not checked for an update yet."
-            : `No update. The app last checked on ${dayLabel(check.checkedAt, now)}.`}
+            : `No update. The app last checked on ${dayLabel(check.checkedAt, zone, now)}.`}
         </p>
       ) : (
         <div className="mt-2" role="status">
@@ -67,6 +67,7 @@ export function UpdateLines(props: { check: UpdateCheckView; now?: Date }) {
 
 export function AboutDetails(props: {
   about: AboutView;
+  zone: string;
   busy?: boolean;
   onSwitch?: (on: boolean) => void;
   now?: Date;
@@ -95,7 +96,7 @@ export function AboutDetails(props: {
         </li>
       </ul>
       <h3 className="mt-6 font-semibold">Updates</h3>
-      <UpdateLines check={about.updateCheck} now={props.now} />
+      <UpdateLines check={about.updateCheck} zone={props.zone} now={props.now} />
       <label className="mt-3 flex items-center gap-2">
         <input
           type="checkbox"
@@ -116,6 +117,7 @@ export function About() {
   const [about, setAbout] = useState<AboutView | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   useEffect(() => {
     api.about
@@ -144,8 +146,8 @@ export function About() {
   return (
     <>
       <h2 className="text-xl font-semibold">About</h2>
-      {about === undefined ? null : (
-        <AboutDetails about={about} busy={busy} onSwitch={switchCheck} />
+      {about === undefined || zone === undefined ? null : (
+        <AboutDetails about={about} zone={zone} busy={busy} onSwitch={switchCheck} />
       )}
       <ErrorLine error={error} />
     </>

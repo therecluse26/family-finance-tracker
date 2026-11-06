@@ -1,23 +1,19 @@
 import { useEffect, useState } from "react";
-import type { PushSubscriptionFields, PushView } from "../../../notify/push-view.ts";
-import { api } from "../../api.ts";
+import type { PushView } from "../../../notify/push-view.ts";
 import { BUTTON, ErrorLine } from "../../components/Fields.tsx";
 import { SERVICE_WORKER } from "../../install.ts";
+import {
+  type BrowserPush,
+  type DeviceChange,
+  type DeviceState,
+  deviceState,
+  turnOffDevice,
+  turnOnDevice,
+} from "../../push-device.ts";
 
 // Settings, Alerts: push on this device (spec 06, Recipients and channels; spec 09, Security mode).
 // Each Member turns Alerts on for each of their devices, over HTTPS only. In plain-HTTP mode push
 // and the install prompt are hidden, and a note says why.
-
-// The page's writes, exactly as it sends them. Each sends a JSON body: the server answers 415 to a
-// write without one.
-export const addDevice = (json: PushSubscriptionFields) => api.push.devices.$post({ json });
-export const removeDevice = (endpoint: string) => api.push.devices.$delete({ json: { endpoint } });
-
-// The words to show for a refused request: the server's own.
-async function refusal(res: Response): Promise<string> {
-  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
-  return typeof body.error === "string" ? body.error : "That did not work.";
-}
 
 export const PLAIN_HTTP_NOTE =
   "Push and installing the app need HTTPS. This app runs in plain-HTTP mode: its address starts with http://, and browsers allow push only over HTTPS. So Alerts and System notices come by email only.";
@@ -56,7 +52,18 @@ async function currentSubscription(publicKey: string): Promise<PushSubscription 
   return null;
 }
 
-type DeviceState = "checking" | "on" | "off" | "not supported";
+const browserPush = (publicKey: string): BrowserPush => ({
+  current: () => currentSubscription(publicKey),
+  subscribe: async () =>
+    (await registration()).pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: keyBytes(publicKey),
+    }),
+});
+
+// Push on a device belongs to the one Member who turned it on (spec 06, Recipients and channels).
+export const ANOTHER_MEMBERS_PUSH =
+  "Push on this device is on for another Member. Only they can turn it off, in Settings, Alerts, while signed in.";
 
 export function DevicePush(props: { publicKey: string; initial?: DeviceState }) {
   const { publicKey } = props;
@@ -66,62 +73,39 @@ export function DevicePush(props: { publicKey: string; initial?: DeviceState }) 
 
   useEffect(() => {
     if (!pushSupported()) return setState("not supported");
-    currentSubscription(publicKey)
-      .then((found) => setState(found === null ? "off" : "on"))
+    deviceState(browserPush(publicKey))
+      .then(setState)
       .catch(() => setState("not supported"));
   }, [publicKey]);
 
-  async function turnOn() {
+  async function change(run: () => Promise<DeviceChange>, failed: string) {
     setBusy(true);
     setError(undefined);
     try {
-      if ((await Notification.requestPermission()) !== "granted") {
-        return setError(
-          "The browser blocks notifications for this app. Allow them in the browser's settings for this site, then try again.",
-        );
-      }
-      const subscription =
-        (await currentSubscription(publicKey)) ??
-        (await (
-          await registration()
-        ).pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: keyBytes(publicKey),
-        }));
-      const { keys } = subscription.toJSON();
-      const res = await addDevice({
-        endpoint: subscription.endpoint,
-        keys: { p256dh: keys?.p256dh ?? "", auth: keys?.auth ?? "" },
-      });
-      if (!res.ok) {
-        await subscription.unsubscribe();
-        return setError(await refusal(res));
-      }
-      setState("on");
+      const changed = await run();
+      setState(changed.state);
+      setError(changed.error);
     } catch {
-      setError("Alerts did not turn on for this device.");
+      setError(failed);
     } finally {
       setBusy(false);
     }
   }
 
-  async function turnOff() {
-    setBusy(true);
-    setError(undefined);
-    try {
-      const subscription = await currentSubscription(publicKey);
-      if (subscription !== null) {
-        const res = await removeDevice(subscription.endpoint);
-        if (!res.ok) return setError(await refusal(res));
-        await subscription.unsubscribe();
+  const turnOn = () =>
+    change(async () => {
+      if ((await Notification.requestPermission()) !== "granted") {
+        return {
+          state: "off",
+          error:
+            "The browser blocks notifications for this app. Allow them in the browser's settings for this site, then try again.",
+        };
       }
-      setState("off");
-    } catch {
-      setError("Alerts did not turn off for this device.");
-    } finally {
-      setBusy(false);
-    }
-  }
+      return turnOnDevice(browserPush(publicKey));
+    }, "Alerts did not turn on for this device.");
+
+  const turnOff = () =>
+    change(() => turnOffDevice(browserPush(publicKey)), "Alerts did not turn off for this device.");
 
   return (
     <section className="mt-6">
@@ -132,6 +116,8 @@ export function DevicePush(props: { publicKey: string; initial?: DeviceState }) 
       </p>
       {state === "not supported" ? (
         <p className="mt-2">This browser cannot get pushes.</p>
+      ) : state === "another Member" ? (
+        <p className="mt-2">{ANOTHER_MEMBERS_PUSH}</p>
       ) : state === "on" ? (
         <>
           <p className="mt-2">Alerts are on for this device.</p>

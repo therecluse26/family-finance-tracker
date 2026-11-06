@@ -3,6 +3,7 @@ import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { BackupsView } from "../../../server/backups-views.ts";
 import { api } from "../../api.ts";
 import { BUTTON, ErrorLine, FIELD, PasteField } from "../../components/Fields.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import { lastCheckText, sendPastedKey } from "../../master-key.ts";
 
 // Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11),
@@ -27,15 +28,14 @@ export function sizeLabel(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
-// "Nov 2 at 3:00 AM", in this browser's time zone.
-function momentLabel(at: string, now: Date): string {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+// "Nov 2 at 3:00 AM", in `zone`, the Household time zone.
+function momentLabel(at: string, zone: string, now: Date): string {
   const moment = new Date(at);
   return `${dateLabel(calendarDateIn(moment, zone), calendarDateIn(now, zone))} at ${timeLabel(moment, zone)}`;
 }
 
-export function BackupLines(props: { backups: BackupsView; now?: Date }) {
-  const { backups } = props;
+export function BackupLines(props: { backups: BackupsView; zone: string; now?: Date }) {
+  const { backups, zone } = props;
   const now = props.now ?? new Date();
   const count = backups.files === 1 ? "1 file" : `${backups.files} files`;
   return (
@@ -48,7 +48,7 @@ export function BackupLines(props: { backups: BackupsView; now?: Date }) {
         <p className="mt-2">
           {backups.lastBackupAt === null
             ? "No backup yet."
-            : `Last backup: ${momentLabel(backups.lastBackupAt, now)}. ${count}, ${sizeLabel(backups.bytes)} in all.`}
+            : `Last backup: ${momentLabel(backups.lastBackupAt, zone, now)}. ${count}, ${sizeLabel(backups.bytes)} in all.`}
         </p>
       ) : (
         <p className="mt-2 text-red-700">The app cannot read the backup folder.</p>
@@ -62,6 +62,7 @@ function Backups() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   useEffect(() => {
     api.backups
@@ -91,7 +92,9 @@ function Backups() {
     <section className="mt-4">
       <h3 className="font-semibold">Backups</h3>
       <p className="mt-2">The app backs up its data every day at 3:00 AM, Household time.</p>
-      {backups === undefined ? null : <BackupLines backups={backups} />}
+      {backups === undefined || zone === undefined ? null : (
+        <BackupLines backups={backups} zone={zone} />
+      )}
       <button className={BUTTON} type="button" disabled={busy} onClick={backUp}>
         Back up now
       </button>
@@ -118,6 +121,8 @@ function CheckMasterKey() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
+
+  const zone = useHouseholdZone();
 
   const readLastCheck = async () => setLastCheck(await fetchLastCheck());
 
@@ -150,8 +155,8 @@ function CheckMasterKey() {
         Paste the Master key you saved, and the app says whether it matches. The app never shows the
         Master key.
       </p>
-      {lastCheck === undefined ? null : (
-        <p className="mt-2 text-gray-600">{lastCheckText(lastCheck)}</p>
+      {lastCheck === undefined || zone === undefined ? null : (
+        <p className="mt-2 text-gray-600">{lastCheckText(lastCheck, zone)}</p>
       )}
       <PasteField label="Master key" value={pasted} onChange={setPasted} />
       <button className={BUTTON} type="submit" disabled={busy}>
@@ -217,7 +222,7 @@ export function DownloadMyData() {
         To download, enter a code from your authenticator app, or a backup code
         <input
           className={FIELD}
-          inputMode="numeric"
+          inputMode="text"
           autoComplete="one-time-code"
           required
           value={code}

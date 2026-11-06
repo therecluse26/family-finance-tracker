@@ -28,14 +28,14 @@ export function grouped(masterKey: string): string {
   return masterKey.match(/.{1,4}/g)?.join(" ") ?? masterKey;
 }
 
-// "Bob checked it on Nov 3 at 9:05 AM, and it matched." Times show in this browser's time zone
-// until the Household has one.
+// "Bob checked it on Nov 3 at 9:05 AM, and it matched." Times show in `zone`, the Household time
+// zone.
 export function lastCheckText(
   check: { memberName: string | null; at: string; matched: boolean } | null,
+  zone: string,
   now = new Date(),
 ): string {
   if (check === null) return "No one has checked the Master key yet.";
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const at = new Date(check.at);
   const when = `${dateLabel(calendarDateIn(at, zone), calendarDateIn(now, zone))} at ${timeLabel(at, zone)}`;
   const who = check.memberName ?? "A removed Member";
