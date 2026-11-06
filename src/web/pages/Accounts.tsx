@@ -109,32 +109,53 @@ export function Marks(props: { marks: readonly string[] }) {
 }
 
 // What fixes a Connection that needs a Member, as Settings, Banks names it (spec 02, Repair).
-function fixOf(connection: ConnectionView | undefined): string | undefined {
+export function fixOf(connection: ConnectionView | undefined): string | undefined {
   if (connection?.health === "needs a member") return "Repair";
   if (connection?.health === "broken") return "Link again";
   return undefined;
 }
 
-// A balance, or a dash when the provider sent none or the Account is Excluded or Closed.
-export function Balance(props: { cents: number | null }) {
-  if (props.cents === null) {
+// The link to Settings, Banks that fixes a Connection, labelled as that page labels the fix.
+export function FixLink(props: { fix: string }) {
+  return (
+    <Link className={LINK} to="/settings/banks">
+      {props.fix}
+    </Link>
+  );
+}
+
+// A balance, or a dash. An Excluded or Closed Account counts in no total, so its dash says so to
+// a screen reader; an open one's dash says the provider sent no balance.
+export function Balance(props: {
+  account: Pick<AccountView, "currentBalance" | "excluded" | "closed">;
+}) {
+  const { account } = props;
+  const notCounted = account.excluded || account.closed;
+  if (notCounted || account.currentBalance === null) {
     return (
       <span className="text-muted">
         <span aria-hidden="true">—</span>
-        <span className="sr-only">No balance</span>
+        <span className="sr-only">{notCounted ? "Not counted" : "No balance"}</span>
       </span>
     );
   }
-  return <>{wholeDollars(props.cents)}</>;
+  return <>{wholeDollars(account.currentBalance)}</>;
 }
 
-// The sum of the balances that count: open Accounts not Excluded. Undefined when none has one.
-function sumOf(accounts: readonly AccountView[]): number | undefined {
+// The sum of the balances that count: open Accounts not Excluded, and whether any of them is an
+// estimate (spec 07, Status: an estimated number always carries the word "estimated"). Undefined
+// when none has a balance.
+export function groupTotal(
+  accounts: readonly AccountView[],
+): { amount: number; estimated: boolean } | undefined {
   const counted = accounts.filter(
     (account) => !account.closed && !account.excluded && account.currentBalance !== null,
   );
   if (counted.length === 0) return undefined;
-  return counted.reduce((sum, account) => sum + (account.currentBalance ?? 0), 0);
+  return {
+    amount: counted.reduce((sum, account) => sum + (account.currentBalance ?? 0), 0),
+    estimated: counted.some((account) => account.estimated),
+  };
 }
 
 // The totals above the list, counted as the dashboard's tiles count them (spec 07, 4. Number
@@ -218,13 +239,7 @@ function AccountRow(props: { account: AccountView; marks: readonly string[]; fix
     ...(marks.some((mark) => !PILL_MARKS.has(mark))
       ? [<SyncMarks key="sync" marks={marks} />]
       : []),
-    ...(fix === undefined
-      ? []
-      : [
-          <Link key="fix" className={LINK} to="/settings/banks">
-            {fix}
-          </Link>,
-        ]),
+    ...(fix === undefined ? [] : [<FixLink key="fix" fix={fix} />]),
   ];
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3.5 border-t border-line-soft py-3">
@@ -249,7 +264,7 @@ function AccountRow(props: { account: AccountView; marks: readonly string[]; fix
         )}
       </div>
       <span className="min-w-[96px] text-right font-semibold tabular-nums">
-        <Balance cents={account.currentBalance} />
+        <Balance account={account} />
       </span>
     </li>
   );
@@ -285,13 +300,22 @@ export function AccountList(props: {
           {ACCOUNT_GROUPS.map((group) => {
             const inGroup = open.filter((account) => groupOf(account) === group);
             if (inGroup.length === 0) return null;
-            const total = sumOf(inGroup);
+            const total = groupTotal(inGroup);
             return (
               <section key={group}>
                 <div className="flex items-baseline justify-between gap-3 pt-3.5 pb-1.5 text-small font-semibold tracking-[.05em] text-muted uppercase">
                   <h2>{group}</h2>
                   {total === undefined ? null : (
-                    <span className="tabular-nums">{wholeDollars(total)}</span>
+                    <span className="tabular-nums">
+                      {total.estimated ? (
+                        <>
+                          <span className="normal-case">
+                            <Pill>estimated</Pill>
+                          </span>{" "}
+                        </>
+                      ) : null}
+                      {wholeDollars(total.amount)}
+                    </span>
                   )}
                 </div>
                 <ul>{inGroup.map(row)}</ul>

@@ -21,7 +21,7 @@ import { Card, CardLabel } from "../components/Card.tsx";
 import { BUTTON, ErrorLine, FIELD } from "../components/Fields.tsx";
 import { Page, PageHeading, SectionHeading } from "../components/Page.tsx";
 import { Pill } from "../components/Pill.tsx";
-import { accountLabel, Balance, browserZone, Marks, marksOf } from "./Accounts.tsx";
+import { accountLabel, Balance, browserZone, FixLink, fixOf, Marks, marksOf } from "./Accounts.tsx";
 import { ManualLoanForm } from "./settings/ManualLoans.tsx";
 import { UnconnectedAccountForm } from "./settings/UnconnectedAccounts.tsx";
 import { merchantOf } from "./Transactions.tsx";
@@ -209,6 +209,8 @@ export function TransactionList(props: {
 export type AccountFacts = {
   account: AccountView;
   marks: string[];
+  // What fixes its Connection, "Repair" or "Link again", while it needs a Member or is Broken.
+  fix?: string;
   points: BalancePointView[];
   transactions: TransactionRowView[];
   // A connected loan's settings.
@@ -222,18 +224,24 @@ export function AccountDetail(props: {
   today: string;
   onChanged: () => void;
 }) {
-  const { account, marks, points, transactions, loan, unconnected, manualLoan } = props.facts;
+  const { account, marks, fix, points, transactions, loan, unconnected, manualLoan } = props.facts;
   return (
     <>
       <Card>
         <CardLabel>Current balance</CardLabel>
         <p className="mt-0.5 text-[28px] font-bold tracking-[-.01em] tabular-nums">
-          <Balance cents={account.currentBalance} />
+          <Balance account={account} />
         </p>
         {account.institutionName === null && marks.length === 0 ? null : (
           <p className="mt-1 text-small text-muted">
             {account.institutionName ?? ""}
             <Marks marks={marks} />
+            {fix === undefined ? null : (
+              <>
+                {" · "}
+                <FixLink fix={fix} />
+              </>
+            )}
           </p>
         )}
       </Card>
@@ -288,6 +296,7 @@ async function loadFacts(
   const facts: AccountFacts = {
     account,
     marks: marksOf(account, connections, today, zone),
+    fix: fixOf(connections.find((each) => each.id === account.connectionId)),
     points: ((await balances.json()) as { points: BalancePointView[] }).points,
     transactions: ((await txns.json()) as TransactionListView).transactions,
   };

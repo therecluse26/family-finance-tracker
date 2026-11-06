@@ -146,7 +146,8 @@ describe("the Account list", () => {
   it("totals each group and the list as the dashboard's tiles do, leaving out Excluded and Closed Accounts", () => {
     const accounts = [
       account({}),
-      account({ id: "joint", name: "Joint", mask: "1176", excluded: true, currentBalance: null }),
+      // The API sends an Excluded Account's balance as null; a balance here proves the filter.
+      account({ id: "joint", name: "Joint", mask: "1176", excluded: true, currentBalance: 99_900 }),
       account({ id: "savings", subtype: "savings", currentBalance: 1_205_000 }),
       account({ id: "card", kind: "credit", subtype: "credit card", currentBalance: -121_400 }),
       account({ id: "old", kind: "credit", closed: true, currentBalance: -50_000 }),
@@ -159,14 +160,20 @@ describe("the Account list", () => {
         estimated: true,
       }),
       account({ id: "hsa", kind: "unconnected", connectionId: null, currentBalance: null }),
-      account({ id: "college", kind: "unconnected", connectionId: null, currentBalance: 840_000 }),
+      account({
+        id: "college",
+        kind: "unconnected",
+        connectionId: null,
+        currentBalance: 840_000,
+        estimated: true,
+      }),
     ];
 
     expect(accountTotals(accounts)).toEqual({
       cashOnHand: 1_455_000,
       debt: 421_400,
       estimatedLoans: 1,
-      unconnected: { amount: 840_000, estimated: false },
+      unconnected: { amount: 840_000, estimated: true },
     });
     expect(accountTotals([account({})])).toEqual({
       cashOnHand: 250_000,
@@ -176,26 +183,35 @@ describe("the Account list", () => {
 
     const tiles = text(renderToString(<AccountTotals accounts={accounts} />));
     expect(tiles).toMatch(
-      /Cash on hand +\$14,550 +Debt +\$4,214 +Includes 1 estimated loan +Unconnected accounts +\$8,400/,
+      /Cash on hand +\$14,550 +Debt +\$4,214 +Includes 1 estimated loan +Unconnected accounts +\$8,400 +Includes estimated balances/,
     );
     expect(renderToString(<AccountTotals accounts={[]} />)).toBe("");
 
     const html = inRouter(
       <AccountList accounts={accounts} connections={[CONNECTION]} today={TODAY} zone={ZONE} />,
     );
-    const heads = [...html.matchAll(/<h2[^>]*>(.*?)<\/h2>(?:<span[^>]*>(.*?)<\/span>)?/g)].map(
-      (m) => [m[1], m[2] ?? null],
-    );
-    // The Excluded checking Account counts in no total; the Closed card is not in its group.
+    const heads = [...html.matchAll(/<h2[^>]*>(.*?)<\/h2>(.*?)<\/div>/g)].map((m) => [
+      m[1],
+      text(m[2] ?? "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ]);
+    // The Excluded checking Account counts in no total; the Closed card is not in its group. A
+    // total that counts an estimate says "estimated" (spec 07, Status).
     expect(heads).toEqual([
       ["Checking", "$2,500"],
       ["Savings", "$12,050"],
       ["Credit cards", "−$1,214"],
-      ["Loans", "−$3,000"],
-      ["Unconnected accounts", "$8,400"],
+      ["Loans", "estimated −$3,000"],
+      ["Unconnected accounts", "estimated $8,400"],
     ]);
-    // A missing balance shows a dash, and says so to a screen reader.
-    expect(text(html)).toMatch(/Joint ··1176 +excluded +First Bank +— +No balance/);
+    // A dash says to a screen reader why: an Excluded or Closed Account is not counted, and an
+    // open one has no balance from the provider.
+    const shown = text(html);
+    expect(shown).toMatch(/Joint ··1176 +excluded +First Bank +— +Not counted/);
+    expect(shown).not.toContain("$999");
+    expect(shown).toMatch(/Everyday Checking ··1234 +First Bank +— +No balance/);
+    expect(shown).toMatch(/Everyday Checking ··1234 +Closed +First Bank +— +Not counted/);
   });
 });
 
@@ -332,6 +348,22 @@ describe("an Account's page", () => {
     expect(rows).toContain('<span class="whitespace-nowrap">+$1,865.90</span>');
     expect(rows).toContain('<span class="whitespace-nowrap">−$42.50</span>');
     expect(checking).not.toContain("Loan type");
+
+    // A Connection that needs a Member: the orange mark, then the fix Settings, Banks names.
+    const fixFacts = { account: ACCOUNT, points: [], transactions: [] };
+    const needsMember = inRouter(
+      <AccountDetail
+        facts={{ ...fixFacts, marks: ["last synced Oct 8"], fix: "Repair" }}
+        today={TODAY}
+        onChanged={() => {}}
+      />,
+    );
+    expect(text(needsMember)).toMatch(/First Bank +◆ +last synced Oct 8 +· +Repair/);
+    expect(needsMember).toMatch(/<a [^>]*href="\/settings\/banks"[^>]*>Repair<\/a>/);
+    const healthy = inRouter(
+      <AccountDetail facts={{ ...fixFacts, marks: [] }} today={TODAY} onChanged={() => {}} />,
+    );
+    expect(healthy).not.toContain('href="/settings/banks"');
 
     const loan = page({
       account: account({ kind: "loan", subtype: "personal", closed: true }),
