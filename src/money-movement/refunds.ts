@@ -25,6 +25,23 @@ import { purchaseDate } from "./totals.ts";
 // A Refund links to a purchase at most this many days before it.
 export const REFUND_WINDOW_DAYS = 120;
 
+// What breaks a tie between Transactions: a fixed key from the Transaction, never its random row
+// ID, so the links and the amounts they reduce are the same on every run.
+type TieKey = {
+  postedDate: string;
+  authorizedDate: string | null;
+  providerTransactionId: string;
+  description: string;
+};
+
+// Oldest first: by posted date, then purchase date, then the provider's Transaction ID, then the
+// description.
+const arrivedFirst = (a: TieKey, b: TieKey): number =>
+  a.postedDate.localeCompare(b.postedDate) ||
+  purchaseDate(a).localeCompare(purchaseDate(b)) ||
+  a.providerTransactionId.localeCompare(b.providerTransactionId) ||
+  a.description.localeCompare(b.description);
+
 const merchantOf = (txn: {
   merchantId: string | null;
   merchantCleanName: string | null;
@@ -79,10 +96,7 @@ export function allocate(
 ): Map<string, number> {
   const allocations = new Map<string, number>();
   const left = new Map(spending);
-  const ordered = [...links].sort(
-    (a, b) =>
-      a.postedDate.localeCompare(b.postedDate) || a.transactionId.localeCompare(b.transactionId),
-  );
+  const ordered = [...links].sort(arrivedFirst);
   for (const link of ordered) {
     if (!spending.has(link.spendingTransactionId)) continue;
     const available = left.get(link.spendingTransactionId) ?? 0;
@@ -126,7 +140,8 @@ class PurchaseIndex {
     else list.push(purchase);
   }
 
-  // The purchases on the Account from the same Merchant, latest first.
+  // The purchases on the Account from the same Merchant, latest bought first; on the same day, the
+  // latest posted, then the fixed key.
   find(accountId: string, merchant: Merchant): RefundPurchase[] {
     const found = new Map<string, RefundPurchase>();
     const keys = [`name ${accountId} ${merchantKey(merchant.name)}`];
@@ -138,7 +153,7 @@ class PurchaseIndex {
       }
     }
     return [...found.values()].sort(
-      (a, b) => purchaseDate(b).localeCompare(purchaseDate(a)) || b.id.localeCompare(a.id),
+      (a, b) => purchaseDate(b).localeCompare(purchaseDate(a)) || arrivedFirst(b, a),
     );
   }
 }
@@ -195,7 +210,7 @@ export async function linkRefunds(
         merchantOf(record) !== null,
     )
     .map(({ record }) => record)
-    .sort((a, b) => a.postedDate.localeCompare(b.postedDate) || a.id.localeCompare(b.id));
+    .sort(arrivedFirst);
   if (refunds.length === 0) return [];
   const dates = refunds.map((refund) => refund.postedDate).sort();
   const index = new PurchaseIndex(

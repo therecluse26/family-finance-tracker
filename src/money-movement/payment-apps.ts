@@ -1,3 +1,4 @@
+import { mapPlaidCategory } from "../bank/plaid-categories.ts";
 import { paymentAppLine } from "../merchants/index.ts";
 import { toUnconnectedAccount } from "./one-sided.ts";
 import type { Decision, DecisionInput, DecisionRule } from "./order.ts";
@@ -10,20 +11,32 @@ import { linkedTreatment } from "./refunds.ts";
 // Plaid's code for a cash withdrawal at an ATM or a teller.
 const WITHDRAWAL = "TRANSFER_OUT_WITHDRAWAL";
 
-// Cash back at a checkout. A line that also holds "purchase" is one line for the purchase and the
-// cash, and takes the purchase's Category.
+// Cash back at a checkout. A line that also names a purchase is one line for the purchase and the
+// cash, and takes the purchase's Category: it holds "purchase", it has a provider Merchant name, or
+// its Plaid code maps to a Spending Category. A code of Plaid's OTHER primary, such as
+// `OTHER_OTHER`, says Plaid does not know, so it names no purchase.
 const CASH_BACK = /\bcash[\s-]?back\b/i;
 const PURCHASE = /\bpurchase\b/i;
+const UNKNOWN_CODE = "OTHER_";
+
+const isPurchaseCode = (code: string | null): boolean =>
+  code !== null &&
+  !code.startsWith(UNKNOWN_CODE) &&
+  mapPlaidCategory(code, null)?.kind === "category";
+
+const namesPurchase = (txn: DecisionInput): boolean =>
+  PURCHASE.test(txn.description) ||
+  txn.merchantName !== null ||
+  isPurchaseCode(txn.providerCategory);
 
 const named = (txn: DecisionInput, category: "Cash" | "Payments to people"): Decision => ({
   parts: [{ type: "Spending", amount: txn.amount, category }],
 });
 
 // Step 5.3. A cash withdrawal at an ATM or a teller is Spending in Cash, on the day of the
-// withdrawal. So is cash back at a checkout on its own line.
+// withdrawal. So is cash back at a checkout on its own line, which shows the cash alone.
 export const cashWithdrawal: DecisionRule = (txn) =>
-  txn.providerCategory === WITHDRAWAL ||
-  (CASH_BACK.test(txn.description) && !PURCHASE.test(txn.description))
+  txn.providerCategory === WITHDRAWAL || (CASH_BACK.test(txn.description) && !namesPurchase(txn))
     ? named(txn, "Cash")
     : undefined;
 

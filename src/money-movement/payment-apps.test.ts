@@ -387,5 +387,55 @@ describe("payment apps and cash", () => {
         { type: "Spending", category: "Groceries", source: "provider" },
       ]);
     });
+
+    it("gives a combined line without the word purchase the purchase's Category, by its Merchant name or its Plaid code", async () => {
+      await syncMore("fake-ally", {
+        added: [
+          inChecking("both", -6_500, "WALMART #1234 W/ CASH BACK", {
+            merchantName: "Walmart",
+            ...code("GENERAL_MERCHANDISE_SUPERSTORES"),
+          }),
+          // Each half alone names a purchase too.
+          inChecking("merchant-only", -5_200, "HAT SHACK #77 W/ CASH BACK", {
+            merchantName: "Hat Shack",
+          }),
+          inChecking("code-only", -4_300, "POS 0412 W/ CASH BACK", {
+            ...code("GENERAL_MERCHANDISE_CLOTHING_AND_ACCESSORIES"),
+          }),
+          inChecking("word-only", -3_700, "POS PURCHASE W/ CASH BACK 0412"),
+          // Cash alone: no Merchant name, and no code, a code that is no purchase, or Plaid's code
+          // for "it does not know".
+          inChecking("cash-alone", -2_000, "CASH BACK"),
+          inChecking(
+            "cash-transfer-code",
+            -3_000,
+            "CASH BACK 0412",
+            code("TRANSFER_OUT_OTHER_TRANSFER_OUT"),
+          ),
+          inChecking("cash-unknown-code", -2_500, "CASH BACK", code("OTHER_OTHER")),
+        ],
+      });
+
+      expect((await decisionOf("both"))?.step).toBe("5.7");
+      expect((await shownAs("both")).parts).toEqual([
+        { type: "Spending", category: "Superstores", source: "provider" },
+      ]);
+      for (const named of ["merchant-only", "word-only"]) {
+        expect((await decisionOf(named))?.step).not.toBe("5.3");
+        expect((await shownAs(named)).parts).not.toContainEqual(
+          expect.objectContaining({ category: "Cash" }),
+        );
+      }
+      expect((await decisionOf("code-only"))?.step).toBe("5.7");
+      expect((await shownAs("code-only")).parts).toEqual([
+        { type: "Spending", category: "Clothing", source: "provider" },
+      ]);
+      for (const cash of ["cash-alone", "cash-transfer-code", "cash-unknown-code"]) {
+        expect((await decisionOf(cash))?.step).toBe("5.3");
+        expect((await shownAs(cash)).parts).toEqual([
+          { type: "Spending", category: "Cash", source: "money movement" },
+        ]);
+      }
+    });
   });
 });
