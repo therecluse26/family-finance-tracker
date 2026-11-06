@@ -81,6 +81,30 @@ function ChangePassword() {
   );
 }
 
+// The second TOTP step: the new TOTP to scan or type in, and the field for its first code.
+export function ConfirmNewTotp(props: {
+  totpURI: string;
+  code: string;
+  onCodeChange: (code: string) => void;
+  busy: boolean;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <form onSubmit={props.onSubmit}>
+      <NewTotp totpURI={props.totpURI} />
+      <TextField
+        label="The 6-digit code the new TOTP shows"
+        autoComplete="one-time-code"
+        value={props.code}
+        onChange={props.onCodeChange}
+      />
+      <button className={BUTTON} type="submit" disabled={props.busy}>
+        Use the new TOTP
+      </button>
+    </form>
+  );
+}
+
 function ChangeTotp() {
   const [code, setCode] = useState("");
   const [totpURI, setTotpURI] = useState<string | undefined>();
@@ -128,18 +152,13 @@ function ChangeTotp() {
           </button>
         </form>
       ) : (
-        <form onSubmit={confirm}>
-          <NewTotp totpURI={totpURI} />
-          <TextField
-            label="The 6-digit code the new TOTP shows"
-            autoComplete="one-time-code"
-            value={newCode}
-            onChange={setNewCode}
-          />
-          <button className={BUTTON} type="submit" disabled={action.busy}>
-            Use the new TOTP
-          </button>
-        </form>
+        <ConfirmNewTotp
+          totpURI={totpURI}
+          code={newCode}
+          onCodeChange={setNewCode}
+          busy={action.busy}
+          onSubmit={confirm}
+        />
       )}
       <ErrorLine error={action.error} />
       {action.done === undefined ? null : <p className="mt-3">{action.done}</p>}

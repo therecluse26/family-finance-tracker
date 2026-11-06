@@ -62,6 +62,10 @@ export function PasteField(props: {
   );
 }
 
+// CSS px for each QR module, so even a 1x screen draws every module the same size and a camera
+// reads it from a desktop monitor. A narrow screen shrinks the whole code to fit.
+const QR_MODULE_PX = 4;
+
 // The otpauth:// link as a QR code, drawn in the browser. The TOTP secret never leaves the page.
 function TotpQrCode(props: { totpURI: string }) {
   const { size, data } = encode(props.totpURI, { border: 4 });
@@ -73,8 +77,10 @@ function TotpQrCode(props: { totpURI: string }) {
       role="img"
       aria-label="QR code for your authenticator app"
       viewBox={`0 0 ${size} ${size}`}
+      width={size * QR_MODULE_PX}
+      height={size * QR_MODULE_PX}
       shapeRendering="crispEdges"
-      className="mt-2 h-48 w-48 bg-white"
+      className="mt-2 h-auto max-w-full bg-white"
     >
       <path d={squares.join("")} fill="#000" />
     </svg>
