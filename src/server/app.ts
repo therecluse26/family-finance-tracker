@@ -30,6 +30,7 @@ import { categoryRoutes } from "./categories.ts";
 import { chatRoutes } from "./chat.ts";
 import { comingUpRoutes } from "./coming-up.ts";
 import { dataExportRoutes } from "./data-export.ts";
+import { deviceRoutes } from "./devices.ts";
 import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
@@ -88,6 +89,7 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
     if (signedIn === undefined) return c.json({ error: "Sign in first" }, 401);
     for (const cookie of signedIn.setCookies) c.header("Set-Cookie", cookie, { append: true });
     c.set("member", signedIn.member);
+    c.set("sessionId", signedIn.sessionId);
     await next();
   };
 }
@@ -226,6 +228,7 @@ export function createApp(
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
   const members = memberRoutes(database, auth, security.appUrl);
+  const devices = deviceRoutes(auth);
   return (
     new Hono<ServerEnv>()
       .use(safetyHeaders)
@@ -285,6 +288,7 @@ export function createApp(
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
         c.set("members", members);
+        c.set("devices", devices);
         await next();
       })
       .use("/api/*", masterKeyFirst)

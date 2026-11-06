@@ -20,6 +20,7 @@ import type { CategoryRoutes } from "./category-views.ts";
 import type { ChatRoutes } from "./chat-views.ts";
 import type { ComingUpRoutes } from "./coming-up-views.ts";
 import type { DataExportRoutes } from "./data-export-views.ts";
+import type { DeviceRoutes } from "./devices-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
@@ -43,6 +44,8 @@ export type ServerEnv = {
     // The Member signed in on the request: the auth module's SignedInMember. Written out here,
     // since the web app's type check reads this file and runs without Node's types.
     member: { id: string; name: string; email: string };
+    // The ID of the session the request uses, for Signed-in devices' "this device". Never its token.
+    sessionId: string;
     // The Accounts, Transactions, and Connections in app.db, for the routes that list them.
     bank: BankViews;
     // The Plaid keys and the count of Plaid Items, for the routes under /api/plaid/.
@@ -79,6 +82,8 @@ export type ServerEnv = {
     dataExport: DataExportRoutes;
     // Settings, Members: the Members, invite links, and removing a Member.
     members: MemberRoutes;
+    // Settings, My login: the signed-in Member's own devices, and Sign out on one.
+    devices: DeviceRoutes;
     // Each Category's Benchmark.
     benchmarks: BenchmarkRoutes;
     // Each Category's Budget for a month.
