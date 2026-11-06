@@ -1,6 +1,6 @@
 import { isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
-import { MemoryRouter } from "react-router";
+import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountView } from "../../server/bank-views.ts";
 import type {
@@ -295,20 +295,53 @@ describe("the Transactions page", () => {
     const html = inRouter(
       <TransactionRows transactions={rows} accounts={accountLabels(ACCOUNTS)} today={TODAY} />,
     );
-    const lines = [...html.matchAll(/<li[^>]*>(.*?)<\/li>/gs)].map((match) => text(match[1] ?? ""));
+    const cellsOf = (tag: "th" | "td", within: string) =>
+      [...within.matchAll(new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, "gs"))].map((match) =>
+        text(match[1] ?? ""),
+      );
+    const tbody = html.slice(html.indexOf("<tbody>"));
+    const lines = [...tbody.matchAll(/<tr[^>]*>(.*?)<\/tr>/gs)].map((match) =>
+      cellsOf("td", match[1] ?? ""),
+    );
 
+    expect(cellsOf("th", html)).toEqual([
+      "Date",
+      "Merchant",
+      "Category or type",
+      "Account",
+      "Amount",
+    ]);
     expect(lines).toEqual([
-      "Nov 3 · Corner Bistro · −$42.50 · Rewards Card ··9876 · Restaurants pending",
-      "Oct 12 · Target · −$120.00 · Rewards Card ··9876 · Split: Groceries, Clothing",
-      "Oct 12 · Target · +$30.00 · Rewards Card ··9876 · Refund: Groceries",
-      "Dec 31, 2025 · ACME PAYROLL · +$3,200.00 · Everyday Checking ··1234 · Income",
-      "Oct 12 · Lakeside Auto · −$42.50 · Rewards Card ··9876 · Interest and fees + Transfer",
-      "Oct 12 · Corner Bistro · −$42.50 · Rewards Card ··9876 · Not decided yet",
+      ["Nov 3", "Corner Bistro pending", "Restaurants", "Rewards Card ··9876", "−$42.50"],
+      ["Oct 12", "Target", "Split: Groceries, Clothing", "Rewards Card ··9876", "−$120.00"],
+      ["Oct 12", "Target", "Refund: Groceries", "Rewards Card ··9876", "+$30.00"],
+      ["Dec 31, 2025", "ACME PAYROLL", "Income", "Everyday Checking ··1234", "+$3,200.00"],
+      ["Oct 12", "Lakeside Auto", "Interest and fees + Transfer", "Rewards Card ··9876", "−$42.50"],
+      ["Oct 12", "Corner Bistro", "Not decided yet", "Rewards Card ··9876", "−$42.50"],
     ]);
     // A signed amount never breaks after its sign (spec 07, Number formats).
-    expect(html).toContain(' · <span class="whitespace-nowrap">+$3,200.00</span> · ');
-    expect(html).toContain(' · <span class="whitespace-nowrap">−$120.00</span> · ');
+    expect(html).toMatch(/<td class="[^"]*\bwhitespace-nowrap\b[^"]*">\+\$3,200\.00<\/td>/);
+    expect(html).toMatch(/<td class="[^"]*\bwhitespace-nowrap\b[^"]*">−\$120\.00<\/td>/);
+    // Money in is green, and its "+" says so too.
+    expect(html).toMatch(/<td class="[^"]*\btext-good\b[^"]*">\+\$30\.00<\/td>/);
+    expect(html).not.toMatch(/<td class="[^"]*\btext-good\b[^"]*">−/);
     expect(html).toContain('href="/transactions/split"');
+    // A Category the AI chose carries the AI tag; one set by hand does not.
+    const aiRows = inRouter(
+      <TransactionRows
+        transactions={[
+          row("ai", { parts: [part({ categoryChosenBy: "AI, unsure" })] }),
+          row("hand", { parts: [part({ categoryChosenBy: "hand-set" })] }),
+        ]}
+        accounts={accountLabels(ACCOUNTS)}
+        today={TODAY}
+      />,
+    );
+    expect(cellsOf("td", aiRows).filter((cell) => cell.startsWith("Restaurants"))).toEqual([
+      "Restaurants AI",
+      "Restaurants",
+    ]);
+    expect(aiRows).toContain('title="Category chosen by the AI"');
     expect(
       text(inRouter(<TransactionRows transactions={[]} accounts={new Map()} today={TODAY} />)),
     ).toBe("No Transactions match these filters.");
@@ -400,6 +433,16 @@ describe("the Transaction detail view", () => {
       actions={actions}
     />
   );
+
+  it("shows its one heading before the Transaction loads, so the focus has a place to go", () => {
+    const router = createMemoryRouter(routes, { initialEntries: ["/transactions/dinner"] });
+    const html = renderToString(<RouterProvider router={router} />);
+
+    expect(
+      [...html.matchAll(/<h1[^>]*>(.*?)<\/h1>/gs)].map((match) => text(match[1] ?? "")),
+    ).toEqual(["Transaction"]);
+    expect(html).toContain('href="/transactions"');
+  });
 
   it("shows how each Category was chosen", () => {
     const chosen: CategoryChosenBy[] = [
@@ -497,9 +540,8 @@ describe("the Transaction detail view", () => {
 
     // A signed amount never breaks after its sign (spec 07, Number formats): in the header, and in
     // the Transaction each link matched.
-    expect(shown).toMatch(
-      /<p class="mt-1">Oct 12(<!-- -->)? ·(<!-- -->)? <span class="whitespace-nowrap">−\$500\.00<\/span>/,
-    );
+    expect(shown).toMatch(/<p class="[^"]*\bwhitespace-nowrap\b[^"]*">−\$500\.00<\/p>/);
+    expect(html).toContain("Oct 12 · Everyday Checking ··1234 −$500.00 The bank's line:");
     expect(shown).toContain(' · <span class="whitespace-nowrap">+$500.00</span> · ');
 
     expect(html).toContain(
