@@ -906,6 +906,30 @@ describe('"A usual month"', () => {
     });
   });
 
+  it("keys the charts for sighted Members only, and names the dashed line only once one is drawn", () => {
+    const key = (usualMonth: UsualMonthView) =>
+      slotHtml(render(data({ budgets: USUAL_BUDGETS, usualMonth })), "chart-key");
+    const withBudget = key(USUAL_MONTH);
+
+    // The charts are hidden from screen readers, so their key is too; the way to a group's
+    // Budgets is read aloud.
+    expect(withBudget.replaceAll("<!-- -->", "")).toMatch(
+      /^<span aria-hidden="true">Grey bars: [^<]*<\/span> Choose a group to see its Budgets\.$/,
+    );
+    expect(text(withBudget)).toBe(
+      "Grey bars: the last 12 months. Blue: October so far. Dashed line: the Budget. Choose a group to see its Budgets.",
+    );
+
+    // Before the first draft no bar has a Budget, so no chart draws a dashed line.
+    const noBudget = key({
+      ...USUAL_MONTH,
+      groups: USUAL_MONTH.groups.map((group) => ({ ...group, bars: bars(36_000, null) })),
+    });
+    expect(text(noBudget)).toBe(
+      "Grey bars: the last 12 months. Blue: October so far. Choose a group to see its Budgets.",
+    );
+  });
+
   it("marks this month's bar and draws no Budget line before the first draft", () => {
     const shopping = USUAL_MONTH.groups[1];
     if (shopping === undefined) throw new Error("No Shopping group.");
@@ -1105,6 +1129,47 @@ describe("Coming up", () => {
       { bold: true, lines: ["Oct 30 Northwind Logistics payday", "+$1,865.90 $2,265.90"] },
       { bold: false, lines: ["Nov 2 Ironworks Fitness", "−$9.00 $2,256.90"] },
     ]);
+  });
+
+  it("shows payday amounts in neutral ink, bold with their +, not in a status color", () => {
+    const box = slotHtml(render(data()), "coming-up");
+
+    expect(text(box)).toContain("+$1,865.90");
+    expect(box).not.toMatch(/text-(?:good|critical|serious|accent)\b/);
+  });
+
+  it("gives a date with its year room on a phone, as across New Year", async () => {
+    // Christmas Day: the 14 days ahead reach into January.
+    const html = render(
+      data({
+        month: dashboardMonth(new Date("2026-12-25T17:00:00.000Z"), ZONE),
+        comingUp: {
+          ...COMING_UP,
+          from: "2026-12-26",
+          to: "2027-01-08",
+          rows: [
+            {
+              date: "2027-01-03",
+              late: false,
+              kind: "Recurring charge",
+              what: "Ironworks Fitness",
+              amount: -900,
+              onCard: false,
+              checkingAfter: 99_100,
+            },
+          ],
+        },
+      }),
+    );
+    const styleOf = await layoutOf(html);
+
+    expect(slotText(html, "due-date")).toBe("Jan 3, 2027");
+    // The date column grows past its 52 px to fit the year, and never wraps, so it never runs
+    // into the words beside it.
+    expect(styleOf("due-date", 375).get("min-width")).toBe("52px");
+    expect(styleOf("due-date", 375).has("width")).toBe(false);
+    expect(styleOf("due-date", 375).get("flex-shrink")).toBe("0");
+    expect(styleOf("due-date", 375).get("white-space")).toBe("nowrap");
   });
 
   it('says "late" in place of the date for a late Recurring charge', () => {

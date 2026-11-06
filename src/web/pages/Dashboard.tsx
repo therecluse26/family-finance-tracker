@@ -681,6 +681,8 @@ export function UsualMonthBox(props: {
   const projected = projectedSpending(budgets.groups);
   const line = projected === null ? undefined : usualMonthLine(month, projected, usual.usual);
   const shown = usual.groups.find((group) => group.categoryGroup === open);
+  // Whether any group's chart draws a dashed Budget line (BudgetMark draws one per bar with a Budget).
+  const budgetLine = usual.groups.some((group) => group.bars.some((bar) => bar.budget != null));
   return (
     <section aria-labelledby="usual-month" className={`${BOX} @container`} data-slot="usual-month">
       <h2 id="usual-month" className={BOX_LABEL}>
@@ -712,11 +714,15 @@ export function UsualMonthBox(props: {
           />
         ))}
       </ul>
-      {/* The charts are hidden from screen readers; each group's words say what they show. */}
+      {/* The charts are hidden from screen readers, and each group's words say what they show, so
+          the key to the charts is hidden too. It names the dashed line only once a chart draws one. */}
       {usual.groups.length === 0 ? null : (
         <p className="mt-2.5 text-small text-muted" data-slot="chart-key">
-          Grey bars: the last 12 months. Blue: {month.name} so far. Dashed line: the Budget. Choose
-          a group to see its Budgets.
+          <span aria-hidden="true">
+            Grey bars: the last 12 months. Blue: {month.name} so far.
+            {budgetLine ? " Dashed line: the Budget." : ""}
+          </span>{" "}
+          Choose a group to see its Budgets.
         </p>
       )}
       {shown === undefined ? null : (
@@ -801,13 +807,17 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
               data-row={row.kind}
             >
               <span className="flex gap-2">
-                <span className="w-[52px] shrink-0 font-normal whitespace-nowrap text-muted">
+                {/* At least 52 px, and wider for a date with its year, as across New Year. */}
+                <span
+                  className="min-w-[52px] shrink-0 font-normal whitespace-nowrap text-muted"
+                  data-slot="due-date"
+                >
                   {row.date}
                 </span>
                 <span className="min-w-0 flex-1 break-words">{row.what}</span>
               </span>
               <span className="flex justify-end gap-3 tabular-nums">
-                <span className={row.payday ? "text-good" : undefined}>{row.amount}</span>
+                <span>{row.amount}</span>
                 <span className="font-normal text-muted">{row.checkingAfter}</span>
               </span>
             </li>
@@ -831,9 +841,7 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
               >
                 <td className={DUE_CELL}>{row.date}</td>
                 <td className={DUE_CELL}>{row.what}</td>
-                <td className={`${DUE_CELL} text-right ${row.payday ? "text-good" : ""}`}>
-                  {row.amount}
-                </td>
+                <td className={`${DUE_CELL} text-right`}>{row.amount}</td>
                 <td
                   className={`${DUE_CELL} text-right ${row.checkingAfter === "on card" ? "text-muted" : ""}`}
                 >
