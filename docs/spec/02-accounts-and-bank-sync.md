@@ -132,6 +132,7 @@ type SyncResult = {
 
 - **Amounts** are integer cents in US dollars. A positive amount is money into the Account; a negative amount is money out. The Plaid adapter flips Plaid's sign.
 - **Raw data** is stored with each record, so a later version can reprocess history without fetching it again.
+- Raw data holds no account number and no personal detail. The Plaid adapter drops these fields by name, at every depth: `account_number`, `account_numbers`, `payment_reference_number`, `reference_number` and `ppd_id` (in `payment_meta`), `account_owner`, and `property_address` (in a mortgage's details).
 - **Provider categories** carry the transfer, credit card payment, loan payment, and loan payout (`LOAN_DISBURSEMENTS_*`) signals that [Money movement](03-money-movement.md) uses.
 - **MCC:** the Plaid adapter leaves it empty. When a later adapter sends one, it is a hint to the AI only ([Categorization](04-categorization.md)).
 
@@ -249,6 +250,7 @@ The Plaid adapter declares `minSyncGapHours: 0` and all three actions: `repairIn
 - When a Repair finishes, the app syncs that Connection at once. A successful sync makes it Healthy.
 - **Broken:** update mode cannot work, because the access token no longer works. Repair offers "Link again" instead.
   - Link again follows [Linking a new bank](#linking-a-new-bank), with the Item count and its confirmation. It spends a new Item.
+  - Link again does not call `/item/remove` for the Broken Connection's Item, even after `INSTITUTION_NO_LONGER_SUPPORTED`.
   - The duplicate-bank block lets it through, because the new Connection replaces the Broken one.
   - The new Connection's Accounts carry on the old ones ([Carrying Accounts over](#carrying-accounts-over)).
 
@@ -275,6 +277,10 @@ The Plaid adapter declares `minSyncGapHours: 0` and all three actions: `repairIn
   - It keeps the old Transactions dated before D.
   - It keeps the new Transactions dated on or after D.
   - It hides the rest with the reason `replaced by re-link`.
+- The new Connection records the old Connection whose Accounts it carries on.
+- **Link carry-over:** a hand-made link on an old Transaction hidden as `replaced by re-link` does not end at once. It moves to that Transaction's new copy: a new Transaction on the same Account, with the same amount and the same posted date. When several fit, the app pairs them one to one, the same description first. The moved link stays a hand-made link.
+  - If no copy has arrived when the new Connection's first history load ends, the link ends, and matching runs again.
+  - An app-made link on a replaced Transaction ends, and matching runs again on the new Transactions.
 
 ### A lost Master key
 
@@ -453,6 +459,7 @@ A Manual loan is a loan a Member enters by hand, because no Bank-data provider s
   2. **An APR a Member typed** on the Account's page: computed as for a [Manual loan](#interest).
   3. **No interest data:** the payment minus the drop in the loan's current balance across that payment. It compares the balance at the last sync before the payment appears with the balance at the first sync after.
 - Interest never goes below $0 or above the payment.
+- **A lagging balance:** while the data to measure a payment's interest has not come, such as a balance that has not moved yet, the interest is provisional. The wait ends when the next payment lands, or 45 days after the payment (after the first saved balance, for a payment before it). The app then decides the interest once, from the best data it has, and does not decide it again.
 - **Payments before the loan's first saved balance** have no saved data to measure. Without an APR, they use the interest share (interest ÷ payment) of the first payment the app measured. Until the app has measured one, their interest is $0.
 - [Money movement](03-money-movement.md) gives how the interest and the principal count.
 

@@ -151,7 +151,7 @@ An AI report, written on the 1st, on the past month's Habits, overspending, and 
 _Avoid_: Monthly report, summary
 
 **Insight card**:
-A short AI finding in the dashboard's AI box, rewritten at most once a day after a sync brings new Transactions.
+A short AI finding in the dashboard's AI box, rewritten at most once a day, after 6 AM, when new posted Transactions have arrived since the last run.
 _Avoid_: Tip, widget
 
 **Chat**:

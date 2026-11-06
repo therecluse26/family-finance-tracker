@@ -10,13 +10,13 @@ A Recurring charge is Spending with one Merchant that repeats at a steady interv
 
 - A Recurring charge is 3 or more Spending Transactions from one Merchant on one schedule. Their amounts are within 7.5% of each other.
 - "Within 7.5% of each other" means the largest amount is at most the smallest amount × 1.075.
-- Each Transaction must land within the schedule's margin, measured from the previous Transaction in the series:
+- Each Transaction must land within the schedule's margin. A weekly, 2-week, or yearly series measures it from the previous Transaction in the series. A monthly series measures it from a fixed day of the month ([Monthly series](#monthly-series)):
 
 | Schedule | Interval | Margin |
 |---|---|---|
 | Weekly | 7 days | ±2 days |
 | Every 2 weeks | 14 days | ±2 days |
-| Monthly | The same day of the next month. A day the month lacks means its last day. | ±2 days |
+| Monthly | The fixed day of each month, with the business-day shift. A day the month lacks means its last day. | ±2 days |
 | Yearly | 12 months | 11 to 13 months after the previous one |
 
 - **Yearly** needs only 2 Transactions, 11 to 13 months apart, with amounts within 15% of each other.
@@ -29,18 +29,27 @@ A Recurring charge is Spending with one Merchant that repeats at a steady interv
 
 Source: this follows Sure and Actual, plus the weekly, 2-week, and yearly schedules, from [Prior art: Transfer matching and categorization](https://github.com/therecluse26/family-finance-tracker-private/issues/7).
 
+#### Monthly series
+
+A monthly series is measured from a fixed day of the month, not from the previous Transaction. So an early or late Transaction does not move the next expected date.
+
+- The fixed day is the day of the month whose expected dates are the fewest total days from the series' Transactions. A tie takes the earlier day.
+- Each month's expected date is the fixed day in that month. A day the month lacks means its last day.
+- **Business-day shift:** when an expected date is not a business day, a Transaction may also land within the margin of the business day before it or the business day after it. Business days follow the Federal Reserve calendar, as the Transfer windows do ([Money movement](03-money-movement.md#windows)): weekends and Federal Reserve holidays are closed.
+- Income series use the same rule for monthly Income ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md#steady-income)).
+
 ### Continuing a series
 
-- The next expected date is the last Transaction's date plus one interval.
+- The next expected date is the last Transaction's date plus one interval. For a monthly series, it is the fixed day in the month after the expected date the last Transaction met.
 - Once a Recurring charge exists, a Transaction from that Merchant continues it at any amount. It must land within the margin of the next expected date. The 7.5% band applies only to finding a new series. So a Price increase above 7.5% still continues the series.
 - If two Transactions fit, the one nearest the latest amount continues the series.
 - The latest amount is the amount of the last Transaction in the series.
 
 ### Inactive and ended
 
-- A Recurring charge goes inactive after one missed Transaction. It is missed when the next expected date plus 2 days passes with none. A yearly one is missed 13 months after its last Transaction.
+- A Recurring charge goes inactive after one missed Transaction. It is missed when the next expected date plus 2 days passes with none. For a monthly one, that is 2 days after the latest date the business-day shift allows. A yearly one is missed 13 months after its last Transaction.
 - An inactive Recurring charge leaves "Coming up", the projection, and the Budget formulas' known amounts.
-- A later Transaction can make it active again. It must come from the same Merchant, within 7.5% of the latest amount. Its date must be within the margin of the last date plus a whole number of intervals. This fires no New Recurring charge Alert.
+- A later Transaction can make it active again. It must come from the same Merchant, within 7.5% of the latest amount. Its date must be within the margin of the last date plus a whole number of intervals. For a monthly one, it must be within the margin of a later month's expected date. This fires no New Recurring charge Alert.
 - A Member may mark a Recurring charge ended. An ended one never comes back by itself. Later Transactions from that Merchant start a new series.
 
 ### What the app stores

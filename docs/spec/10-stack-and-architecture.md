@@ -133,6 +133,7 @@ Sidequest keeps schedules in memory and skips runs missed while the app is down.
 | First run | When every Connection's history has loaded: the AI's first run and the Budget draft | [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md), [AI](08-ai.md) |
 | Month start | On the 1st: the month's Bills Budgets | [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md) |
 | Monthly review | On the 1st | [AI](08-ai.md) |
+| Insight card check | Daily at 6 AM Household time. It starts a run only when a new posted Transaction has arrived since the last run | [AI](08-ai.md#when-ai-does-not-run) |
 | Household summary | Once a day | [AI](08-ai.md) |
 | AI retry | After an AI call fails | [AI](08-ai.md) |
 | Redo no-AI work | When AI works again after the AI cost cap or an outage | [AI](08-ai.md) |

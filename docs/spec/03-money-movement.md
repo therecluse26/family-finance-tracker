@@ -122,6 +122,7 @@ A link ties Transactions together. There are four kinds:
 - A Member can undo any link. After an undo, the app never makes that same link again.
 - After an undo, the app matches both Transactions again without that pair. If nothing else matches, the one-sided rules apply.
 - A Member can link Transactions by hand, from the Review list or the Transactions page. Re-matching never breaks a hand-made link.
+- When Link again or a new link of a removed bank hides a Transaction as `replaced by re-link`, its hand-made links move to its new copy ([Carrying Accounts over](02-accounts-and-bank-sync.md#carrying-accounts-over)).
 - When the provider removes a Transaction, every link that used it ends. The other Transactions go through matching again ([Accounts and bank sync](02-accounts-and-bank-sync.md)).
 - When the provider changes a linked Transaction, the link stays if it still passes its hard filters. Otherwise the link ends, and matching runs again.
 
@@ -180,6 +181,8 @@ These rules apply to a Transaction with no pair. A pair found later inside the r
 - **A connected Account pays a card the app does not track.** This is Spending in Miscellaneous. The app first waits 4 business days for a pair. Until then, the payment counts as a Transfer.
   - A card payment is an outgoing Transaction with Plaid's `LOAN_PAYMENTS_CREDIT_CARD_PAYMENT` category.
   - The card is tracked when a card Account matches the last 4 digits in the description. With no last 4 digits, a card Account at the named institution makes it tracked.
+  - A run of 4 digits counts as a card's last 4 digits only right after a card word: "ending" (or "ending in"), "card", a run of the letter x that is not part of a longer word (such as `x` or `XXXX`), or `*`. Only spaces and punctuation may stand between. Examples: "Chase card ending in 4821", `XXXX4821`, `*4821`. A store number or a year, as in "PURCHASE 1005 BLUEBIRD BOOKS", is not a last 4.
+  - A card Closed because its Connection was removed stays tracked for 90 days after the removal. A payment dated later is a payment to a card the app does not track.
   - A card whose Connection is broken still counts as tracked. Its payment is a Transfer to that card.
 - **Any other one-sided Transaction with transfer wording or a Plaid transfer category.** This is a Transfer to or from an Unconnected account, or Saving ([Unconnected accounts](#unconnected-accounts)).
   - Transfer wording: the description holds "transfer" or "xfer", in any case.

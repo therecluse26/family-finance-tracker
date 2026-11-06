@@ -29,6 +29,7 @@ Every formula in this file uses these terms.
 - Spending means posted Spending, net of linked Refunds and Reimbursements, in the month of its purchase date ([Categorization](04-categorization.md#which-month-a-transaction-counts-in)).
 - A flexible Category is any Category outside the Bills group.
 - **Room above typical Spending:** in the draft, the Household's own figure for a flexible Category is its 12-month average × 1.10, rounded as drafts round. The draft still takes the lower of the Benchmark and that figure, and history still never loosens a Budget after the draft. The 10% keeps a typical month under its Budget. The [total must fit](#the-total-must-fit) step runs as before.
+- **History shorter than one complete month:** n is 0. Then A(c), A_other(c), and A_flex(c) use all Spending loaded so far, scaled to a month: × the days in m ÷ the days of history. The days of history run from the start of history to the day the app computes, both days counted. Groceries and Superstores then use the [split rule](#shopping-groceries-and-superstores).
 - The app rounds every Budget to the nearest whole dollar.
 - A Category group's Budget is the sum of its Categories' Budgets.
 
@@ -38,13 +39,14 @@ Every formula in this file uses these terms.
 - A Member may edit the facts in settings at any time.
 - The facts stay on the server. The AI never receives the ZIP code or the ages.
 - The app ships a ZIP table. It maps each ZIP code to a state and a time zone.
+- A county that two time zones divide gets one time zone, so Household time can be one hour off there. The app has no time zone override.
 - The facts feed these rules:
 
 | Fact | Used for |
 |---|---|
 | Number of people | The household size for the USDA food plan and the CE table |
 | Each person's age | The USDA food cost per person |
-| Rent or own | The CE housing line for the Housing context line: rented dwellings or owned dwellings |
+| Rent or own | The CE housing line for the Housing context line: owned dwellings for a Household that owns. A Household that rents gets no typical Housing figure ([Context for Bills Budgets](#context-for-bills-budgets)). |
 | ZIP code | The Household time zone; the Alaska and Hawaii food rule |
 
 - The Household time zone sets every Household-time rule: the 1st of the month, quiet hours, and the Alert week.
@@ -105,12 +107,13 @@ Example: F is $1,000 for two adults and one child. Supplies are 2% of I = $6,000
 |---|---|
 | Drafts the Budget | Clothing, Home and garden, Alcohol and tobacco, Gas, Car, Transit and rideshare, Health, Personal care, Childcare, Pets, Fitness, Restaurants, Entertainment, Hobbies, Books and education |
 | Drafts the Budget, shared | Groceries and Superstores (B_GS) |
-| Context only | Housing, Utilities, Phone and internet, Insurance |
+| Context only | Housing (for a Household that owns), Utilities, Phone and internet, Insurance |
 | None | Taxes and government, Interest and fees, Travel, General goods, Gifts and donations, Services, Cash, Payments to people, Miscellaneous |
 
 ### Context for Bills Budgets
 
 - Each Bills Budget with a Benchmark shows one context line: "<Category> is X% of Income; typical is Y%". X = the Budget ÷ I. Y = B(c) ÷ I. Example: "Housing is 41% of Income; typical is 33%".
+- **A Household that rents** has no Housing Benchmark. The CE mean for rented dwellings is an average over all households, owners included, so it reads far too low for a renter, such as "typical is 7%". Housing's line then shows no typical figure: "Housing is 41% of Income". The AI gets no Housing Benchmark either.
 - CE leaves mortgage principal out, as a reduction of debt. It counts a financed car at its full price in the year of purchase. So Housing and Car Spending can sit above their Benchmarks for this reason alone. The app gives the AI this fact with any Housing or Car comparison.
 - 50/30/20 and the 30% housing rule appear only as plain-English framing, never as a rule. 50/30/20 comes from Warren and Tyagi's *All Your Worth* (2005), with no statistical basis found.
 
@@ -135,6 +138,7 @@ Steady Income (I) is the Household's regular Income per month. It sets the Bench
 - It uses Income Transactions on checking and savings Accounts only.
 - It groups them by payer: the Merchant on the Income Transaction.
 - Amounts must be within 15% of each other, not 7.5%.
+- A monthly Income series is measured from a fixed day of the month, with the business-day shift, as a monthly Recurring charge is ([Monthly series](06-anomalies-and-alerts.md#monthly-series)).
 - It adds a twice-a-month schedule: two fixed days of the month, each within ±2 days. Examples: the 1st and the 15th, or the 15th and the last day.
 - A series may fit both every 2 weeks and twice a month. Then the app picks the schedule whose expected dates are fewer total days from the actual dates.
 - Yearly series never count as steady Income.
@@ -173,7 +177,7 @@ Steady Income (I) is the Household's regular Income per month. It sets the Bench
 
 ### Which Categories get a Budget
 
-- A Category gets no Budget when it has no Spending in the history window and no known amounts for m. It never gets a $0 Budget this way.
+- A Category gets no Budget when it has no Spending in the history window and no known amounts for m. It never gets a $0 Budget this way. With n = 0, the Spending loaded so far counts in place of the history window.
 - Interest and fees always gets a Budget, even $0.
 - A Category with no Benchmark gets no Budget until there are 3 months of history (n ≥ 3). Bills Categories are exempt.
 - Spending in a Category with no Budget still counts against Left to spend ([Dashboard and pages](07-dashboard-and-pages.md#2-left-to-spend)).
@@ -312,6 +316,7 @@ Each row except Chat and the Monthly review is a Budget tailoring run ([AI](08-a
 | Chat | A Member asks in Chat | A new monthly Budget for one Category, or a new Goal ([AI](08-ai.md#proposals)) |
 | Monthly review | The review is written on the 1st | Budget changes to consider ([AI](08-ai.md#monthly-review)) |
 
+- A Goal whose target is not a Category, such as Saving, a Merchant, or a loan, may change any flexible Category in its Goal Budget change.
 - **A redraft** runs the full draft for flexible Categories: the formulas, the "must fit" step, and the AI's part. It makes one Proposal. The Proposal lists each Category whose figure differs from its current Budget by 5% or more. If none differs, there is no Proposal.
 - The app records the inputs behind the current Budgets: I and the CE data year. The first draft records them.
 - Guardrails, expiry, replacement, and where Proposals appear are in [AI](08-ai.md#proposals).
