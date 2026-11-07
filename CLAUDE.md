@@ -20,17 +20,40 @@ These rules apply to every builder, reviewer and helper agent, whatever its brie
 - Number new migrations after the last one on `main` when you start. Write them only with `pnpm db:generate`, never by hand, so they can be regenerated. If another branch takes your number first, do nothing: the orchestrator regenerates your migration after `main`'s last one when it merges.
 - Never run host-wide Docker cleanup (`docker system prune`, `docker image prune`, and so on).
 
+## Keep each agent small
+
+Every tool call sends the whole conversation to the model again. Each call costs more as the context grows, so fewer calls and less output matter more than anything else here.
+
+- Find before you read. Use `rg -n` or `grep -n` to find the lines, then read only those ranges with some lines around them. Do not `cat` a whole large file to find one function.
+- Batch reads. Read all the files or line ranges you need in one command, not one call per file or range.
+- Do not read a file again if it is already in your context and has not changed.
+- Keep command output short. Send long output to a file, and print only the end or the matching lines, for example `| tail -n 40`.
+- Put several test files in one `pnpm vitest run` call.
+- Reviewers start from `git diff --stat origin/main...HEAD`. Then they read the diff of the files that matter, a few files per call. Do not print the whole diff of a large change at once.
+- Reports to the orchestrator are short: what changed, the head, one line per check, and anything blocking. No full logs and no file dumps.
+
 ## Checks
 
 - The full set is `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm check:licenses`, `pnpm check:audit`.
-- Builders run the full set on the head they push. They save each output to `<scratch>/checks-<short head>/<check>.log`.
-- Reviewers read those logs. If the logs exist for the head under review and all pass, reviewers run `pnpm lint`, `pnpm typecheck`, the test files near the change, and their own probes. Otherwise they run the full set.
+- While they work, builders run only `pnpm typecheck` and the test files near the change.
+- Builders run the full set on the head they push, in one command. They save each output to `<scratch>/checks-<short head>/<check>.log` and print only one pass or fail line per check, plus the failing lines.
+- Reviewers read those logs. If the logs exist for the head under review and all pass, reviewers run only the test files near the change and their own probes. Otherwise they run the full set.
 - If a diff touches `package.json`, `pnpm-lock.yaml`, `licenses/`, `security/` or `scripts/`, reviewers always run `pnpm check:licenses` and `pnpm check:audit`.
 - The orchestrator runs the full set on the exact merged tree before every push to `main`.
 
+## Reviews
+
+The orchestrator gives each ticket a review level in its brief.
+
+- **Full review** (a reviewer agent) for a diff that touches security, privacy or what reaches the AI (K8, K13 to K17), auth or write routes, Plaid or bank sync, migrations or deletes, money math, or dependencies.
+- **Light review** (the orchestrator itself, no agent) for every other diff, such as UI, copy, styling, docs or tests only. The orchestrator reads `git diff --stat`, the check logs and the PR text, and opens only the parts that look wrong.
+- The orchestrator puts small tickets in the same area into one builder brief. One reviewer may review several small full-review diffs together.
+- A ticket gets at most two review rounds. After the second round, the reviewer lists what is left, and the orchestrator fixes it or sends one last fix to the builder without another review. A third review round is only for a blocking security or privacy finding.
+- Reviewers block only on bugs, failed checks, broken rules in this file, and missing tests for changed behavior. They list other notes in one short non-blocking list. They do not ask for style changes or rewording.
+
 ## Known findings: check these before you push
 
-Each item was a blocking review finding at least once, and each cost a full review round. Builders check every item that applies to their diff before the first push. They list each one as ok or n/a under `## Evidence` in the PR text, for example "Known findings: K1 ok, K3 n/a". Reviewers check them too.
+Each item was a blocking review finding at least once, and each cost a full review round. Builders check every item that applies to their diff before the first push. They list each one as ok or n/a under `## Evidence` in the PR text, for example "Known findings: K1 ok, K3 n/a". Reviewers check the items that apply too.
 
 - **K1. Every new write route has 401 and 403 tests.** No session gets 401. A cross-site Origin and a missing Origin each get 403. Each case changes nothing. A JSON route rejects a wrong content type with 415.
 - **K2. Every filter on a write path has a test that fails without it.** This covers filters by kind, owner, hidden state or removed state. Write through the wrong row and see nothing change. Break each filter once and confirm a test fails.
@@ -43,7 +66,7 @@ Each item was a blocking review finding at least once, and each cost a full revi
   - Names a person or shop: `VENMO *MORGAN LEE`, `ZELLE PAYMENT TO JOHN SMITH`, `PAYPAL *ETSY SHOP`, `CASH APP*JOHN SMITH`.
   - Store numbers, lead-ins and digit runs: `PURCHASE 1005 BLUEBIRD BOOKS`, `BEST BUY CO`, `XXXX4821`, `REF#12345678`, `(800) 555-1212`.
 - **K8. No personal or secret field reaches storage, logs, errors or the AI.** Raw provider data drops every account-number-like or personal field at every depth: `account_number`, `account_numbers`, `payment_reference_number`, `reference_number`, `ppd_id`, `payer`, `payee`, `by_order_of`, `reason`, `account_owner`, `property_address`, `verification_insights`, and any new one in the Plaid types you touch. No raw error object reaches Sidequest or a log line; errors go through `src/log.ts`. Library errors such as rate limits map to their own status, not 500.
-- **K9. Large-history check.** If a diff touches `src/bank/`, `src/money-movement/`, `src/categorization/`, `src/categories/`, `src/recurring/`, `src/merchants/` or `src/review/`, run `pnpm bench:history` (5 years, about 20,000 Transactions). Add a case in `src/large-history/cases/` for each changed request and follow-up job that has none. Paste its table into the PR text. No request takes more than 1 s. A streamed download is timed until its response starts (1 s); the whole file has its own limit.
+- **K9. Large-history check.** If a diff touches `src/bank/`, `src/money-movement/`, `src/categorization/`, `src/categories/`, `src/recurring/`, `src/merchants/` or `src/review/`, run `pnpm bench:history` (5 years, about 20,000 Transactions). Add a case in `src/large-history/cases/` for each changed request and follow-up job that has none. Paste its table into the PR text. Run it once, on the head you push. Reviewers do not run it again if the PR text has a table for the head under review. No request takes more than 1 s. A streamed download is timed until its response starts (1 s); the whole file has its own limit.
 - **K10. Never decide on data the browser sends when the server can learn it.** Plaid Link metadata (bank ID, bank name, account list) comes from the browser. After the token exchange, every decision that depends on it (same bank, duplicate bank, which Connection to replace) uses Plaid's own answer from `/item/get` or `/accounts/get`. Test it with a browser value that differs from Plaid's.
 
 - **K11. Every hold on a Connection is honored by every path that starts a sync.** The paths are the schedule, the start-up catch-up, Sync now, update mode and `update-finished`. Set the hold in the same write that creates or changes the row, so no window exists. Test each path with the hold set, and break the hold once in each.
