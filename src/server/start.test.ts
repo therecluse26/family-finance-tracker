@@ -160,6 +160,16 @@ describe("starting the app", () => {
       ? readdirSync(backupFolder()).filter((name) => name.endsWith("-migration.db.gz"))
       : [];
 
+  // Writes app.db's WAL into its main file and empties it.
+  async function checkpoint(): Promise<void> {
+    const database = await openDatabase(url);
+    try {
+      await database.$client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+    } finally {
+      closeDatabase(database);
+    }
+  }
+
   // What a start could change in app.db: its data keys and its migrations.
   async function readFileState() {
     const database = await openDatabase(url);
@@ -324,6 +334,9 @@ describe("starting the app", () => {
       "stops before it migrates when the copy fails, with app.db unchanged, and the same at every restart until the folder works",
       async () => {
         await stop(await start(v1()));
+        // The first app's close can leave its writes in the WAL, and the failed start's close then
+        // writes them into the main file. Writing them in first leaves only the start's own changes.
+        await checkpoint();
         const before = readFileSync(path);
         const files = readdirSync(backupFolder());
         chmodSync(backupFolder(), 0o500);
