@@ -397,6 +397,49 @@ describe("Chat", () => {
       for (const word of PRIVATE) expect(sent).not.toContain(word);
     });
 
+    it("says nothing went to the AI when the privacy filter refuses the first round", async () => {
+      // A Household summary of two typed values with no text between them reads as one number.
+      const refusing = chat({
+        database: test.database,
+        ai,
+        summary: { today: async () => ({ parts: [typedCount(3), typedCount(4)] }) },
+        now: () => clock,
+      });
+      const result = await refusing.start(DANA, {
+        text: "How much do we spend on sewing each month?",
+        note: null,
+        sendAnyway: false,
+      });
+      if (!("threadId" in result)) throw new Error(`Refused: ${result.refused}`);
+      const response = await refusing.answer(DANA, result.threadId, {
+        text: null,
+        sendAnyway: false,
+      });
+      if (!(response instanceof Response)) throw new Error(`Refused: ${response.refused}`);
+
+      expect((await partsOf(response)).at(-1)).toEqual({
+        type: "error",
+        errorText: "The privacy filter stopped this answer, so nothing went to the AI.",
+      });
+      expect(modelCalls()).toEqual([]);
+    });
+
+    it("says the question went to the AI when the privacy filter refuses a later round", async () => {
+      // The AI's own tool call names a Household fact, so the next round, which repeats it, is
+      // refused.
+      callingOnce([{ toolName: "get_budgets_and_goals", input: { age: 40 } }]);
+      const id = await started("How much do we spend on sewing each month?");
+
+      const parts = await answered(id, null);
+
+      expect(parts.at(-1)).toEqual({
+        type: "error",
+        errorText:
+          "The privacy filter stopped this answer partway. Your question went to the AI, but nothing more did.",
+      });
+      expect(modelCalls()).toHaveLength(1);
+    });
+
     it("shows an error with no retry when the AI provider fails, stores no answer, and answers again on Try again", async () => {
       stub.answers.writer = "fail";
       const id = await started("How are we doing?");

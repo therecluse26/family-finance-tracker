@@ -412,19 +412,20 @@ export async function callModel<OUTPUT>(
 
 // How a streamed answer ended: with the AI's whole text, as it wrote it, with "Member A" labels;
 // with an AI error or a rejected key; paused by its gate between rounds, such as at the AI cost
-// cap; or refused by the privacy filter, so its request did not go out.
+// cap; or refused by the privacy filter, so its request did not go out. `sent` is whether an
+// earlier round of the same answer went out, such as the round with the Member's question.
 export type StreamEnd =
   | { answered: string }
   | { failed: AiFailure | "key rejected" }
   | { paused: AiPause }
-  | { refused: true };
+  | { refused: true; sent: boolean };
 
 // What ends a streamed answer that failed. An error that is none of these, such as a database
 // error in a gate, counts as a server error: a stream cannot throw to its route.
-function streamEndOf(error: unknown, timedOut: boolean): StreamEnd {
+function streamEndOf(error: unknown, timedOut: boolean, sent: boolean): StreamEnd {
   if (timedOut) return { failed: "timeout" };
   if (error instanceof AiPausedError) return { paused: error.pause };
-  if (error instanceof PrivacyRefusal) return { refused: true };
+  if (error instanceof PrivacyRefusal) return { refused: true, sent };
   return { failed: callErrorOf(error)?.failure ?? "server error" };
 }
 
@@ -509,9 +510,13 @@ export function streamModel(
   async function answer(): Promise<void> {
     let failure: unknown;
     let failed = false;
+    // Whether a round went out and its answer came back.
+    let sent = false;
     try {
       for await (const part of result.fullStream) {
-        if (part.type === "text-start" && /\S$/u.test(text.text())) {
+        if (part.type === "finish-step") {
+          sent = true;
+        } else if (part.type === "text-start" && /\S$/u.test(text.text())) {
           // Each round's text starts a new paragraph.
           sendText(text.add("\n\n"));
         } else if (part.type === "text-delta") {
@@ -528,7 +533,7 @@ export function streamModel(
       clearTimeout(timer);
     }
     const end: StreamEnd = failed
-      ? streamEndOf(failure, timeout.signal.aborted)
+      ? streamEndOf(failure, timeout.signal.aborted, sent)
       : { answered: text.text() };
     const words = await hooks.ended(end);
     if (words !== undefined) {

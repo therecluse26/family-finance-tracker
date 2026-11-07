@@ -11,7 +11,7 @@ import { type AiCost, aiCost } from "./cost.ts";
 import { householdAi } from "./household-ai.ts";
 import type { OutboundCall } from "./outbound.ts";
 import { memberPrice } from "./prices.ts";
-import { PrivacyRefusal } from "./privacy.ts";
+import { HELD_BACK, PrivacyRefusal } from "./privacy.ts";
 import { type AiCall, type AiMessage, aiTool } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { aiSettings } from "./settings.ts";
@@ -1027,6 +1027,36 @@ describe("the one AI call path", () => {
         },
       ]);
       expect(JSON.stringify(stub.prompts)).not.toContain("typed value");
+    });
+
+    it("holds back only a tool result the filter refuses, so the AI answers from the rest", async () => {
+      const stub = new StubModels();
+      stub.callTools = (messages) =>
+        messages.some((message) => message.role === "tool")
+          ? []
+          : [
+              { toolName: "refs", input: { month: "2026-10" } },
+              { toolName: "payers", input: { month: "2026-10" } },
+            ];
+      const ai = await connect("anthropic", stub.makeModels);
+      // A field name that ends in 48 next to a count of 21 reads as the last 4 4821, across the
+      // edge of a typed value, which the filter cannot cut from a field name.
+      const refs = aiTool({
+        description: "References in a month",
+        input: z.object({ month: z.string() }),
+        run: async () => ai.toolResult({ "Ref 48": typedCount(21) }),
+      });
+
+      expect(await ai.generate({ ...call, tools: { refs, payers } })).toMatchObject({
+        ready: true,
+        text: "O",
+      });
+
+      const [held, kept] = toolResults(stub).at(-1) ?? [];
+      expect(held).toEqual({ type: "error-text", value: HELD_BACK });
+      expect(kept).toMatchObject({ type: "json", value: { month: "2026-10", last4: "[removed]" } });
+      expect(JSON.stringify(stub.prompts)).not.toContain("Ref 48");
+      expect(await counted()).toEqual(["check on save", "check on save", "chat", "chat"]);
     });
 
     it("runs at most 5 of the 10 tools the AI calls in one round, then offers none", async () => {

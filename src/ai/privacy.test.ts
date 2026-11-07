@@ -1,9 +1,11 @@
 import type { JSONValue } from "ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loginTables } from "../db/index.ts";
 import { newTestDatabase } from "../db/testing.ts";
 import { readHouseholdFacts, saveHouseholdFacts } from "../household/index.ts";
+import { log } from "../log.ts";
 import {
+  HELD_BACK,
   MEMBER_TYPED,
   memberLabel,
   type PrivacyAccount,
@@ -73,6 +75,16 @@ function newCardNumber(): string {
 
 const card = newCardNumber();
 const grouped = (digits: string, between: string) => digits.match(/\d{4}/g)?.join(between) ?? "";
+
+// A prompt of tool results, as the filter sends it when it holds back each one.
+const heldBack = (prompt: { role: "tool"; content: { output: unknown }[] }[]) =>
+  prompt.map((message) => ({
+    ...message,
+    content: message.content.map((part) => ({
+      ...part,
+      output: { type: "error-text", value: HELD_BACK },
+    })),
+  }));
 
 describe("the privacy filter's text rules", () => {
   it.each([
@@ -678,7 +690,9 @@ describe("the privacy filter on typed values", () => {
     ["an amount of 10^12 cents", { [TYPED]: "-10000000000.00" }],
   ])("refuses a value marked typed that holds %s", (_, value) => {
     expect(() => matching.json({ value })).toThrow(PrivacyRefusal);
-    expect(() => matching.params({ prompt: toolResult({ value }) })).toThrow(PrivacyRefusal);
+    expect(matching.params({ prompt: toolResult({ value }) }).prompt).toEqual(
+      heldBack(toolResult({ value })),
+    );
   });
 
   it("makes a typed value only from a whole number, a date, or a month, checked at run time", () => {
@@ -955,8 +969,83 @@ describe("the privacy filter on the Household summary's typed parts", () => {
       expect(sentValue([typedCount(48), typedCount(22)])).toEqual([48, 22]);
     });
 
-    it("refuses a tool result with a fact across a field name and a typed value", () => {
-      expect(() => sentValue({ "Ref 48": typedCount(22) })).toThrow(PrivacyRefusal);
+    it("holds back a tool result with a fact across a field name and a typed value", () => {
+      const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+      try {
+        const sent = probe.params({ prompt: toolResult({ "Ref 48": typedCount(22) }) });
+
+        expect(sent.prompt).toEqual(heldBack(toolResult({})));
+        expect(warn.mock.calls).toEqual([
+          [
+            "The privacy filter held back a tool result",
+            { tool: "lookup", rule: "The privacy filter found a fact across a field name." },
+          ],
+        ]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("holds back only the refused tool result, and sends the rest of the call", () => {
+      const sent = probe.params({
+        prompt: [
+          { role: "system", content: "Answer briefly." },
+          {
+            role: "tool",
+            content: [
+              ...(toolResult({ "Ref 48": typedCount(22) })[0]?.content ?? []),
+              {
+                type: "tool-result",
+                toolCallId: "c2",
+                toolName: "other",
+                output: { type: "json", value: { total: typedCount(3) } },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(sent.prompt).toEqual([
+        { role: "system", content: "Answer briefly." },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "lookup",
+              output: { type: "error-text", value: HELD_BACK },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "c2",
+              toolName: "other",
+              output: { type: "json", value: { total: 3 } },
+            },
+          ],
+        },
+      ]);
+    });
+
+    it("logs where a refused call fails and which rule refused it, never the value", () => {
+      const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+      try {
+        expect(() =>
+          sentText(text("Paid "), typedPart(typedCount(48)), typedPart(typedCount(22))),
+        ).toThrow(PrivacyRefusal);
+
+        expect(warn.mock.calls).toEqual([
+          [
+            "The privacy filter refused an AI call",
+            {
+              rule: "The privacy filter refused two typed values with no text between.",
+              place: "message 1 of 1 (user)",
+            },
+          ],
+        ]);
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 });
