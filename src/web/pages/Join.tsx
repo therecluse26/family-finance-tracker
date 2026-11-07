@@ -1,7 +1,8 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { BackupCodes, BUTTON, ErrorLine, NewTotp, TextField } from "../components/Fields.tsx";
+import { BackupCodes, ErrorLine, NewTotp } from "../components/Fields.tsx";
 import { postJson } from "../requests.ts";
+import { AUTH_BUTTON, AuthField, AuthFrame } from "./SignIn.tsx";
 
 // The join page (spec 09, Invites): a new Member opens an invite link, <APP_URL>/join#token=…, and
 // makes their own login: a name, an email address, a password, and TOTP, then gets backup codes.
@@ -87,11 +88,11 @@ function MakeLogin(props: { token: string }) {
 
   if (backupCodes !== undefined) {
     return (
-      <div className="mt-4">
+      <div className="mt-2">
         <p>You are a Member now, and you are signed in.</p>
         <BackupCodes codes={backupCodes} />
         <button
-          className={BUTTON}
+          className={AUTH_BUTTON}
           type="button"
           onClick={() => void navigate("/", { replace: true })}
         >
@@ -103,16 +104,16 @@ function MakeLogin(props: { token: string }) {
 
   if (totpURI !== undefined) {
     return (
-      <form className="mt-4" onSubmit={join}>
+      <form className="mt-2" onSubmit={join}>
         <p>Every Member signs in with a password plus TOTP.</p>
         <NewTotp totpURI={totpURI} />
-        <TextField
+        <AuthField
           label="The 6-digit code your authenticator app shows"
           autoComplete="one-time-code"
           value={totpCode}
           onChange={setTotpCode}
         />
-        <button className={BUTTON} type="submit" disabled={busy}>
+        <button className={AUTH_BUTTON} type="submit" disabled={busy}>
           Make my login
         </button>
         <ErrorLine error={error} />
@@ -121,24 +122,24 @@ function MakeLogin(props: { token: string }) {
   }
 
   return (
-    <form className="mt-4" onSubmit={startTotp}>
+    <form className="mt-2" onSubmit={startTotp}>
       <p>You were invited to the Household. Make your login.</p>
-      <TextField label="Name" autoComplete="name" value={name} onChange={setName} />
-      <TextField
+      <AuthField label="Name" autoComplete="name" value={name} onChange={setName} />
+      <AuthField
         label="Email"
         type="email"
         autoComplete="username"
         value={email}
         onChange={setEmail}
       />
-      <TextField
+      <AuthField
         label="Password, at least 12 characters"
         type="password"
         autoComplete="new-password"
         value={password}
         onChange={setPassword}
       />
-      <button className={BUTTON} type="submit" disabled={busy}>
+      <button className={AUTH_BUTTON} type="submit" disabled={busy}>
         Next
       </button>
       <ErrorLine error={error} />
@@ -164,10 +165,9 @@ export function Join() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-md p-6">
-      <h1 className="text-2xl font-semibold">Join Family Finance Tracker</h1>
+    <AuthFrame title="Join Family Finance Tracker">
       {token === undefined ? null : <MakeLogin token={token} />}
       <ErrorLine error={error} />
-    </main>
+    </AuthFrame>
   );
 }

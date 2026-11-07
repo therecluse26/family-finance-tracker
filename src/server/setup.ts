@@ -9,16 +9,17 @@ import {
   skipSetupStep,
 } from "../db/index.ts";
 import {
-  OPTIONAL_SETUP_STEPS,
-  type OptionalSetupStep,
+  FINISH_SETUP_ITEMS,
   type SetupProgressView,
   type SetupRefusal,
   type SetupRoutes,
+  type SkippableSetupStep,
 } from "./setup-views.ts";
 
-// The first-run wizard's progress (spec 12, The first-run wizard). Until steps 1 to 4 are done,
-// every page leads to the wizard. The next visit opens the first step that is neither done nor
-// skipped.
+// The first-run wizard's progress (spec 12, The first-run wizard). Its 6 steps are the setup link,
+// the first Member's login, the Master key, the Household, Banks, and Finish. Until steps 1 to 4
+// are done, every page leads to the wizard. The next visit opens the first step that is neither
+// done nor skipped.
 
 // The required steps, in order. Steps 1 and 2 are done once a Member exists; the others are done
 // when their step marks them in app.db.
@@ -45,14 +46,15 @@ export async function readSetupState(database: Database): Promise<SetupState> {
   return { next, wizard: next !== null };
 }
 
-// Step 9, Finish, is done once the first Member opens the dashboard from it.
+// Step 6, Finish, is done once the first Member opens the dashboard from it.
 const FINISH = "finish";
 
-// Steps 5 to 9, for the first Member only (spec 12, Order and resume rules). A step is done only on
-// what the server knows: Banks once app.db holds a Connection, an Unconnected account, or a Manual
-// loan; AI once an AI provider is set; Alerts once a test email went out; Invite Members once an
-// invite link is made. A done step stays done, so a skipped one leaves the "Finish setup" list for
-// good, wherever it was done.
+// Steps 5 and 6, for the first Member only, and the "Finish setup" list (spec 12, Order and resume
+// rules). An item is done only on what the server knows: Banks once app.db holds a Connection; AI
+// once an AI provider is set; Alerts once a test email went out; Invite Members once an invite link
+// is made. A done item stays done, so an extra leaves the "Finish setup" list for good, wherever it
+// was done. Banks is listed while app.db holds no Connection that is not removed, even once its step
+// is done.
 export function setupRoutes(database: Database): SetupRoutes {
   async function progress(memberId: string): Promise<SetupProgressView> {
     const [state, steps, facts, firstMemberId] = await Promise.all([
@@ -68,14 +70,20 @@ export function setupRoutes(database: Database): SetupRoutes {
     for (const step of newlyDone) steps.set(step, "done");
 
     const status = Object.fromEntries(
-      OPTIONAL_SETUP_STEPS.map((step) => [step, steps.get(step) ?? null]),
+      FINISH_SETUP_ITEMS.map((item) => [item, steps.get(item) ?? null]),
     ) as SetupProgressView["steps"];
-    const open = OPTIONAL_SETUP_STEPS.find((step) => status[step] === null);
-    const wizardStep = open ?? (steps.get(FINISH) === "done" ? null : FINISH);
+    // Banks waits until it is done or skipped; the optional extras never hold the wizard up.
+    const wizardStep =
+      status.banks === null ? "banks" : steps.get(FINISH) === "done" ? null : FINISH;
     return {
       next: !state.wizard && memberId === firstMemberId ? wizardStep : null,
       steps: status,
-      finishSetup: OPTIONAL_SETUP_STEPS.filter((step) => status[step] === "skipped"),
+      // Banks stays in the list while no Connection exists now, even once the step is done.
+      finishSetup: state.wizard
+        ? []
+        : FINISH_SETUP_ITEMS.filter((item) =>
+            item === "banks" ? !facts.banks : status[item] !== "done",
+          ),
       connections: facts.connections,
     };
   }
@@ -90,7 +98,7 @@ export function setupRoutes(database: Database): SetupRoutes {
   return {
     progress,
 
-    async skip(memberId: string, step: OptionalSetupStep) {
+    async skip(memberId: string, step: SkippableSetupStep) {
       const refused = await refusal(memberId);
       if (refused !== undefined) return refused;
       await skipSetupStep(database, step);

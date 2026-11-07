@@ -23,6 +23,7 @@ export {
 } from "./ai-retries.ts";
 export {
   AI_SETTINGS_ROW,
+  clearAiKeyRejected,
   markAiKeyRejected,
   readAiSettings,
   readAiSettingsVersion,
@@ -183,6 +184,7 @@ export {
   type NewChatMessage,
   readChatThread,
   type StoredChatThread,
+  storeAlertThread,
   storeChatMessage,
   storeChatThread,
 } from "./chat.ts";
@@ -568,12 +570,18 @@ export {
   listOpenReviewItems,
   listOpenReviewItemsOfKind,
   listReviewItemSubjects,
+  listReviewListItems,
   type NewReviewItem,
   readReviewItem,
   reviseOpenReviewItems,
   type StoredReviewItem,
 } from "./review-items.ts";
 export { scheduledTasks } from "./schema.ts";
+export {
+  endOpenSession,
+  listOpenSessions,
+  type OpenSession,
+} from "./sessions.ts";
 export {
   hasMember,
   markSetupStep,
@@ -628,3 +636,14 @@ export {
   storeUpdateFailure,
   type UpdateCheckState,
 } from "./update-check.ts";
+export {
+  countWeeklySummaryFailures,
+  finishWeeklySummary,
+  listLinkedMoneyPostedDates,
+  listTakenWeeklySummaries,
+  listWeeklySummaryMembers,
+  readLatestWeeklySummary,
+  readWeeklySummarySwitch,
+  storeWeeklySummarySwitch,
+  takeWeeklySummaries,
+} from "./weekly-summaries.ts";

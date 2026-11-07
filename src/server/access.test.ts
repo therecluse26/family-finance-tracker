@@ -306,7 +306,6 @@ describe.each(MODES)("in $name", (mode) => {
 
       expect((await stranger.get("/healthz")).status).toBe(200);
       expect((await stranger.get("/api/setup")).status).toBe(200);
-      expect((await stranger.get("/api/auth/get-session")).status).toBe(200);
     });
 
     it("answers 403 on every write from another site, with no Origin, or with Origin null, and changes nothing", async () => {

@@ -1,9 +1,14 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { Channels, ChannelsView, SmtpFields, SmtpView } from "../../../notify/email-view.ts";
 import type { PushView } from "../../../notify/push-view.ts";
+import type { WeeklySummaryView } from "../../../weekly-summary/view.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
-import { AlertPush } from "./AlertPush.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
+import { homeScreenFirstHere, PushPart } from "./AlertPush.tsx";
+import { BUTTONS, CHOICE, DoneLine, Field, HINT, SettingCard } from "./settings-ui.tsx";
+import { WeeklySummaryRow } from "./WeeklySummary.tsx";
 
 // Settings, Alerts: how Alerts and System notices reach each Member (spec 06, Recipients and
 // channels). Each Member picks their own channels, and turns push on for each device
@@ -14,42 +19,13 @@ import { AlertPush } from "./AlertPush.tsx";
 // The page's writes, exactly as it sends them. Each sends a JSON body: the server answers 415 to a
 // write without one.
 export const saveChannels = (channels: Channels) => api["alert-channels"].$put({ json: channels });
-export const saveSmtp = (json: SmtpFields & { code?: string }) => api.smtp.settings.$post({ json });
+export const saveSmtp = (json: SmtpFields) => api.smtp.settings.$post({ json });
 export const sendTestEmail = () => api.smtp.test.$post({ json: {} });
 
-const CODE_LABEL = "A code from your authenticator app, or a backup code";
-
-// The words to show for a refused request: the server's own, such as "Wrong code.".
+// The words to show for a refused request: the server's own, such as "Enter the SMTP password.".
 async function refusal(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   return typeof body.error === "string" ? body.error : "That did not work.";
-}
-
-function Field(props: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  inputMode?: "numeric" | "email";
-  autoComplete?: string;
-  placeholder?: string;
-  required?: boolean;
-}) {
-  return (
-    <label className="mt-3 block">
-      {props.label}
-      <input
-        className={FIELD}
-        type={props.type ?? "text"}
-        inputMode={props.inputMode}
-        autoComplete={props.autoComplete ?? "off"}
-        placeholder={props.placeholder}
-        required={props.required ?? false}
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-      />
-    </label>
-  );
 }
 
 const CHOICES: { label: string; channels: Channels }[] = [
@@ -105,46 +81,52 @@ export function ChannelsForm(props: {
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
+    <form onSubmit={submit}>
       <fieldset>
-        <legend className="font-semibold">My channels</legend>
-        <p className="mt-1 text-gray-600">
+        <legend className="sr-only">My channels</legend>
+        <p className="mt-1.5 text-muted">
           How Alerts and System notices reach you. Email goes out at once, even in quiet hours.
           {pushOffered ? " Push waits from 9 PM to 8 AM, Household time." : null}
         </p>
-        {choices.map((each, index) => (
-          <label key={each.label} className="mt-2 flex items-center gap-2">
-            <input
-              type="radio"
-              name="channels"
-              checked={choice === index}
-              onChange={() => setChoice(index)}
-            />
-            {each.label}
-          </label>
-        ))}
+        <div className="mt-1">
+          {choices.map((each, index) => (
+            <label key={each.label} className={CHOICE}>
+              <input
+                type="radio"
+                name="channels"
+                checked={choice === index}
+                onChange={() => setChoice(index)}
+              />
+              {each.label}
+            </label>
+          ))}
+        </div>
       </fieldset>
       {props.channels.emailSetUp || !choices[choice]?.channels.email ? null : (
-        <p className="mt-2 text-gray-600">
-          No SMTP server is saved, so the app skips email until one is.
-        </p>
+        <p className={HINT}>No SMTP server is saved, so the app skips email until one is.</p>
       )}
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Save my channels
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Save my channels
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
 }
 
-export function SmtpForm(props: { smtp: SmtpView | null; onSaved: (smtp: SmtpView) => void }) {
+// `children` sits beside Save, such as "Send a test email".
+export function SmtpForm(props: {
+  smtp: SmtpView | null;
+  onSaved: (smtp: SmtpView) => void;
+  children?: ReactNode;
+}) {
   const { smtp } = props;
   const [host, setHost] = useState(smtp?.host ?? "");
   const [port, setPort] = useState(String(smtp?.port ?? 587));
   const [username, setUsername] = useState(smtp?.username ?? "");
   const [password, setPassword] = useState("");
   const [sender, setSender] = useState(smtp?.sender ?? "");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -169,9 +151,7 @@ export function SmtpForm(props: { smtp: SmtpView | null; onSaved: (smtp: SmtpVie
         username: username.trim(),
         ...(password === "" ? {} : { password }),
         sender: sender.trim(),
-        ...(code.trim() === "" ? {} : { code: code.trim() }),
       });
-      setCode("");
       if (!res.ok) return setError(await refusal(res));
       setPassword("");
       props.onSaved(((await res.json()) as { smtp: SmtpView }).smtp);
@@ -183,40 +163,53 @@ export function SmtpForm(props: { smtp: SmtpView | null; onSaved: (smtp: SmtpVie
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
-      <h3 className="font-semibold">Email server (SMTP)</h3>
-      <p className="mt-1 text-gray-600">
+    <form onSubmit={submit}>
+      <p className="mt-1.5 text-muted">
         The Household's mail server, which sends Alerts and System notices to each Member who picks
         email. The app always uses TLS: port 465 from the start, any other port with STARTTLS.
       </p>
-      <Field label="Host" value={host} onChange={setHost} required />
-      <Field label="Port" inputMode="numeric" value={port} onChange={setPort} required />
-      <Field label="Sign-in name" value={username} onChange={setUsername} required />
-      <Field
-        label="Password"
-        type="password"
-        value={password}
-        onChange={setPassword}
-        required={!sameServer}
-        placeholder={sameServer ? "Saved. Enter a new password to change it." : "Not saved"}
-      />
-      <Field
-        label="Sender address"
-        type="email"
-        inputMode="email"
-        value={sender}
-        onChange={setSender}
-        required
-      />
-      <Field
-        label={`${CODE_LABEL}, to set or change the password`}
-        autoComplete="one-time-code"
-        value={code}
-        onChange={setCode}
-      />
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Save the email server
-      </button>
+      <div className="grid gap-x-5 sm:grid-cols-2">
+        <Field label="Host" value={host} onChange={setHost} required className="max-w-none" />
+        <Field
+          label="Port"
+          inputMode="numeric"
+          value={port}
+          onChange={setPort}
+          required
+          className="max-w-30 tabular-nums"
+        />
+        <Field
+          label="Sign-in name"
+          value={username}
+          onChange={setUsername}
+          required
+          className="max-w-none"
+        />
+        <Field
+          label="Password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          required={!sameServer}
+          placeholder={sameServer ? "Saved. Enter a new password to change it." : "Not saved"}
+          className="max-w-none"
+        />
+        <Field
+          label="Sender address"
+          type="email"
+          inputMode="email"
+          value={sender}
+          onChange={setSender}
+          required
+          className="max-w-none"
+        />
+      </div>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Save
+        </Button>
+        {props.children}
+      </div>
       <ErrorLine error={error} />
     </form>
   );
@@ -244,17 +237,21 @@ export function TestEmailButton() {
   }
 
   return (
-    <div>
-      <button className={BUTTON} type="button" disabled={busy} onClick={send}>
+    <>
+      <Button type="button" variant="outlined" disabled={busy} onClick={send}>
         Send a test email
-      </button>
-      <p className="mt-1 text-gray-600">It goes to your own email address.</p>
+      </Button>
+      <p className="w-full text-small text-muted">It goes to your own email address.</p>
       {result === undefined ? null : result.sent ? (
-        <p className="mt-3">{result.line}</p>
+        <p className="w-full text-small" role="status">
+          <StatusText tone="good">{result.line}</StatusText>
+        </p>
       ) : (
-        <ErrorLine error={result.line} />
+        <div className="w-full">
+          <ErrorLine error={result.line} />
+        </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -262,18 +259,30 @@ export function AlertEmail() {
   const [channels, setChannels] = useState<ChannelsView | undefined>();
   const [smtp, setSmtp] = useState<SmtpView | null | undefined>();
   const [push, setPush] = useState<PushView | undefined>();
+  const [weeklySummary, setWeeklySummary] = useState<WeeklySummaryView | undefined>();
+  const [homeScreenFirst, setHomeScreenFirst] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [done, setDone] = useState<string | undefined>();
+  const [channelsDone, setChannelsDone] = useState<string | undefined>();
+  const [smtpDone, setSmtpDone] = useState<string | undefined>();
 
   useEffect(() => {
-    Promise.all([api["alert-channels"].$get(), api.smtp.settings.$get(), api.push.$get()])
-      .then(async ([channelsRes, smtpRes, pushRes]) => {
-        if (!channelsRes.ok || !smtpRes.ok || !pushRes.ok) {
+    setHomeScreenFirst(homeScreenFirstHere());
+    Promise.all([
+      api["alert-channels"].$get(),
+      api.smtp.settings.$get(),
+      api.push.$get(),
+      api["weekly-summary"].$get(),
+    ])
+      .then(async ([channelsRes, smtpRes, pushRes, weeklyRes]) => {
+        if (!channelsRes.ok || !smtpRes.ok || !pushRes.ok || !weeklyRes.ok) {
           return setError("The channel settings did not load.");
         }
         setPush(((await pushRes.json()) as { push: PushView }).push);
         setChannels(((await channelsRes.json()) as { channels: ChannelsView }).channels);
         setSmtp(((await smtpRes.json()) as { smtp: SmtpView | null }).smtp);
+        setWeeklySummary(
+          ((await weeklyRes.json()) as { weeklySummary: WeeklySummaryView }).weeklySummary,
+        );
       })
       .catch(() => setError("The server did not answer."));
   }, []);
@@ -281,29 +290,52 @@ export function AlertEmail() {
   return (
     <>
       <ErrorLine error={error} />
-      {channels === undefined || push === undefined ? null : (
-        <ChannelsForm
-          channels={channels}
-          pushOffered={push.available || push.why !== "plain HTTP"}
-          onSaved={(saved) => {
-            setChannels(saved);
-            setDone("Your channels are saved.");
-          }}
-        />
-      )}
-      {push === undefined ? null : <AlertPush push={push} />}
-      {smtp === undefined ? null : (
-        <SmtpForm
-          smtp={smtp}
-          onSaved={(saved) => {
-            setSmtp(saved);
-            if (channels !== undefined) setChannels({ ...channels, emailSetUp: true });
-            setDone("The email server is saved.");
-          }}
-        />
-      )}
-      {smtp === undefined ? null : <TestEmailButton />}
-      {done === undefined ? null : <p className="mt-3">{done}</p>}
+      <SettingCard id="my-channels" title="My channels">
+        {channels === undefined || push === undefined ? null : (
+          <ChannelsForm
+            channels={channels}
+            pushOffered={push.available || push.why !== "plain HTTP"}
+            onSaved={(saved) => {
+              setChannels(saved);
+              setChannelsDone("Your channels are saved.");
+            }}
+          />
+        )}
+        <DoneLine done={channelsDone} />
+        {push === undefined ? null : <PushPart push={push} homeScreenFirst={homeScreenFirst} />}
+        {weeklySummary === undefined ? null : <WeeklySummaryRow initial={weeklySummary} />}
+      </SettingCard>
+      <SettingCard
+        id="email-server"
+        title="Email server (SMTP)"
+        status={
+          smtp === undefined ? undefined : smtp === null ? (
+            <StatusText tone="muted">Not saved</StatusText>
+          ) : (
+            <StatusText tone="good">Saved</StatusText>
+          )
+        }
+      >
+        {smtp === undefined ? null : (
+          <SmtpForm
+            smtp={smtp}
+            onSaved={(saved) => {
+              setSmtp(saved);
+              if (channels !== undefined) setChannels({ ...channels, emailSetUp: true });
+              if (weeklySummary !== undefined) {
+                setWeeklySummary({ ...weeklySummary, emailSetUp: true });
+              }
+              setSmtpDone("The email server is saved.");
+            }}
+          >
+            <TestEmailButton />
+          </SmtpForm>
+        )}
+        <DoneLine done={smtpDone} />
+        <p className="mt-3 text-small text-muted">
+          No code is needed. You signed in with one already.
+        </p>
+      </SettingCard>
     </>
   );
 }

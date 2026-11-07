@@ -29,9 +29,10 @@ export type ChatMessageView = {
   createdAt: string;
 };
 
-// The note a thread started from with "Ask about this".
+// The note a thread started from with "Ask about this" (CHAT_NOTE_KINDS), or the Alert it started
+// from with "Ask the AI" in the Alert list.
 export const CHAT_NOTE_KINDS = ["Alert note", "Proposal", "Insight card"] as const;
-export type ChatNoteKindView = (typeof CHAT_NOTE_KINDS)[number];
+export type ChatNoteKindView = (typeof CHAT_NOTE_KINDS)[number] | "Alert";
 export type ChatNoteView = { kind: ChatNoteKindView; title: string; lines: string[] };
 
 // A Proposal the thread's AI made: its card, the answer it came with (null when that answer
@@ -65,10 +66,16 @@ export type ChatRoutes = {
     member: { id: string; name: string },
     input: {
       text: string;
-      note: { kind: ChatNoteKindView; id: string } | null;
+      note: { kind: Exclude<ChatNoteKindView, "Alert">; id: string } | null;
       sendAnyway: boolean;
     },
   ): Promise<{ threadId: string } | ChatRefusalView>;
+  // "Ask the AI" on an Alert (spec 06, "Ask the AI"): the Member's thread about it, new or already
+  // there, with no AI call.
+  askAboutAlert(
+    member: { id: string; name: string },
+    alertId: string,
+  ): Promise<{ threadId: string; started: boolean } | ChatRefusalView>;
   // The answer, streamed as @ai-sdk/react reads it.
   answer(
     member: { id: string; name: string },

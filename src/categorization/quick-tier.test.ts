@@ -85,17 +85,14 @@ describe("the Quick tier in the categorization step", () => {
     notices: { raise: async () => undefined, end: async () => undefined },
   });
   const connectAi = async () => {
-    const saved = await aiSettings(aiOptions()).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings(aiOptions()).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     expect(saved).toMatchObject({ saved: true });
     // The two checks on save are not Quick batches.
     asked = [];

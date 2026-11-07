@@ -34,7 +34,7 @@ export type Secrets = {
   // hexadecimal characters once spaces and line breaks are gone.
   checkMasterKey(pasted: string): boolean;
   // The Master key, as 64 lowercase hexadecimal characters. Only the wizard's step 3 shows it, and
-  // only until the paste-back succeeds (spec 09, The Master key). The logger refuses it.
+  // only until the Member presses "I saved it" (spec 09, The Master key). The logger refuses it.
   showMasterKey(): string;
   // The setup code in the setup link, such as "7KQ2-M9XD-4TRF".
   setupCode(): string;

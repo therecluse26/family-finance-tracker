@@ -8,6 +8,7 @@ import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { PictureRoutes } from "../pictures/picture-view.ts";
+import type { WeeklySummarySettings } from "../weekly-summary/view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AiBoxRoutes } from "./ai-box-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
@@ -20,6 +21,7 @@ import type { CategoryRoutes } from "./category-views.ts";
 import type { ChatRoutes } from "./chat-views.ts";
 import type { ComingUpRoutes } from "./coming-up-views.ts";
 import type { DataExportRoutes } from "./data-export-views.ts";
+import type { DeviceRoutes } from "./devices-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
@@ -43,11 +45,10 @@ export type ServerEnv = {
     // The Member signed in on the request: the auth module's SignedInMember. Written out here,
     // since the web app's type check reads this file and runs without Node's types.
     member: { id: string; name: string; email: string };
+    // The ID of the session the request uses, for Signed-in devices' "this device". Never its token.
+    sessionId: string;
     // The Accounts, Transactions, and Connections in app.db, for the routes that list them.
     bank: BankViews;
-    // The sensitive-action check (spec 09, Signing in) for a code from the Member signed in on
-    // this request. Its answer is the auth module's FreshCode, written out as member is.
-    checkFreshCode: (code: string) => Promise<"fresh" | "wrong" | "too many tries">;
     // The Plaid keys and the count of Plaid Items, for the routes under /api/plaid/.
     plaid: PlaidSettings;
     // Linking a new bank through Plaid, for the routes under /api/plaid/.
@@ -58,7 +59,7 @@ export type ServerEnv = {
     repairing: ConnectionRepairing;
     // The wizard's step 3 and "Check my master key".
     masterKey: MasterKeyRoutes;
-    // The wizard's steps 5 to 9, and the dashboard's "Finish setup" list.
+    // The wizard's steps 5 and 6, and the dashboard's "Finish setup" list.
     setup: SetupRoutes;
     // The open System notices.
     notices: NoticeRoutes;
@@ -82,6 +83,8 @@ export type ServerEnv = {
     dataExport: DataExportRoutes;
     // Settings, Members: the Members, invite links, and removing a Member.
     members: MemberRoutes;
+    // Settings, My login: the signed-in Member's own devices, and Sign out on one.
+    devices: DeviceRoutes;
     // Each Category's Benchmark.
     benchmarks: BenchmarkRoutes;
     // Each Category's Budget for a month.
@@ -108,6 +111,8 @@ export type ServerEnv = {
     smtp: SmtpSettings;
     // Each Member's own channels for Alerts and System notices.
     channels: ChannelSettings;
+    // Each Member's own weekly summary email switch.
+    weeklySummary: WeeklySummarySettings;
     // Web push and each Member's devices, for the routes under /api/push/.
     push: PushSettings;
   };

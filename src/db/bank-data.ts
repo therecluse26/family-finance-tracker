@@ -682,11 +682,15 @@ export async function finishSync(
   });
 }
 
-// How far each Connection's history has come: its Transactions so far, hidden ones left out, and
-// the posted date of the oldest, by Connection ID.
+// How far each of the given Connections' history has come: its Transactions so far, hidden ones
+// left out, and the posted date of the oldest, by Connection ID. Only the Connections whose history
+// still loads are given, so a page that reads this again while a load runs never counts the whole
+// history.
 export async function historyProgress(
   database: Database,
+  connectionIds: readonly string[],
 ): Promise<Map<string, { transactions: number; oldestDate: string | null }>> {
+  if (connectionIds.length === 0) return new Map();
   const rows = await database
     .select({
       connectionId: transactions.connectionId,
@@ -694,7 +698,12 @@ export async function historyProgress(
       oldestDate: min(transactions.postedDate),
     })
     .from(transactions)
-    .where(isNull(transactions.hiddenReason))
+    .where(
+      and(
+        inArray(transactions.connectionId, [...connectionIds]),
+        isNull(transactions.hiddenReason),
+      ),
+    )
     .groupBy(transactions.connectionId);
   return new Map(
     rows.map((row) => [
@@ -1167,6 +1176,8 @@ export async function listTransactionPage(
 ) {
   const where = filtered(database, filter);
   if (page.after !== undefined) {
+    // The page goes on after the anchor in the list's own order: its shown date, its posted date,
+    // then its ID.
     const [anchor] = await database
       .select({ id: transactions.id, postedDate: transactions.postedDate, shownDate })
       .from(transactions)

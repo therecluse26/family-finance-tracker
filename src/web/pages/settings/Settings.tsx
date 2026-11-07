@@ -1,35 +1,72 @@
-import { NavLink, Outlet } from "react-router";
+import { useEffect, useRef } from "react";
+import { Navigate, NavLink, Outlet, useLocation } from "react-router";
+import { Page, PageHeading } from "../../components/Page.tsx";
 import { SETTINGS_SECTIONS } from "../../menu.ts";
+import { TabHeading } from "./settings-ui.tsx";
 
-// Settings: one section per area (spec 07, Settings overview).
+// The room kept beside the current tab when the row scrolls to it, so the tab beside it peeks in.
+const TAB_MARGIN = 24;
+
+// How far the row of tabs scrolls so the current tab shows whole: as little as it can, or not at
+// all when the tab shows already. Each value is in px, from the row's left edge.
+export function tabRowScroll(
+  row: { scrollLeft: number; width: number },
+  tab: {
+    left: number;
+    width: number;
+  },
+): number {
+  if (tab.left < row.scrollLeft) return Math.max(0, tab.left - TAB_MARGIN);
+  const right = tab.left + tab.width;
+  if (right > row.scrollLeft + row.width) return right - row.width + TAB_MARGIN;
+  return row.scrollLeft;
+}
+
+// Settings: one section per area (spec 07, Settings overview), as a row of tabs under the heading.
+// Below 900 px, where the Shell shows the phone tab bar, the tabs stay one row that scrolls sideways
+// with no scrollbar, and the current tab scrolls into view. From 900 px they wrap, as before, so a
+// mouse never needs to scroll them. The tabs keep their order, so Tab moves through them as before.
 export function Settings() {
+  const { pathname } = useLocation();
+  const row = useRef<HTMLUListElement>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the effect runs on each new tab.
+  useEffect(() => {
+    const list = row.current;
+    const current = list?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (list === null || list === undefined || current === null || current === undefined) return;
+    list.scrollLeft = tabRowScroll(
+      { scrollLeft: list.scrollLeft, width: list.clientWidth },
+      { left: current.offsetLeft, width: current.offsetWidth },
+    );
+  }, [pathname]);
+
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Settings</h1>
-      <div className="mt-4 min-[900px]:grid min-[900px]:grid-cols-[12rem_1fr] min-[900px]:gap-6">
-        <nav aria-label="Settings sections">
-          <ul className="flex flex-wrap gap-1 min-[900px]:flex-col">
-            {SETTINGS_SECTIONS.map((section) => (
-              <li key={section.path}>
-                <NavLink
-                  to={section.path}
-                  className={({ isActive }) =>
-                    `block rounded px-3 py-2 ${
-                      isActive ? "bg-blue-50 font-semibold text-blue-800" : "hover:bg-gray-100"
-                    }`
-                  }
-                >
-                  {section.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <section className="mt-4 min-w-0 min-[900px]:mt-0">
-          <Outlet />
-        </section>
+    <Page>
+      <PageHeading title="Settings" />
+      <nav aria-label="Settings sections" className="-mt-0.5 min-w-0">
+        {/* The line under the tabs is an inset shadow, so the current tab's underline covers it
+            inside a row that scrolls. */}
+        <ul
+          ref={row}
+          className="relative flex overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] [scrollbar-width:none] min-[900px]:flex-wrap min-[900px]:overflow-x-visible"
+        >
+          {SETTINGS_SECTIONS.map((section) => (
+            <li key={section.path} className="shrink-0">
+              <NavLink
+                to={section.path}
+                className="block whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm text-ink-soft hover:text-ink aria-[current=page]:border-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
+              >
+                {section.label}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <div className="mt-1 flex min-w-0 flex-col gap-4">
+        <Outlet />
       </div>
-    </main>
+    </Page>
   );
 }
 
@@ -37,13 +74,15 @@ export function Settings() {
 export function SettingsPlaceholder(props: { title: string }) {
   return (
     <>
-      <h2 className="text-xl font-semibold">{props.title}</h2>
-      <p className="mt-2 text-gray-600">This section is not built yet.</p>
+      <TabHeading>{props.title}</TabHeading>
+      <p className="text-muted">This section is not built yet.</p>
     </>
   );
 }
 
-// Settings before a section is chosen.
+// Settings with no section chosen opens the first section, Household. The address is replaced, so
+// Back leaves Settings instead of coming back here.
 export function SettingsIndex() {
-  return <p className="text-gray-600">Choose a section.</p>;
+  const first = SETTINGS_SECTIONS[0];
+  return first === undefined ? null : <Navigate to={first.path} replace />;
 }

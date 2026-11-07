@@ -183,20 +183,17 @@ describe("the Quick tier's link decisions", () => {
       cost: aiCost({ database: bank.database }),
       notices: { raise: async () => {}, end: async () => {} },
     };
-    const saved = await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: {
-          quick: { input: 1_000_000, output: 2_000_000 },
-          writer: { input: 1_000_000, output: 2_000_000 },
-        },
+    const saved = await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: {
+        quick: { input: 1_000_000, output: 2_000_000 },
+        writer: { input: 1_000_000, output: 2_000_000 },
       },
-      { freshCode: true },
-    );
+    });
     expect(saved).toMatchObject({ saved: true });
     stops = [startMoneyMovement({ database: bank.database, ai: householdAi(options) }).stop];
     connections.clear();
@@ -281,11 +278,15 @@ describe("the Quick tier's link decisions", () => {
         },
       ]);
       // A high no makes no link and no item. Anything below high goes to the Review list.
+      // Both items share one moment and one date, so their order is only the ID tie-break.
       const offered = (await itemsOf(UNCLEAR_PAIR_KIND)).map((item) => item.subject);
-      expect(offered).toEqual([
-        { type: "transactions", transactionIds: [await idOf("maple-3"), await idOf("birch-3")] },
-        { type: "transactions", transactionIds: [await idOf("maple-4"), await idOf("birch-4")] },
-      ]);
+      expect(offered).toHaveLength(2);
+      expect(offered).toEqual(
+        expect.arrayContaining([
+          { type: "transactions", transactionIds: [await idOf("maple-3"), await idOf("birch-3")] },
+          { type: "transactions", transactionIds: [await idOf("maple-4"), await idOf("birch-4")] },
+        ]),
+      );
       expect(
         (await bank.database.$client.execute("SELECT refused_by FROM refused_transfer_links")).rows,
       ).toMatchObject([{ refused_by: "AI" }]);

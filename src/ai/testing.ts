@@ -90,12 +90,20 @@ export class CapturingFetch {
 }
 
 // How a test model answers its one call: a 1-token reply, a 401 as for a rejected key, a 429 as
-// for a rate limit, a 500, a thrown error, or no answer until the call is aborted. Each failure
+// for a rate limit, a 404 as for a model the AI provider does not know, a 500, a thrown error, or
+// no answer until the call is aborted. Each failure
 // holds the key and the gateway token, in its message, its request, and its config, as an AI
 // provider SDK's error can.
-export type StubAnswer = "work" | "reject" | "rate limit" | "fail" | "throw" | "hang";
+export type StubAnswer =
+  | "work"
+  | "reject"
+  | "rate limit"
+  | "unknown model"
+  | "fail"
+  | "throw"
+  | "hang";
 
-const STUB_STATUS = { reject: 401, "rate limit": 429, fail: 500 } as const;
+const STUB_STATUS = { reject: 401, "rate limit": 429, "unknown model": 404, fail: 500 } as const;
 
 // A reply's token counts, as an AI provider reports them.
 export type StubUsage = {
@@ -260,7 +268,12 @@ export class StubModels {
       "cf-aig-authorization": `Bearer ${connection.gatewayToken ?? ""}`,
     };
     const answer = this.answers[tier];
-    if (answer === "reject" || answer === "rate limit" || answer === "fail") {
+    if (
+      answer === "reject" ||
+      answer === "rate limit" ||
+      answer === "unknown model" ||
+      answer === "fail"
+    ) {
       throw Object.assign(
         new APICallError({
           message: `Refused the key ${secrets}`,

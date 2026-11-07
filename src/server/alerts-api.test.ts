@@ -7,7 +7,14 @@ import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
 import { startCategorization } from "../categorization/index.ts";
-import { addConnection, markSetupStep } from "../db/index.ts";
+import {
+  addConnection,
+  deleteRemovedConnection,
+  markConnectionRemoved,
+  markSetupStep,
+  storeAlertThread,
+} from "../db/index.ts";
+import { readEveryTable } from "../db/testing.ts";
 import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -47,6 +54,7 @@ describe("the Alert list route", () => {
   let app: App;
   let browser: TestBrowser;
   let memberId: string;
+  let connectionId: string;
   let stops: (() => void)[];
   let now: Date;
   const clock = () => now;
@@ -87,7 +95,7 @@ describe("the Alert list route", () => {
       added: [shell("h1", "2026-09-01"), shell("h2", "2026-09-02")],
       historyLoaded: true,
     });
-    const connectionId = await addConnection(test.database, {
+    connectionId = await addConnection(test.database, {
       provider: "fake",
       bankId: BANK,
       bankName: "First Fake Bank",
@@ -227,6 +235,74 @@ describe("the Alert list route", () => {
       expect(
         (await list()).flatMap((alert) => alert.parts.flatMap((part) => part.notAProblem)),
       ).toEqual([]);
+    });
+  });
+
+  describe('"Ask the AI"', () => {
+    const list = async () =>
+      ((await (await browser.get("/api/alerts")).json()) as { alerts: AlertView[] }).alerts;
+    // Every table but the sessions, which each request renews.
+    const everyTable = async () => {
+      const { sessions: _renewed, ...tables } = await readEveryTable(test.database);
+      return tables;
+    };
+
+    it("with no AI provider, says why in Chat's words and starts nothing", async () => {
+      const [merged] = await list();
+      const before = await everyTable();
+
+      const res = await browser.send("POST", `/api/alerts/${merged?.id}/ask-ai`, {});
+
+      expect([res.status, await res.json()]).toEqual([
+        409,
+        { error: "Set up an AI provider in Settings, AI, to use Chat.", pause: "no AI provider" },
+      ]);
+      expect(await everyTable()).toEqual(before);
+    });
+
+    it("answers 401 with no session, 403 from another origin or none, and 415 to a body that is not JSON, and changes nothing", async () => {
+      const [merged] = await list();
+      const path = `/api/alerts/${merged?.id}/ask-ai`;
+      const before = await everyTable();
+      const signedOut = new TestBrowser(app, APP_URL, "192.168.1.21");
+
+      expect((await signedOut.send("POST", path, {})).status).toBe(401);
+      for (const origin of WRONG_ORIGINS) {
+        expect((await browser.send("POST", path, {}, { origin })).status, `${origin}`).toBe(403);
+      }
+      expect((await browser.send("POST", path, {}, { "content-type": "text/plain" })).status).toBe(
+        415,
+      );
+      expect(await everyTable()).toEqual(before);
+    });
+
+    it("loses its link to the Alert when Delete history deletes the Alert, and keeps the thread", async () => {
+      const [merged, found] = await list();
+      const note = { kind: "Alert", title: "2 Duplicate charges", lines: [], pieces: [] };
+      const thread = { title: "About: 2 Duplicate charges", note };
+      const asked = await storeAlertThread(
+        test.database,
+        thread,
+        { alertId: merged?.id ?? "", memberId },
+        now,
+      );
+      await storeAlertThread(test.database, thread, { alertId: found?.id ?? "", memberId }, now);
+      const rows = async (table: string) =>
+        (await test.database.$client.execute(`SELECT * FROM ${table}`)).rows.length;
+      expect([await rows("chat_alert_threads"), await rows("chat_threads")]).toEqual([2, 2]);
+
+      expect(await markConnectionRemoved(test.database, connectionId, now)).toMatchObject({
+        removed: true,
+      });
+      expect(await deleteRemovedConnection(test.database, connectionId, now)).toBeDefined();
+
+      expect(await list()).toEqual([]);
+      expect([await rows("chat_alert_threads"), await rows("chat_threads")]).toEqual([0, 2]);
+      const kept = await test.database.$client.execute({
+        sql: "SELECT title FROM chat_threads WHERE id = ?",
+        args: [asked?.threadId ?? ""],
+      });
+      expect(kept.rows[0]?.title).toBe("About: 2 Duplicate charges");
     });
   });
 

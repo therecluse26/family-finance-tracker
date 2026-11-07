@@ -70,7 +70,7 @@ describe("passkeys in the browser", () => {
     vi.unstubAllGlobals();
   });
 
-  it("adds a passkey: the options, the device with their bytes, then the answer with the fresh code", async () => {
+  it("adds a passkey: the options, the device with their bytes, then the answer with the current password", async () => {
     const { sent, asked } = fakeBrowser({
       challenge: b64("challenge"),
       rp: { id: "money.example.com", name: "Family Finance Tracker" },
@@ -79,7 +79,8 @@ describe("passkeys in the browser", () => {
       excludeCredentials: [{ id: b64("old"), type: "public-key", transports: ["internal"] }],
     });
 
-    await addPasskey({ code: "123456", name: "Phone" });
+    const currentPassword = `pw-${crypto.randomUUID()}`;
+    await addPasskey({ currentPassword, name: "Phone" });
 
     const publicKey = asked.create?.publicKey;
     expect(asText(publicKey?.challenge)).toBe("challenge");
@@ -110,7 +111,7 @@ describe("passkeys in the browser", () => {
               transports: ["internal"],
             },
           },
-          code: "123456",
+          currentPassword,
           name: "Phone",
         },
       },

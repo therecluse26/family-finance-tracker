@@ -1,17 +1,23 @@
 import type { ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiUsageView, AiView } from "../../../ai/ai-view.ts";
+import { atCap } from "../../../ai/usage-view.ts";
 import {
   AiProviderForm,
   AiStatusLine,
+  COST_CAP_SAVED,
   CostCapForm,
   centsOfText,
   dataUseLine,
   enteredPrices,
+  KeyTestLine,
   priceOfText,
+  saveCostCap,
+  spentShare,
   statusLine,
+  testTheKey,
   todayHere,
 } from "./Ai.tsx";
 import { AiUsageReport } from "./AiUsage.tsx";
@@ -70,7 +76,41 @@ describe("Settings → AI", () => {
     expect(statusLine({ state: "key rejected" }, today)).toBe(
       "AI paused: the AI provider rejected the key",
     );
-    expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("AI is on");
+    expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("✓ AI is on");
+  });
+
+  it("offers Test the key beside Save, outlined, with or without an AI provider", () => {
+    for (const ai of [null, OPENAI]) {
+      const html = renderToString(<AiProviderForm ai={ai} onSaved={() => {}} />);
+      const buttons = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)];
+
+      expect(buttons.map(([, words]) => words)).toEqual(["Save", "Test the key"]);
+      expect(buttons[1]?.[0]).toContain('type="button"');
+      expect(buttons[1]?.[0]).toContain("border-field");
+    }
+  });
+
+  it("shows each key test result with its icon, color, and words", () => {
+    const line = (result: Parameters<typeof KeyTestLine>[0]["result"]) =>
+      renderToString(<KeyTestLine result={result} />);
+
+    expect(text(line("works"))).toBe("✓ The key works");
+    expect(line("works")).toContain("text-good");
+    expect(text(line("key rejected"))).toBe("▲ The AI provider rejected the key");
+    expect(line("key rejected")).toContain("text-critical");
+    expect(text(line("rate limit"))).toBe(
+      "◆ The AI provider is limiting calls. Wait a minute, then test again",
+    );
+    expect(line("rate limit")).toContain("text-serious");
+    expect(text(line("model unknown"))).toBe(
+      "▲ The AI provider does not know the Quick model. Check the model names",
+    );
+    expect(line("model unknown")).toContain("text-critical");
+    expect(text(line("no answer"))).toBe("◆ The AI provider did not answer. Try again later");
+    expect(line("no answer")).toContain("text-serious");
+    expect(text(line("no key"))).toBe("● No key is saved");
+    expect(line("no key")).toContain("text-muted");
+    expect(line("works")).toContain('role="status"');
   });
 
   it("takes today in the Household time zone, not in UTC", () => {
@@ -190,11 +230,38 @@ describe("Settings → AI", () => {
   });
 
   it("shows the AI cost cap, the month's total against it, and a link to the AI usage page", () => {
-    const html = routed(<CostCapForm usage={USAGE} onSaved={() => {}} />);
+    const html = routed(<CostCapForm usage={USAGE} today="2026-11-20" onSaved={() => {}} />);
 
     expect(text(html)).toContain("This month: $3.12 of $10.00");
     expect(html).toContain('value="10"');
     expect(html).toContain('href="/settings/ai/usage"');
+    expect(html).toContain("bg-accent");
+    expect(text(html)).not.toContain("AI paused");
+  });
+
+  it("fills the cost cap bar just when the server's cap check pauses AI, from exact amounts", () => {
+    const cases = [
+      { totalNanos: 0, capCents: 0 },
+      { totalNanos: 1, capCents: 0 },
+      { totalNanos: 0, capCents: 1000 },
+      // Rounds to $10.00, but is still under the cap.
+      { totalNanos: 9_999_999_999, capCents: 1000 },
+      { totalNanos: 10_000_000_000, capCents: 1000 },
+      { totalNanos: 10_000_000_001, capCents: 1000 },
+    ];
+    for (const amounts of cases) {
+      const share = spentShare({ ...USAGE, ...amounts });
+      expect(share >= 1, JSON.stringify(amounts)).toBe(atCap(amounts.totalNanos, amounts.capCents));
+    }
+    expect(spentShare({ ...USAGE, totalNanos: 5_000_000_000, capCents: 1000 })).toBe(0.5);
+  });
+
+  it("shows the paused status on a serious bar at the cap, and a $0 cap as full", () => {
+    const paused = { ...USAGE, totalNanos: 0, capCents: 0, pausedUntil: "2026-12-01" };
+    const html = routed(<CostCapForm usage={paused} today="2026-11-20" onSaved={() => {}} />);
+
+    expect(text(html)).toContain("◆ AI paused until Dec 1");
+    expect(html).toMatch(/bg-serious[^"]*" style="width:100%"/);
   });
 });
 
@@ -235,5 +302,86 @@ describe("Settings → AI → AI usage", () => {
 
     expect(text(html)).toContain("AI paused until Dec 1: AI cost cap reached");
     expect(text(html)).toContain("No AI calls this month.");
+  });
+});
+
+describe("Settings → AI: Save cap", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A server that answers PUT /api/ai/cost-cap with `status` and `body`, and records each request.
+  function server(status: number, body: unknown) {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      sent.push({ method: init.method ?? "GET", path: String(input), body: init.body });
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    return sent;
+  }
+
+  it("says the cap is saved, as the Alerts and email forms do, with the new usage", async () => {
+    const saved = { ...USAGE, capCents: 700 };
+    const sent = server(200, { usage: saved });
+
+    expect(COST_CAP_SAVED).toBe("The AI cost cap is saved.");
+    expect(await saveCostCap("7")).toEqual({ usage: saved, saved: COST_CAP_SAVED });
+    expect(sent).toEqual([{ method: "PUT", path: "/api/ai/cost-cap", body: '{"capCents":700}' }]);
+  });
+
+  it("says nothing is saved when the server refuses, or the cap is not an amount", async () => {
+    server(400, { error: "The cap is too high." });
+    expect(await saveCostCap("7")).toEqual({ error: "The cap is too high." });
+
+    const sent = server(200, { usage: USAGE });
+    for (const typed of ["seven", "10000.01"]) {
+      expect(await saveCostCap(typed)).toEqual({
+        error: "Enter the AI cost cap in dollars, from $0 to $10,000.",
+      });
+    }
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("Settings → AI: Test the key", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function server(status: number, body: unknown) {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      sent.push({ method: init.method ?? "GET", path: String(input), body: init.body });
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    return sent;
+  }
+
+  it("posts an empty body, and answers the result with the AI settings after it", async () => {
+    const sent = server(200, { result: "works", ai: OPENAI });
+
+    expect(await testTheKey()).toEqual({ result: "works", ai: OPENAI });
+    expect(sent).toEqual([{ method: "POST", path: "/api/ai/test", body: "{}" }]);
+  });
+
+  it("answers the server's words for a refusal", async () => {
+    server(429, { error: "Wait 4 seconds, then test the key again." });
+
+    expect(await testTheKey()).toEqual({ error: "Wait 4 seconds, then test the key again." });
+  });
+
+  it("answers the AI settings as they are now with a refusal because they changed", async () => {
+    const error = "The AI settings changed during the test. Test again.";
+    server(409, { error, ai: OPENAI });
+    expect(await testTheKey()).toEqual({ error, ai: OPENAI });
+
+    server(409, { error, ai: null });
+    expect(await testTheKey()).toEqual({ error, ai: null });
   });
 });

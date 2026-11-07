@@ -5,8 +5,8 @@ import {
   cancelInviteLink,
   MembersLists,
   makeInviteLink,
-  removeMemberWithCode,
-  resetLoginWithCode,
+  removeMember,
+  resetMemberLogin,
 } from "./Members.tsx";
 
 // Settings, Members as the browser first paints it, and the exact request each button sends.
@@ -59,9 +59,7 @@ describe("Settings, Members", () => {
     expect(html.match(/Reset login/g)).toHaveLength(1);
     expect(html.indexOf("Reset login")).toBeGreaterThan(html.indexOf("bob@example.com"));
     expect(html).toContain("Make an invite link");
-    expect(html).toContain(
-      "To make a link, enter a code from your authenticator app, or a backup code",
-    );
+    expect(html).not.toContain("code from your authenticator app");
     expect(html).toContain("It sends no email.");
     expect(html).toMatch(/Made Nov \d{1,2} by Alice\. Works until Nov \d{1,2}\./);
     expect(html).toContain("Cancel");
@@ -74,6 +72,34 @@ describe("Settings, Members", () => {
     expect(html).toContain("No open invite links.");
     expect(html).toContain("The app cannot remove the last Member.");
     expect(html).not.toContain("Cancel");
+  });
+
+  it("turns Remove off on the last Member, with the reason as text it points to", () => {
+    const render = (members: MemberView[]) =>
+      renderToString(
+        <MembersLists
+          members={members}
+          invites={[]}
+          zone="America/New_York"
+          onChange={() => {}}
+          onRemoved={() => {}}
+        />,
+      );
+    const removeButtons = (html: string) =>
+      [...html.matchAll(/<button([^>]*)>Remove<\/button>/g)].map((match) => match[1] ?? "");
+
+    const alone = removeButtons(render([ALICE]));
+    expect(alone).toHaveLength(1);
+    expect(alone[0]).toContain('disabled=""');
+    expect(alone[0]).toContain('aria-describedby="last-member-note"');
+    expect(render([ALICE])).toMatch(
+      /<p id="last-member-note"[^>]*>The app cannot remove the last Member\.<\/p>/,
+    );
+
+    for (const attributes of removeButtons(render([ALICE, BOB]))) {
+      expect(attributes).not.toContain('disabled=""');
+      expect(attributes).not.toContain("aria-describedby");
+    }
   });
 });
 
@@ -98,13 +124,13 @@ describe("Settings, Members: the request each button sends", () => {
     return requests;
   }
 
-  it("Make an invite link sends the code as JSON", async () => {
-    expect(await sent(() => makeInviteLink("123456"))).toEqual([
+  it("Make an invite link sends an empty JSON body", async () => {
+    expect(await sent(() => makeInviteLink())).toEqual([
       {
         method: "POST",
         path: "/api/invites",
         type: "application/json",
-        body: '{"code":"123456"}',
+        body: "{}",
       },
     ]);
   });
@@ -120,24 +146,24 @@ describe("Settings, Members: the request each button sends", () => {
     ]);
   });
 
-  it("Remove sends the code as JSON for its Member", async () => {
-    expect(await sent(() => removeMemberWithCode("member-2", "123456"))).toEqual([
+  it("Remove sends an empty JSON body for its Member", async () => {
+    expect(await sent(() => removeMember("member-2"))).toEqual([
       {
         method: "POST",
         path: "/api/members/member-2/remove",
         type: "application/json",
-        body: '{"code":"123456"}',
+        body: "{}",
       },
     ]);
   });
 
-  it("Reset login sends the code as JSON for its Member", async () => {
-    expect(await sent(() => resetLoginWithCode("member-2", "123456"))).toEqual([
+  it("Reset login sends an empty JSON body for its Member", async () => {
+    expect(await sent(() => resetMemberLogin("member-2"))).toEqual([
       {
         method: "POST",
         path: "/api/members/member-2/reset-login",
         type: "application/json",
-        body: '{"code":"123456"}',
+        body: "{}",
       },
     ]);
   });

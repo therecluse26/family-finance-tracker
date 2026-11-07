@@ -4,9 +4,12 @@ import DATA_SOURCES from "../../../../docs/data-sources.md?raw";
 import { calendarDateIn, dateLabel } from "../../../format.ts";
 import type { AboutView } from "../../../server/about-views.ts";
 import { api } from "../../api.ts";
+import { Card } from "../../components/Card.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { Markdown } from "../../components/Markdown.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
+import { TEXT_LINK } from "./settings-ui.tsx";
 
 // The Data sources page in Settings, About (spec 05, The Data sources page). It renders the repo's
 // docs/data-sources.md, which the build bundles into the app, so the page and the file say the
@@ -33,23 +36,27 @@ export function DataSourcesPage(props: {
   const { dataSources, zone } = props;
   return (
     <>
-      <h2 className="text-xl font-semibold">Data sources</h2>
-      <p className="mt-1">
-        <Link className="text-blue-700 underline" to="/settings/about">
-          Back to About
-        </Link>
-      </p>
-      {dataSources?.benchmarkNotice == null ? null : (
-        <p className="mt-3 font-semibold text-orange-700" role="status">
-          {dataSources.benchmarkNotice}
+      <div>
+        <h2 className="text-heading font-bold">Data sources</h2>
+        <p className="mt-1 text-sm">
+          <Link className={TEXT_LINK} to="/settings/about">
+            Back to About
+          </Link>
         </p>
-      )}
-      {dataSources === undefined || zone === undefined ? null : (
-        <p className="mt-3">{cpiFetchText(dataSources.cpiFetchedAt, zone, props.now)}</p>
-      )}
-      <div className="mt-2">
-        <Markdown text={DOCUMENT} topLevel={2} />
       </div>
+      <Card>
+        {dataSources?.benchmarkNotice == null ? null : (
+          <p className="mb-3 font-semibold" role="status">
+            <StatusText tone="serious">{dataSources.benchmarkNotice}</StatusText>
+          </p>
+        )}
+        {dataSources === undefined || zone === undefined ? null : (
+          <p>{cpiFetchText(dataSources.cpiFetchedAt, zone, props.now)}</p>
+        )}
+        <div className="mt-2 min-w-0 overflow-x-auto">
+          <Markdown text={DOCUMENT} topLevel={2} />
+        </div>
+      </Card>
     </>
   );
 }

@@ -33,6 +33,7 @@ import { startRedo } from "../redo/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { startBudgetTailoring, startRedrafts, tailorFirstDraft } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
+import { startWeeklySummary } from "../weekly-summary/index.ts";
 import { HISTORY_NOW } from "./history.ts";
 
 // The app's modules, as src/server/start.ts starts them, in its order. The build and each case
@@ -293,6 +294,11 @@ export const APP_MODULES: readonly AppModule[] = [
   {
     name: "startUpdateCheck",
     start: ({ database }) => startUpdateCheck({ database, fetch: noNetwork }),
+  },
+  {
+    name: "startWeeklySummary",
+    // Its job runs on Sunday mornings, never in a follow-up step: the weekly summary case runs it.
+    start: ({ database }) => startWeeklySummary({ database, now: HISTORY_NOW }),
   },
   {
     name: "startBackups",

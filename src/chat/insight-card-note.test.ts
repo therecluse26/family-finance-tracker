@@ -112,17 +112,14 @@ describe("an Insight card in Chat", () => {
       notices: { raise: async () => {}, end: async () => {} },
     };
     expect(
-      await aiSettings(options).save(
-        {
-          provider: "anthropic",
-          apiKey: newAiKey(),
-          baseUrl: null,
-          quickModel: "quick-model",
-          writerModel: "writer-model",
-          prices: { quick: PRICE, writer: PRICE },
-        },
-        { freshCode: true },
-      ),
+      await aiSettings(options).save({
+        provider: "anthropic",
+        apiKey: newAiKey(),
+        baseUrl: null,
+        quickModel: "quick-model",
+        writerModel: "writer-model",
+        prices: { quick: PRICE, writer: PRICE },
+      }),
     ).toMatchObject({ saved: true });
     ai = householdAi(options);
     talk = chat({

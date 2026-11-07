@@ -234,8 +234,12 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
 
       expect((await tab.totp(await alice.totpCode())).status).toBe(200);
       expect(await tab.isSignedIn()).toBe(true);
-      const session = (await (await tab.get("/api/auth/get-session")).json()) as { user: unknown };
-      expect(session.user).toEqual(expect.objectContaining({ id: alice.id, email: alice.email }));
+      const { members } = (await (await tab.get("/api/members")).json()) as {
+        members: { id: string; email: string; you: boolean }[];
+      };
+      expect(members.find((member) => member.you)).toEqual(
+        expect.objectContaining({ id: alice.id, email: alice.email }),
+      );
     });
   });
 
@@ -369,7 +373,15 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       ["POST", "/api/auth/update-user"],
       ["POST", "/api/auth/delete-user"],
       ["POST", "/api/auth/request-password-reset"],
+      // Settings, My login lists and ends sessions through the app's own routes instead, which
+      // never send a token, an IP address, or a user agent (spec 09, Signed-in devices).
       ["GET", "/api/auth/list-sessions"],
+      ["POST", "/api/auth/revoke-session"],
+      ["POST", "/api/auth/revoke-sessions"],
+      ["POST", "/api/auth/revoke-other-sessions"],
+      ["POST", "/api/auth/update-session"],
+      // It would send this session's token, IP address, and user agent to the page.
+      ["GET", "/api/auth/get-session"],
       ["GET", "/api/auth/sign-in/email"],
     ])("answers %s %s with 404, even with a session", async (method, path) => {
       const tab = browser();
@@ -696,9 +708,6 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
   });
 
   once("used TOTP codes", () => {
-    const changePassword = (tab: Browser, newPassword: string, code: string) =>
-      tab.post("/api/auth/my-login/change-password", { newPassword, code });
-
     it("refuse a code used to sign in at a second sign-in, as a failed sign-in", async () => {
       const code = await alice.totpCode();
       const first = browser();
@@ -729,18 +738,6 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       expect((await other.totp(earlier)).status).toBe(401);
     });
 
-    it("let one code pass only one sensitive action", async () => {
-      const tab = browser();
-      await tab.signIn(alice);
-      later(TOTP_STEP_MS);
-      const code = await alice.totpCode();
-
-      expect((await changePassword(tab, "a new password here", code)).status).toBe(200);
-      expect((await tab.post("/api/auth/my-login/new-backup-codes", { code })).status).toBe(401);
-      expect((await tab.post("/api/auth/my-login/new-totp", { code })).status).toBe(401);
-      expect((await changePassword(tab, "another new password", code)).status).toBe(401);
-    });
-
     it("let one of two sign-ins with the same code through, when they run at the same time", async () => {
       const code = await alice.totpCode();
       const tabs = [browser(), browser()];
@@ -752,124 +749,239 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
 
       expect(statuses.sort()).toEqual([200, 401]);
     });
+  });
 
-    it("let one of two sensitive actions with the same code through, when they run at the same time", async () => {
+  describe("My login routes", () => {
+    it("refuse a cross-site Origin and a missing Origin with 403, and a body that is not JSON with 415, each changing nothing and counting no failed sign-in", async () => {
       const tab = browser();
       await tab.signIn(alice);
+      const started = await tab.post("/api/auth/my-login/new-totp", {
+        currentPassword: alice.password,
+      });
+      expect(started.status).toBe(200);
+      const { totpURI } = (await started.json()) as { totpURI: string };
       later(TOTP_STEP_MS);
-      const code = await alice.totpCode();
+      const newCode = await totpCodeFromURI(totpURI);
+      const routes: [string, unknown][] = [
+        [
+          "/api/auth/my-login/change-password",
+          { currentPassword: alice.password, newPassword: "a new password here" },
+        ],
+        ["/api/auth/my-login/new-totp", { currentPassword: alice.password }],
+        ["/api/auth/my-login/new-backup-codes", { currentPassword: alice.password }],
+        ["/api/auth/my-login/confirm-totp", { code: newCode }],
+      ];
+      // Sessions renew on each use, so they are compared by ID.
+      const lasting = async () => ({
+        accounts: await query("SELECT * FROM accounts ORDER BY id"),
+        twoFactors: await query("SELECT * FROM two_factors ORDER BY id"),
+        verifications: await query("SELECT * FROM verifications ORDER BY id"),
+        sessions: await query("SELECT id FROM sessions ORDER BY id"),
+        tries: await query("SELECT * FROM sign_in_tries ORDER BY id"),
+      });
+      const before = await lasting();
 
-      const statuses = (
-        await Promise.all([
-          changePassword(tab, "a new password here", code),
-          tab.post("/api/auth/my-login/new-backup-codes", { code }),
-        ])
-      ).map((res) => res.status);
+      for (const [path, body] of routes) {
+        for (const origin of ["https://evil.example", ""]) {
+          expect((await tab.send("POST", path, body, { origin })).status, `${path} ${origin}`).toBe(
+            403,
+          );
+        }
+        for (const type of ["text/plain", "application/x-www-form-urlencoded"]) {
+          const res = await tab.send("POST", path, body, { "content-type": type });
+          expect(res.status, `${path} ${type}`).toBe(415);
+        }
+      }
 
-      expect(statuses.sort()).toEqual([200, 401]);
-    });
-
-    it("take the code of the next step", async () => {
-      const tab = browser();
-      await tab.signIn(alice);
-      later(TOTP_STEP_MS);
-      expect(
-        (await changePassword(tab, "a new password here", await alice.totpCode())).status,
-      ).toBe(200);
-      later(TOTP_STEP_MS);
-      expect(
-        (await tab.post("/api/auth/my-login/new-backup-codes", { code: await alice.totpCode() }))
-          .status,
-      ).toBe(200);
+      expect(await lasting()).toEqual(before);
+      // The new TOTP still waits, and its code was not used up.
+      expect((await tab.post("/api/auth/my-login/confirm-totp", { code: newCode })).status).toBe(
+        200,
+      );
     });
   });
 
   once("sensitive actions", () => {
-    const changePassword = (tab: Browser, newPassword: string, code?: string) =>
-      tab.post("/api/auth/my-login/change-password", { newPassword, code });
+    // Settings, My login's "Change password": the current password, then the new one.
+    const changePassword = (
+      tab: Browser,
+      newPassword: string,
+      currentPassword: unknown = alice.password,
+    ) => tab.post("/api/auth/my-login/change-password", { currentPassword, newPassword });
 
-    it("change the password only with a fresh TOTP code", async () => {
+    it("change the password with the current password and no code", async () => {
       const tab = browser();
       await tab.signIn(alice);
       const newPassword = "a new password with spaces";
-      later(TOTP_STEP_MS);
 
-      expect((await changePassword(tab, newPassword)).status).toBe(400);
-      expect((await changePassword(tab, newPassword, wrong(await alice.totpCode()))).status).toBe(
-        401,
-      );
-      later(BURST_WINDOW_MS);
-      expect((await browser().password(alice)).status).toBe(200);
+      const res = await changePassword(tab, newPassword);
 
-      expect((await changePassword(tab, newPassword, await alice.totpCode())).status).toBe(200);
-
+      expect(res.status).toBe(200);
       later(TOTP_STEP_MS);
       expect((await browser().password(alice)).status).toBe(401);
       await browser().signIn(alice, newPassword);
     });
 
-    it("refuse every code after 5 wrong ones in 15 minutes, with 429", async () => {
+    it("refuse a wrong or missing current password, and change nothing", async () => {
+      const other = browser();
+      await other.signIn(alice);
+      later(TOTP_STEP_MS);
       const tab = browser();
       await tab.signIn(alice);
-      later(TOTP_STEP_MS);
-      const code = await alice.totpCode();
-      const actions = [
-        (c: string) => changePassword(tab, "a new password here", c),
-        (c: string) => tab.post("/api/auth/my-login/new-totp", { code: c }),
-        (c: string) => tab.post("/api/auth/my-login/new-backup-codes", { code: c }),
-      ];
+      const newPassword = "a new password with spaces";
+      const hashBefore = await query("SELECT password FROM accounts WHERE member_id = ?", [
+        alice.id,
+      ]);
 
-      for (const action of [...actions, ...actions].slice(0, 5)) {
-        expect((await action(wrong(code))).status).toBe(401);
+      expect((await tab.post("/api/auth/my-login/change-password", { newPassword })).status).toBe(
+        400,
+      );
+      for (const currentPassword of [
+        `${alice.password}x`,
+        alice.password.toUpperCase(),
+        "",
+        bob.password,
+      ]) {
+        later(BURST_WINDOW_MS);
+        const res = await changePassword(tab, newPassword, currentPassword);
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual(expect.objectContaining({ code: "INVALID_PASSWORD" }));
       }
 
-      for (const action of actions) await tooManyFailed(await action(code));
-    });
-
-    it("take a backup code once in place of a TOTP code", async () => {
-      const tab = browser();
-      await tab.signIn(alice);
-      const [code = ""] = alice.backupCodes;
-
-      expect((await changePassword(tab, "first new password", code)).status).toBe(200);
-      expect((await changePassword(tab, "second new password", code)).status).toBe(401);
+      expect(await query("SELECT password FROM accounts WHERE member_id = ?", [alice.id])).toEqual(
+        hashBefore,
+      );
+      expect(await other.isSignedIn()).toBe(true);
+      expect(await tab.isSignedIn()).toBe(true);
+      later(TOTP_STEP_MS);
+      expect((await browser().password(alice, newPassword)).status).toBe(401);
     });
 
     it("refuse a password shorter than 12 characters, and take one of 12", async () => {
       const tab = browser();
       await tab.signIn(alice);
-      later(TOTP_STEP_MS);
 
-      expect((await changePassword(tab, "elevenchars", await alice.totpCode())).status).toBe(400);
-      expect((await changePassword(tab, "twelve chars", await alice.totpCode())).status).toBe(200);
+      expect((await changePassword(tab, "elevenchars")).status).toBe(400);
+      expect((await changePassword(tab, "twelve chars")).status).toBe(200);
     });
 
     it("need a session", async () => {
       const tab = browser();
       await tab.password(alice);
 
+      expect((await changePassword(tab, "a new password here")).status).toBe(401);
       expect(
-        (await changePassword(tab, "a new password here", await alice.totpCode())).status,
+        (await tab.post("/api/auth/my-login/new-totp", { currentPassword: alice.password })).status,
+      ).toBe(401);
+      expect(
+        (await tab.post("/api/auth/my-login/new-backup-codes", { currentPassword: alice.password }))
+          .status,
       ).toBe(401);
     });
 
-    it("count wrong codes as failed sign-ins", async () => {
+    it("count wrong current passwords as failed sign-ins, then refuse the right one with 429", async () => {
       const tab = browser();
       await tab.signIn(alice);
       for (let i = 0; i < 5; i += 1) {
         later(BURST_WINDOW_MS);
         expect(
-          (await changePassword(tab, "a new password here", wrong(await alice.totpCode()))).status,
+          (await changePassword(tab, "a new password here", `${alice.password}x`)).status,
         ).toBe(401);
       }
 
-      later(TOTP_STEP_MS);
-      const res = await changePassword(tab, "a new password here", await alice.totpCode());
-
-      await tooManyFailed(res);
+      later(BURST_WINDOW_MS);
+      await tooManyFailed(await changePassword(tab, "a new password here"));
+      await tooManyFailed(await browser().password(alice));
     });
 
-    it("change TOTP with a fresh code, then a code from the new secret", async () => {
+    // Settings, My login's "Move to a new phone" and "Make new backup codes": each asks for the
+    // current password, so a stolen session cannot lock the Member out.
+    const lockOutRoutes = ["/api/auth/my-login/new-totp", "/api/auth/my-login/new-backup-codes"];
+
+    it.each(lockOutRoutes)(
+      "%s refuses a wrong or missing current password, and changes nothing",
+      async (path) => {
+        const other = browser();
+        await other.signIn(alice);
+        later(TOTP_STEP_MS);
+        const tab = browser();
+        await tab.signIn(alice);
+        const kept = async () => ({
+          twoFactors: await query("SELECT * FROM two_factors ORDER BY id"),
+          verifications: await query(
+            "SELECT * FROM verifications WHERE identifier NOT LIKE '2fa-%' ORDER BY id",
+          ),
+          sessions: await query("SELECT id FROM sessions ORDER BY id"),
+        });
+        const before = await kept();
+
+        for (const body of [{}, { currentPassword: 123456 }, { currentPassword: null }]) {
+          expect((await tab.post(path, body)).status, JSON.stringify(body)).toBe(400);
+        }
+        for (const currentPassword of [
+          `${alice.password}x`,
+          alice.password.toUpperCase(),
+          "",
+          bob.password,
+        ]) {
+          later(BURST_WINDOW_MS);
+          const res = await tab.post(path, { currentPassword });
+          expect(res.status).toBe(401);
+          expect(await res.json()).toEqual(expect.objectContaining({ code: "INVALID_PASSWORD" }));
+        }
+
+        expect(await kept()).toEqual(before);
+        expect(await other.isSignedIn()).toBe(true);
+        expect(await tab.isSignedIn()).toBe(true);
+        // The confirm step finds no new TOTP to confirm.
+        expect(
+          (await tab.post("/api/auth/my-login/confirm-totp", { code: await alice.totpCode() }))
+            .status,
+        ).toBe(400);
+        later(TOTP_STEP_MS);
+        await browser().signIn(alice);
+      },
+    );
+
+    it.each(lockOutRoutes)(
+      "%s counts wrong current passwords as failed sign-ins, then refuses the right one with 429",
+      async (path) => {
+        const tab = browser();
+        await tab.signIn(alice);
+        const twoFactors = await query("SELECT * FROM two_factors ORDER BY id");
+        for (let i = 0; i < 5; i += 1) {
+          later(BURST_WINDOW_MS);
+          expect((await tab.post(path, { currentPassword: `${alice.password}x` })).status).toBe(
+            401,
+          );
+        }
+        expect(
+          await query("SELECT id FROM sign_in_tries WHERE key = ?", [`member:${alice.id}`]),
+        ).toHaveLength(5);
+
+        later(BURST_WINDOW_MS);
+        await tooManyFailed(await tab.post(path, { currentPassword: alice.password }));
+        await tooManyFailed(await browser().password(alice));
+        expect(await query("SELECT * FROM two_factors ORDER BY id")).toEqual(twoFactors);
+      },
+    );
+
+    it.each(lockOutRoutes)(
+      "%s with the right current password counts no failed sign-in",
+      async (path) => {
+        const tab = browser();
+        await tab.signIn(alice);
+        later(BURST_WINDOW_MS);
+
+        expect((await tab.post(path, { currentPassword: alice.password })).status).toBe(200);
+
+        expect(
+          await query("SELECT id FROM sign_in_tries WHERE key = ?", [`member:${alice.id}`]),
+        ).toEqual([]);
+      },
+    );
+
+    it("start a new TOTP with the current password and no code, then take a code from the new secret only", async () => {
       const tab = browser();
       await tab.signIn(alice);
       later(TOTP_STEP_MS);
@@ -878,11 +990,10 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
         400,
       );
       expect(
-        (await tab.post("/api/auth/my-login/new-totp", { code: wrong(await alice.totpCode()) }))
-          .status,
-      ).toBe(401);
+        (await tab.post("/api/auth/my-login/new-totp", { code: await alice.totpCode() })).status,
+      ).toBe(400);
       const started = await tab.post("/api/auth/my-login/new-totp", {
-        code: await alice.totpCode(),
+        currentPassword: alice.password,
       });
       expect(started.status).toBe(200);
       expect(started.headers.get("cache-control")).toBe("no-store");
@@ -891,9 +1002,8 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       const confirm = async (code: string) =>
         (await tab.post("/api/auth/my-login/confirm-totp", { code })).status;
       expect(await confirm(wrong(await totpCodeFromURI(totpURI)))).toBe(401);
-      // The fresh code used this time step, so the new secret's code for it is refused too.
-      expect(await confirm(await totpCodeFromURI(totpURI))).toBe(401);
-      later(TOTP_STEP_MS);
+      // A code from the old secret does not confirm the new one.
+      expect(await confirm(await alice.totpCode())).toBe(401);
       const confirmed = await totpCodeFromURI(totpURI);
       expect(await confirm(confirmed)).toBe(200);
 
@@ -936,19 +1046,18 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
 
         let codeNow = () => alice.totpCode();
         if (change === "password") {
-          const res = await changePassword(tab, "another new password", await alice.totpCode());
+          const res = await changePassword(tab, "another new password");
           expect(res.status).toBe(200);
         } else if (change === "backup codes") {
           const res = await tab.post("/api/auth/my-login/new-backup-codes", {
-            code: await alice.totpCode(),
+            currentPassword: alice.password,
           });
           expect(res.status).toBe(200);
         } else {
           const started = await tab.post("/api/auth/my-login/new-totp", {
-            code: await alice.totpCode(),
+            currentPassword: alice.password,
           });
           const { totpURI } = (await started.json()) as { totpURI: string };
-          later(TOTP_STEP_MS);
           const res = await tab.post("/api/auth/my-login/confirm-totp", {
             code: await totpCodeFromURI(totpURI),
           });
@@ -975,21 +1084,25 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
     it("keep the old TOTP until the new one is confirmed", async () => {
       const tab = browser();
       await tab.signIn(alice);
-      later(TOTP_STEP_MS);
-      await tab.post("/api/auth/my-login/new-totp", { code: await alice.totpCode() });
+      expect(
+        (await tab.post("/api/auth/my-login/new-totp", { currentPassword: alice.password })).status,
+      ).toBe(200);
 
       later(TOTP_STEP_MS);
       await browser().signIn(alice);
     });
 
-    it("give new backup codes with a fresh code, and the old ones stop working", async () => {
+    it("give new backup codes with the current password and no code, and the old ones stop working", async () => {
       const tab = browser();
       await tab.signIn(alice);
       later(TOTP_STEP_MS);
 
-      expect((await tab.post("/api/auth/my-login/new-backup-codes", {})).status).toBe(400);
+      expect(
+        (await tab.post("/api/auth/my-login/new-backup-codes", { code: await alice.totpCode() }))
+          .status,
+      ).toBe(400);
       const res = await tab.post("/api/auth/my-login/new-backup-codes", {
-        code: await alice.totpCode(),
+        currentPassword: alice.password,
       });
       expect(res.status).toBe(200);
       const { backupCodes } = (await res.json()) as { backupCodes: string[] };
@@ -1012,13 +1125,17 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       const tab = browser();
       await tab.password(alice, `${alice.password}x`);
       await tab.signIn(alice);
-      later(TOTP_STEP_MS);
+      const wrongCurrent = `${alice.password}y`;
+      await tab.post("/api/auth/my-login/change-password", {
+        currentPassword: wrongCurrent,
+        newPassword: "a new password here",
+      });
       const started = await tab.post("/api/auth/my-login/new-totp", {
-        code: await alice.totpCode(),
+        currentPassword: alice.password,
       });
       const { totpURI } = (await started.json()) as { totpURI: string };
       const codes = await tab.post("/api/auth/my-login/new-backup-codes", {
-        code: alice.backupCodes[0],
+        currentPassword: alice.password,
       });
       const { backupCodes } = (await codes.json()) as { backupCodes: string[] };
       await browser().post(
@@ -1030,6 +1147,7 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
 
       for (const value of [
         alice.password,
+        wrongCurrent,
         alice.totpSecret,
         totpURI,
         ...alice.backupCodes,

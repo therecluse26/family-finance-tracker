@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { PushView } from "../../../notify/push-view.ts";
-import { BUTTON, ErrorLine } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { SERVICE_WORKER } from "../../install.ts";
 import {
   type BrowserPush,
@@ -14,6 +16,9 @@ import {
 // Settings, Alerts: push on this device (spec 06, Recipients and channels; spec 09, Security mode).
 // Each Member turns Alerts on for each of their devices, over HTTPS only. In plain-HTTP mode push
 // and the install prompt are hidden, and a note says why.
+
+// A part of the My channels card, under a line.
+const PART = "mt-4 border-t border-line-soft pt-3.5";
 
 export const PLAIN_HTTP_NOTE =
   "Push and installing the app need HTTPS. This app runs in plain-HTTP mode: its address starts with http://, and browsers allow push only over HTTPS. So Alerts and System notices come by email only.";
@@ -108,9 +113,11 @@ export function DevicePush(props: { publicKey: string; initial?: DeviceState }) 
     change(() => turnOffDevice(browserPush(publicKey)), "Alerts did not turn off for this device.");
 
   return (
-    <section className="mt-6">
-      <h3 className="font-semibold">Push on this device</h3>
-      <p className="mt-1 text-gray-600">
+    <section className={PART} aria-labelledby="push-on-this-device">
+      <h4 id="push-on-this-device" className="font-semibold">
+        Push on this device
+      </h4>
+      <p className="mt-0.5 text-small text-muted">
         Pushes show each Alert's kind and its text. They wait from 9 PM to 8 AM, Household time.
         Turn Alerts on for each device you want them on.
       </p>
@@ -119,24 +126,64 @@ export function DevicePush(props: { publicKey: string; initial?: DeviceState }) 
       ) : state === "another Member" ? (
         <p className="mt-2">{ANOTHER_MEMBERS_PUSH}</p>
       ) : state === "on" ? (
-        <>
-          <p className="mt-2">Alerts are on for this device.</p>
-          <button className={BUTTON} type="button" disabled={busy} onClick={turnOff}>
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3.5 gap-y-2">
+          <p className="text-small">
+            <StatusText tone="good">Alerts are on for this device.</StatusText>
+          </p>
+          <Button type="button" variant="outlined" size="small" disabled={busy} onClick={turnOff}>
             Turn off Alerts on this device
-          </button>
-        </>
+          </Button>
+        </div>
       ) : (
-        <button
-          className={BUTTON}
+        <Button
           type="button"
+          variant="outlined"
+          size="small"
+          className="mt-2.5"
           disabled={busy || state === "checking"}
           onClick={turnOn}
         >
           Turn on Alerts on this device
-        </button>
+        </Button>
       )}
       <ErrorLine error={error} />
     </section>
+  );
+}
+
+// "Add to Home Screen" (spec 06, Recipients and channels): on an iPhone, only an app on the Home
+// Screen gets pushes, so the page explains it first. The installed app opens standalone, and needs
+// no such note.
+export function needsHomeScreen(userAgent: string, standalone: boolean): boolean {
+  return /\biPhone\b/.test(userAgent) && !standalone;
+}
+
+export const HOME_SCREEN_NOTE =
+  "On an iPhone, Alerts come only to the app on your Home Screen. In Safari, tap Share, then Add to Home Screen. Open the app from your Home Screen, sign in, and turn on Alerts there.";
+
+// Whether this browser needs the Home Screen note: an iPhone outside the installed app.
+export function homeScreenFirstHere(): boolean {
+  if (typeof window === "undefined") return false;
+  const apple = (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const standalone = apple || window.matchMedia?.("(display-mode: standalone)").matches === true;
+  return needsHomeScreen(navigator.userAgent, standalone);
+}
+
+// Push on this device: hidden in plain-HTTP mode, with the reason shown; on an iPhone, the Home
+// Screen note comes first.
+export function PushPart(props: { push: PushView; homeScreenFirst: boolean }) {
+  return (
+    <>
+      {props.push.available && props.homeScreenFirst ? (
+        <section className={PART} aria-labelledby="add-to-home-screen">
+          <h4 id="add-to-home-screen" className="font-semibold">
+            Add to Home Screen
+          </h4>
+          <p className="mt-0.5">{HOME_SCREEN_NOTE}</p>
+        </section>
+      ) : null}
+      <AlertPush push={props.push} />
+    </>
   );
 }
 
@@ -145,9 +192,11 @@ export function AlertPush(props: { push: PushView }) {
   if (push.available) return <DevicePush publicKey={push.publicKey} />;
   if (push.why === "setup not done") return null;
   return (
-    <section className="mt-6">
-      <h3 className="font-semibold">Push and the installed app</h3>
-      <p className="mt-1 text-gray-600">{PLAIN_HTTP_NOTE}</p>
+    <section className={PART} aria-labelledby="push-and-installed-app">
+      <h4 id="push-and-installed-app" className="font-semibold">
+        Push and the installed app
+      </h4>
+      <p className="mt-0.5 text-small text-muted">{PLAIN_HTTP_NOTE}</p>
     </section>
   );
 }

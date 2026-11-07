@@ -1,7 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ManualLoanView } from "../../../server/money-movement-views.ts";
-import { ManualLoanForm, ManualLoanList } from "./ManualLoans.tsx";
+import { AddManualLoan, ManualLoanForm, ManualLoanRows } from "./ManualLoans.tsx";
 
 // Settings → Banks: the Manual loans, as the browser paints them.
 
@@ -52,7 +52,9 @@ describe("the Manual loan form", () => {
   });
 
   it("offers a credit card and a line of credit only to refuse them, and says why", () => {
-    const html = text(renderToString(<ManualLoanList loans={[]} onSaved={() => {}} />));
+    const html = text(
+      renderToString(<AddManualLoan id="add" onSaved={() => {}} onCancel={() => {}} />),
+    );
 
     expect(html).toContain("Credit card");
     expect(html).toContain("Line of credit");
@@ -63,10 +65,13 @@ describe("the Manual loan form", () => {
 
   it("fills in the lender from a link, and lists each loan with its balance and type", () => {
     const html = renderToString(
-      <ManualLoanList loans={[CAR]} lender="Riverbank Lending" onSaved={() => {}} />,
+      <AddManualLoan id="add" lender="Riverbank Lending" onSaved={() => {}} onCancel={() => {}} />,
     );
+    const rows = text(renderToString(<ManualLoanRows loans={[CAR]} onSaved={() => {}} />));
 
     expect(html).toContain('value="Riverbank Lending"');
-    expect(text(html)).toContain("Lakeside Auto, Car: $12,500 owed, Purchase loan");
+    expect(text(html)).toContain("Add the loanCancel");
+    expect(rows).toContain("Lakeside Auto · Manual loan, Car, Purchase loan");
+    expect(rows).toContain("$12,500 owed");
   });
 });

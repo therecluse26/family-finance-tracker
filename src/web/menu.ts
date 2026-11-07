@@ -22,6 +22,9 @@ export const MORE_MENU: readonly MenuItem[] = [
   { label: "Top Merchants", path: "/top-merchants" },
 ];
 
+// At phone width the menu folds to a bar of these tabs and "More", which opens the whole menu.
+export const PHONE_TABS: readonly string[] = ["/", "/transactions", "/chat", "/review-list"];
+
 // One section per area. Each path is under /settings/.
 export const SETTINGS_SECTIONS: readonly MenuItem[] = [
   { label: "Household", path: "household" },

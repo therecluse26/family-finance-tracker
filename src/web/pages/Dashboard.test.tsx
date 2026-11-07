@@ -37,7 +37,7 @@ import {
 } from "../dashboard.ts";
 import type { GoalsAnswer } from "../goals.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
-import { DashboardReport, StatusLineList } from "./Dashboard.tsx";
+import { DashboardReport, DashboardView, StatusLineList } from "./Dashboard.tsx";
 
 // The dashboard (spec 07, The dashboard; Header and status lines; 2. Left to spend; 3. Goals;
 // 4. Number tiles; 5. "A usual month"; 6. Coming up), drawn from its requests' answers. The numbers themselves are checked
@@ -345,9 +345,10 @@ const data = (fields: Partial<DashboardData> = {}): DashboardData => ({
   ...fields,
 });
 
+// The page as it draws once it has read: the header, then the status lines and the boxes.
 function render(shown: DashboardData, openGroup?: string, whyOpen?: string): string {
   const page = (
-    <DashboardReport
+    <DashboardView
       data={shown}
       onClose={() => {}}
       onRetry={() => {}}
@@ -400,6 +401,27 @@ describe("the dashboard's header", () => {
     );
 
     expect(text(html)).toMatch(/^October Day 20 of 31 · synced 10:05 AM /);
+  });
+
+  it("draws its one heading before the page has read, in the same place, so the focus stays on it", () => {
+    const view = (shown: DashboardData | undefined) => {
+      const page = (
+        <DashboardView data={shown} onClose={() => {}} onRetry={() => {}} onChanged={() => {}} />
+      );
+      const router = createMemoryRouter([{ path: "/", element: page }], { initialEntries: ["/"] });
+      return renderToString(<RouterProvider router={router} />);
+    };
+    const loading = view(undefined);
+    const loaded = view(data());
+    const heading = (html: string) => /<h1[^>]*>(.*?)<\/h1>/s.exec(html)?.[1];
+
+    expect(loading.match(/<h1[ >]/g)).toHaveLength(1);
+    expect(loaded.match(/<h1[ >]/g)).toHaveLength(1);
+    expect(heading(loading)).toBe("Dashboard");
+    expect(heading(loaded)).toBe("October");
+    // The same elements lead to the <h1> in both, so React keeps it as the page reads: the shell's
+    // focus after a phone-menu choice is not lost when the numbers arrive.
+    expect(loaded.slice(0, loaded.indexOf("<h1"))).toBe(loading.slice(0, loading.indexOf("<h1")));
   });
 
   it("switches to the new month on the 1st, Household time", () => {
@@ -491,8 +513,9 @@ describe("the dashboard's status lines", () => {
       "▲ Second Fake Bank has disconnected. Use Repair to link it again Repair",
     ]);
     expect(html).toContain('href="/settings/banks"');
+    expect(slotText(html, "history-loading")).toContain("Your history is loading");
     expect(listItems(html, "History loading")).toEqual([
-      "Loading history for Third Fake Bank: 1,240 Transactions so far, back to Mar 3, 2025",
+      "Third Fake Bank 1,240 Transactions · back to Mar 2025",
     ]);
     // A notice about a past event has a close button; one about a condition does not. A Repair
     // notice shows once, as its banner.
@@ -526,7 +549,7 @@ describe("the dashboard's status lines", () => {
     ]);
     const buttons = buttonsOf(
       <StatusLineList
-        lines={statusLines(shown.notices, shown.connections, shown.history, shown.month.today)}
+        lines={statusLines(shown.notices, shown.connections, shown.history)}
         onClose={() => {}}
         onRetry={onRetry}
         onChanged={() => {}}
@@ -552,7 +575,7 @@ describe("the dashboard's status lines", () => {
 });
 
 describe('the "Finish setup" list', () => {
-  it("lists each skipped wizard step, with a link to where it is done, after the loading lines", () => {
+  it("lists each item not yet done, with a link to where it is done, after the loading lines", () => {
     const html = render(
       data({
         history: {
@@ -581,15 +604,56 @@ describe('the "Finish setup" list', () => {
       expect(lines).toContain(`href="${path}"`);
     }
     // In its slot: after the history loading lines, before the other System notices.
-    expect(lines.indexOf("Loading history")).toBeLessThan(lines.indexOf("Finish setup"));
+    expect(lines.indexOf("Your history is loading")).toBeGreaterThanOrEqual(0);
+    expect(lines.indexOf("Your history is loading")).toBeLessThan(lines.indexOf("Finish setup"));
     expect(lines.indexOf("Finish setup")).toBeLessThan(lines.indexOf("Your history is ready"));
   });
 
-  it("shows nothing once no skipped step is left", () => {
+  it("shows nothing once every item is done, and Banks while it waits", () => {
     expect(render(data())).not.toContain("Finish setup");
-    expect(render(data({ setup: { ...SETUP_DONE, finishSetup: ["banks"] } }))).toContain(
-      'href="/settings/banks"',
+    const banks = render(data({ setup: { ...SETUP_DONE, finishSetup: ["banks"] } }));
+    expect(banks).toContain('href="/settings/banks"');
+    expect(slotText(banks, "finish-setup")).toBe("Finish setup Link your banks");
+  });
+});
+
+describe("the dashboard with no Connection", () => {
+  // After "Skip for now": no bank, so no history ever loads, and no Budget draft is made.
+  const skipped = () =>
+    render(
+      data({
+        connections: [],
+        budgets: { ...BUDGETS, drafted: false },
+        setup: {
+          ...SETUP_DONE,
+          steps: { ...SETUP_DONE.steps, banks: "skipped" },
+          finishSetup: ["banks"],
+          connections: 0,
+        },
+      }),
     );
+
+  it("shows one line that links to Settings → Banks in place of the boxes", () => {
+    const html = skipped();
+
+    expect(slotText(html, "no-connection")).toBe(
+      "Link a bank to see your money here The dashboard fills in once a bank is linked and its history has loaded.",
+    );
+    expect(slotHtml(html, "no-connection")).toContain('href="/settings/banks"');
+    expect(html).not.toContain('data-slot="columns"');
+    expect(text(html)).not.toContain(BEFORE_FIRST_DRAFT);
+    expect(text(html)).not.toContain("$0");
+    // The header and the "Finish setup" list still show.
+    expect(text(html)).toMatch(/^October Day 20 of 31 · not synced yet /);
+    expect(slotText(html, "finish-setup")).toBe("Finish setup Link your banks");
+  });
+
+  it("shows the boxes once any Connection exists, even a removed one whose history is kept", () => {
+    for (const connections of [[connection()], [connection({ removed: true })]]) {
+      const html = render(data({ connections }));
+      expect(html).toContain('data-slot="columns"');
+      expect(html).not.toContain('data-slot="no-connection"');
+    }
   });
 });
 
@@ -731,9 +795,9 @@ describe("the number tiles", () => {
       "/accounts",
     ]);
     // More Spending or Debt is bad (orange); less Cash on hand is bad too; no change is grey.
-    expect(tiles).toContain('class="block text-sm text-orange-700">▲ $120 above usual');
-    expect(tiles).toContain('class="block text-sm text-gray-500">● about usual');
-    expect(tiles).toContain('class="block text-sm text-orange-700">▼ $655 below usual');
+    expect(tiles).toContain('class="block text-sm text-serious">▲ $120 above usual');
+    expect(tiles).toContain('class="block text-sm text-muted">● about usual');
+    expect(tiles).toContain('class="block text-sm text-serious">▼ $655 below usual');
   });
 
   it('says "estimated usual" on Cash on hand and Debt when the server flags their usual', () => {
@@ -869,11 +933,11 @@ describe('"A usual month"', () => {
     expect(slotText(html, "usual")).toBe("$3,000");
     // On pace for $3,120 against a usual of $3,000: $120 above, past the 2% band.
     expect(slotText(html, "usual-line")).toBe("October is on pace for $3,120, $120 above usual");
-    expect(html).toContain('class="text-orange-700" data-slot="usual-line"');
+    expect(html).toContain('class="text-serious" data-slot="usual-line"');
     expect(listItems(html, "Category groups")).toEqual([
       "Bills $1,500 of $2,000 ◆ 1 on pace to go over",
       "Shopping $800 of $700 ▲ 1 over",
-      "Transportation $0, no Budget",
+      "Transportation $0, no Budget No Spending since Sep 2026",
     ]);
     // No group's Budgets show until a Member taps a group.
     expect(html).not.toContain('data-slot="group-budgets"');
@@ -895,6 +959,30 @@ describe('"A usual month"', () => {
     });
   });
 
+  it("keys the charts for sighted Members only, and names the dashed line only once one is drawn", () => {
+    const key = (usualMonth: UsualMonthView) =>
+      slotHtml(render(data({ budgets: USUAL_BUDGETS, usualMonth })), "chart-key");
+    const withBudget = key(USUAL_MONTH);
+
+    // The charts are hidden from screen readers, so their key is too; the way to a group's
+    // Budgets is read aloud.
+    expect(withBudget.replaceAll("<!-- -->", "")).toMatch(
+      /^<span aria-hidden="true" [^>]*>Grey bars: [^<]*<\/span> Choose a group to see its Budgets\.$/,
+    );
+    expect(text(withBudget)).toBe(
+      "Grey bars: the last 12 months. Blue: October so far. Dashed line: the Budget. Choose a group to see its Budgets.",
+    );
+
+    // Before the first draft no bar has a Budget, so no chart draws a dashed line.
+    const noBudget = key({
+      ...USUAL_MONTH,
+      groups: USUAL_MONTH.groups.map((group) => ({ ...group, bars: bars(36_000, null) })),
+    });
+    expect(text(noBudget)).toBe(
+      "Grey bars: the last 12 months. Blue: October so far. Choose a group to see its Budgets.",
+    );
+  });
+
   it("marks this month's bar and draws no Budget line before the first draft", () => {
     const shopping = USUAL_MONTH.groups[1];
     if (shopping === undefined) throw new Error("No Shopping group.");
@@ -903,6 +991,47 @@ describe('"A usual month"', () => {
       { month: "2026-09", label: "Sep 2026", spending: 36_000, budget: null, current: false },
       { month: "2026-10", label: "Oct 2026", spending: 36_000, budget: 110_000, current: true },
     ]);
+  });
+
+  it("says a group with no Spending and no Budget has none, in place of an empty chart", () => {
+    const html = render(data());
+    const group = (name: string) =>
+      new RegExp(`<li[^>]*data-group="${name}"[^>]*>(.*?)</li>`, "s").exec(html)?.[1] ?? "";
+
+    // Transportation has no Spending in any month and no Budget.
+    expect(slotText(group("Transportation"), "group-empty")).toBe("No Spending since Sep 2026");
+    expect(group("Transportation")).not.toContain('data-slot="group-chart"');
+    // A group with Spending keeps its chart.
+    expect(group("Shopping")).toContain('data-slot="group-chart"');
+    expect(group("Shopping")).not.toContain('data-slot="group-empty"');
+
+    // A month with a Budget draws its dashed line, so that chart is not empty.
+    const groups = USUAL_MONTH.groups.map((each) =>
+      each.categoryGroup === "Transportation" ? { ...each, bars: bars(0, 20_000) } : each,
+    );
+    expect(render(data({ usualMonth: { ...USUAL_MONTH, groups } }))).not.toContain(
+      'data-slot="group-empty"',
+    );
+  });
+
+  it("folds each group to a row with its status at the right in a box under 480 px", () => {
+    const html = render(data({ budgets: USUAL_BUDGETS }));
+    const shopping = /<li class="([^"]*)"[^>]*data-group="Shopping"[^>]*>(.*?)<\/li>/s.exec(html);
+    const classes = (shopping?.[1] ?? "").split(" ");
+
+    // A row with a rule above it; from 480 px, a box of its own.
+    expect(classes).toEqual(
+      expect.arrayContaining(["border-t", "@min-[480px]:border", "@min-[480px]:rounded-[10px]"]),
+    );
+    // The button holds the name, "$spent of $Budget" and the status, as before.
+    expect(text(/<button[^>]*>(.*?)<\/button>/s.exec(shopping?.[2] ?? "")?.[1] ?? "")).toBe(
+      "Shopping $800 of $700 ▲ 1 over",
+    );
+    // The chart is clipped away under 480 px, never removed, so its library can measure it.
+    expect(slotHtml(shopping?.[2] ?? "", "group-chart-area")).toContain('data-slot="group-chart"');
+    expect(html).toMatch(/class="[^"]*@max-\[479px\]:h-0[^"]*"[^>]*data-slot="group-chart-area"/);
+    // The key to the charts goes with them.
+    expect(html).toMatch(/class="@max-\[479px\]:hidden"[^>]*data-slot="chart-key-bars"/);
   });
 
   it("opens a group's Budgets worst first, each row opening its Transactions, with Close", () => {
@@ -1096,6 +1225,49 @@ describe("Coming up", () => {
     ]);
   });
 
+  it("shows payday amounts in neutral ink, bold with their +, not in a status color", () => {
+    const html = slotHtml(render(data()), "coming-up");
+    // The rows, in the box's link; the phone's "All N items" button after it is a text link.
+    const box = html.slice(0, html.lastIndexOf("</a>"));
+
+    expect(text(box)).toContain("+$1,865.90");
+    expect(box).not.toMatch(/text-(?:good|critical|serious|accent)\b/);
+  });
+
+  it("gives a date with its year room on a phone, as across New Year", async () => {
+    // Christmas Day: the 14 days ahead reach into January.
+    const html = render(
+      data({
+        month: dashboardMonth(new Date("2026-12-25T17:00:00.000Z"), ZONE),
+        comingUp: {
+          ...COMING_UP,
+          from: "2026-12-26",
+          to: "2027-01-08",
+          rows: [
+            {
+              date: "2027-01-03",
+              late: false,
+              kind: "Recurring charge",
+              what: "Ironworks Fitness",
+              amount: -900,
+              onCard: false,
+              checkingAfter: 99_100,
+            },
+          ],
+        },
+      }),
+    );
+    const styleOf = await layoutOf(html);
+
+    expect(slotText(html, "due-date")).toBe("Jan 3, 2027");
+    // The date column grows past its 52 px to fit the year, and never wraps, so it never runs
+    // into the words beside it.
+    expect(styleOf("due-date", 375).get("min-width")).toBe("52px");
+    expect(styleOf("due-date", 375).has("width")).toBe(false);
+    expect(styleOf("due-date", 375).get("flex-shrink")).toBe("0");
+    expect(styleOf("due-date", 375).get("white-space")).toBe("nowrap");
+  });
+
   it('says "late" in place of the date for a late Recurring charge', () => {
     const late = {
       date: "2026-10-20",
@@ -1121,7 +1293,41 @@ describe("Coming up", () => {
     const box = slotHtml(render(data()), "coming-up");
 
     expect(box).toMatch(/^<a [^>]*href="\/recurring-charges"/);
-    expect(box.trim().endsWith("</a>")).toBe(true);
+    // Everything but the phone's "All N items" button is inside the link.
+    expect(box.slice(box.lastIndexOf("</a>") + "</a>".length)).toMatch(
+      /^<button [^>]*data-slot="due-all"[^>]*>All 4 items<\/button>$/,
+    );
+    expect(box.slice(0, box.lastIndexOf("</a>"))).not.toContain("<button");
+  });
+
+  it("shows the first 3 rows below 900 px, with a button for all of them, as on the phone board", async () => {
+    const html = render(data());
+    const styleOf = await layoutOf(html);
+    const folded = (row: string) => row.includes("max-[899px]:hidden");
+
+    // The fourth row of each layout is hidden below 900 px until the button opens it.
+    expect(tableRows(html, "coming-up").map((row) => folded(row.className))).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+    const lines = [...slotHtml(html, "due-lines").matchAll(/<li class="([^"]*)"/g)];
+    expect(lines.map((line) => folded(line[1] ?? ""))).toEqual([false, false, false, true]);
+
+    const button = /<button[^>]*data-slot="due-all"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(button).toContain('aria-expanded="false"');
+    const ids = /aria-controls="([^"]+)"/.exec(button)?.[1]?.split(" ") ?? [];
+    expect(ids).toHaveLength(2);
+    for (const id of ids) expect(html).toContain(`id="${id}"`);
+    // The button shows only below 900 px, where rows are folded.
+    expect(styleOf("due-all", 375).has("display")).toBe(false);
+    expect(styleOf("due-all", 900).get("display")).toBe("none");
+
+    // With 3 rows or fewer, nothing is folded and there is no button.
+    const three = render(data({ comingUp: { ...COMING_UP, rows: COMING_UP.rows.slice(0, 3) } }));
+    expect(three).not.toContain('data-slot="due-all"');
+    expect(three).not.toContain("max-[899px]:hidden");
   });
 
   it("shows no lowest line and no checking balance with no connected checking Account", () => {
@@ -1236,11 +1442,11 @@ describe('the AI box, "This week"', () => {
 
     expect(html).toContain('aria-label="This week"');
     expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
-    expect(text(html)).toMatch(/^This week 1 thing worth acting on ◆ Worth acting on 2 /);
+    expect(text(html)).toMatch(/^This week 1 thing worth acting on ◆ Worth acting on · 2 /);
     expect(listItems(html, "Worth acting on")).toHaveLength(2);
     expect(listItems(html, "Heads up")).toHaveLength(1);
-    expect(text(html).indexOf("◆ Worth acting on 2")).toBeLessThan(
-      text(html).indexOf("● Heads up 1"),
+    expect(text(html).indexOf("◆ Worth acting on · 2")).toBeLessThan(
+      text(html).indexOf("● Heads up · 1"),
     );
     // An empty group is hidden; nothing hides behind "Show all".
     expect(text(html)).not.toContain("Good news");
@@ -1368,7 +1574,7 @@ describe('the AI box, "This week"', () => {
 
     const items = listItems(html, "Heads up");
     expect(items).toHaveLength(2);
-    expect(items[1]).toBe("Your October review is ready Done");
+    expect(items[1]).toBe("Oct review Your October review is ready Done");
     expect(slotHtml(html, "review-link")).toContain('href="/reviews/2026-10"');
     // The link counts in no "worth acting on" heading.
     expect(slotText(html, "ai-heading")).toBe("1 thing worth acting on");
@@ -1441,7 +1647,7 @@ describe('the AI box, "This week"', () => {
     expect(slotText(fuel ?? "", "note-figure")).toBe("");
     expect(faded(fuel ?? "")).toBe(true);
     expect(text(fuel ?? "")).toContain("Done ✓ Ask about this");
-    expect(text(html)).toMatch(/◆ Worth acting on 3 .* ● Heads up 1 .* ✓ Good news 2 /);
+    expect(text(html)).toMatch(/◆ Worth acting on · 3 .* ● Heads up · 1 .* ✓ Good news · 2 /);
   });
 
   it("shows Good news last", () => {
@@ -1452,7 +1658,7 @@ describe('the AI box, "This week"', () => {
       ],
     });
 
-    expect(text(html)).toMatch(/◆ Worth acting on 2 .* ● Heads up 1 .* ✓ Good news 1 /);
+    expect(text(html)).toMatch(/◆ Worth acting on · 2 .* ● Heads up · 1 .* ✓ Good news · 1 /);
   });
 
   it("lets the number column grow to fit a large number, and breaks a long word in a note", async () => {
@@ -1515,11 +1721,11 @@ describe("the dashboard's layout", () => {
       html.indexOf('data-slot="right-column"'),
     );
 
-    // The header, as in prototype variant H: the month at the left and "Day N of M · synced" at
-    // the right, on one line where both fit.
+    // The header, as on the approved dashboard boards: the month, then "Day N of M · synced" just
+    // after it on the same baseline, on one line where both fit.
     expect(styleOf("dashboard-header", 375).get("display")).toBe("flex");
     expect(styleOf("dashboard-header", 375).get("flex-wrap")).toBe("wrap");
-    expect(styleOf("dashboard-header", 375).get("justify-content")).toBe("space-between");
+    expect(styleOf("dashboard-header", 375).has("justify-content")).toBe(false);
     expect(styleOf("dashboard-header", 375).get("align-items")).toBe("baseline");
 
     // 375 px: one column, so the boxes stack in that order, the AI box first.
@@ -1551,22 +1757,25 @@ describe("the dashboard's layout", () => {
     for (const box of ["number-tiles", "usual-month"]) {
       expect(styleOf(box, 375).get("container-type")).toBe("inline-size");
     }
-    // The four number tiles: two by two in a narrow box, four in a row from a 480 px box. At
-    // 900 px each tile in a row of four would be 47 px, too narrow for its amount.
+    // The four number tiles: two by two, as in the dashboard's right column on the approved
+    // board, and four in a row from a 760 px box, where each tile's words fit on one line. Below
+    // 900 px that is a screen from 792 px.
     expect(styleOf("tiles", 375, TILES_AT[375]).get("grid-template-columns")).toBe(columns(2));
     expect(styleOf("tiles", 900, TILES_AT[900]).get("grid-template-columns")).toBe(columns(2));
     expect(styleOf("tiles", 1050, TILES_AT[1050]).get("grid-template-columns")).toBe(columns(2));
-    expect(styleOf("tiles", 1200, TILES_AT[1200]).get("grid-template-columns")).toBe(columns(4));
-    expect(styleOf("tiles", 1200, 479).get("grid-template-columns")).toBe(columns(2));
-    expect(styleOf("tiles", 1200, 480).get("grid-template-columns")).toBe(columns(4));
+    expect(styleOf("tiles", 1200, TILES_AT[1200]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 1280, 624).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 800, 759).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("tiles", 800, 760).get("grid-template-columns")).toBe(columns(4));
     // No screen width alone moves them.
     expect(styleOf("tiles", 1920).get("grid-template-columns")).toBe(columns(2));
 
-    // The Category groups: one column in the 900 px right column, two on a phone, three in a
-    // wide box.
+    // The Category groups: compact rows in one column in a box under 480 px (a phone, and the
+    // right column from 900 px to about 1,150 px), as on the approved phone board; three boxes
+    // with charts in a wide box.
     expect(styleOf("groups", 900, BOX_AT[900]).get("grid-template-columns")).toBe(columns(1));
-    expect(styleOf("groups", 375, BOX_AT[375]).get("grid-template-columns")).toBe(columns(2));
-    expect(styleOf("groups", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(2));
+    expect(styleOf("groups", 375, BOX_AT[375]).get("grid-template-columns")).toBe(columns(1));
+    expect(styleOf("groups", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(1));
     expect(styleOf("groups", 1200, BOX_AT[1200]).get("grid-template-columns")).toBe(columns(3));
     expect(styleOf("groups", 1920).get("grid-template-columns")).toBe(columns(1));
   });

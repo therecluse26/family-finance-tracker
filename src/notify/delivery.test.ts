@@ -44,16 +44,13 @@ describe("the Delivery job", () => {
       secrets: test.secrets,
       address,
       makeTransport: stub.makeTransport,
-    }).save(
-      {
-        host: "smtp.example.test",
-        port: 587,
-        username: "household@example.test",
-        password,
-        sender: "alerts@example.test",
-      },
-      { freshCode: true },
-    );
+    }).save({
+      host: "smtp.example.test",
+      port: 587,
+      username: "household@example.test",
+      password,
+      sender: "alerts@example.test",
+    });
     expect(saved.saved).toBe(true);
   };
   // Stores a new Alert and decides it, as the checks and the Alerts step do.

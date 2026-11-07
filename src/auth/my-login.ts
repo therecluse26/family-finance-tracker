@@ -24,13 +24,32 @@ export const BACKUP_CODE_COUNT = 10;
 // How long a new TOTP secret waits for the Member to enter its first code.
 const NEW_TOTP_WAIT_MS = 10 * 60 * 1000;
 
-// Checks a fresh TOTP or backup code for the Member signed in on these request headers.
-export type FreshCodeCheck = (headers: Headers, code: string) => Promise<boolean>;
-
 const codeBody = z.object({ code: z.string().min(1).max(64) });
+const currentPasswordBody = z.object({ currentPassword: z.string() }).strict();
 
 const wrongCode = () =>
   APIError.from("UNAUTHORIZED", { code: "INVALID_CODE", message: "The code is wrong." });
+
+export const wrongPassword = () =>
+  APIError.from("UNAUTHORIZED", {
+    code: "INVALID_PASSWORD",
+    message: "Your current password is wrong.",
+  });
+
+// Whether this is the signed-in Member's current password. A password change, a new passkey, a new
+// TOTP, and new backup codes ask for it, so a stolen session cannot take over the login or lock the
+// Member out (spec 09, Sensitive actions). Each route that calls this is on the sign-in limit, so a
+// wrong password counts as a failed sign-in.
+export async function isCurrentPassword(
+  context: HookContext["context"],
+  memberId: string,
+  password: string,
+): Promise<boolean> {
+  if (password === "" || password.length > context.password.config.maxPasswordLength) return false;
+  const account = await context.internalAdapter.findCredentialAccount(memberId);
+  if (!account?.password) return false;
+  return context.password.verify({ hash: account.password, password });
+}
 
 // A new TOTP secret, in the form Better Auth makes one.
 export function newTotpSecret(): string {
@@ -88,16 +107,20 @@ export const newTotpIdentifier = (memberId: string) => `new-totp-${memberId}`;
 const WAITING_SIGN_IN = "2fa-";
 const waitingSignInTries = (identifier: string) => `2fa-attempts-${identifier}`;
 
-// After a change to a Member's password, TOTP, or backup codes (spec 09, Sessions): ends their
-// other sessions and their sign-ins that wait for a code, at once, so a thief who held either is
-// out. The session that made the change stays.
-async function endOtherSignIns(
-  context: HookContext["context"],
+// After a change to a Member's password, TOTP, or backup codes (spec 09, Sessions), and on "Sign
+// out everywhere else" (spec 09, Sign out on a device): ends their other sessions and their
+// sign-ins that wait for a code, at once, so a thief who held either is out. The session that made
+// the change stays.
+export async function endOtherSignIns(
+  context: {
+    internalAdapter: HookContext["context"]["internalAdapter"];
+    adapter: Pick<HookContext["context"]["adapter"], "findMany">;
+  },
   memberId: string,
-  keptToken: string,
+  keptSessionId: string,
 ): Promise<void> {
   const sessions = await context.internalAdapter.listSessions(memberId);
-  const others = sessions.map((one) => one.token).filter((token) => token !== keptToken);
+  const others = sessions.filter((one) => one.id !== keptSessionId).map((one) => one.token);
   if (others.length > 0) await context.internalAdapter.deleteSessions(others);
   const waiting = await context.adapter.findMany<{ identifier: string }>({
     model: "verification",
@@ -113,13 +136,11 @@ async function endOtherSignIns(
 }
 
 // The house rules for Better Auth's sign-in routes, and the routes that let a signed-in Member
-// change their own password, TOTP, and backup codes. Each change asks for a fresh code.
-export function myLogin(options: {
-  database: Database;
-  secrets: Secrets;
-  freshCode: FreshCodeCheck;
-}): BetterAuthPlugin {
-  const { database, secrets, freshCode } = options;
+// change their own password, TOTP, and backup codes. TOTP is asked only at sign-in (spec 09,
+// Sensitive actions): each change asks for the current password instead, and a new TOTP also asks
+// for one code from the new authenticator, which proves the setup.
+export function myLogin(options: { database: Database; secrets: Secrets }): BetterAuthPlugin {
+  const { database, secrets } = options;
 
   // A pending TOTP secret sits in Better Auth's verifications table. Its identifier is unique,
   // so it stands for the row ID in the secret's place.
@@ -178,32 +199,36 @@ export function myLogin(options: {
         {
           method: "POST",
           use: [sessionMiddleware],
-          body: z.object({ newPassword: z.string(), code: codeBody.shape.code }),
+          body: z.object({ currentPassword: z.string(), newPassword: z.string() }),
         },
         async (ctx) => {
           const { minPasswordLength, maxPasswordLength } = ctx.context.password.config;
-          const { newPassword, code } = ctx.body;
+          const { currentPassword, newPassword } = ctx.body;
           if (newPassword.length < minPasswordLength || newPassword.length > maxPasswordLength) {
             throw APIError.from("BAD_REQUEST", {
               code: "PASSWORD_LENGTH",
               message: `A password has ${minPasswordLength} to ${maxPasswordLength} characters.`,
             });
           }
-          if (!(await freshCode(ctx.headers ?? new Headers(), code))) throw wrongCode();
-          const hash = await ctx.context.password.hash(newPassword);
           const { user, session } = ctx.context.session;
+          if (!(await isCurrentPassword(ctx.context, user.id, currentPassword))) {
+            throw wrongPassword();
+          }
+          const hash = await ctx.context.password.hash(newPassword);
           await ctx.context.internalAdapter.updatePassword(user.id, hash);
-          await endOtherSignIns(ctx.context, user.id, session.token);
+          await endOtherSignIns(ctx.context, user.id, session.id);
           return ctx.json({ status: true });
         },
       ),
 
       newTotp: createAuthEndpoint(
         "/my-login/new-totp",
-        { method: "POST", use: [sessionMiddleware], body: codeBody },
+        { method: "POST", use: [sessionMiddleware], body: currentPasswordBody },
         async (ctx) => {
-          if (!(await freshCode(ctx.headers ?? new Headers(), ctx.body.code))) throw wrongCode();
           const { user } = ctx.context.session;
+          if (!(await isCurrentPassword(ctx.context, user.id, ctx.body.currentPassword))) {
+            throw wrongPassword();
+          }
           const identifier = newTotpIdentifier(user.id);
           const secret = newTotpSecret();
           await ctx.context.internalAdapter.deleteVerificationByIdentifier(identifier);
@@ -232,7 +257,7 @@ export function myLogin(options: {
           }
           const secret = secrets.decrypt(pending.value, pendingPlace(identifier));
           // The new secret's code also claims its time step, so it cannot be used again, and a
-          // code from a step already used, such as the fresh code's, is refused.
+          // code from a step already used is refused.
           const step = await totpStepOf(secret, ctx.body.code);
           if (step === undefined || !(await claimTotpStep(database, memberId, step))) {
             throw wrongCode();
@@ -248,24 +273,26 @@ export function myLogin(options: {
             where: [{ field: "userId", value: memberId }],
             update: await storedTwoFactor(ctx.context.secretConfig, { secret }),
           });
-          await endOtherSignIns(ctx.context, memberId, ctx.context.session.session.token);
+          await endOtherSignIns(ctx.context, memberId, ctx.context.session.session.id);
           return ctx.json({ status: true });
         },
       ),
 
       newBackupCodes: createAuthEndpoint(
         "/my-login/new-backup-codes",
-        { method: "POST", use: [sessionMiddleware], body: codeBody },
+        { method: "POST", use: [sessionMiddleware], body: currentPasswordBody },
         async (ctx) => {
-          if (!(await freshCode(ctx.headers ?? new Headers(), ctx.body.code))) throw wrongCode();
-          const backupCodes = newBackupCodes();
           const { user, session } = ctx.context.session;
+          if (!(await isCurrentPassword(ctx.context, user.id, ctx.body.currentPassword))) {
+            throw wrongPassword();
+          }
+          const backupCodes = newBackupCodes();
           await ctx.context.adapter.update({
             model: "twoFactor",
             where: [{ field: "userId", value: user.id }],
             update: await storedTwoFactor(ctx.context.secretConfig, { backupCodes }),
           });
-          await endOtherSignIns(ctx.context, user.id, session.token);
+          await endOtherSignIns(ctx.context, user.id, session.id);
           ctx.setHeader("Cache-Control", "no-store");
           return ctx.json({ backupCodes });
         },

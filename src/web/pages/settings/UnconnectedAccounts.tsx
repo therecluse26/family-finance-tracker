@@ -1,11 +1,11 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { UNCONNECTED_KINDS, type UnconnectedKind } from "../../../bank/unconnected-kinds.ts";
-import { calendarDateIn, dateLabel, wholeDollars } from "../../../format.ts";
+import { dateLabel, wholeDollars } from "../../../format.ts";
 import type { UnconnectedAccountView } from "../../../server/bank-views.ts";
 import { accountEdits } from "../../account-edits.ts";
-import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
-import { useHouseholdZone } from "../../household-zone.ts";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { ADD_PANEL, BUTTONS, DETAILS, INPUT, LABEL, RowMarker, SUMMARY } from "./settings-ui.tsx";
 
 // Settings, Banks: Unconnected accounts (spec 02, Unconnected accounts). Any Member adds one and
 // edits it, and may type its true balance at any time. Its balance is an estimate from the
@@ -61,6 +61,8 @@ export function BalanceLine(props: { account: UnconnectedAccountView; today: str
 export function UnconnectedAccountForm(props: {
   account: UnconnectedAccountView | null;
   onSaved: (account: UnconnectedAccountView) => void;
+  // More buttons after the save button, such as Cancel.
+  children?: ReactNode;
 }) {
   const { account } = props;
   const [name, setName] = useState(account?.name ?? "");
@@ -98,20 +100,20 @@ export function UnconnectedAccountForm(props: {
 
   return (
     <form className="mt-3" onSubmit={submit}>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Name
         <input
-          className={FIELD}
+          className={INPUT}
           required
           maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
       </label>
-      <fieldset className="mt-3">
-        <legend>Kind</legend>
+      <fieldset className="mt-3.5">
+        <legend className="text-sm font-semibold">Kind</legend>
         {UNCONNECTED_KINDS.map((each) => (
-          <label key={each} className="mt-1 block">
+          <label key={each} className="mt-2 block">
             <input
               type="radio"
               name={`kind-${account?.id ?? "new"}`}
@@ -120,32 +122,32 @@ export function UnconnectedAccountForm(props: {
               onChange={() => setKind(each)}
             />{" "}
             {KIND_LABEL[each]}
-            <span className="block text-gray-600">{KIND_HELP[each]}</span>
+            <span className="block pl-5 text-small text-muted">{KIND_HELP[each]}</span>
           </label>
         ))}
       </fieldset>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         {account === null ? "Current balance (optional)" : "True balance today (optional)"}
         <input
-          className={FIELD}
+          className={INPUT}
           inputMode="decimal"
           value={balance}
           onChange={(e) => setBalance(e.target.value)}
         />
       </label>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Institution name (optional)
         <input
-          className={FIELD}
+          className={INPUT}
           maxLength={100}
           value={institutionName}
           onChange={(e) => setInstitutionName(e.target.value)}
         />
       </label>
-      <label className="mt-3 block">
+      <label className={LABEL}>
         Last 4 digits (optional)
         <input
-          className={FIELD}
+          className={INPUT}
           inputMode="numeric"
           pattern="\d{4}"
           maxLength={4}
@@ -153,74 +155,66 @@ export function UnconnectedAccountForm(props: {
           onChange={(e) => setMask(e.target.value)}
         />
       </label>
-      <button className={BUTTON} type="submit" disabled={busy}>
-        {account === null ? "Add the account" : "Save the account"}
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          {account === null ? "Add the account" : "Save the account"}
+        </Button>
+        {props.children}
+      </div>
       <ErrorLine error={error} />
     </form>
   );
 }
 
-export function UnconnectedAccountList(props: {
+// The Unconnected accounts, one row each, that opens to edit it.
+export function UnconnectedAccountRows(props: {
   accounts: UnconnectedAccountView[];
   today: string;
   onSaved: (account: UnconnectedAccountView) => void;
 }) {
   return (
     <>
-      <h3 className="mt-6 font-semibold">Unconnected accounts</h3>
-      <p className="mt-2 text-gray-600">
-        An account the app cannot connect to. Its balance is an estimate from the Transfers and
-        Saving the app links to it, and leaves out interest and market growth. Type its true balance
-        at any time. A loan is added as a Manual loan, not here.
-      </p>
-      {props.accounts.length === 0 ? <p className="mt-2">No Unconnected accounts yet.</p> : null}
       {props.accounts.map((account) => (
-        <details key={account.id} className="mt-3">
-          <summary>
-            {account.name}
-            {account.mask === null ? "" : ` ··${account.mask}`}:{" "}
-            <BalanceLine account={account} today={props.today} />
+        <details key={account.id} className={DETAILS}>
+          <summary className={SUMMARY}>
+            <RowMarker />
+            <span className="min-w-0 flex-[1_1_180px]">
+              {account.name}
+              {account.mask === null ? "" : ` ··${account.mask}`}
+              <span className="text-muted"> · Unconnected account</span>
+            </span>
+            <span className="ml-auto tabular-nums">
+              <BalanceLine account={account} today={props.today} />
+            </span>
           </summary>
           <UnconnectedAccountForm account={account} onSaved={props.onSaved} />
         </details>
       ))}
-      <h3 className="mt-6 font-semibold">Add an Unconnected account</h3>
-      <UnconnectedAccountForm account={null} onSaved={props.onSaved} />
     </>
   );
 }
 
-export function UnconnectedAccounts() {
-  const [accounts, setAccounts] = useState<UnconnectedAccountView[] | undefined>();
-  const [error, setError] = useState<string | undefined>();
-  const zone = useHouseholdZone();
-
-  async function load() {
-    try {
-      const res = await api["unconnected-accounts"].$get();
-      if (!res.ok) return setError(await refusal(res));
-      setAccounts(((await res.json()) as { accounts: UnconnectedAccountView[] }).accounts);
-    } catch {
-      setError("The server did not answer.");
-    }
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
-  useEffect(() => {
-    void load();
-  }, []);
-
+// "Add an Unconnected account", opened in place by its button.
+export function AddUnconnectedAccount(props: {
+  id: string;
+  onSaved: (account: UnconnectedAccountView) => void;
+  onCancel: () => void;
+}) {
   return (
-    <>
-      <ErrorLine error={error} />
-      {accounts === undefined || zone === undefined ? null : (
-        <UnconnectedAccountList
-          accounts={accounts}
-          today={calendarDateIn(new Date(), zone)}
-          onSaved={() => void load()}
-        />
-      )}
-    </>
+    <section id={props.id} aria-labelledby={`${props.id}-title`} className={ADD_PANEL}>
+      <h4 id={`${props.id}-title`} className="font-semibold">
+        Add an Unconnected account
+      </h4>
+      <p className="mt-1.5 text-small text-muted">
+        An account the app cannot connect to. Its balance is an estimate from the Transfers and
+        Saving the app links to it, and leaves out interest and market growth. Type its true balance
+        at any time. A loan is added as a Manual loan, not here.
+      </p>
+      <UnconnectedAccountForm account={null} onSaved={props.onSaved}>
+        <Button type="button" variant="outlined" onClick={props.onCancel}>
+          Cancel
+        </Button>
+      </UnconnectedAccountForm>
+    </section>
   );
 }

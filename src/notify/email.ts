@@ -211,10 +211,10 @@ export function smtpSettings(options: {
   return {
     view,
 
-    async save(fields, { freshCode }) {
+    async save(fields) {
       const stored = await readSmtpSettings(database);
       // A stored password goes only to the server and sign-in name it was entered for: a new
-      // server or sign-in name needs its password, and a new password needs a fresh code.
+      // server or sign-in name needs its password.
       const sameServer =
         stored !== undefined &&
         stored.host === fields.host &&
@@ -222,9 +222,6 @@ export function smtpSettings(options: {
         stored.username === fields.username;
       if (fields.password === undefined && !sameServer) {
         return { saved: false, refusal: "password needed" };
-      }
-      if (fields.password !== undefined && !freshCode) {
-        return { saved: false, refusal: "code needed" };
       }
       let password = fields.password;
       if (password === undefined && stored !== undefined) {

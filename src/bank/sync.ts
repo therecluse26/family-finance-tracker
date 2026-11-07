@@ -126,6 +126,11 @@ export function runningBank(): BankServices {
   return services;
 }
 
+// Whether a provider's adapter runs. The fake adapter runs only under `pnpm dev`, and in tests.
+export function adapterRuns(provider: Provider): boolean {
+  return services?.adapters.has(provider) ?? false;
+}
+
 // The adapter's actions, so screens hide the buttons for missing ones.
 export function adapterActions(provider: Provider): AdapterActions {
   return services?.adapters.get(provider)?.actions ?? NO_ACTIONS;

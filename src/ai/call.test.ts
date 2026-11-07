@@ -353,7 +353,7 @@ describe("the one AI call path", () => {
 
   async function connect(provider: AiProviderName, makeModels = makeFetchModels(capture.fetch)) {
     const settings = aiSettings(options(makeModels));
-    expect(await settings.save(settingsFor(provider), { freshCode: true })).toMatchObject({
+    expect(await settings.save(settingsFor(provider))).toMatchObject({
       saved: true,
     });
     return householdAi(options(makeModels));
@@ -1179,16 +1179,13 @@ describe("the one AI call path", () => {
   it("sends nothing, and checks nothing on save, when it cannot read what it hides", async () => {
     const stub = new StubModels();
     const settings = aiSettings(options(stub.makeModels));
-    await settings.save(settingsFor("anthropic"), { freshCode: true });
+    await settings.save(settingsFor("anthropic"));
     expect(stub.calls).toHaveLength(2);
     await test.database.$client.execute("ALTER TABLE members RENAME TO members_away");
 
     const ai = householdAi(options(stub.makeModels));
     await expect(ai.generate(call)).rejects.toThrow();
-    const saved = await settings.save(
-      { ...settingsFor("anthropic"), quickModel: "other" },
-      { freshCode: true },
-    );
+    const saved = await settings.save({ ...settingsFor("anthropic"), quickModel: "other" });
 
     expect(saved).toMatchObject({ saved: true, check: { quick: "failed", writer: "failed" } });
     expect(stub.calls).toHaveLength(2);

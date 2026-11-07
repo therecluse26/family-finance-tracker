@@ -43,17 +43,14 @@ describe("a background AI use that runs out of retries", () => {
     };
     settings = aiSettings(options);
     expect(
-      await settings.save(
-        {
-          provider: "anthropic",
-          apiKey: newAiKey(),
-          baseUrl: null,
-          quickModel: "quick-model",
-          writerModel: "writer-model",
-          prices: { quick: PRICE, writer: PRICE },
-        },
-        { freshCode: true },
-      ),
+      await settings.save({
+        provider: "anthropic",
+        apiKey: newAiKey(),
+        baseUrl: null,
+        quickModel: "quick-model",
+        writerModel: "writer-model",
+        prices: { quick: PRICE, writer: PRICE },
+      }),
     ).toMatchObject({ saved: true });
     ai = householdAi(options);
   });

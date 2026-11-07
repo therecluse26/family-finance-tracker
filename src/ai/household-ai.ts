@@ -1,4 +1,4 @@
-import { claimAiBack, listMemberNamesById, markAiAway, markAiKeyRejected } from "../db/index.ts";
+import { claimAiBack, listMemberNamesById, markAiAway } from "../db/index.ts";
 import { log } from "../log.ts";
 import { isBackground } from "./ai-view.ts";
 import {
@@ -13,7 +13,7 @@ import { type AiPause, AiPausedError } from "./outbound.ts";
 import { memberLabel, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, plainData } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
-import { type AiOptions, aiCalls, KEY_REJECTED_CONDITION, noticesOf } from "./settings.ts";
+import { type AiOptions, aiCalls, markKeyRejected, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
 
 // The AI's reply, or why the use has none.
@@ -77,25 +77,11 @@ export type HouseholdAi = {
 export function householdAi(options: AiOptions): HouseholdAi {
   const { database, logger = log } = options;
   const calls = aiCalls(options);
-  const notices = noticesOf(options);
-  const retries = aiRetries(database, notices, logger);
+  const retries = aiRetries(database, noticesOf(options), logger);
   const filter = async () => privacyFilter(await readPrivacyFacts(database));
 
   // Spec 08, Failures: a rejected key pauses AI until a Member fixes it, with one System notice.
-  async function keyRejected(generation: number): Promise<void> {
-    if (!(await markAiKeyRejected(database, generation, new Date()))) return;
-    try {
-      await notices.raise({
-        kind: "condition",
-        condition: KEY_REJECTED_CONDITION,
-        text: "AI paused: the AI provider rejected the key. A Member can enter a new key in Settings, AI.",
-      });
-    } catch (error) {
-      logger.warn("The rejected AI key System notice could not be raised", {
-        error: error instanceof Error ? error.name : "unknown",
-      });
-    }
-  }
+  const keyRejected = (generation: number) => markKeyRejected(options, generation);
 
   // Spec 08, Redo of no-AI work: a background use that takes its no-AI path marks AI away, and the
   // first one that works after an outage brings it back, which starts one redo. A pause ends on its

@@ -1,8 +1,9 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { BackupCodes, BUTTON, ErrorLine, NewTotp, TextField } from "../components/Fields.tsx";
+import { BackupCodes, ErrorLine, NewTotp } from "../components/Fields.tsx";
 import { postJson } from "../requests.ts";
 import { tokenFromHash } from "./Join.tsx";
+import { AUTH_BUTTON, AuthField, AuthFrame } from "./SignIn.tsx";
 
 // The reset page (spec 09, Login reset): a Member opens a reset link, <APP_URL>/reset#token=…, and
 // sets a new password and new TOTP, then gets 10 new backup codes. The token sits after "#", so the
@@ -74,11 +75,11 @@ function NewLogin(props: { token: string; email: string }) {
 
   if (backupCodes !== undefined) {
     return (
-      <div className="mt-4">
+      <div className="mt-2">
         <p>Your new login is set, and you are signed in.</p>
         <BackupCodes codes={backupCodes} />
         <button
-          className={BUTTON}
+          className={AUTH_BUTTON}
           type="button"
           onClick={() => void navigate("/", { replace: true })}
         >
@@ -90,16 +91,16 @@ function NewLogin(props: { token: string; email: string }) {
 
   if (totpURI !== undefined) {
     return (
-      <form className="mt-4" onSubmit={finish}>
+      <form className="mt-2" onSubmit={finish}>
         <p>Set up TOTP again. Your old authenticator entry no longer works.</p>
         <NewTotp totpURI={totpURI} />
-        <TextField
+        <AuthField
           label="The 6-digit code your authenticator app shows"
           autoComplete="one-time-code"
           value={totpCode}
           onChange={setTotpCode}
         />
-        <button className={BUTTON} type="submit" disabled={busy}>
+        <button className={AUTH_BUTTON} type="submit" disabled={busy}>
           Set my new login
         </button>
         <ErrorLine error={error} />
@@ -108,20 +109,20 @@ function NewLogin(props: { token: string; email: string }) {
   }
 
   return (
-    <form className="mt-4" onSubmit={startTotp}>
+    <form className="mt-2" onSubmit={startTotp}>
       <p>
         Your login was reset. Set a new password and new TOTP for {props.email}. Your old password,
         TOTP, and backup codes no longer work.
       </p>
       <input type="hidden" autoComplete="username" value={props.email} readOnly />
-      <TextField
+      <AuthField
         label="New password, at least 12 characters"
         type="password"
         autoComplete="new-password"
         value={password}
         onChange={setPassword}
       />
-      <button className={BUTTON} type="submit" disabled={busy}>
+      <button className={AUTH_BUTTON} type="submit" disabled={busy}>
         Next
       </button>
       <ErrorLine error={error} />
@@ -150,10 +151,9 @@ export function Reset() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-md p-6">
-      <h1 className="text-2xl font-semibold">Set a new login</h1>
+    <AuthFrame title="Set a new login">
       {open === undefined ? null : <NewLogin token={open.token} email={open.email} />}
       <ErrorLine error={error} />
-    </main>
+    </AuthFrame>
   );
 }

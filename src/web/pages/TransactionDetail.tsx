@@ -13,7 +13,11 @@ import type {
 } from "../../server/money-movement-views.ts";
 import { api } from "../api.ts";
 import { keepAmountsWhole } from "../components/Amounts.tsx";
-import { FIELD } from "../components/Fields.tsx";
+import { buttonClass } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
+import { Page, PageHeading, SectionHeading } from "../components/Page.tsx";
+import { Pill } from "../components/Pill.tsx";
+import { StatusText } from "../components/Status.tsx";
 import { readOpenCount } from "../review-list.ts";
 import type { ShellContext } from "../Shell.tsx";
 import {
@@ -40,9 +44,16 @@ import { accountLabels, merchantOf, readPage, rowLine } from "./Transactions.tsx
 // optional correction is here: the Category, with "only this Transaction"; a split by amount; Undo;
 // a hand link as a Refund or Reimbursement; and a hand-set type.
 
-const LINK = "text-blue-700 underline";
-const BUTTON = "mt-2 mr-2 rounded border border-gray-300 px-3 py-1";
-const SAVE = "mt-2 mr-2 rounded bg-blue-700 px-3 py-1 text-white disabled:opacity-50";
+const LINK = "text-accent hover:text-accent-dark hover:underline";
+const BUTTON = buttonClass("outlined");
+const SAVE = buttonClass("primary");
+// The boards' field: 40 px high, 14 px text.
+const FIELD_BASE = "block h-10 rounded-control border border-field bg-white px-3 text-sm text-ink";
+const FIELD = `${FIELD_BASE} mt-1 w-full`;
+const LABEL = "block text-sm font-semibold";
+const SMALL_LABEL = "block text-small font-semibold text-muted";
+const BUTTONS = "mt-4 flex flex-wrap gap-2";
+const DIVIDED = "mt-5 border-t border-line-soft pt-4";
 
 // A Refund or Reimbursement links to Spending from up to 120 days before it (spec 03, Refunds).
 const LINK_WINDOW_DAYS = 120;
@@ -218,7 +229,7 @@ const MADE_BY = { app: "the app", AI: "the AI", Member: "a Member" } as const;
 function Evidence(props: { link: TransferLinkView | OtherLinkView }) {
   const { link } = props;
   return (
-    <ul className="mt-1 text-sm text-gray-700">
+    <ul className="mt-1 text-small text-muted">
       <li>Tier: {link.tier}</li>
       <li>
         {link.signals.length === 0
@@ -249,10 +260,13 @@ function LinkEvidence(props: {
 }) {
   const { matched } = props;
   return (
-    <li className="mt-3 rounded border border-gray-200 p-3" data-link={props.link.id}>
+    <li
+      className="border-t border-line-soft py-3 text-sm first:border-t-0 first:pt-0 last:pb-0"
+      data-link={props.link.id}
+    >
       <p className="font-semibold">{props.title}</p>
       {matched === undefined ? null : (
-        <p>
+        <p className="mt-0.5">
           <Link className={LINK} to={transactionPath(matched.id)}>
             {keepAmountsWhole(rowLine(matched, props.accounts, props.today))}
           </Link>
@@ -261,7 +275,7 @@ function LinkEvidence(props: {
       <Evidence link={props.link} />
       <button
         type="button"
-        className={BUTTON}
+        className={`${buttonClass("outlined", "small")} mt-2`}
         onClick={() => props.actions.undoLink(props.link.id)}
       >
         Undo
@@ -302,13 +316,14 @@ function PartLine(props: { part: ShownPartView }) {
   const { part } = props;
   const chosenBy = chosenByLabel(part);
   return (
-    <li className="mt-1">
-      {partLabel(part)} · {dollarsAndCents(part.amount)}
+    <li className="border-t border-line-soft py-2.5 text-sm first:border-t-0 first:pt-0 last:pb-0">
+      <span className="font-medium">{partLabel(part)}</span> ·{" "}
+      <span className="whitespace-nowrap tabular-nums">{dollarsAndCents(part.amount)}</span>
       {chosenBy === undefined ? null : (
-        <span className="text-gray-600"> · Category chosen by: {chosenBy}</span>
+        <span className="text-muted"> · Category chosen by: {chosenBy}</span>
       )}
       {part.amount === 0 && !part.linked ? (
-        <span className="text-gray-600">
+        <span className="text-muted">
           {" "}
           · The bank lowered the amount, so this part has nothing left.
         </span>
@@ -344,136 +359,168 @@ export function TransactionDetailBody(props: {
 
   return (
     <>
-      <h1 className="text-2xl font-semibold">{merchantOf(txn)}</h1>
-      <p className="mt-1">
-        {dateLabel(txn.authorizedDate ?? txn.postedDate, today)} ·{" "}
-        <span className="whitespace-nowrap">{dollarsAndCents(txn.amount)}</span> ·{" "}
-        {labels.get(txn.accountId) ?? "An Account"}
-        {txn.pending ? <span className="ml-2 text-sm text-gray-500">pending</span> : null}
-      </p>
-      <p className="mt-1 text-sm text-gray-600">The bank's line: {txn.description}</p>
-      {txn.merchant === null ? null : (
-        <p className="mt-1 text-sm">
-          <Link className={LINK} to={transactionsPath({ merchant: txn.merchant })}>
-            Every {txn.merchant} Transaction
-          </Link>
+      <Card as="div">
+        <p className="text-small text-muted">
+          {dateLabel(txn.authorizedDate ?? txn.postedDate, today)} ·{" "}
+          {labels.get(txn.accountId) ?? "An Account"}
+          {txn.pending ? (
+            <>
+              {" "}
+              <Pill>pending</Pill>
+            </>
+          ) : null}
         </p>
-      )}
+        <p className="mt-1 whitespace-nowrap text-[28px] font-bold tabular-nums">
+          {dollarsAndCents(txn.amount)}
+        </p>
+        <p className="mt-0.5 text-small text-muted">The bank's line: {txn.description}</p>
+        {txn.merchant === null ? null : (
+          <p className="mt-3 text-sm">
+            <Link className={LINK} to={transactionsPath({ merchant: txn.merchant })}>
+              Every {txn.merchant} Transaction
+            </Link>
+          </p>
+        )}
+      </Card>
 
-      <h2 className="mt-6 text-lg font-semibold">Type and Category</h2>
-      {detail.decision === null ? (
-        <p className="mt-1">The app has not decided this Transaction yet.</p>
-      ) : (
-        <ul>
-          {parts.map((part, index) => (
-            // Parts have no ID of their own; their order is fixed.
-            // biome-ignore lint/suspicious/noArrayIndexKey: see above.
-            <PartLine key={index} part={part} />
-          ))}
-        </ul>
-      )}
+      <Card aria-labelledby="type-and-category">
+        <SectionHeading id="type-and-category">Type and Category</SectionHeading>
+        {detail.decision === null ? (
+          <p className="mt-2 text-sm text-muted">The app has not decided this Transaction yet.</p>
+        ) : (
+          <ul className="mt-3">
+            {parts.map((part, index) => (
+              // Parts have no ID of their own; their order is fixed.
+              // biome-ignore lint/suspicious/noArrayIndexKey: see above.
+              <PartLine key={index} part={part} />
+            ))}
+          </ul>
+        )}
+      </Card>
 
-      <h2 className="mt-6 text-lg font-semibold">Links</h2>
-      {detail.transferLink === null && detail.otherLinks.length === 0 ? (
-        <p className="mt-1">No links.</p>
-      ) : (
-        <ul>
-          {detail.transferLink === null ? null : (
-            <LinkEvidence
-              title="Transfer with:"
-              matched={matched.get(detail.transferLink.otherTransactionId)}
-              link={detail.transferLink}
-              accounts={labels}
-              today={today}
-              actions={actions}
-            />
-          )}
-          {detail.otherLinks.map((link) => (
-            <LinkEvidence
-              key={link.id}
-              title={linkTitle(link, moneyIn, labels)}
-              matched={
-                link.otherTransactionId === null ? undefined : matched.get(link.otherTransactionId)
-              }
-              link={link}
-              accounts={labels}
-              today={today}
-              actions={actions}
-            />
-          ))}
-        </ul>
-      )}
+      <Card aria-labelledby="links">
+        <SectionHeading id="links">Links</SectionHeading>
+        {detail.transferLink === null && detail.otherLinks.length === 0 ? (
+          <p className="mt-2 text-sm text-muted">No links.</p>
+        ) : (
+          <ul className="mt-3">
+            {detail.transferLink === null ? null : (
+              <LinkEvidence
+                title="Transfer with:"
+                matched={matched.get(detail.transferLink.otherTransactionId)}
+                link={detail.transferLink}
+                accounts={labels}
+                today={today}
+                actions={actions}
+              />
+            )}
+            {detail.otherLinks.map((link) => (
+              <LinkEvidence
+                key={link.id}
+                title={linkTitle(link, moneyIn, labels)}
+                matched={
+                  link.otherTransactionId === null
+                    ? undefined
+                    : matched.get(link.otherTransactionId)
+                }
+                link={link}
+                accounts={labels}
+                today={today}
+                actions={actions}
+              />
+            ))}
+          </ul>
+        )}
+      </Card>
 
       {props.outcome.notice === undefined ? null : (
-        <p className="mt-4 text-green-800" role="status">
-          {props.outcome.notice}
+        <p role="status">
+          <StatusText tone="good">{props.outcome.notice}</StatusText>
         </p>
       )}
       {props.outcome.error === undefined ? null : (
-        <p className="mt-4 text-red-700" role="alert">
+        <p className="text-critical" role="alert">
           {props.outcome.error}
         </p>
       )}
 
-      <h2 className="mt-6 text-lg font-semibold">Change the Category</h2>
-      <select
-        name="category"
-        className={FIELD}
-        value={form.category}
-        onChange={(e) => set({ category: e.target.value })}
-      >
-        <CategoryOptions />
-      </select>
-      <label className="mt-2 block">
-        <input
-          type="checkbox"
-          name="onlyThisTransaction"
-          checked={form.onlyThisTransaction}
-          onChange={(e) => set({ onlyThisTransaction: e.target.checked })}
-        />{" "}
-        Only this Transaction. Without it, a Category rule gives the Merchant's other Transactions
-        this Category too.
-      </label>
-      <button type="button" className={SAVE} onClick={actions.saveCategory}>
-        Save the Category
-      </button>
+      <Card aria-labelledby="change-category">
+        <SectionHeading id="change-category">Change the Category</SectionHeading>
+        <label className={`${LABEL} mt-3`}>
+          Category
+          <select
+            name="category"
+            className={`${FIELD_BASE} mt-1 w-full sm:max-w-sm`}
+            value={form.category}
+            onChange={(e) => set({ category: e.target.value })}
+          >
+            <CategoryOptions />
+          </select>
+        </label>
+        <label className="mt-3 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="onlyThisTransaction"
+            className="size-4 accent-accent"
+            aria-describedby="only-this-transaction-help"
+            checked={form.onlyThisTransaction}
+            onChange={(e) => set({ onlyThisTransaction: e.target.checked })}
+          />
+          Only this Transaction
+        </label>
+        <p id="only-this-transaction-help" className="mt-1 text-small text-muted">
+          Without it, a Category rule gives the Merchant's other Transactions this Category too.
+        </p>
+        <div className={BUTTONS}>
+          <button type="button" className={SAVE} onClick={actions.saveCategory}>
+            Save the Category
+          </button>
+        </div>
 
-      <h2 className="mt-6 text-lg font-semibold">Set the type</h2>
-      <select
-        name="type"
-        className={FIELD}
-        value={form.type}
-        onChange={(e) => set({ type: e.target.value as HandSetType })}
-      >
-        {HAND_SET_TYPES.map((type) => (
-          <option key={type} value={type}>
-            {type}
-          </option>
-        ))}
-      </select>
-      <button type="button" className={SAVE} onClick={actions.saveType}>
-        Set the type
-      </button>
+        <div className={DIVIDED}>
+          <SectionHeading id="set-type">Set the type</SectionHeading>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <select
+              name="type"
+              aria-labelledby="set-type"
+              className={`${FIELD_BASE} w-full sm:w-60`}
+              value={form.type}
+              onChange={(e) => set({ type: e.target.value as HandSetType })}
+            >
+              {HAND_SET_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+            <button type="button" className={SAVE} onClick={actions.saveType}>
+              Set the type
+            </button>
+          </div>
+        </div>
+      </Card>
 
       {splitable ? (
-        <>
-          <h2 className="mt-6 text-lg font-semibold">Split by amount</h2>
-          <p className="text-sm text-gray-600">
+        <Card aria-labelledby="split">
+          <SectionHeading id="split">Split by amount</SectionHeading>
+          <p className="mt-1 text-small text-muted">
             The parts must add up to {dollarsAndCents(-txn.amount)}.
           </p>
           {form.split.map((part, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a split's parts are kept in order.
-            <div key={index} className="mt-2 flex gap-2">
+            <div key={index} className="mt-3 flex gap-2">
               <input
                 name={`split-amount-${index}`}
-                className={FIELD}
+                aria-label={`Part ${index + 1}, amount in dollars`}
+                className={`${FIELD_BASE} w-28 shrink-0 tabular-nums`}
                 inputMode="decimal"
                 value={part.amount}
                 onChange={(e) => setSplitPart(index, { amount: e.target.value })}
               />
               <select
                 name={`split-category-${index}`}
-                className={FIELD}
+                aria-label={`Part ${index + 1}, Category`}
+                className={`${FIELD_BASE} w-full min-w-0`}
                 value={part.category}
                 onChange={(e) => setSplitPart(index, { category: e.target.value })}
               >
@@ -481,51 +528,56 @@ export function TransactionDetailBody(props: {
               </select>
             </div>
           ))}
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => set({ split: [...form.split, { amount: "", category: "" }] })}
-          >
-            Add a part
-          </button>
-          {form.split.length > 2 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              className={BUTTON}
-              onClick={() => set({ split: form.split.slice(0, -1) })}
+              className={buttonClass("outlined", "small")}
+              onClick={() => set({ split: [...form.split, { amount: "", category: "" }] })}
             >
-              Remove the last part
+              Add a part
             </button>
-          ) : null}
-          <button type="button" className={SAVE} onClick={actions.saveSplit}>
-            Save the split
-          </button>
-          {isSplit(parts) ? (
-            <button type="button" className={BUTTON} onClick={actions.removeSplit}>
-              Remove the split
+            {form.split.length > 2 ? (
+              <button
+                type="button"
+                className={buttonClass("outlined", "small")}
+                onClick={() => set({ split: form.split.slice(0, -1) })}
+              >
+                Remove the last part
+              </button>
+            ) : null}
+          </div>
+          <div className={BUTTONS}>
+            <button type="button" className={SAVE} onClick={actions.saveSplit}>
+              Save the split
             </button>
-          ) : null}
-        </>
+            {isSplit(parts) ? (
+              <button type="button" className={BUTTON} onClick={actions.removeSplit}>
+                Remove the split
+              </button>
+            ) : null}
+          </div>
+        </Card>
       ) : null}
 
       {moneyIn && !linkedIn ? (
-        <>
-          <h2 className="mt-6 text-lg font-semibold">Link as a Refund or Reimbursement</h2>
+        <Card aria-labelledby="link-by-hand">
+          <SectionHeading id="link-by-hand">Link as a Refund or Reimbursement</SectionHeading>
           <select
             name="linkKind"
-            className={FIELD}
+            aria-labelledby="link-by-hand"
+            className={`${FIELD_BASE} mt-3 w-full sm:w-72`}
             value={form.linkKind}
             onChange={(e) => set({ linkKind: e.target.value as DetailForm["linkKind"] })}
           >
             <option value="Refund">Refund from a Merchant</option>
             <option value="Reimbursement">Reimbursement from a person</option>
           </select>
-          <p className="mt-2">
+          <p className="mt-4 text-sm">
             Find the Spending it pays back. It posted on or before{" "}
             {dateLabel(txn.postedDate, today)}.
           </p>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="block">
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <label className={SMALL_LABEL}>
               Merchant
               <input
                 name="candidateMerchant"
@@ -537,7 +589,7 @@ export function TransactionDetailBody(props: {
                 }
               />
             </label>
-            <label className="block">
+            <label className={SMALL_LABEL}>
               From
               <input
                 name="candidateFrom"
@@ -548,7 +600,7 @@ export function TransactionDetailBody(props: {
                 onChange={(e) => set({ candidates: { ...form.candidates, from: e.target.value } })}
               />
             </label>
-            <label className="block">
+            <label className={SMALL_LABEL}>
               To
               <input
                 name="candidateTo"
@@ -560,31 +612,38 @@ export function TransactionDetailBody(props: {
               />
             </label>
           </div>
-          <button type="button" className={BUTTON} onClick={actions.findCandidates}>
-            Find Spending
-          </button>
-          <select
-            name="spendingTransactionId"
-            className={FIELD}
-            value={form.spendingTransactionId}
-            onChange={(e) => set({ spendingTransactionId: e.target.value })}
-          >
-            <option value="">Pick the Spending it pays back</option>
-            {props.candidates.map((spent) => (
-              <option key={spent.id} value={spent.id}>
-                {rowLine(spent, labels, today)}
-              </option>
-            ))}
-          </select>
-          {props.moreCandidates ? (
-            <button type="button" className={BUTTON} onClick={actions.showMoreCandidates}>
-              Show more Spending
+          <div className="mt-3">
+            <button type="button" className={BUTTON} onClick={actions.findCandidates}>
+              Find Spending
             </button>
-          ) : null}
-          <button type="button" className={SAVE} onClick={actions.linkByHand}>
-            Link
-          </button>
-        </>
+          </div>
+          <label className={`${LABEL} mt-4`}>
+            The Spending it pays back
+            <select
+              name="spendingTransactionId"
+              className={FIELD}
+              value={form.spendingTransactionId}
+              onChange={(e) => set({ spendingTransactionId: e.target.value })}
+            >
+              <option value="">Pick the Spending it pays back</option>
+              {props.candidates.map((spent) => (
+                <option key={spent.id} value={spent.id}>
+                  {rowLine(spent, labels, today)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className={BUTTONS}>
+            <button type="button" className={SAVE} onClick={actions.linkByHand}>
+              Link
+            </button>
+            {props.moreCandidates ? (
+              <button type="button" className={BUTTON} onClick={actions.showMoreCandidates}>
+                Show more Spending
+              </button>
+            ) : null}
+          </div>
+        </Card>
       ) : null}
     </>
   );
@@ -655,15 +714,21 @@ export function TransactionDetail() {
   }
 
   return (
-    <main>
-      <p>
+    <Page>
+      <p className="-mb-2 text-sm">
         <Link className={LINK} to={transactionsPath()}>
-          Transactions
+          <span aria-hidden="true">← </span>Transactions
         </Link>
       </p>
-      {loaded === null ? <p className="mt-3">No Transaction has this ID.</p> : null}
+      {/* The heading renders while the Transaction loads too, so the focus has a place to go. */}
+      <PageHeading title={loaded ? merchantOf(loaded.detail.transaction) : "Transaction"} />
+      {loaded === null ? (
+        <Card>
+          <p className="text-muted">No Transaction has this ID.</p>
+        </Card>
+      ) : null}
       {loaded === undefined && outcome.error !== undefined ? (
-        <p className="mt-3 text-red-700" role="alert">
+        <p className="text-critical" role="alert">
           {outcome.error}
         </p>
       ) : null}
@@ -682,6 +747,6 @@ export function TransactionDetail() {
           })}
         />
       ) : null}
-    </main>
+    </Page>
   );
 }

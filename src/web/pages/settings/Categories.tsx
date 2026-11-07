@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { CategoryRuleView } from "../../../server/category-views.ts";
 import { api } from "../../api.ts";
+import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
+import { Lead, ROW, SettingCard, TabHeading } from "./settings-ui.tsx";
 
 // Settings → Categories (spec 07, Settings overview; spec 04, Category rules): every Category
 // rule, with Delete. A Member's correction makes a rule; deleting one runs the cascade again on its
@@ -13,33 +15,34 @@ export function CategoryRuleList(props: {
   onDelete: (rule: CategoryRuleView) => void;
 }) {
   return (
-    <>
-      <h3 className="mt-4 font-semibold">Category rules</h3>
-      <p className="mt-2 text-gray-600">
+    <SettingCard id="category-rules" title="Category rules">
+      <Lead>
         When you change a Transaction's Category, the app makes a rule for its Merchant. The rule
         gives the Merchant's past and future Transactions the same Category, except those you set by
         hand.
-      </p>
-      {props.rules.length === 0 ? <p className="mt-2">No Category rules yet.</p> : null}
-      <ul className="mt-2">
+      </Lead>
+      {props.rules.length === 0 ? <p className="mt-3">No Category rules yet.</p> : null}
+      <ul className="mt-2.5">
         {props.rules.map((rule) => (
-          <li key={rule.id} className="mt-2 flex flex-wrap items-center gap-3">
-            <span>
-              {rule.merchantName}: {rule.category}
+          <li key={rule.id} className={ROW}>
+            <span className="min-w-0 flex-[1_1_220px]">
+              <span className="font-semibold">{rule.merchantName}</span>
+              <span className="text-muted">: {rule.category}</span>
             </span>
-            <button
+            <Button
               type="button"
-              className="rounded border border-gray-400 px-3 py-1 hover:bg-gray-100"
+              variant="outlined"
+              size="small"
               disabled={props.busy !== undefined}
               aria-label={`Delete the rule for ${rule.merchantName}`}
               onClick={() => props.onDelete(rule)}
             >
               Delete
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
-    </>
+    </SettingCard>
   );
 }
 
@@ -79,7 +82,7 @@ export function Categories() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">Categories</h2>
+      <TabHeading>Categories</TabHeading>
       <ErrorLine error={error} />
       {rules === undefined ? null : (
         <CategoryRuleList rules={rules} busy={busy} onDelete={(rule) => void remove(rule)} />

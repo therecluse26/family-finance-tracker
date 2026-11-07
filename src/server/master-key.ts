@@ -13,8 +13,9 @@ import {
 import type { Secrets } from "../secrets/index.ts";
 import type { MasterKeyCheckResult, MasterKeyRoutes } from "./master-key-views.ts";
 
-// The wizard's step 3 and "Check my master key" (spec 09, The Master key). Both use the secrets
-// module's checkMasterKey. A pasted key is never stored, logged, or sent back.
+// The wizard's step 3 and "Check my master key" (spec 09, The Master key). Step 3 shows the key
+// until the Member says they saved it. "Check my master key" uses the secrets module's
+// checkMasterKey. A pasted key is never stored, logged, or sent back.
 
 // Wrong Master keys count per Member, as failed sign-ins do, in the same window.
 export const WRONG_MASTER_KEYS_ALLOWED = FAILED_SIGN_INS_ALLOWED;
@@ -50,11 +51,10 @@ export function masterKeyRoutes(database: Database, secrets: Secrets): MasterKey
       return (await saved()) ? undefined : secrets.showMasterKey();
     },
 
-    async pasteBack(memberId, pasted) {
-      if (await saved()) return "step done";
-      const result = await check(memberId, pasted);
-      if (result === "matches") await markSetupStep(database, "master key", "done");
-      return result;
+    // Once the step is done, a later press, from any Member, changes nothing.
+    async confirmSaved() {
+      if (await saved()) return;
+      await markSetupStep(database, "master key", "done");
     },
 
     check,

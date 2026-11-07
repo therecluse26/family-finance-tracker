@@ -3,7 +3,7 @@ import { type Database, type LoanPayouts, listLoanLinksOf, listLoanPayouts } fro
 import { log } from "../log.ts";
 import {
   everAskedAbout,
-  openReviewItem,
+  openReviewItemBatch,
   openReviewItems,
   type ReviewKind,
   settleReviewItems,
@@ -108,17 +108,19 @@ export async function updateUntrackedLoanItems(
   }
   if (offers.length === 0) return;
   const asked = await everAskedAbout(database, UNTRACKED_LOAN_KIND);
-  let opened = 0;
+  const items = [];
   for (const { lender, payoutId } of offers) {
     if (asked.has(payoutId)) continue;
     asked.add(payoutId);
-    await openReviewItem(database, {
+    items.push({
       kind: UNTRACKED_LOAN_KIND,
-      subject: { type: "transactions", transactionIds: [payoutId] },
+      subject: { type: "transactions" as const, transactionIds: [payoutId] },
       decided: `Payments to ${lender} count as Transfers, so their interest cannot show.`,
       bestAnswer: { value: manualLoanFormPath(lender), label: "Add it as a Manual loan" },
     });
-    opened += 1;
   }
+  // One moment for the run's items, so the Review list runs them by their payouts' date (spec 07,
+  // Review list page).
+  const opened = (await openReviewItemBatch(database, items)).length;
   if (opened > 0) log.info("Untracked loans went on the Review list", { opened });
 }

@@ -12,6 +12,7 @@ Layout ([prototype, variant H](https://github.com/therecluse26/family-finance-tr
 - On a screen 900 px wide or wider, the AI box is the left column. It stays in view while the right column scrolls.
 - On a narrower screen, all boxes stack in one column, and the AI box comes first.
 - The right column holds, top to bottom: Left to spend, Goals, the four number tiles, "A usual month", and "Coming up".
+- While app.db holds no Connection at all, such as after "Skip for now" in the wizard, no history can load. The dashboard then shows one line, "Link a bank to see your money here", with a link to Settings, Banks, in place of every box. The header and the status lines still show. A removed Connection counts here, because its history stays until a Member deletes it.
 
 ### Header and status lines
 
@@ -20,7 +21,7 @@ Layout ([prototype, variant H](https://github.com/therecluse26/family-finance-tr
 - Above the boxes, the dashboard shows these lines when they apply. Each owner file defines when they appear and go:
   - a banner for each broken Connection, with **Repair** ([Accounts and bank sync](02-accounts-and-bank-sync.md));
   - "loading history for <bank>", with progress per Connection ([Accounts and bank sync](02-accounts-and-bank-sync.md));
-  - the "Finish setup" list of skipped wizard steps ([Install and first-run setup](12-install-and-first-run.md));
+  - the "Finish setup" list: Banks while the Household has no Connection, then the optional extras AI, Alerts, and Invite Members, each until it is done ([Install and first-run setup](12-install-and-first-run.md#the-first-run-wizard));
   - any other open System notice. A System notice about a past event, such as "Your history is ready", has a close button. One about a condition, such as a broken Connection, stays until the condition ends.
 
 ### 1. AI box ("This week")
@@ -219,7 +220,7 @@ Using this page is never required.
 
 - Every Alert, newest first, including Alerts held back by the weekly cap and Alerts found in loaded history.
 - **Each row:** the date, the kind, the template text, the AI's advice when there is any, and one of these marks: "sent", "held back (weekly cap)", or "found in history".
-- Each Alert has a "Not a problem" button. Its effect is in [Anomalies and Alerts](06-anomalies-and-alerts.md).
+- Each Alert has an "Ask the AI" button and a "Not a problem" button. Their effects are in [Anomalies and Alerts](06-anomalies-and-alerts.md#ask-the-ai). A merged Alert has one "Ask the AI" button under its heading, and a "Not a problem" button on each part.
 
 ### Budgets page
 
@@ -266,10 +267,10 @@ Settings has one section per area. Each owner file holds the rules.
 |---|---|---|
 | Household | Household facts (ZIP code, ages, rent or own) | [05](05-budgets-benchmarks-goals.md) |
 | Members | Members, invite links, removing a Member, resetting a login | [09](09-members-login-security.md) |
-| My login | Password, TOTP, backup codes, passkeys | [09](09-members-login-security.md) |
+| My login | Password, TOTP, backup codes, passkeys, signed-in devices | [09](09-members-login-security.md) |
 | Banks | Plaid keys, Connections, Repair, Remove, "Import Plaid Connection", "at least N of 10 used", Unconnected accounts, Manual loans | [02](02-accounts-and-bank-sync.md) |
 | Categories | Category rules, with Delete | [04](04-categorization.md) |
-| Alerts | Weekly cap, my channels, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
+| Alerts | Weekly cap, my channels, the weekly summary email, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
 | AI | AI provider, key, models, prices, AI cost cap, base URL, and the AI usage page | [08](08-ai.md#ai-settings-page) |
 | Backups and data | "Back up now", last backup, "Check my master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |
 | About | Version, "Source code" link, "Data sources" page, "Update available", the update-check switch | [12](12-install-and-first-run.md) |

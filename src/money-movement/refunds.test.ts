@@ -436,6 +436,45 @@ describe("Refunds", () => {
     }
   });
 
+  // The Merchant of a line with an account-number lead-in or a card payment line (spec 04, Names).
+  it("links a Refund through an account-number lead-in, and a card payment's reversal to its payment", async () => {
+    const CARD_PAYMENT = code("LOAN_PAYMENTS_CREDIT_CARD_PAYMENT");
+    await sync({
+      added: [
+        txn("utility", -9_000, "2026-10-01", null, {
+          description: "NORTHWIND UTILITIES ACCT ENDING 4821",
+        }),
+        txn("utility-credit", 1_500, "2026-10-05", null, { description: "NORTHWIND UTILITIES" }),
+        // A payment of a card the app does not track, past its window, so it is Spending (step
+        // 5.1), and the bank's reversal of it, money in with no Category.
+        fakeTxn({
+          id: "card-payment",
+          accountId: CHECKING,
+          amount: -20_000,
+          postedDate: "2026-10-01",
+          description: "PAYMENT TO CHASE CARD ENDING IN 7731",
+          merchantName: null,
+          category: CARD_PAYMENT,
+        }),
+        fakeTxn({
+          id: "card-payment-reversal",
+          accountId: CHECKING,
+          amount: 20_000,
+          postedDate: "2026-10-06",
+          description: "CHASE EPAY REVERSAL",
+          merchantName: null,
+          category: CARD_PAYMENT,
+        }),
+      ],
+    });
+
+    expect((await decisionOf("card-payment"))?.step).toBe("5.1");
+    expect(await links()).toEqual([
+      { money: "card-payment-reversal", spending: "card-payment", kind: "Refund", madeBy: "app" },
+      { money: "utility-credit", spending: "utility", kind: "Refund", madeBy: "app" },
+    ]);
+  });
+
   it("never makes an undone Refund link again", async () => {
     await sync({
       added: [

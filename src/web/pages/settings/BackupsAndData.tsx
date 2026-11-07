@@ -1,19 +1,31 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, Fragment, useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { BackupsView } from "../../../server/backups-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD, PasteField } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
 import { lastCheckText, sendPastedKey } from "../../master-key.ts";
+import {
+  BUTTONS,
+  DoneLine,
+  HINT,
+  LABEL,
+  Lead,
+  SettingCard,
+  TabHeading,
+  TEXTAREA,
+} from "./settings-ui.tsx";
 
 // Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11),
-// "Check my master key" (spec 09, The Master key), and "Download my data" (spec 11, Data export).
+// "Check my Master key" (spec 09, The Master key), and "Download my data" (spec 11, Data export).
 
 // "Back up now" sends an empty JSON body: the route takes only JSON.
 export const backUpNow = () => api.backups.now.$post({ json: {} });
 
-// "Download my data" sends the code as JSON: the route takes only JSON.
-export const downloadMyData = (code: string) => api.export.$post({ json: { code } });
+// "Download my data" sends an empty JSON body: the route takes only JSON.
+export const downloadMyData = () => api.export.$post({ json: {} });
 
 // The file name the server gave the ZIP, or a plain one.
 export function exportFileName(res: Response): string {
@@ -34,24 +46,45 @@ function momentLabel(at: string, zone: string, now: Date): string {
   return `${dateLabel(calendarDateIn(moment, zone), calendarDateIn(now, zone))} at ${timeLabel(moment, zone)}`;
 }
 
+// A folder path that wraps on a phone at its separators, not mid-name: a line break may fall after
+// each "/" or "\". <wbr> adds no character, so the path copies as it is. A name too long for the
+// line still breaks, so the page never scrolls sideways.
+export function FolderPath(props: { path: string }) {
+  const parts = props.path.split(/(?<=[/\\])/);
+  return (
+    <code className="font-mono text-sm [overflow-wrap:anywhere]">
+      {parts.map((part, index) => (
+        // The parts of one path never move, so each one's place is its key.
+        // biome-ignore lint/suspicious/noArrayIndexKey: see above.
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 ? <wbr /> : null}
+        </Fragment>
+      ))}
+    </code>
+  );
+}
+
 export function BackupLines(props: { backups: BackupsView; zone: string; now?: Date }) {
   const { backups, zone } = props;
   const now = props.now ?? new Date();
   const count = backups.files === 1 ? "1 file" : `${backups.files} files`;
   return (
     <>
-      <p className="mt-2">
-        Backups go to <code>{backups.folder}</code>. The app keeps the newest 7 backups and 3 safety
-        copies, and uploads nothing.
+      <p className="mt-3">
+        Backups go to <FolderPath path={backups.folder} />. The app keeps the newest 7 backups and 3
+        safety copies, and uploads nothing.
       </p>
       {backups.readable ? (
-        <p className="mt-2">
+        <p className="mt-1.5">
           {backups.lastBackupAt === null
             ? "No backup yet."
             : `Last backup: ${momentLabel(backups.lastBackupAt, zone, now)}. ${count}, ${sizeLabel(backups.bytes)} in all.`}
         </p>
       ) : (
-        <p className="mt-2 text-red-700">The app cannot read the backup folder.</p>
+        <p className="mt-1.5">
+          <StatusText tone="critical">The app cannot read the backup folder.</StatusText>
+        </p>
       )}
     </>
   );
@@ -89,22 +122,19 @@ function Backups() {
   }
 
   return (
-    <section className="mt-4">
-      <h3 className="font-semibold">Backups</h3>
-      <p className="mt-2">The app backs up its data every day at 3:00 AM, Household time.</p>
+    <SettingCard id="backups" title="Backups">
+      <Lead>The app backs up its data every day at 3:00 AM, Household time.</Lead>
       {backups === undefined || zone === undefined ? null : (
         <BackupLines backups={backups} zone={zone} />
       )}
-      <button className={BUTTON} type="button" disabled={busy} onClick={backUp}>
-        Back up now
-      </button>
-      {done === undefined ? null : (
-        <p className="mt-3 text-green-700" role="status">
-          {done}
-        </p>
-      )}
+      <div className={BUTTONS}>
+        <Button type="button" variant="outlined" disabled={busy} onClick={backUp}>
+          Back up now
+        </Button>
+      </div>
+      <DoneLine done={done} />
       <ErrorLine error={error} />
-    </section>
+    </SettingCard>
   );
 }
 
@@ -149,33 +179,44 @@ function CheckMasterKey() {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <h3 className="font-semibold">Check my master key</h3>
-      <p className="mt-2">
-        Paste the Master key you saved, and the app says whether it matches. The app never shows the
-        Master key.
+    <SettingCard id="check-my-master-key" title="Check my Master key">
+      <form onSubmit={submit}>
+        <Lead>
+          Paste the Master key you saved, and the app says whether it matches. The app never shows
+          the Master key.
+        </Lead>
+        {lastCheck === undefined || zone === undefined ? null : (
+          <p className={HINT}>{lastCheckText(lastCheck, zone)}</p>
+        )}
+        <label className={LABEL}>
+          Master key
+          <textarea
+            className={TEXTAREA}
+            rows={3}
+            autoComplete="off"
+            spellCheck={false}
+            required
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+          />
+        </label>
+        <div className={BUTTONS}>
+          <Button type="submit" disabled={busy}>
+            Check my Master key
+          </Button>
+        </div>
+        <DoneLine done={done} />
+        <ErrorLine error={error} />
+      </form>
+      <p className="mt-3 text-small text-muted">
+        No code is needed. You signed in with one already.
       </p>
-      {lastCheck === undefined || zone === undefined ? null : (
-        <p className="mt-2 text-gray-600">{lastCheckText(lastCheck, zone)}</p>
-      )}
-      <PasteField label="Master key" value={pasted} onChange={setPasted} />
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Check my master key
-      </button>
-      {done === undefined ? null : (
-        <p className="mt-3 text-green-700" role="status">
-          {done}
-        </p>
-      )}
-      <ErrorLine error={error} />
-    </form>
+    </SettingCard>
   );
 }
 
-// The data export asks for a fresh code, and says before the download that the file is not
-// encrypted (spec 11, Data export).
+// The data export says before the download that the file is not encrypted (spec 11, Data export).
 export function DownloadMyData() {
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
@@ -185,9 +226,8 @@ export function DownloadMyData() {
     setBusy(true);
     setError(undefined);
     setDone(undefined);
-    downloadMyData(code.trim())
+    downloadMyData()
       .then(async (res) => {
-        setCode("");
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: unknown };
           setError(typeof body.error === "string" ? body.error : "That did not work.");
@@ -208,44 +248,35 @@ export function DownloadMyData() {
   }
 
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <h3 className="font-semibold">Download my data</h3>
-      <p className="mt-2">
-        One ZIP file: your Transactions, Accounts, Budgets, Goals, and Category rules as CSV files,
-        and all the app's data in data.json. It holds no keys, passwords, or codes.
-      </p>
-      <p className="mt-2 font-medium">
-        The file is not encrypted. Anyone who has it can read your Household's money. Keep it
-        somewhere safe.
-      </p>
-      <label className="mt-3 block">
-        To download, enter a code from your authenticator app, or a backup code
-        <input
-          className={FIELD}
-          inputMode="text"
-          autoComplete="one-time-code"
-          required
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-      </label>
-      <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
-        Download my data
-      </button>
-      {done === undefined ? null : (
-        <p className="mt-3 text-green-700" role="status">
-          {done}
+    <SettingCard id="download-my-data" title="Download my data">
+      <form onSubmit={submit}>
+        <Lead>
+          One ZIP file: your Transactions, Accounts, Budgets, Goals, and Category rules as CSV
+          files, and all the app's data in data.json. It holds no keys, passwords, or codes.
+        </Lead>
+        <p className="mt-3 font-semibold">
+          The file is not encrypted. Anyone who has it can read your Household's money. Keep it
+          somewhere safe.
         </p>
-      )}
-      <ErrorLine error={error} />
-    </form>
+        <div className={BUTTONS}>
+          <Button type="submit" variant="outlined" disabled={busy}>
+            Download my data
+          </Button>
+        </div>
+        <DoneLine done={done} />
+        <ErrorLine error={error} />
+      </form>
+      <p className="mt-3 text-small text-muted">
+        No code is needed. You signed in with one already.
+      </p>
+    </SettingCard>
   );
 }
 
 export function BackupsAndData() {
   return (
     <>
-      <h2 className="text-xl font-semibold">Backups and data</h2>
+      <TabHeading>Backups and data</TabHeading>
       <Backups />
       <CheckMasterKey />
       <DownloadMyData />

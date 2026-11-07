@@ -1,5 +1,4 @@
-import { and, count, desc, eq, inArray, isNull, max, type SQL, sql } from "drizzle-orm";
-import { shownDate } from "./bank-data.ts";
+import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database, Queries } from "./client.ts";
 import { reviewItems, transactions } from "./schema.ts";
 
@@ -56,29 +55,39 @@ export async function listReviewItemSubjects(
     .where(eq(reviewItems.kind, kind));
 }
 
-// The newest date among an item's Transactions, each the date its row shows. A loan item has
-// none, so it runs after the others made at the same moment.
-function newestSubjectDate(database: Queries): SQL {
-  return sql`(${database
-    .select({ date: max(shownDate) })
-    .from(transactions)
-    .where(sql`${transactions.id} in (select value from json_each(${reviewItems.subjectIds}))`)})`;
+// The newest date an item's shown Transactions show: the purchase date, else the posted date. Null
+// for a loan item, or when none of its Transactions shows. Each item reads its own few Transactions
+// by ID.
+const subjectDate = sql<string | null>`(
+  SELECT max(coalesce(${transactions.authorizedDate}, ${transactions.postedDate}))
+  FROM json_each(${reviewItems.subjectIds}) AS subject
+  JOIN ${transactions} ON ${transactions.id} = subject.value
+  WHERE ${reviewItems.subjectType} = 'transactions' AND ${transactions.hiddenReason} IS NULL
+)`;
+
+// Every open item in the Review list page's order: newest first, and items made at the same moment
+// by their Transaction's date, newest first, then by ID (spec 07, Review list page). A loan item
+// comes after them.
+export async function listReviewListItems(database: Database): Promise<StoredReviewItem[]> {
+  return database
+    .select()
+    .from(reviewItems)
+    .where(isNull(reviewItems.closedAt))
+    .orderBy(
+      desc(reviewItems.createdAt),
+      sql`${subjectDate} DESC NULLS LAST`,
+      desc(reviewItems.id),
+    );
 }
 
-// Newest first. Items made at the same moment, such as by one follow-up job, run by their
-// Transactions' date, newest first, then by ID, so the order is the same on every read (spec 07,
-// Review list page).
-function newestFirst(database: Queries): SQL[] {
-  return [desc(reviewItems.createdAt), desc(newestSubjectDate(database)), desc(reviewItems.id)];
-}
-
-// Every open item, newest first.
+// Every open item, newest made first, for callers that settle or revise items and need no page
+// order, so they skip each item's Transaction dates.
 export async function listOpenReviewItems(database: Database): Promise<StoredReviewItem[]> {
   return database
     .select()
     .from(reviewItems)
     .where(isNull(reviewItems.closedAt))
-    .orderBy(...newestFirst(database));
+    .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
 }
 
 // Every open item of one kind, newest first.
@@ -90,7 +99,7 @@ export async function listOpenReviewItemsOfKind(
     .select()
     .from(reviewItems)
     .where(and(isNull(reviewItems.closedAt), eq(reviewItems.kind, kind)))
-    .orderBy(...newestFirst(database));
+    .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
 }
 
 export async function countOpenReviewItems(database: Database): Promise<number> {

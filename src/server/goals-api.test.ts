@@ -241,17 +241,14 @@ describe("adding a Goal and editing its words", () => {
       notices: { raise: async () => undefined, end: async () => undefined },
     };
     await markSetupStep(test.database, "master key", "done");
-    const saved = await aiSettings(aiOptions).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: { input: 1, output: 1 }, writer: { input: 1, output: 1 } },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings(aiOptions).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: { input: 1, output: 1 }, writer: { input: 1, output: 1 } },
+    });
     expect(saved).toMatchObject({ saved: true });
     callsBefore = stub.calls.length;
     app = createApp(

@@ -14,11 +14,22 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../auth/index.ts";
 import { addMember } from "../auth/testing.ts";
-import { closeDatabase } from "../db/index.ts";
+import { DEMO_BANKS } from "../bank/demo.ts";
+import { closeDatabase, markSetupStep, openDatabase } from "../db/index.ts";
+import { scheduledTasks } from "../jobs/list.ts";
 import { createLogger, log } from "../log.ts";
 import { setupCodeOf, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKeyHex } from "../secrets/testing.ts";
-import { DevStartError, openDevDatabase, showSetupLink, withDevMasterKey } from "./dev-app.ts";
+import * as appModule from "./app.ts";
+import {
+  createDevApp,
+  DevStartError,
+  devScheduledTasks,
+  openDevDatabase,
+  showSetupLink,
+  withDevMasterKey,
+} from "./dev-app.ts";
+import { TestBrowser } from "./testing.ts";
 
 // `pnpm dev` makes its own Master key in .dev/ when none is set, so local dev is one command.
 
@@ -237,5 +248,134 @@ describe("the dev setup link", () => {
 
     expect(written).toEqual([]);
     for (const spy of logged) expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+// createDevApp runs the services `pnpm start` runs, on the dev folder, plus the fake adapter and
+// its fake bank route. No test uses a real Bank-data provider or real bank data, and no scheduled
+// task runs, so nothing calls out.
+describe("the dev app", () => {
+  let root: string;
+  let folder: string;
+  let webRoot: string;
+  let running: { close(): Promise<void> }[];
+  const APP_URL = "http://localhost:5173";
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "fft-dev-"));
+    folder = join(root, ".dev");
+    webRoot = join(root, "web");
+    mkdirSync(webRoot);
+    writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
+    running = [];
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  });
+
+  afterEach(async () => {
+    await Promise.all(running.map((app) => app.close()));
+    vi.restoreAllMocks();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  async function start() {
+    const dev = await createDevApp(webRoot, { APP_URL }, { folder, tasks: [] });
+    running.push(dev);
+    return dev;
+  }
+
+  async function stop(dev: { close(): Promise<void> }) {
+    running.splice(running.indexOf(dev), 1);
+    await dev.close();
+  }
+
+  // The first Member, made in the dev app.db before the dev app starts, past the wizard's step 3.
+  async function firstMember() {
+    const { masterKey, database } = await openDevDatabase({}, folder);
+    try {
+      const quiet = createLogger(() => {}, { throwOnSecretField: true });
+      const secrets = await unlockSecrets(database, masterKey, { logger: quiet });
+      const auth = createAuth({ database, secrets, appOrigin: APP_URL, logger: quiet });
+      const member = await addMember(auth, { name: "Alice", email: "alice@example.test" });
+      await markSetupStep(database, "master key", "done");
+      return member;
+    } finally {
+      closeDatabase(database);
+    }
+  }
+
+  async function historyLoaded(): Promise<unknown[]> {
+    const database = await openDatabase(`file:${join(folder, "app.db")}`);
+    try {
+      const { rows } = await database.$client.execute("SELECT history_loaded FROM connections");
+      return rows.map((row) => row.history_loaded);
+    } finally {
+      closeDatabase(database);
+    }
+  }
+
+  it("links a demo bank through the fake adapter, and its first sync loads the whole history", async () => {
+    const member = await firstMember();
+    const dev = await start();
+    const tab = new TestBrowser(dev.app, APP_URL, "192.168.1.1");
+    await tab.signIn(member);
+
+    const list = await tab.get("/api/connections");
+    expect(((await list.json()) as { fakeBank: boolean }).fakeBank).toBe(true);
+    const linked = await tab.post("/api/dev/fake-bank", {});
+
+    expect(linked.status).toBe(200);
+    const body = (await linked.json()) as { connection: { bankName: string } };
+    expect(body.connection.bankName).toBe(DEMO_BANKS[0]?.bankName);
+    // The first sync runs as a background job, through the fake adapter's script.
+    const deadline = Date.now() + 10_000;
+    while ((await historyLoaded())[0] !== 1) {
+      if (Date.now() > deadline) throw new Error("The first sync never loaded the history.");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  });
+
+  it("stops its jobs and closes app.db on close, so it starts again, as after an edit under `pnpm dev`", async () => {
+    const member = await firstMember();
+    await stop(await start());
+
+    const again = await start();
+    const tab = new TestBrowser(again.app, APP_URL, "192.168.1.2");
+    await tab.signIn(member);
+
+    expect((await tab.post("/api/dev/fake-bank", {})).status).toBe(200);
+  });
+
+  it("closes its services when building the app fails, so the next start, after a fix, works", async () => {
+    const member = await firstMember();
+    const createApp = vi.spyOn(appModule, "createApp").mockImplementationOnce(() => {
+      throw new TypeError("A route that an edit broke.");
+    });
+
+    await expect(start()).rejects.toThrow("A route that an edit broke.");
+    expect(createApp).toHaveBeenCalledTimes(1);
+
+    const fixed = await start();
+    const tab = new TestBrowser(fixed.app, APP_URL, "192.168.1.3");
+    await tab.signIn(member);
+    expect((await tab.get("/api/connections")).status).toBe(200);
+  });
+});
+
+// `pnpm dev` makes no scheduled outside call: it runs `pnpm start`'s scheduled tasks, less the
+// update check (GitHub) and the CPI fetch (BLS).
+describe("the dev app's scheduled tasks", () => {
+  it("leave out the update check and the CPI fetch, and keep every other task", () => {
+    const names = devScheduledTasks.map((task) => task.name);
+
+    expect(names).not.toContain("update check");
+    expect(names).not.toContain("cpi fetch");
+    expect(names).toEqual(
+      scheduledTasks
+        .map((task) => task.name)
+        .filter((name) => name !== "update check" && name !== "cpi fetch"),
+    );
+    expect(scheduledTasks.map((task) => task.name)).toEqual(
+      expect.arrayContaining(["update check", "cpi fetch"]),
+    );
   });
 });

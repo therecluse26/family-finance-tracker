@@ -1,8 +1,8 @@
 // `pnpm seed:demo`: loads the demo Household into the dev app.db in .dev/, which `pnpm dev` uses,
-// through the fake adapter. It is a dev script only: it is not an `fft` command, it is not in the
-// image, and no screen offers the fake provider. It uses the Master key that `pnpm dev` uses:
-// .dev/master.key, or the key set in FFT_MASTER_KEY_FILE or FFT_MASTER_KEY. It adds no Member:
-// sign in with the first Member, made from the setup link that `pnpm dev` prints.
+// through the fake adapter. It is a dev script only: it is not an `fft` command, and it is not in
+// the image. It uses the Master key that `pnpm dev` uses: .dev/master.key, or the key set in
+// FFT_MASTER_KEY_FILE or FFT_MASTER_KEY. It adds no Member: sign in with the first Member, made
+// from the setup link that `pnpm dev` prints.
 import { seedDemoHousehold } from "../src/bank/demo.ts";
 import { FakeBankAdapter } from "../src/bank/fake.ts";
 import { startBank } from "../src/bank/index.ts";

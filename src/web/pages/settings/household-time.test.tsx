@@ -142,14 +142,18 @@ describe("the Settings source", () => {
         (match) => ({ name, field: match[0] }),
       ),
     );
-    expect(codeFields.length).toBeGreaterThan(5);
+    // TOTP is asked only at sign-in (spec 09, Sensitive actions), so Settings keeps one code field:
+    // the new TOTP's code in My login.
+    expect(codeFields.length).toBeGreaterThan(0);
     for (const { name, field } of codeFields) {
       expect(field, name).not.toMatch(/inputMode="numeric"|pattern=/);
       if (field.startsWith("<input")) expect(field, name).toContain('inputMode="text"');
     }
   });
 
-  it("lets the invite link's code field take a backup code with letters", () => {
+  // TOTP is asked only at sign-in (spec 09, Sensitive actions): making an invite link asks for no
+  // code, so no field can refuse a backup code with letters.
+  it("asks for no code to make an invite link", () => {
     const html = renderToString(
       <MembersLists
         members={[]}
@@ -159,8 +163,7 @@ describe("the Settings source", () => {
         onRemoved={() => {}}
       />,
     );
-    const field = html.match(/<input[^>]*one-time-code[^>]*>/)?.[0] ?? "";
-    expect(field).toContain('inputMode="text"');
-    expect(field).not.toMatch(/pattern=|inputMode="numeric"/);
+    expect(html).toContain("Make an invite link");
+    expect(html).not.toContain("one-time-code");
   });
 });

@@ -1,6 +1,7 @@
 import { type UIMessage, useChat } from "@ai-sdk/react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
+import { calendarDateIn, dateLabel } from "../../format.ts";
 import type {
   ChatMessageView,
   ChatProposalView,
@@ -8,6 +9,7 @@ import type {
   ChatThreadItemView,
   ChatThreadView,
 } from "../../server/chat-views.ts";
+import { browserZone } from "../browser-zone.ts";
 import {
   type AskAbout,
   askAboutOf,
@@ -25,16 +27,37 @@ import {
   startThread,
   statusLine,
 } from "../chat.ts";
-import { ErrorLine, FIELD } from "../components/Fields.tsx";
+import { Button, buttonClass } from "../components/Button.tsx";
+import { ErrorLine } from "../components/Fields.tsx";
 import { ProposalCard } from "../components/Proposal.tsx";
+import { AiMark } from "../components/Status.tsx";
 
 // The Chat page (spec 07, Chat page; spec 08, Chat): the threads, newest first, and the open one.
 // Every Member sees every thread, and each message shows who wrote it: a Member's name, or "AI".
 // The answer shows as the AI writes it, through @ai-sdk/react's useChat. A failed answer shows its
 // error with "Try again", and nothing retries by itself.
 
-const BUTTON = "rounded border border-gray-300 px-3 py-1 disabled:opacity-50";
-const SEND = "rounded bg-blue-700 px-4 py-2 text-white disabled:opacity-50";
+// The board's faint grey behind the thread list and a Proposal. It has no token yet.
+const FAINT = "bg-[#FBFBFC]";
+// The input row's Send, as tall as the input. The shared Button has no 46 px size.
+const SEND =
+  "inline-flex h-[46px] shrink-0 items-center justify-center rounded-control bg-accent px-5 text-sm font-semibold text-white hover:bg-accent-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50";
+// The side padding of the thread's header, messages and input.
+const GUTTER = "px-4 min-[900px]:px-7";
+const EVERY_MEMBER = "Every Member sees every thread.";
+
+// The page fills the screen, as on the board: it takes back the shell's padding around the page,
+// so the threads and the open thread run from the top of the screen to its foot. Below 900 px it
+// stops above the shell's 59 px tab bar (and the phone's safe area under it); the shell's bottom
+// padding is taken back with it, so the page itself never scrolls. Inside, the thread list and
+// the messages scroll on their own, and the input stays at the foot.
+const CHAT_PAGE =
+  "-mx-4 -mt-4 -mb-24 flex h-dvh min-w-0 flex-col pb-[calc(59px+env(safe-area-inset-bottom))] min-[900px]:-mx-5 min-[900px]:-mt-7 min-[900px]:-mb-12 min-[900px]:pb-0";
+// The open thread, or a new one: its header, its messages, and the input.
+const THREAD_PANE = "flex min-h-0 min-w-0 flex-1 flex-col wrap-anywhere";
+// The messages scroll inside the pane, so the input stays in view.
+const SCROLLER = "min-h-0 flex-1 overflow-y-auto";
+const MESSAGES = `w-full max-w-[816px] py-6 ${GUTTER}`;
 
 // What the page shows after "Send": the new thread answers its first message once it opens.
 type OpenState = { answer: true; sendAnyway: boolean };
@@ -55,13 +78,54 @@ export function AiWords(props: { text: string }) {
   );
 }
 
-function Message(props: { name: string; text: string; ai: boolean }) {
+// The small ring the board shows while the AI works on an answer.
+function Working() {
   return (
-    <li className="min-w-0 rounded border border-gray-200 p-3" data-slot="chat-message">
-      <p className="text-sm font-semibold text-gray-600">{props.name}</p>
-      <p className="mt-1 whitespace-pre-wrap wrap-anywhere">
-        {props.ai ? <AiWords text={props.text} /> : props.text}
-      </p>
+    <svg
+      aria-hidden="true"
+      className="mr-2 inline-block align-[-3px] motion-safe:animate-spin"
+      width="18"
+      height="18"
+      viewBox="0 0 40 40"
+    >
+      <circle cx="20" cy="20" r="16" className="stroke-line" strokeWidth="5" fill="none" />
+      <path
+        d="M20 4a16 16 0 0 1 16 16"
+        className="stroke-ai"
+        strokeWidth="5"
+        fill="none"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// A Member's message sits on the right in blue, under the Member's name. The AI's sits on the
+// left in white, under the AI tag, which reads "AI".
+function Message(props: { name: string; text: string; ai: boolean; working?: boolean }) {
+  if (props.ai) {
+    return (
+      <li
+        className="max-w-[88%] min-w-0 self-start rounded-card rounded-bl-[4px] border border-line bg-white px-4 py-3.5 min-[900px]:px-[18px]"
+        data-slot="chat-message"
+      >
+        <p className="text-xs">
+          <AiMark />
+        </p>
+        <p className="mt-1.5 leading-[1.55] whitespace-pre-wrap wrap-anywhere">
+          {props.working === true ? <Working /> : null}
+          <AiWords text={props.text} />
+        </p>
+      </li>
+    );
+  }
+  return (
+    <li
+      className="max-w-[80%] min-w-0 self-end rounded-card rounded-br-[4px] bg-accent px-4 py-3 text-white"
+      data-slot="chat-message"
+    >
+      <p className="text-xs text-white/85">{props.name}</p>
+      <p className="mt-0.5 whitespace-pre-wrap wrap-anywhere">{props.text}</p>
     </li>
   );
 }
@@ -86,17 +150,22 @@ function ThreadProposal(props: {
         proposal={proposal}
         onChanged={props.onChanged}
         onAsk={() => props.onAsk(askAboutProposal(proposal))}
+        className="max-w-[88%] self-start"
       />
     );
   }
   return (
     <li
-      className="min-w-0 rounded border border-gray-200 p-3 text-sm wrap-anywhere"
+      className={`max-w-[88%] min-w-0 self-start rounded-[10px] border border-line ${FAINT} px-3.5 py-3 text-sm wrap-anywhere`}
       data-slot="chat-proposal"
     >
-      <p className="font-semibold">Proposal: {STATUS_WORDS[proposal.status]}</p>
+      <p className="text-small font-semibold text-muted">
+        Proposal: {STATUS_WORDS[proposal.status]}
+      </p>
       {proposal.changes.map((change) => (
-        <p key={change}>{change}</p>
+        <p key={change} className="mt-0.5 text-ink-soft">
+          {change}
+        </p>
       ))}
     </li>
   );
@@ -126,7 +195,7 @@ export function ThreadMessages(props: {
   for (const message of thread.messages) {
     if (message.id === thread.firstSent) {
       items.push(
-        <li key="dropped" className="border-t border-gray-400 pt-1 text-sm text-gray-600">
+        <li key="dropped" className="border-t border-field pt-1.5 text-small text-muted">
           {DROPPED_LINE}
         </li>,
       );
@@ -140,12 +209,20 @@ export function ThreadMessages(props: {
     );
   }
   if (props.live !== undefined) {
-    items.push(<Message key="live-answer" name="AI" text={props.live.answer || "…"} ai />);
+    items.push(
+      <Message
+        key="live-answer"
+        name="AI"
+        text={props.live.answer || "…"}
+        ai
+        working={props.live.answer === ""}
+      />,
+    );
   }
   // A Proposal whose answer failed still shows, after the messages.
   items.push(...proposalsOf(null));
   return (
-    <ol aria-label="Messages" className="mt-3 flex flex-col gap-2">
+    <ol aria-label="Messages" className="flex flex-col gap-[18px]">
       {items}
     </ol>
   );
@@ -173,30 +250,34 @@ export function Composer(props: {
     else props.onSend(false);
   }
   return (
-    <form className="mt-3" onSubmit={submit}>
-      <p className="text-sm text-gray-600" data-slot="chat-privacy">
-        {PRIVACY_NOTICE}
-      </p>
+    <form className={`-mt-px border-t border-line bg-white pt-4 pb-5 ${GUTTER}`} onSubmit={submit}>
       {blocked === undefined ? null : (
-        <p className="mt-2 text-gray-700" data-slot="chat-blocked">
+        <p className="mb-2 text-sm text-ink-soft" data-slot="chat-blocked">
           {blocked}
         </p>
       )}
-      <textarea
-        aria-label="Message"
-        className={FIELD}
-        rows={3}
-        placeholder={INPUT_PLACEHOLDER}
-        value={props.draft}
-        disabled={blocked !== undefined}
-        onChange={(event) => props.onDraft(event.target.value)}
-      />
+      <div className="flex items-start gap-2.5">
+        <textarea
+          aria-label="Message"
+          className="block min-h-[46px] min-w-0 flex-1 resize-y rounded-xl border border-field bg-white px-3.5 py-[11px] field-sizing-content disabled:bg-page"
+          rows={1}
+          placeholder={INPUT_PLACEHOLDER}
+          value={props.draft}
+          disabled={blocked !== undefined}
+          onChange={(event) => props.onDraft(event.target.value)}
+        />
+        {asking ? null : (
+          <button type="submit" className={SEND} disabled={props.busy || blocked !== undefined}>
+            Send
+          </button>
+        )}
+      </div>
       {asking ? (
-        <div className="mt-2 flex items-center gap-2" data-slot="send-anyway">
+        <div className="mt-2 flex flex-wrap items-center gap-2" data-slot="send-anyway">
           <span>{SEND_ANYWAY}</span>
-          <button
+          <Button
             type="button"
-            className={SEND}
+            size="small"
             disabled={props.busy}
             onClick={() => {
               setAsking(false);
@@ -204,20 +285,15 @@ export function Composer(props: {
             }}
           >
             Send
-          </button>
-          <button type="button" className={BUTTON} onClick={() => setAsking(false)}>
+          </Button>
+          <Button type="button" variant="outlined" size="small" onClick={() => setAsking(false)}>
             Cancel
-          </button>
+          </Button>
         </div>
-      ) : (
-        <button
-          type="submit"
-          className={`${SEND} mt-2`}
-          disabled={props.busy || blocked !== undefined}
-        >
-          Send
-        </button>
-      )}
+      ) : null}
+      <p className="mt-2 text-small text-muted" data-slot="chat-privacy">
+        {PRIVACY_NOTICE}
+      </p>
     </form>
   );
 }
@@ -229,16 +305,18 @@ function Problem(props: {
   onTryAgain: (sendAnyway: boolean) => void;
 }) {
   return (
-    <div className="mt-3" data-slot="chat-problem">
+    <div className="mt-4" data-slot="chat-problem">
       <ErrorLine error={props.problem.error} />
-      <button
+      <Button
         type="button"
-        className={`${BUTTON} mt-2`}
+        variant="outlined"
+        size="small"
+        className="mt-2"
         disabled={props.busy}
         onClick={() => props.onTryAgain(props.problem.sendAnyway)}
       >
         {props.problem.sendAnyway ? "Send anyway" : "Try again"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -300,6 +378,16 @@ function OpenThread(props: {
     props.onFirstAnswer();
   }, []);
 
+  // The messages scroll inside the pane: the newest shows when the thread opens and when a
+  // message joins it.
+  const scroller = useRef<HTMLDivElement>(null);
+  const shown = thread.messages.length + chat.messages.length;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: when the count of messages changes.
+  useEffect(() => {
+    const box = scroller.current;
+    if (box !== null) box.scrollTop = box.scrollHeight;
+  }, [shown]);
+
   function send(sendAnyway: boolean) {
     const text = draft;
     if (text.trim() === "") return;
@@ -328,56 +416,82 @@ function OpenThread(props: {
       : undefined;
 
   return (
-    <section
-      aria-label={thread.title}
-      className="min-w-0 flex-1 wrap-anywhere"
-      data-slot="chat-thread"
-    >
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="min-w-0 text-lg font-semibold wrap-anywhere">{thread.title}</h2>
-        <button type="button" className={`${BUTTON} shrink-0`} onClick={() => void remove()}>
+    <section aria-label={thread.title} className={THREAD_PANE} data-slot="chat-thread">
+      <ThreadHeader title={thread.title}>
+        <Button
+          type="button"
+          variant="outlined"
+          size="small"
+          className="shrink-0"
+          onClick={() => void remove()}
+        >
           Delete thread
-        </button>
+        </Button>
+      </ThreadHeader>
+      <div ref={scroller} className={SCROLLER} data-slot="chat-scroll">
+        <div className={MESSAGES}>
+          <ErrorLine error={error} />
+          {thread.note === null ? null : <AttachedNote note={thread.note} />}
+          <ThreadMessages
+            thread={thread}
+            live={live}
+            onChanged={() => void props.onChanged()}
+            onAsk={props.onAsk}
+          />
+          {problem !== undefined ? (
+            <Problem
+              problem={problem}
+              busy={busy}
+              // A message the route refused is back in the input: it goes again from there.
+              onTryAgain={problem.notStored ? send : answerAgain}
+            />
+          ) : unanswered && props.answerFirst === undefined ? (
+            <Problem
+              problem={{
+                error: "This message has no answer yet.",
+                sendAnyway: props.status === "send anyway?",
+                notStored: false,
+              }}
+              busy={busy}
+              onTryAgain={answerAgain}
+            />
+          ) : null}
+        </div>
       </div>
-      <ErrorLine error={error} />
-      {thread.note === null ? null : <AttachedNote note={thread.note} />}
-      <ThreadMessages
-        thread={thread}
-        live={live}
-        onChanged={() => void props.onChanged()}
-        onAsk={props.onAsk}
-      />
-      {problem !== undefined ? (
-        <Problem
-          problem={problem}
-          busy={busy}
-          // A message the route refused is back in the input: it goes again from there.
-          onTryAgain={problem.notStored ? send : answerAgain}
-        />
-      ) : unanswered && props.answerFirst === undefined ? (
-        <Problem
-          problem={{
-            error: "This message has no answer yet.",
-            sendAnyway: props.status === "send anyway?",
-            notStored: false,
-          }}
-          busy={busy}
-          onTryAgain={answerAgain}
-        />
-      ) : null}
       <Composer status={props.status} draft={draft} onDraft={setDraft} busy={busy} onSend={send} />
     </section>
   );
 }
 
-function AttachedNote(props: { note: { kind: string; title: string; lines: string[] } }) {
+// The thread's title in a white bar over its messages, with who sees it under it.
+function ThreadHeader(props: { title: string; children?: ReactNode }) {
   return (
-    <div className="mt-2 rounded bg-gray-50 p-3 text-sm wrap-anywhere" data-slot="chat-note">
+    <header
+      className={`flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-line py-4 min-[900px]:py-5 ${GUTTER}`}
+    >
+      <div className="min-w-0 flex-[1_1_12rem]">
+        <h2 className="text-lg font-bold wrap-anywhere min-[900px]:text-xl">{props.title}</h2>
+        <p className="mt-0.5 text-small text-muted">{EVERY_MEMBER}</p>
+      </div>
+      {props.children}
+    </header>
+  );
+}
+
+export function AttachedNote(props: { note: { kind: string; title: string; lines: string[] } }) {
+  return (
+    <div
+      className={`mb-[18px] rounded-[10px] border border-line ${FAINT} px-3.5 py-3 text-sm wrap-anywhere`}
+      data-slot="chat-note"
+    >
       <p className="font-semibold">
         {props.note.kind}: {props.note.title}
       </p>
-      {props.note.lines.map((line) => (
-        <p key={line}>{line}</p>
+      {props.note.lines.map((line, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a stored note never changes, and two of its lines may match.
+        <p key={index} className="mt-0.5 text-ink-soft">
+          {line}
+        </p>
       ))}
     </div>
   );
@@ -403,18 +517,25 @@ export function NewThread(props: {
   }
 
   return (
-    <section aria-label="New thread" className="min-w-0 flex-1 wrap-anywhere" data-slot="chat-new">
-      <h2 className="text-lg font-semibold">New thread</h2>
-      {props.ask === null ? null : (
-        <div className="mt-2 rounded bg-gray-50 p-3 text-sm wrap-anywhere" data-slot="chat-note">
-          <p className="font-semibold">
-            {props.ask.kind}: {props.ask.title}
-          </p>
+    <section aria-label="New thread" className={THREAD_PANE} data-slot="chat-new">
+      <ThreadHeader title="New thread" />
+      <div className={SCROLLER} data-slot="chat-scroll">
+        <div className={MESSAGES}>
+          {props.ask === null ? null : (
+            <div
+              className={`rounded-[10px] border border-line ${FAINT} px-3.5 py-3 text-sm wrap-anywhere`}
+              data-slot="chat-note"
+            >
+              <p className="font-semibold">
+                {props.ask.kind}: {props.ask.title}
+              </p>
+            </div>
+          )}
+          {problem === undefined ? null : (
+            <Problem problem={problem} busy={busy} onTryAgain={(anyway) => void send(anyway)} />
+          )}
         </div>
-      )}
-      {problem === undefined ? null : (
-        <Problem problem={problem} busy={busy} onTryAgain={(anyway) => void send(anyway)} />
-      )}
+      </div>
       <Composer
         status={props.status}
         draft={draft}
@@ -426,24 +547,44 @@ export function NewThread(props: {
   );
 }
 
-export function ThreadList(props: { threads: ChatThreadItemView[]; open: string | undefined }) {
+// The threads, newest first, each with the day of its last message. On a phone the list sits over
+// the open thread, at most 160 px tall, and scrolls; from 768 px it is a column at the left, the
+// pane's full height, and scrolls on its own.
+export function ThreadList(props: {
+  threads: ChatThreadItemView[];
+  open: string | undefined;
+  today: string;
+  zone: string;
+}) {
   return (
-    <nav aria-label="Chat threads" className="min-w-0 md:w-64 md:shrink-0">
-      <Link to="/chat" className={BUTTON}>
+    <nav
+      aria-label="Chat threads"
+      className={`max-h-40 min-w-0 shrink-0 overflow-y-auto border-b border-line ${FAINT} px-3 py-4 md:max-h-none md:w-[260px] md:border-r md:border-b-0 md:py-5`}
+    >
+      <Link to="/chat" className={`${buttonClass("primary")} w-full`}>
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14">
+          <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
         New thread
       </Link>
       {props.threads.length === 0 ? (
-        <p className="mt-2 text-sm text-gray-600">No threads yet.</p>
+        <p className="mt-3.5 px-3.5 text-small text-muted">No threads yet.</p>
       ) : (
-        <ul className="mt-2 flex flex-col gap-1">
+        <ul className="mt-3.5 flex flex-col gap-0.5">
           {props.threads.map((thread) => (
             <li key={thread.id}>
               <Link
                 to={`/chat/${thread.id}`}
                 aria-current={thread.id === props.open ? "page" : undefined}
-                className="block truncate rounded px-2 py-1 hover:bg-gray-100 aria-[current=page]:bg-gray-100"
+                className="block truncate rounded-[10px] px-3.5 py-3 text-ink hover:bg-line-soft aria-[current=page]:bg-nav-current"
               >
-                {thread.title}
+                <span className="block truncate text-sm font-semibold">{thread.title}</span>
+                <span className="mt-0.5 block text-small text-muted">
+                  {dateLabel(
+                    calendarDateIn(new Date(thread.lastMessageAt), props.zone),
+                    props.today,
+                  )}
+                </span>
               </Link>
             </li>
           ))}
@@ -478,13 +619,28 @@ export function Chat() {
   }, [id]);
 
   const ask = (about: AskAbout) => navigate("/chat", { state: about });
+  const zone = browserZone();
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Chat</h1>
-      <ErrorLine error={error} />
+    <main className={CHAT_PAGE} data-slot="chat-page">
+      {/* The page's one heading, for screen readers and the focus a menu choice moves: as on the
+          board, the open thread's title heads the pane. */}
+      <h1 className="sr-only">Chat</h1>
+      {error === undefined ? null : (
+        <div className={`bg-white py-3 ${GUTTER}`}>
+          <ErrorLine error={error} />
+        </div>
+      )}
       {list === undefined ? null : (
-        <div className="mt-3 flex min-w-0 flex-col gap-4 md:flex-row">
-          <ThreadList threads={list.threads} open={id} />
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col bg-white md:flex-row"
+          data-slot="chat-pane"
+        >
+          <ThreadList
+            threads={list.threads}
+            open={id}
+            today={calendarDateIn(new Date(), zone)}
+            zone={zone}
+          />
           {id === undefined ? (
             <NewThread
               key={location.key}
@@ -495,7 +651,7 @@ export function Chat() {
               }
             />
           ) : thread === undefined ? null : thread === null ? (
-            <p className="text-gray-600">No Chat thread has this ID.</p>
+            <p className={`flex-1 py-6 text-muted ${GUTTER}`}>No Chat thread has this ID.</p>
           ) : (
             <OpenThread
               key={thread.id}

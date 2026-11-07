@@ -3,8 +3,11 @@ import { useNavigate } from "react-router";
 import { calendarDateIn, dateLabel } from "../../../format.ts";
 import type { InviteView, MemberView } from "../../../server/members-views.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
+import { BOX, BUTTONS, HINT, Lead, ROW, SettingCard, TabHeading } from "./settings-ui.tsx";
 
 // Settings, Members (spec 09, Members; Invites; Login reset): every Member, "Make an invite link",
 // the open invite links with Cancel, Remove on each Member, and "Reset login" on every other
@@ -13,20 +16,20 @@ import { useHouseholdZone } from "../../household-zone.ts";
 
 // The requests the page sends, each with a JSON body, even an empty one: the routes take only JSON.
 // The routes read their body themselves, so each body goes in through a separate object.
-export function makeInviteLink(code: string) {
-  const make = { json: { code } };
+export function makeInviteLink() {
+  const make = { json: {} };
   return api.invites.$post(make);
 }
 export function cancelInviteLink(id: string) {
   const cancel = { param: { id }, json: {} };
   return api.invites[":id"].cancel.$post(cancel);
 }
-export function removeMemberWithCode(id: string, code: string) {
-  const remove = { param: { id }, json: { code } };
+export function removeMember(id: string) {
+  const remove = { param: { id }, json: {} };
   return api.members[":id"].remove.$post(remove);
 }
-export function resetLoginWithCode(id: string, code: string) {
-  const reset = { param: { id }, json: { code } };
+export function resetMemberLogin(id: string) {
+  const reset = { param: { id }, json: {} };
   return api.members[":id"]["reset-login"].$post(reset);
 }
 
@@ -40,12 +43,20 @@ function dayOf(iso: string, zone: string): string {
   return dateLabel(calendarDateIn(new Date(iso), zone), calendarDateIn(new Date(), zone));
 }
 
-// One Member, with Remove, and with Reset login unless it is the Member signed in. Each asks for a
-// fresh code first.
-export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean) => void }) {
+// The line under a Household's one Member, which says why its Remove is off. The server refuses
+// that request too.
+const LAST_MEMBER_NOTE = "last-member-note";
+
+// One Member, with Remove, and with Reset login unless it is the Member signed in. Each asks the
+// Member to confirm first. The Household's last Member cannot be removed, so its Remove is off,
+// with the reason in the line under the list.
+export function MemberLine(props: {
+  member: MemberView;
+  last?: boolean;
+  onRemoved: (you: boolean) => void;
+}) {
   const { member } = props;
   const [asking, setAsking] = useState(false);
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -53,9 +64,8 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    removeMemberWithCode(member.id, code.trim())
+    removeMember(member.id)
       .then(async (res) => {
-        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         props.onRemoved(member.you);
       })
@@ -64,39 +74,39 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
   }
 
   return (
-    <li className="mt-3 rounded border border-gray-300 p-3">
-      <p>
-        <span className="font-medium">{member.name}</span>
-        {member.you ? " (you)" : ""}
-      </p>
-      <p className="text-sm text-gray-600">{member.email}</p>
+    <li className={ROW}>
+      <div className="min-w-0 flex-[1_1_220px]">
+        <p>
+          <span className="font-semibold">{member.name}</span>
+          {member.you ? " (you)" : ""}
+        </p>
+        <p className="mt-0.5 text-small break-words text-muted">{member.email}</p>
+      </div>
       {asking ? (
-        <form onSubmit={submit}>
-          <p className="mt-2">
+        <form className="w-full" onSubmit={submit}>
+          <p>
             {member.you
               ? "Removing yourself signs you out on every device, and cancels the invite links you made. You cannot sign in again."
               : `Removing ${member.name} signs them out on every device at once, and cancels the invite links they made. Their Goals and Chat messages keep their name.`}
           </p>
-          <label className="mt-3 block">
-            To remove, enter a code from your authenticator app, or a backup code
-            <input
-              className={FIELD}
-              inputMode="text"
-              autoComplete="one-time-code"
-              required
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-          </label>
-          <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
-            Remove {member.you ? "me" : member.name}
-          </button>
+          <div className={BUTTONS}>
+            <Button type="submit" disabled={busy}>
+              Remove {member.you ? "me" : member.name}
+            </Button>
+          </div>
           <ErrorLine error={error} />
         </form>
       ) : (
-        <button className={BUTTON} type="button" onClick={() => setAsking(true)}>
+        <Button
+          type="button"
+          variant="outlined"
+          size="small"
+          disabled={props.last === true}
+          aria-describedby={props.last === true ? LAST_MEMBER_NOTE : undefined}
+          onClick={() => setAsking(true)}
+        >
           Remove
-        </button>
+        </Button>
       )}
       {member.you ? null : <ResetLogin member={member} />}
     </li>
@@ -119,15 +129,17 @@ export function InviteLine(props: { invite: InviteView; zone: string; onCancelle
   }
 
   return (
-    <li className="mt-3 rounded border border-gray-300 p-3">
-      <p>
+    <li className={ROW}>
+      <p className="min-w-0 flex-[1_1_220px]">
         Made {dayOf(invite.createdAt, zone)} by {invite.madeBy}. Works until{" "}
         {dayOf(invite.expiresAt, zone)}.
       </p>
-      <button className={BUTTON} type="button" onClick={cancel}>
+      <Button type="button" variant="outlined" size="small" onClick={cancel}>
         Cancel
-      </button>
-      <ErrorLine error={error} />
+      </Button>
+      <div className="w-full empty:hidden">
+        <ErrorLine error={error} />
+      </div>
     </li>
   );
 }
@@ -147,29 +159,30 @@ export function LinkToCopy(props: { made: { link: string; expiresAt: string }; z
   }
 
   return (
-    <div className="mt-3 rounded border border-gray-300 p-3">
-      <p>Copy this link now. The app shows it only this once.</p>
-      <input className={`${FIELD} font-mono`} readOnly value={made.link} />
-      <button className={BUTTON} type="button" onClick={copy}>
-        Copy the link
-      </button>
-      {copied ? (
-        <p className="mt-2 text-green-700" role="status">
-          Copied.
-        </p>
-      ) : null}
-      <p className="mt-2">It works until {dayOf(made.expiresAt, zone)}.</p>
+    <div className="mt-3 w-full rounded-control border border-line bg-page p-3.5">
+      <p className="font-semibold">Copy this link now. The app shows it only this once.</p>
+      <input className={`${BOX} font-mono text-sm`} readOnly value={made.link} />
+      <div className={BUTTONS}>
+        <Button type="button" onClick={copy}>
+          Copy the link
+        </Button>
+        {copied ? (
+          <p className="text-small" role="status">
+            <StatusText tone="good">Copied.</StatusText>
+          </p>
+        ) : null}
+      </div>
+      <p className={HINT}>It works until {dayOf(made.expiresAt, zone)}.</p>
       <ErrorLine error={error} />
     </div>
   );
 }
 
-// "Reset login" on another Member. It asks for a fresh code, then shows the reset link once, for
-// the Member to hand over.
+// "Reset login" on another Member. It asks the Member to confirm, then shows the reset link once,
+// for the Member to hand over.
 export function ResetLogin(props: { member: MemberView }) {
   const { member } = props;
   const [asking, setAsking] = useState(false);
-  const [code, setCode] = useState("");
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -179,9 +192,8 @@ export function ResetLogin(props: { member: MemberView }) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    resetLoginWithCode(member.id, code.trim())
+    resetMemberLogin(member.id)
       .then(async (res) => {
-        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         setMade(((await res.json()) as { reset: { link: string; expiresAt: string } }).reset);
         setAsking(false);
@@ -193,7 +205,7 @@ export function ResetLogin(props: { member: MemberView }) {
   if (made !== undefined) {
     return (
       <>
-        <p className="mt-2">
+        <p className="w-full">
           {member.name} is signed out on every device. Their old password, TOTP, and backup codes no
           longer work. Give them this reset link to set a new login. It works once.
         </p>
@@ -204,42 +216,31 @@ export function ResetLogin(props: { member: MemberView }) {
 
   if (!asking) {
     return (
-      <button className={BUTTON} type="button" onClick={() => setAsking(true)}>
+      <Button type="button" variant="outlined" size="small" onClick={() => setAsking(true)}>
         Reset login
-      </button>
+      </Button>
     );
   }
 
   return (
-    <form onSubmit={submit}>
-      <p className="mt-2">
+    <form className="w-full" onSubmit={submit}>
+      <p>
         Resetting {member.name}'s login signs them out on every device at once, and their password,
         TOTP, and backup codes stop working. The app makes a reset link for you to hand to them. It
         works once, for 24 hours.
       </p>
-      <label className="mt-3 block">
-        To reset, enter a code from your authenticator app, or a backup code
-        <input
-          className={FIELD}
-          inputMode="text"
-          autoComplete="one-time-code"
-          required
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-      </label>
-      <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
-        Reset {member.name}'s login
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Reset {member.name}'s login
+        </Button>
+      </div>
       <ErrorLine error={error} />
     </form>
   );
 }
 
-// "Make an invite link", which asks for a fresh code first, and the new link, shown once for the
-// Member to copy.
+// "Make an invite link", and the new link, shown once for the Member to copy.
 export function MakeInvite(props: { onMade: () => void }) {
-  const [code, setCode] = useState("");
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -249,9 +250,8 @@ export function MakeInvite(props: { onMade: () => void }) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    makeInviteLink(code.trim())
+    makeInviteLink()
       .then(async (res) => {
-        setCode("");
         if (!res.ok) return setError(await errorOf(res));
         setMade(((await res.json()) as { invite: { link: string; expiresAt: string } }).invite);
         props.onMade();
@@ -261,33 +261,21 @@ export function MakeInvite(props: { onMade: () => void }) {
   }
 
   return (
-    <div className="mt-4">
-      <h3 className="font-semibold">Invite a Member</h3>
-      <p className="mt-2">
+    <SettingCard id="invite-a-member" title="Invite a Member">
+      <Lead>
         The app makes a link for you to copy and send by hand. It sends no email. The link works
         once, for 7 days.
-      </p>
-      <form onSubmit={submit}>
-        <label className="mt-3 block">
-          To make a link, enter a code from your authenticator app, or a backup code
-          <input
-            className={FIELD}
-            inputMode="text"
-            autoComplete="one-time-code"
-            required
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-        </label>
-        <button className={BUTTON} type="submit" disabled={busy || code.trim() === ""}>
+      </Lead>
+      <form className={BUTTONS} onSubmit={submit}>
+        <Button type="submit" variant="outlined" disabled={busy}>
           Make an invite link
-        </button>
+        </Button>
       </form>
       {made === undefined || zone === undefined ? null : (
         <LinkToCopy key={made.link} made={made} zone={zone} />
       )}
       <ErrorLine error={error} />
-    </div>
+    </SettingCard>
   );
 }
 
@@ -300,30 +288,40 @@ export function MembersLists(props: {
 }) {
   return (
     <>
-      <ul>
-        {props.members.map((member) => (
-          <MemberLine key={member.id} member={member} onRemoved={props.onRemoved} />
-        ))}
-      </ul>
-      {props.members.length === 1 ? (
-        <p className="mt-2 text-gray-600">The app cannot remove the last Member.</p>
-      ) : null}
-      <MakeInvite onMade={props.onChange} />
-      <h3 className="mt-4 font-semibold">Open invite links</h3>
-      {props.invites.length === 0 ? (
-        <p className="mt-2">No open invite links.</p>
-      ) : (
-        <ul>
-          {props.invites.map((invite) => (
-            <InviteLine
-              key={invite.id}
-              invite={invite}
-              zone={props.zone}
-              onCancelled={props.onChange}
+      <SettingCard id="members" title="Members">
+        <ul className="mt-2.5">
+          {props.members.map((member) => (
+            <MemberLine
+              key={member.id}
+              member={member}
+              last={props.members.length === 1}
+              onRemoved={props.onRemoved}
             />
           ))}
         </ul>
-      )}
+        {props.members.length === 1 ? (
+          <p id={LAST_MEMBER_NOTE} className={HINT}>
+            The app cannot remove the last Member.
+          </p>
+        ) : null}
+      </SettingCard>
+      <MakeInvite onMade={props.onChange} />
+      <SettingCard id="open-invite-links" title="Open invite links">
+        {props.invites.length === 0 ? (
+          <p className="mt-1.5 text-muted">No open invite links.</p>
+        ) : (
+          <ul className="mt-2.5">
+            {props.invites.map((invite) => (
+              <InviteLine
+                key={invite.id}
+                invite={invite}
+                zone={props.zone}
+                onCancelled={props.onChange}
+              />
+            ))}
+          </ul>
+        )}
+      </SettingCard>
     </>
   );
 }
@@ -348,7 +346,7 @@ export function Members() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">Members</h2>
+      <TabHeading>Members</TabHeading>
       {view === undefined || zone === undefined ? null : (
         <MembersLists
           members={view.members}

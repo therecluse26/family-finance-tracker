@@ -263,17 +263,14 @@ describe("the demo Household through every AI use", () => {
       notices: { raise: async () => undefined, end: async () => undefined },
     };
     sent = [];
-    const saved = await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     expect(saved).toMatchObject({ saved: true });
     // The key check on save sends only a fixed "Reply with OK.", which is no AI use.
     sent = [];

@@ -122,7 +122,7 @@ describe("Download my data", () => {
   async function signedIn(member: TestMember): Promise<TestBrowser> {
     clients += 1;
     const tab = new TestBrowser(app, APP_URL, `192.168.1.${clients}`);
-    // Each TOTP code works once, so each sign-in and each download takes its own step.
+    // Each TOTP code works once, so each sign-in takes its own step.
     later();
     await tab.signIn(member);
     later();
@@ -131,7 +131,7 @@ describe("Download my data", () => {
 
   async function exported(): Promise<Map<string, Uint8Array> & { zip: Uint8Array }> {
     const tab = await signedIn(alice);
-    const res = await download(tab, { code: await alice.totpCode() });
+    const res = await download(tab, {});
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/zip");
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -548,7 +548,7 @@ describe("Download my data", () => {
     const password = { email: bob.email, password: bob.password };
     expect((await waiting.post("/api/auth/sign-in/email", password)).status).toBe(200);
     const tab = await signedIn(bob);
-    const res = await download(tab, { code: await bob.totpCode() });
+    const res = await download(tab, {});
     const zip = new Uint8Array(await res.arrayBuffer());
     const files = readZip(zip);
     const stored = (
@@ -596,55 +596,32 @@ describe("Download my data", () => {
   });
 
   describe("the route", () => {
-    it("answers 401 with no session, 403 from another site or with no Origin, and 415 to a body that is not JSON, and uses up no code", async () => {
+    it("answers 401 with no session, 403 from another site or with no Origin, 415 to a body that is not JSON, and 400 to a body that is not empty, with no ZIP", async () => {
       const stranger = new TestBrowser(app, APP_URL, "192.168.2.1");
       const tab = await signedIn(alice);
-      const [backupCode = ""] = alice.backupCodes.slice(-1);
-      const body = { code: backupCode };
 
-      const statuses = [
-        (await download(stranger, body)).status,
-        (await download(tab, body, { origin: "http://evil.example" })).status,
-        (await download(tab, body, { origin: undefined })).status,
-        (await download(tab, body, { "content-type": "text/plain" })).status,
-        (await download(tab, {})).status,
+      const refusals = [
+        await download(stranger, {}),
+        await download(tab, {}, { origin: "http://evil.example" }),
+        await download(tab, {}, { origin: undefined }),
+        await download(tab, {}, { "content-type": "text/plain" }),
+        await download(tab, { code: "123456" }),
       ];
 
-      expect(statuses).toEqual([401, 403, 403, 415, 400]);
-      // The backup code still works: no refused request used it up.
-      const res = await download(tab, body);
-      expect(res.status).toBe(200);
-      await res.arrayBuffer();
-      expect((await download(tab, body)).status).toBe(401);
+      expect(refusals.map((res) => res.status)).toEqual([401, 403, 403, 415, 400]);
+      for (const res of refusals) {
+        expect(res.headers.get("content-type")).not.toBe("application/zip");
+      }
     });
 
-    it("refuses a TOTP code used before, and takes the next step's", async () => {
-      const tab = new TestBrowser(app, APP_URL, "192.168.2.2");
-      const code = await alice.totpCode();
-      await tab.signIn(alice);
-
-      expect((await download(tab, { code })).status).toBe(401);
-      later();
-      const fresh = await alice.totpCode();
-      const res = await download(tab, { code: fresh });
-      expect(res.status).toBe(200);
-      await res.arrayBuffer();
-      expect((await download(tab, { code: fresh })).status).toBe(401);
-    });
-
-    it("refuses after 5 wrong codes, as sign-in does, without checking the next one", async () => {
+    it("downloads with no code: TOTP is asked only at sign-in", async () => {
       const tab = await signedIn(bob);
-      const wrong = (await bob.totpCode()).replace(/\d/g, (digit) =>
-        String((Number(digit) + 1) % 10),
-      );
 
-      const statuses: number[] = [];
-      for (let i = 0; i < 5; i += 1) statuses.push((await download(tab, { code: wrong })).status);
-      const refused = await download(tab, { code: await bob.totpCode() });
+      const res = await download(tab, {});
 
-      expect(statuses).toEqual([401, 401, 401, 401, 401]);
-      expect(refused.status).toBe(429);
-      expect(refused.headers.get("content-type")).not.toBe("application/zip");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("application/zip");
+      await res.arrayBuffer();
     });
   });
 });

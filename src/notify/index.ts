@@ -19,6 +19,7 @@ export {
   smtpTransport,
   type TransportMaker,
 } from "./email.ts";
+export { type MemberMail, mailProblem, memberMail } from "./member-email.ts";
 export {
   askForDelivery,
   type DeliveryServices,

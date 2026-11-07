@@ -10,7 +10,7 @@ import { accountEdits } from "../account-edits.ts";
 import { BalanceChart, chartRows, monthTicks } from "../components/BalanceChart.tsx";
 import { routes } from "../routes.tsx";
 import { Account, AccountDetail, daysBefore, TransactionList } from "./Account.tsx";
-import { AccountList, groupOf, marksOf } from "./Accounts.tsx";
+import { AccountList, AccountTotals, accountTotals, groupOf, marksOf } from "./Accounts.tsx";
 
 // The Account list and each Account's page (spec 07, Account list).
 
@@ -127,14 +127,91 @@ describe("the Account list", () => {
       "Savings",
       "Loans",
     ]);
-    expect(shown).toMatch(/Everyday Checking ··1234 +First Bank +last synced Oct 8 +\$2,500/);
-    expect(shown).toMatch(/Lakeside Auto +Lakeside Auto +estimated +−\$9,678/);
+    // A broken Connection's mark is a status, with its icon, and the fix Settings, Banks names.
+    expect(shown).toMatch(
+      /Everyday Checking ··1234 +First Bank · +◆ +last synced Oct 8 +· +Link again +\$2,500/,
+    );
+    expect(html).toMatch(/<span class="text-serious">.*?last synced Oct 8<\/span>/);
+    expect(html).toContain('href="/settings/banks"');
+    // The pills sit beside the name, and the institution under it.
+    expect(shown).toMatch(/Lakeside Auto +estimated +Lakeside Auto +−\$9,678/);
     expect(html).toContain('href="/accounts/a-checking"');
     // The Closed section comes last, collapsed.
     const closed = html.slice(html.indexOf("<details"));
     expect(closed).not.toContain("<details open");
     expect(text(closed)).toMatch(/Closed Accounts \(1\).*Old Card ··9999.*Closed/s);
     expect(html.indexOf("Old Card")).toBeGreaterThan(html.indexOf("Lakeside Auto"));
+  });
+
+  it("totals each group and the list as the dashboard's tiles do, leaving out Excluded and Closed Accounts", () => {
+    const accounts = [
+      account({}),
+      // The API sends an Excluded Account's balance as null; a balance here proves the filter.
+      account({ id: "joint", name: "Joint", mask: "1176", excluded: true, currentBalance: 99_900 }),
+      account({ id: "savings", subtype: "savings", currentBalance: 1_205_000 }),
+      account({ id: "card", kind: "credit", subtype: "credit card", currentBalance: -121_400 }),
+      account({ id: "old", kind: "credit", closed: true, currentBalance: -50_000 }),
+      account({
+        id: "mom",
+        name: "Loan from Mom",
+        kind: "loan",
+        connectionId: null,
+        currentBalance: -300_000,
+        estimated: true,
+      }),
+      account({ id: "hsa", kind: "unconnected", connectionId: null, currentBalance: null }),
+      account({
+        id: "college",
+        kind: "unconnected",
+        connectionId: null,
+        currentBalance: 840_000,
+        estimated: true,
+      }),
+    ];
+
+    expect(accountTotals(accounts)).toEqual({
+      cashOnHand: 1_455_000,
+      debt: 421_400,
+      estimatedLoans: 1,
+      unconnected: { amount: 840_000, estimated: true },
+    });
+    expect(accountTotals([account({})])).toEqual({
+      cashOnHand: 250_000,
+      debt: 0,
+      estimatedLoans: 0,
+    });
+
+    const tiles = text(renderToString(<AccountTotals accounts={accounts} />));
+    expect(tiles).toMatch(
+      /Cash on hand +\$14,550 +Debt +\$4,214 +Includes 1 estimated loan +Unconnected accounts +\$8,400 +Includes estimated balances/,
+    );
+    expect(renderToString(<AccountTotals accounts={[]} />)).toBe("");
+
+    const html = inRouter(
+      <AccountList accounts={accounts} connections={[CONNECTION]} today={TODAY} zone={ZONE} />,
+    );
+    const heads = [...html.matchAll(/<h2[^>]*>(.*?)<\/h2>(.*?)<\/div>/g)].map((m) => [
+      m[1],
+      text(m[2] ?? "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ]);
+    // The Excluded checking Account counts in no total; the Closed card is not in its group. A
+    // total that counts an estimate says "estimated" (spec 07, Status).
+    expect(heads).toEqual([
+      ["Checking", "$2,500"],
+      ["Savings", "$12,050"],
+      ["Credit cards", "−$1,214"],
+      ["Loans", "estimated −$3,000"],
+      ["Unconnected accounts", "estimated $8,400"],
+    ]);
+    // A dash says to a screen reader why: an Excluded or Closed Account is not counted, and an
+    // open one has no balance from the provider.
+    const shown = text(html);
+    expect(shown).toMatch(/Joint ··1176 +excluded +First Bank +— +Not counted/);
+    expect(shown).not.toContain("$999");
+    expect(shown).toMatch(/Everyday Checking ··1234 +First Bank +— +No balance/);
+    expect(shown).toMatch(/Everyday Checking ··1234 +Closed +First Bank +— +Not counted/);
   });
 });
 
@@ -271,6 +348,22 @@ describe("an Account's page", () => {
     expect(rows).toContain('<span class="whitespace-nowrap">+$1,865.90</span>');
     expect(rows).toContain('<span class="whitespace-nowrap">−$42.50</span>');
     expect(checking).not.toContain("Loan type");
+
+    // A Connection that needs a Member: the orange mark, then the fix Settings, Banks names.
+    const fixFacts = { account: ACCOUNT, points: [], transactions: [] };
+    const needsMember = inRouter(
+      <AccountDetail
+        facts={{ ...fixFacts, marks: ["last synced Oct 8"], fix: "Repair" }}
+        today={TODAY}
+        onChanged={() => {}}
+      />,
+    );
+    expect(text(needsMember)).toMatch(/First Bank +◆ +last synced Oct 8 +· +Repair/);
+    expect(needsMember).toMatch(/<a [^>]*href="\/settings\/banks"[^>]*>Repair<\/a>/);
+    const healthy = inRouter(
+      <AccountDetail facts={{ ...fixFacts, marks: [] }} today={TODAY} onChanged={() => {}} />,
+    );
+    expect(healthy).not.toContain('href="/settings/banks"');
 
     const loan = page({
       account: account({ kind: "loan", subtype: "personal", closed: true }),

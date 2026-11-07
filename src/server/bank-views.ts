@@ -203,6 +203,8 @@ export type BankViews = {
   // Undefined when no Account has the ID.
   balances(accountId: string, query: BalanceQuery): Promise<BalancesView | undefined>;
   connections(): Promise<ConnectionView[]>;
+  // True when the fake adapter runs, as under `pnpm dev`: Settings then offers its fake bank.
+  fakeBank(): boolean;
   // Any Member presses Sync now.
   syncNow(): Promise<SyncNowView[]>;
   historyStatus(): Promise<HistoryStatusView>;

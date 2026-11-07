@@ -123,9 +123,12 @@ async function getJson(path: string): Promise<Response> {
   return fetch(path, { credentials: "same-origin" });
 }
 
-// "Add a passkey": the options, the device, then the check, with a fresh TOTP or backup code.
+// "Add a passkey": the options, the device, then the check, with the Member's current password.
 // A refusal comes back as the server's Response; the device's own refusal throws.
-export async function addPasskey(input: { code: string; name: string }): Promise<Response> {
+export async function addPasskey(input: {
+  currentPassword: string;
+  name: string;
+}): Promise<Response> {
   const options = await getJson("/api/auth/passkey/generate-register-options");
   if (!options.ok) return options;
   const credential = await navigator.credentials.create({
@@ -134,7 +137,7 @@ export async function addPasskey(input: { code: string; name: string }): Promise
   if (!(credential instanceof PublicKeyCredential)) throw new Error("No passkey was made.");
   return postJson("/api/auth/passkey/verify-registration", {
     response: credentialJSON(credential),
-    code: input.code,
+    currentPassword: input.currentPassword,
     ...(input.name === "" ? {} : { name: input.name }),
   });
 }

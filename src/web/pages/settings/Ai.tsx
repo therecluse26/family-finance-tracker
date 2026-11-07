@@ -10,6 +10,7 @@ import {
   type AiView,
   DEFAULT_MODELS,
   type EnteredPrice,
+  type KeyTestResult,
   MAX_COST_CAP_CENTS,
   type ModelCheck,
   onGateway,
@@ -17,17 +18,32 @@ import {
 } from "../../../ai/ai-view.ts";
 import { tablePrice } from "../../../ai/prices.ts";
 import { capLine } from "../../../ai/usage-view.ts";
-import { calendarDateIn, dateLabel } from "../../../format.ts";
+import { calendarDateIn, dateLabel, type StatusTone } from "../../../format.ts";
 import { api } from "../../api.ts";
-import { BUTTON, ErrorLine, FIELD } from "../../components/Fields.tsx";
+import { Button } from "../../components/Button.tsx";
+import { ErrorLine } from "../../components/Fields.tsx";
+import { Meter } from "../../components/Meter.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
+import {
+  BUTTONS,
+  CHOICE,
+  DoneLine,
+  Field,
+  HINT,
+  INPUT,
+  LABEL,
+  Lead,
+  SettingCard,
+  SUBHEADING,
+  TabHeading,
+  TEXT_LINK,
+} from "./settings-ui.tsx";
 
 // Settings → AI: the Household's one AI provider (spec 08, AI settings page). The API key and the
 // gateway token are write-only: the page shows only whether each is set.
 
-const CODE_LABEL = "A code from your authenticator app, or a backup code";
-
-// The words to show for a refused request: the server's own, such as "Wrong code.".
+// The words to show for a refused request: the server's own, such as "Enter the API key.".
 async function refusal(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: unknown };
   return typeof body.error === "string" ? body.error : "That did not work.";
@@ -52,6 +68,14 @@ export function statusLine(status: AiStatus, today: string): string {
   }
 }
 
+// The tone of each AI status: its icon and color beside the words.
+const STATUS_TONE: Record<AiStatus["state"], StatusTone> = {
+  on: "good",
+  "waits for history": "accent",
+  "cost cap": "serious",
+  "key rejected": "critical",
+};
+
 // What the app sends each AI provider so it does not train on the Household's data or keep it.
 export function dataUseLine(provider: AiProviderName, baseUrl: string | null): string {
   const gateway = onGateway(baseUrl)
@@ -75,7 +99,56 @@ const CHECK_WORDS: Record<ModelCheck, string> = {
   failed: "did not work",
 };
 
+const CHECK_TONE: Record<ModelCheck, StatusTone> = {
+  worked: "good",
+  "key rejected": "critical",
+  failed: "critical",
+};
+
 const TIER_LABELS: Record<AiTier, string> = { quick: "Quick model", writer: "Writer model" };
+
+// What "Test the key" found, as its line shows it (spec 08, Test the key).
+export const KEY_TEST_WORDS: Record<KeyTestResult, string> = {
+  works: "The key works",
+  "key rejected": "The AI provider rejected the key",
+  "rate limit": "The AI provider is limiting calls. Wait a minute, then test again",
+  "model unknown": "The AI provider does not know the Quick model. Check the model names",
+  "no answer": "The AI provider did not answer. Try again later",
+  "no key": "No key is saved",
+};
+
+const KEY_TEST_TONE: Record<KeyTestResult, StatusTone> = {
+  works: "good",
+  "key rejected": "critical",
+  "rate limit": "serious",
+  "model unknown": "critical",
+  "no answer": "serious",
+  "no key": "muted",
+};
+
+// Presses "Test the key": the result with the AI settings after it, or the server's refusal, such
+// as "Wait 4 seconds, then test the key again.". A refusal because the settings changed during the
+// test comes with the AI settings as they are now, for the status line.
+export async function testTheKey(): Promise<
+  { result: KeyTestResult; ai: AiView | null } | { error: string; ai?: AiView | null }
+> {
+  const res = await api.ai.test.$post({ json: {} });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown; ai?: AiView | null };
+    const error = typeof body.error === "string" ? body.error : "That did not work.";
+    return body.ai === undefined ? { error } : { error, ai: body.ai };
+  }
+  return (await res.json()) as { result: KeyTestResult; ai: AiView | null };
+}
+
+// The line under the buttons: what the last test found, with its icon, color, and words.
+export function KeyTestLine(props: { result: KeyTestResult }) {
+  return (
+    <p className="mt-3 text-small" role="status" data-slot="key-test">
+      <StatusText tone={KEY_TEST_TONE[props.result]}>{KEY_TEST_WORDS[props.result]}</StatusText>
+    </p>
+  );
+}
 
 // A price as a Member types it, in dollars per million tokens, such as "0.50", in millionths of
 // a dollar per million tokens. Undefined when it is not $0 or more with at most 6 decimals.
@@ -125,32 +198,12 @@ export function enteredPrices(
   return prices;
 }
 
-function Field(props: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  autoComplete?: string;
-  placeholder?: string;
-  required?: boolean;
+export function AiProviderForm(props: {
+  ai: AiView | null;
+  onSaved: (ai: AiView | null) => void;
+  // After a test, with the AI settings it read. The form keeps what the Member typed.
+  onTested?: (ai: AiView | null) => void;
 }) {
-  return (
-    <label className="mt-3 block">
-      {props.label}
-      <input
-        className={FIELD}
-        type={props.type ?? "text"}
-        autoComplete={props.autoComplete ?? "off"}
-        placeholder={props.placeholder}
-        required={props.required ?? false}
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-      />
-    </label>
-  );
-}
-
-export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView | null) => void }) {
   const { ai } = props;
   const [provider, setProvider] = useState<AiProviderName>(ai?.provider ?? "anthropic");
   const [apiKey, setApiKey] = useState("");
@@ -167,10 +220,12 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
     quick: storedPriceText(ai, "quick"),
     writer: storedPriceText(ai, "writer"),
   });
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [check, setCheck] = useState<Record<AiTier, ModelCheck> | undefined>();
+  const [testing, setTesting] = useState(false);
+  const [tested, setTested] = useState<KeyTestResult | undefined>();
+  const [testError, setTestError] = useState<string | undefined>();
 
   const sameDestination =
     ai !== null && ai.provider === provider && ai.baseUrl === (baseUrl.trim() || null);
@@ -192,6 +247,9 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
     event.preventDefault();
     setError(undefined);
     setCheck(undefined);
+    // A save checks the key again, so the last test's line no longer holds.
+    setTested(undefined);
+    setTestError(undefined);
     const entered = enteredPrices(provider, models, prices);
     if (entered === "bad") {
       return setError("Enter each price in dollars per million tokens, such as 0.50.");
@@ -208,10 +266,8 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           quickModel: models.quick,
           writerModel: models.writer,
           ...(Object.keys(entered).length === 0 ? {} : { prices: entered }),
-          ...(code.trim() === "" ? {} : { code: code.trim() }),
         },
       });
-      setCode("");
       if (!res.ok) return setError(await refusal(res));
       const body = (await res.json()) as { check: Record<AiTier, ModelCheck>; ai: AiView };
       setApiKey("");
@@ -226,12 +282,37 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
     }
   }
 
+  // "Test the key" tests the saved settings, not the fields as typed. Its call counts toward the
+  // month's cost, and it may change the status line, so the page loads both again.
+  async function testKey() {
+    setTestError(undefined);
+    setTested(undefined);
+    // The test checks the key again, so the last save's check lines no longer hold.
+    setCheck(undefined);
+    setTesting(true);
+    const tested = props.onTested ?? props.onSaved;
+    try {
+      const answer = await testTheKey();
+      if ("error" in answer) {
+        setTestError(answer.error);
+        if (answer.ai !== undefined) tested(answer.ai);
+        return;
+      }
+      setTested(answer.result);
+      tested(answer.ai);
+    } catch {
+      setTestError("The server did not answer.");
+    } finally {
+      setTesting(false);
+    }
+  }
+
   return (
-    <form className="mt-4" onSubmit={submit}>
-      <label className="mt-3 block">
+    <form onSubmit={submit}>
+      <label className={LABEL}>
         AI provider
         <select
-          className={FIELD}
+          className={INPUT}
           value={provider}
           onChange={(e) => chooseProvider(e.target.value as AiProviderName)}
         >
@@ -242,7 +323,7 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           ))}
         </select>
       </label>
-      <p className="mt-2 text-gray-600">{dataUseLine(provider, baseUrl.trim() || null)}</p>
+      <p className={HINT}>{dataUseLine(provider, baseUrl.trim() || null)}</p>
       <Field
         label="API key"
         type="password"
@@ -276,7 +357,7 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
             }
           />
           {sameDestination && ai.gatewayTokenSet ? (
-            <label className="mt-2 flex items-center gap-2">
+            <label className={CHOICE}>
               <input
                 type="checkbox"
                 checked={removeToken}
@@ -287,57 +368,85 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
           ) : null}
         </>
       ) : null}
-      <Field label="Quick model" value={quickModel} onChange={setQuickModel} required />
-      <Field label="Writer model" value={writerModel} onChange={setWriterModel} required />
+      <h4 className={SUBHEADING}>Models</h4>
+      <p className={HINT}>
+        The Quick model makes the small choices during sync. The Writer model writes the Insight
+        cards, the Monthly review, Chat, and Budget tailoring.
+      </p>
+      <div className="grid gap-x-5 sm:grid-cols-2">
+        <Field
+          label="Quick model"
+          value={quickModel}
+          onChange={setQuickModel}
+          required
+          className="max-w-none"
+        />
+        <Field
+          label="Writer model"
+          value={writerModel}
+          onChange={setWriterModel}
+          required
+          className="max-w-none"
+        />
+      </div>
       {unpriced.length === 0 ? null : (
-        <fieldset className="mt-4">
-          <legend className="font-semibold">Prices, in dollars per million tokens</legend>
-          <p className="mt-1 text-gray-600">
+        <fieldset className="mt-5">
+          <legend className="text-sm font-semibold">Prices, in dollars per million tokens</legend>
+          <p className={HINT}>
             The app has no price for this model. Cache reads and writes count at the input price. A
             local model may be $0. The app makes no call with a model that has no price.
           </p>
           {unpriced.map((tier) => (
-            <div key={tier}>
+            <div key={tier} className="grid gap-x-5 sm:grid-cols-2">
               <Field
                 label={`${TIER_LABELS[tier]} (${models[tier]}): input price`}
                 value={prices[tier].input}
                 onChange={(input) => setPrices({ ...prices, [tier]: { ...prices[tier], input } })}
                 placeholder="0.50"
+                className="max-w-36 tabular-nums"
               />
               <Field
                 label={`${TIER_LABELS[tier]} (${models[tier]}): output price`}
                 value={prices[tier].output}
                 onChange={(output) => setPrices({ ...prices, [tier]: { ...prices[tier], output } })}
                 placeholder="2.50"
+                className="max-w-36 tabular-nums"
               />
             </div>
           ))}
         </fieldset>
       )}
-      <Field
-        label={`${CODE_LABEL}, to set or change the key, the token, the AI provider, or the base URL`}
-        autoComplete="one-time-code"
-        value={code}
-        onChange={setCode}
-      />
       {limit === undefined ? null : (
-        <p className="mt-3">
+        <p className="mt-4 text-small text-muted">
           Set a monthly usage limit at the AI provider too:{" "}
-          <a className="text-blue-700 underline" href={limit.url} target="_blank" rel="noreferrer">
+          <a className={TEXT_LINK} href={limit.url} target="_blank" rel="noreferrer">
             {limit.label}
           </a>
           . The app does not check it.
         </p>
       )}
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Check and save
-      </button>
+      <div className={BUTTONS}>
+        <Button type="submit" disabled={busy}>
+          Save
+        </Button>
+        <Button type="button" variant="outlined" disabled={testing} onClick={testKey}>
+          Test the key
+        </Button>
+      </div>
+      {/* Spec 08, Check on save: the button says "Save", so this line says what else it does. */}
+      <p className={HINT}>
+        Save checks each model with one short call. The calls count toward this month's cost.
+      </p>
       <ErrorLine error={error} />
+      <ErrorLine error={testError} />
+      {tested === undefined ? null : <KeyTestLine result={tested} />}
       {check === undefined ? null : (
-        <ul className="mt-3">
+        <ul className="mt-3 text-small">
           {(["quick", "writer"] as const).map((tier) => (
             <li key={tier}>
-              {TIER_LABELS[tier]}: {CHECK_WORDS[check[tier]]}
+              <StatusText tone={CHECK_TONE[check[tier]]}>
+                {TIER_LABELS[tier]}: {CHECK_WORDS[check[tier]]}
+              </StatusText>
             </li>
           ))}
         </ul>
@@ -348,8 +457,10 @@ export function AiProviderForm(props: { ai: AiView | null; onSaved: (ai: AiView 
 
 export function AiStatusLine(props: { ai: AiView; today: string }) {
   return (
-    <p className="mt-2 font-semibold" role="status">
-      {statusLine(props.ai.status, props.today)}
+    <p className="font-semibold" role="status">
+      <StatusText tone={STATUS_TONE[props.ai.status.state]}>
+        {statusLine(props.ai.status, props.today)}
+      </StatusText>
     </p>
   );
 }
@@ -373,37 +484,67 @@ function RemoveAiProvider(props: { onRemoved: () => void }) {
   }
 
   return (
-    <div className="mt-6">
-      <button className={BUTTON} type="button" disabled={busy} onClick={remove}>
-        Remove AI provider
-      </button>
-      <p className="mt-2 text-gray-600">
-        This deletes the key. Every AI use falls back to its no-AI path.
-      </p>
+    <SettingCard id="remove-ai-provider" title="Remove AI provider">
+      <Lead>This deletes the key. Every AI use falls back to its no-AI path.</Lead>
+      <div className={BUTTONS}>
+        <Button type="button" variant="outlined" disabled={busy} onClick={remove}>
+          Remove AI provider
+        </Button>
+      </div>
       <ErrorLine error={error} />
-    </div>
+    </SettingCard>
   );
 }
 
+export const COST_CAP_SAVED = "The AI cost cap is saved.";
+
+// Saves the AI cost cap typed in dollars. Answers the new usage with the saved message, or the
+// words for a cap the app or the server refuses.
+export async function saveCostCap(
+  typed: string,
+): Promise<{ usage: AiUsageView; saved: string } | { error: string }> {
+  const capCents = centsOfText(typed);
+  if (capCents === undefined || capCents > MAX_COST_CAP_CENTS) {
+    return { error: "Enter the AI cost cap in dollars, from $0 to $10,000." };
+  }
+  const res = await api.ai["cost-cap"].$put({ json: { capCents } });
+  if (!res.ok) return { error: await refusal(res) };
+  return { usage: ((await res.json()) as { usage: AiUsageView }).usage, saved: COST_CAP_SAVED };
+}
+
+// Billionths of a dollar in a cent: the unit of an AI call's cost against the cap's unit.
+const NANOS_PER_CENT = 1_000_000_000 / 100;
+
+// How much of the AI cost cap this month's calls spent, for the bar beside the words. It compares
+// the exact amounts the server's cap check does (`atCap`): billionths of a dollar against the cap,
+// so the bar is full just when AI pauses. A $0 cap is full at once.
+export function spentShare(usage: AiUsageView): number {
+  if (usage.capCents === 0) return 1;
+  return usage.totalNanos / (usage.capCents * NANOS_PER_CENT);
+}
+
 // The AI cost cap, per Household, whatever the AI provider (spec 08, The AI cost cap).
-export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsageView) => void }) {
+export function CostCapForm(props: {
+  usage: AiUsageView;
+  today: string;
+  onSaved: (usage: AiUsageView) => void;
+}) {
   const { usage } = props;
   const [cap, setCap] = useState(String(usage.capCents / 100));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [done, setDone] = useState<string | undefined>();
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(undefined);
-    const capCents = centsOfText(cap);
-    if (capCents === undefined || capCents > MAX_COST_CAP_CENTS) {
-      return setError("Enter the AI cost cap in dollars, from $0 to $10,000.");
-    }
+    setDone(undefined);
     setBusy(true);
     try {
-      const res = await api.ai["cost-cap"].$put({ json: { capCents } });
-      if (!res.ok) return setError(await refusal(res));
-      props.onSaved(((await res.json()) as { usage: AiUsageView }).usage);
+      const answer = await saveCostCap(cap);
+      if ("error" in answer) return setError(answer.error);
+      props.onSaved(answer.usage);
+      setDone(answer.saved);
     } catch {
       setError("The server did not answer.");
     } finally {
@@ -412,33 +553,89 @@ export function CostCapForm(props: { usage: AiUsageView; onSaved: (usage: AiUsag
   }
 
   return (
-    <form className="mt-6" onSubmit={submit}>
-      <h3 className="text-lg font-semibold">AI cost cap</h3>
-      <p className="mt-1">This month: {capLine(usage.totalNanos, usage.capCents)}</p>
-      <p className="mt-1 text-gray-600">
-        At the cap, background AI pauses until the 1st. Chat and Goals ask before each call.
-      </p>
-      <Field label="AI cost cap, in dollars a month" value={cap} onChange={setCap} required />
-      <button className={BUTTON} type="submit" disabled={busy}>
-        Save cap
-      </button>
-      <ErrorLine error={error} />
-      <p className="mt-3">
-        <Link className="text-blue-700 underline" to="/settings/ai/usage">
-          AI usage
-        </Link>
-      </p>
-    </form>
+    <SettingCard
+      id="ai-cost-cap"
+      title="AI cost cap"
+      status={
+        usage.pausedUntil === null ? undefined : (
+          <StatusText tone="serious">
+            AI paused until {dateLabel(usage.pausedUntil, props.today)}
+          </StatusText>
+        )
+      }
+    >
+      <form onSubmit={submit}>
+        <p className="mt-1.5 tabular-nums">
+          This month: {capLine(usage.totalNanos, usage.capCents)}
+        </p>
+        <Meter
+          share={spentShare(usage)}
+          tone={usage.pausedUntil === null ? "accent" : "serious"}
+          className="mt-2.5 max-w-[520px]"
+        />
+        <Field
+          label="AI cost cap, in dollars a month"
+          value={cap}
+          onChange={setCap}
+          required
+          className="max-w-36 tabular-nums"
+        />
+        <p className={HINT}>
+          At the cap, background AI pauses until the 1st. Chat and Goals ask before each call.
+        </p>
+        <div className={BUTTONS}>
+          <Button type="submit" disabled={busy}>
+            Save cap
+          </Button>
+        </div>
+        <ErrorLine error={error} />
+        <DoneLine done={done} />
+        <p className="mt-3 text-sm">
+          <Link className={TEXT_LINK} to="/settings/ai/usage">
+            AI usage
+          </Link>
+        </p>
+      </form>
+    </SettingCard>
   );
 }
 
-// The AI settings page's fields. Settings, AI shows them, and so does the first-run wizard's
-// step 6 (spec 12, Step 6, AI).
+// What the privacy filter takes out of each call (spec 08, Privacy filter), on a grey card.
+function AiPrivacyNote() {
+  return (
+    <section
+      aria-labelledby="what-the-ai-never-sees"
+      className="rounded-card border border-line bg-page p-4 min-[900px]:px-[22px] min-[900px]:py-5"
+    >
+      <h3 id="what-the-ai-never-sees" className="font-bold">
+        What the AI never sees
+      </h3>
+      <p className="mt-1.5 text-small text-ink-soft">
+        The ZIP code and ages are never sent. In the text the app writes for each call, "Member A",
+        "Member B", and so on replace the names of the Household's current Members, and Member email
+        addresses and Account and card numbers are removed. The filter does not look for a removed
+        Member's name. What you type in Chat is best effort: the app hides names and numbers it
+        spots, but not all of them.
+      </p>
+    </section>
+  );
+}
+
+// The AI settings page's fields, which Settings, AI shows (spec 08, AI settings page). The first-run
+// wizard's Finish step links here as an optional extra.
 export function AiSettingsFields() {
   const [ai, setAi] = useState<AiView | null | undefined>();
+  // The form starts again, with the saved fields, only on a load, a save, or a Remove AI provider:
+  // never on a test, so a test keeps what the Member typed and its own line.
+  const [formKey, setFormKey] = useState<"none" | "set">("none");
+  const showSaved = useCallback((saved: AiView | null) => {
+    setAi(saved);
+    setFormKey(saved === null ? "none" : "set");
+  }, []);
   const [usage, setUsage] = useState<AiUsageView | undefined>();
   const [error, setError] = useState<string | undefined>();
   const zone = useHouseholdZone();
+  const today = zone === undefined ? undefined : todayHere(new Date(), zone);
 
   // The check on save counts toward the month's cost, so a save loads the total again.
   const loadUsage = useCallback(() => {
@@ -456,31 +653,46 @@ export function AiSettingsFields() {
       .$get()
       .then(async (res) => {
         if (!res.ok) return setError(await refusal(res));
-        setAi(((await res.json()) as { ai: AiView | null }).ai);
+        showSaved(((await res.json()) as { ai: AiView | null }).ai);
       })
       .catch(() => setError("The server did not answer."));
-  }, [loadUsage]);
+  }, [loadUsage, showSaved]);
 
   return (
     <>
       <ErrorLine error={error} />
       {ai === undefined ? null : (
         <>
-          {ai === null ? (
-            <p className="mt-2">No AI provider yet. Every AI use takes its no-AI path.</p>
-          ) : zone === undefined ? null : (
-            <AiStatusLine ai={ai} today={todayHere(new Date(), zone)} />
+          <SettingCard
+            id="ai-provider"
+            title="AI provider"
+            status={
+              ai === null || today === undefined ? undefined : (
+                <AiStatusLine ai={ai} today={today} />
+              )
+            }
+          >
+            {ai === null ? (
+              <Lead>No AI provider yet. Every AI use takes its no-AI path.</Lead>
+            ) : null}
+            <AiProviderForm
+              key={formKey}
+              ai={ai}
+              onSaved={(saved) => {
+                showSaved(saved);
+                loadUsage();
+              }}
+              onTested={(tested) => {
+                setAi(tested);
+                loadUsage();
+              }}
+            />
+          </SettingCard>
+          {usage === undefined || today === undefined ? null : (
+            <CostCapForm usage={usage} today={today} onSaved={setUsage} />
           )}
-          <AiProviderForm
-            key={ai === null ? "none" : "set"}
-            ai={ai}
-            onSaved={(saved) => {
-              setAi(saved);
-              loadUsage();
-            }}
-          />
-          {usage === undefined ? null : <CostCapForm usage={usage} onSaved={setUsage} />}
-          {ai === null ? null : <RemoveAiProvider onRemoved={() => setAi(null)} />}
+          <AiPrivacyNote />
+          {ai === null ? null : <RemoveAiProvider onRemoved={() => showSaved(null)} />}
         </>
       )}
     </>
@@ -490,7 +702,7 @@ export function AiSettingsFields() {
 export function Ai() {
   return (
     <>
-      <h2 className="text-xl font-semibold">AI</h2>
+      <TabHeading>AI</TabHeading>
       <AiSettingsFields />
     </>
   );

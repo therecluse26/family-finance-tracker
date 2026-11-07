@@ -5,9 +5,10 @@ export {
   type Auth,
   type AuthOptions,
   createAuth,
-  type FreshCode,
+  type DeviceSignOut,
   MIN_PASSWORD_LENGTH,
   SESSION_SECONDS,
+  type SignedInDevice,
   type SignedInMember,
 } from "./auth.ts";
 export {

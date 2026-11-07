@@ -6,8 +6,11 @@ import {
   AlertPush,
   ANOTHER_MEMBERS_PUSH,
   DevicePush,
+  HOME_SCREEN_NOTE,
   keyBytes,
+  needsHomeScreen,
   PLAIN_HTTP_NOTE,
+  PushPart,
 } from "./AlertPush.tsx";
 
 // Settings, Alerts: push on this device, as the browser first paints it, in HTTPS mode and in
@@ -120,5 +123,48 @@ describe("Settings, Alerts: push requests", () => {
         body: JSON.stringify({ endpoint: subscription.endpoint }),
       },
     ]);
+  });
+});
+
+const IPHONE =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const ANDROID =
+  "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36";
+const IPAD =
+  "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const TURN_ON = "Turn on Alerts on this device";
+
+describe("Settings, Alerts: Add to Home Screen", () => {
+  const HTTPS_PUSH = { available: true, publicKey: PUBLIC_KEY } as const;
+  const PLAIN_HTTP = { available: false, why: "plain HTTP" } as const;
+
+  it("explains Add to Home Screen first on an iPhone", () => {
+    const html = text(renderToString(<PushPart push={HTTPS_PUSH} homeScreenFirst={true} />));
+
+    expect(html).toContain(HOME_SCREEN_NOTE);
+    expect(html.indexOf("Add to Home Screen")).toBeLessThan(html.indexOf(TURN_ON));
+  });
+
+  it("gives no such note elsewhere, nor in plain-HTTP mode", () => {
+    const https = text(renderToString(<PushPart push={HTTPS_PUSH} homeScreenFirst={false} />));
+    expect(https).toContain(TURN_ON);
+    expect(https).not.toContain("Add to Home Screen");
+
+    for (const homeScreenFirst of [false, true]) {
+      const html = text(
+        renderToString(<PushPart push={PLAIN_HTTP} homeScreenFirst={homeScreenFirst} />),
+      );
+      expect(html).toContain(PLAIN_HTTP_NOTE);
+      expect(html).not.toContain(TURN_ON);
+      expect(html).not.toContain("Add to Home Screen");
+    }
+  });
+
+  it("knows an iPhone outside the installed app", () => {
+    expect(needsHomeScreen(IPHONE, false)).toBe(true);
+    // The app opened from the Home Screen gets pushes already.
+    expect(needsHomeScreen(IPHONE, true)).toBe(false);
+    expect(needsHomeScreen(ANDROID, false)).toBe(false);
+    expect(needsHomeScreen(IPAD, false)).toBe(false);
   });
 });

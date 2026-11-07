@@ -1,10 +1,17 @@
-import { aiCost, aiSettings, FOLLOW_UP_AI_USES, householdAi, startAiRetries } from "../ai/index.ts";
+import {
+  type AiSettings,
+  aiCost,
+  aiSettings,
+  FOLLOW_UP_AI_USES,
+  householdAi,
+  startAiRetries,
+} from "../ai/index.ts";
 import {
   startAlertSending,
   startAnomalyChecks,
   startOverspendingChecks,
 } from "../anomalies/index.ts";
-import { createAuth } from "../auth/index.ts";
+import { type Auth, createAuth } from "../auth/index.ts";
 import {
   type BackupFolders,
   chooseBackupFolder,
@@ -16,6 +23,7 @@ import {
 import {
   type BankDataAdapter,
   catchUpSyncs,
+  type PlaidSettings,
   plaidAdapter,
   plaidSettings,
   startBank,
@@ -23,16 +31,17 @@ import {
 import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
-import { chat } from "../chat/index.ts";
+import { type Chat, chat } from "../chat/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
-import { goalWriting, startGoals } from "../goals/index.ts";
+import { type GoalWriting, goalWriting, startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { requestInsightCardCheck, startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startMonthlyReview } from "../monthly-review/index.ts";
+import type { SmtpSettings } from "../notify/email-view.ts";
 import {
   askForDelivery,
   pushSettings,
@@ -42,6 +51,7 @@ import {
   startNotify,
   vapidKeysOf,
 } from "../notify/index.ts";
+import type { PushSettings } from "../notify/push-view.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
 import { requestRedo, startRedo } from "../redo/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
@@ -54,26 +64,54 @@ import {
   tailorFirstDraft,
 } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
+import { startWeeklySummary } from "../weekly-summary/index.ts";
 import { takeAppLock } from "./running-lock.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
 
-export type StartOptions = {
+// What the app's services need: everything that `pnpm start` and `pnpm dev` both run.
+export type ServiceOptions = {
   // Step 1: main loads the Master key before startApp opens app.db.
   masterKey: MasterKey;
   databaseUrl: string;
   migrationsFolder: string;
   jobs: Pick<JobsOptions, "jobsDb" | "jobList" | "tasks">;
-  port: number;
-  webRoot: string;
   security: Security;
-  // The Bank-data adapters: the Plaid adapter unless given. Tests give the fake adapter.
-  bankAdapters?: readonly BankDataAdapter[];
+  // Bank-data adapters beside the Plaid adapter. `pnpm dev` adds the fake adapter; the built app
+  // adds none.
+  extraBankAdapters?: readonly BankDataAdapter[];
   // /backups and /data/backups. Tests give temporary folders.
   backupFolders: BackupFolders;
+};
+
+export type StartOptions = ServiceOptions & {
+  port: number;
+  webRoot: string;
   // The running lock file, /data/app.lock, so `fft restore` refuses to run while the app does.
   // Tests that do not check it leave it out.
   runningLock?: string;
+};
+
+// The services the web app hands its routes, beside app.db, the secrets, and the login.
+export type RouteServices = {
+  plaid: PlaidSettings;
+  ai: AiSettings;
+  smtp: SmtpSettings;
+  push: PushSettings;
+  chat: Chat;
+  goalWriting: GoalWriting;
+};
+
+// The app's running services, with nothing listening yet. The open database stays open until
+// close().
+export type AppServices = {
+  database: Database;
+  secrets: Secrets;
+  auth: Auth;
+  routes: RouteServices;
+  // Stops starting jobs at once, then waits for the running job and for `waitFor`, such as open
+  // requests. The modules stop and the database closes last, since they may use it.
+  close(waitFor?: Promise<unknown>[]): Promise<void>;
 };
 
 // The open database stays open until close().
@@ -114,9 +152,47 @@ export async function startApp(options: StartOptions): Promise<RunningApp> {
   }
 }
 
-// The startup steps, in the spec's order. Nothing listens until migrations are done and the first
-// scheduler tick has run.
+// The services, then the server. Nothing listens until the services have started.
 async function launchUnderLock(options: StartOptions): Promise<RunningApp> {
+  const services = await launchServices(options);
+  const { database, secrets } = services;
+  let server: RunningServer;
+  try {
+    server = await startServer({
+      port: options.port,
+      webRoot: options.webRoot,
+      security: options.security,
+      auth: services.auth,
+      database,
+      secrets,
+      ...services.routes,
+    });
+  } catch (error) {
+    await services.close();
+    throw error;
+  }
+  // The startup check, once the app listens, so a slow or hung backup folder never holds up the
+  // start: a daily backup runs when none is from the most recent 3:00 AM, Household time. A failed
+  // one starts its retry.
+  const startupBackup = runDailyBackup().catch((error: unknown) => {
+    log.error("The startup backup check failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  });
+  return {
+    port: server.port,
+    database,
+    secrets,
+    // Stops taking requests and starting jobs at once, then waits for open requests, the running
+    // job, and the startup check. The database closes last, since they may use it.
+    close: () => services.close([server.close(), startupBackup]),
+  };
+}
+
+// The startup steps, in the spec's order, up to the point where the app may listen: migrations are
+// done and the first scheduler tick has run. `pnpm start` then listens; `pnpm dev` hands the same
+// services to Vite.
+export async function launchServices(options: ServiceOptions): Promise<AppServices> {
   const database = await openDatabase(options.databaseUrl);
   let backups: { stop(): void } | undefined;
   try {
@@ -158,7 +234,7 @@ async function launchUnderLock(options: StartOptions): Promise<RunningApp> {
     // Web push needs VAPID keys: the app makes them when none are stored, as after a restore
     // without the Master key deleted them (spec 09, Encryption at rest).
     if (https) await vapidKeysOf(database, secrets);
-    const adapters = options.bankAdapters ?? [plaidAdapter({ database, secrets })];
+    const adapters = [plaidAdapter({ database, secrets }), ...(options.extraBankAdapters ?? [])];
     const bank = startBank({ database, secrets, adapters, timeZone });
     const followUp = startFollowUpPipeline({ database, startJob: requestFollowUp });
     // A background AI use in the follow-up job retries in a new follow-up job.
@@ -201,8 +277,10 @@ async function launchUnderLock(options: StartOptions): Promise<RunningApp> {
     const redo = startRedo({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
+    const weeklySummary = startWeeklySummary({ database });
     const stopModules = () => {
       backups?.stop();
+      weeklySummary.stop();
       monthlyReview.stop();
       updateCheck.stop();
       cpiFetch.stop();
@@ -242,46 +320,30 @@ async function launchUnderLock(options: StartOptions): Promise<RunningApp> {
       if ((await auth.removeOtherHostPasskeys(new Date())) > 0) {
         await askForDelivery();
       }
-      const server = await startServer({
-        port: options.port,
-        webRoot: options.webRoot,
-        security: options.security,
-        auth,
-        database,
-        secrets,
-        plaid: plaidSettings({ database, secrets }),
-        ai: aiSettings({
-          database,
-          secrets,
-          cost,
-          afterChange: async () => {
-            await redo.afterAiChange();
-            await tailoring.afterAiChange();
-          },
-        }),
-        smtp: smtpSettings({ database, secrets, address }),
-        push: pushSettings({ database, secrets, available: https }),
-        chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
-        // Each Goal's reading asks for its Budget tailoring Goal run at once.
-        goalWriting: goalWriting({ database, ai, requestGoalRun: requestGoalTailoring }),
-      });
-      // The startup check, once the app listens, so a slow or hung backup folder never holds up
-      // the start: a daily backup runs when none is from the most recent 3:00 AM, Household time.
-      // A failed one starts its retry.
-      const startupBackup = runDailyBackup().catch((error: unknown) => {
-        log.error("The startup backup check failed", {
-          errorName: error instanceof Error ? error.name : typeof error,
-        });
-      });
       return {
-        port: server.port,
         database,
         secrets,
-        // Stops taking requests and starting jobs at once, then waits for open requests, the
-        // running job, and the startup check. The database closes last, since they may use it.
-        close: async () => {
+        auth,
+        routes: {
+          plaid: plaidSettings({ database, secrets }),
+          ai: aiSettings({
+            database,
+            secrets,
+            cost,
+            afterChange: async () => {
+              await redo.afterAiChange();
+              await tailoring.afterAiChange();
+            },
+          }),
+          smtp: smtpSettings({ database, secrets, address }),
+          push: pushSettings({ database, secrets, available: https }),
+          chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
+          // Each Goal's reading asks for its Budget tailoring Goal run at once.
+          goalWriting: goalWriting({ database, ai, requestGoalRun: requestGoalTailoring }),
+        },
+        close: async (waitFor = []) => {
           try {
-            await settleAll([server.close(), jobs.stop(), startupBackup]);
+            await settleAll([...waitFor, jobs.stop()]);
           } finally {
             stopModules();
             closeDatabase(database);

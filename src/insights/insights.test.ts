@@ -197,17 +197,14 @@ describe("Insight cards", () => {
       BEFORE_SIX,
     );
     expect(facts).toMatchObject({ saved: { timeZone: "America/New_York" } });
-    const saved = await aiSettings(aiOptions()).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings(aiOptions()).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     expect(saved).toMatchObject({ saved: true });
     saveCalls = stub.calls.length;
     stops = [

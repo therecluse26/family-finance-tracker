@@ -225,6 +225,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   exported(schema.insightCards, "every column"),
   exported(schema.chatThreads, "every column"),
   exported(schema.chatMessages, "every column"),
+  exported(schema.chatAlertThreads, "every column"),
   // The AI provider and its models. The API key and the gateway token are Master-key secrets. A
   // base URL may hold a sign-in name and password.
   exported(
@@ -266,6 +267,7 @@ export const NEVER_EXPORTED_TABLES: ReadonlyMap<string, string> = new Map([
   [getTableName(schema.pushSends), "Work state: the push queue."],
   [getTableName(schema.noticeDeliveries), "Work state: the email and push queue."],
   [getTableName(schema.alertDeliveries), "Work state: the email and push queue."],
+  [getTableName(schema.weeklySummarySends), "Work state: the weekly summary email's sends."],
   [getTableName(schema.scheduledTasks), "Work state: the scheduler."],
   [getTableName(schema.setupSteps), "Work state: the first-run wizard."],
   [getTableName(schema.cpiValues), "Public BLS figures, not the Household's data."],

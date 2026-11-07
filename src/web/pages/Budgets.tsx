@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { calendarDateIn, percent, wholeDollars } from "../../format.ts";
 import type { BudgetsView, MonthBudgetView } from "../../server/budgets-views.ts";
 import type { HouseholdFactsView } from "../../server/household-views.ts";
 import { api } from "../api.ts";
+import { browserZone } from "../browser-zone.ts";
 import {
   acceptAll,
   type BudgetRow,
+  type BudgetRows,
+  type BudgetStatusShown,
   budgetRequests,
   budgetRows,
   type ChangeOutcome,
@@ -14,20 +17,24 @@ import {
   STATUS_SHOWN,
   typedBudget,
 } from "../budgets.ts";
-import { ErrorLine, FIELD } from "../components/Fields.tsx";
+import { Button } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
+import { ErrorLine } from "../components/Fields.tsx";
+import { Meter } from "../components/Meter.tsx";
+import { Page, PageHeading } from "../components/Page.tsx";
 import { UndoableProposals } from "../components/Proposal.tsx";
 import { AiMark, Status } from "../components/Status.tsx";
-import { browserZone } from "./Accounts.tsx";
+import { barShare, dashboardMonth, groupStatus, leftToSpend, monthName } from "../dashboard.ts";
 
 // The Budgets page (spec 07, Budgets page): every Category by Category group, with this month's
 // Spending, its Budget, and its status, and the yearly Budgets in their own section at the end. A
 // Member edits any Budget here, switches a pinned Bills Budget back to "Follow the bill", and
 // accepts the whole draft with "Accept all".
 
-const BUTTON = "rounded border border-gray-300 px-3 py-1 disabled:opacity-50";
-const ACCEPT = "rounded bg-blue-700 px-3 py-1 text-white disabled:opacity-50";
-
 export const BEFORE_FIRST_DRAFT = "Budgets appear when your history has loaded.";
+
+// The draft box's soft blue, from the board. It has no shared token yet.
+const DRAFT_BOX = "rounded-card border border-[#C9D7F8] bg-[#EEF3FE] px-4 py-3.5 sm:px-[18px]";
 
 // A row's edit box and the answer to its last change.
 export type RowState = { typed?: string; error?: string; busy?: boolean };
@@ -39,44 +46,70 @@ export type BudgetActions = {
   acceptAll(): void;
 };
 
+// A form field's ID from a Category, such as "budget-phone-and-internet".
+const fieldId = (category: string) =>
+  `budget-${category.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
+// A Budget's status, with the amount where it is not on track (spec 07, Status): "▲ $8 over",
+// "◆ on pace for $435", or "✓ On track". On pace with no projection keeps its word.
+export function budgetStatus(budget: MonthBudgetView): BudgetStatusShown {
+  if (budget.status === "Over Budget") {
+    return { tone: "critical", word: `${wholeDollars(budget.spending - budget.amount)} over` };
+  }
+  if (budget.status === "On pace" && budget.projected !== null) {
+    return { tone: "serious", word: `on pace for ${wholeDollars(budget.projected)}` };
+  }
+  return STATUS_SHOWN[budget.status];
+}
+
+// The Budget's box, always open: Enter or "Save" sends it. A yearly Budget is per year. As on the
+// board, the boxes stand alone at rest: "Save" shows once the box holds a new amount (or while it
+// saves, or after a refusal), and keeps its place while hidden so nothing moves as it appears.
 function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: BudgetActions }) {
   const { budget, state, actions } = props;
   const typed = state.typed ?? typedBudget(budget.amount);
+  const id = fieldId(budget.category);
+  const showSave =
+    typed !== typedBudget(budget.amount) || state.busy === true || state.error !== undefined;
   return (
-    <details className="mt-1">
-      <summary className="cursor-pointer text-sm text-blue-700">Edit</summary>
-      <form
-        className="mt-1 flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          actions.save(budget, typed);
-        }}
+    <form
+      className="flex items-center gap-2 sm:justify-end"
+      onSubmit={(e) => {
+        e.preventDefault();
+        actions.save(budget, typed);
+      }}
+    >
+      <label className="sr-only" htmlFor={id}>
+        {`${budget.category} ${budget.period === "yearly" ? "Budget per year" : "Budget per month"}`}
+      </label>
+      <span className="relative before:pointer-events-none before:absolute before:top-1/2 before:left-2.5 before:-translate-y-1/2 before:text-muted before:content-['$']">
+        <input
+          id={id}
+          className="h-9 w-24 rounded-control border border-field bg-white pr-2 pl-5 text-right text-sm tabular-nums"
+          inputMode="decimal"
+          required
+          value={typed}
+          onChange={(e) => actions.type(budget, e.target.value)}
+        />
+      </span>
+      <Button
+        type="button"
+        variant="outlined"
+        size="small"
+        disabled={state.busy === true}
+        className={showSave ? undefined : "invisible"}
+        data-slot="budget-save"
+        onClick={() => actions.save(budget, typed)}
       >
-        <label className="block">
-          {budget.period === "yearly" ? "Budget per year" : "Budget per month"}
-          <input
-            className={FIELD}
-            inputMode="decimal"
-            required
-            value={typed}
-            onChange={(e) => actions.type(budget, e.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          className={BUTTON}
-          disabled={state.busy === true}
-          onClick={() => actions.save(budget, typed)}
-        >
-          Save
-        </button>
-      </form>
-    </details>
+        Save
+      </Button>
+    </form>
   );
 }
 
 // "Follow the bill" is on while the Bills Budget follows the formula. A Member's edit pins it and
-// turns it off; turning it on puts the Budget back on the formula from the next month.
+// turns it off; turning it on puts the Budget back on the formula from the next month. The
+// checkbox stays the switch for keyboards and screen readers; the track beside it is drawn.
 function FollowTheBill(props: {
   budget: MonthBudgetView;
   state: RowState;
@@ -84,61 +117,131 @@ function FollowTheBill(props: {
 }) {
   const { budget, state, actions } = props;
   return (
-    <label className="mt-1 inline-flex items-center gap-2 text-sm">
+    <label className="inline-flex items-center gap-1.5 text-xs text-ink-soft">
       <input
         type="checkbox"
         role="switch"
+        className="peer sr-only"
         aria-checked={budget.pinned !== true}
         checked={budget.pinned !== true}
         disabled={budget.pinned !== true || state.busy === true}
         onChange={() => actions.followTheBill(budget)}
+      />
+      <span
+        aria-hidden="true"
+        className="relative inline-block h-[18px] w-[30px] shrink-0 rounded-full bg-muted peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent peer-disabled:opacity-70 after:absolute after:top-0.5 after:left-0.5 after:size-3.5 after:rounded-full after:bg-white after:content-[''] peer-checked:after:left-[14px]"
       />
       Follow the bill
     </label>
   );
 }
 
-export function BudgetRowItem(props: { row: BudgetRow; state: RowState; actions: BudgetActions }) {
-  const { row, state, actions } = props;
-  const { budget } = row;
+// One row: the Category, its Spending and status, a meter of Spending against the Budget, and the
+// Budget's box. From 640 px the four sit in a line, as on the board; on a phone the meter and the
+// box each take a line under the Category, and a Category with no Budget drops its empty meter.
+// The box's column has one width, so the meters line up down the card. `today` is where the meter's "today" tick goes: the
+// share of the month gone for a flexible Category, the share of the year for a yearly Budget, and
+// none for Bills.
+function BudgetLine(props: {
+  category: string;
+  spending: number;
+  spent: string;
+  budget: MonthBudgetView | undefined;
+  today: number | undefined;
+  facts: ReactNode;
+  state: RowState;
+  actions: BudgetActions;
+}) {
+  const { budget, state, actions } = props;
+  const tone =
+    budget?.status === "Over Budget"
+      ? "critical"
+      : budget?.status === "On pace"
+        ? "serious"
+        : "accent";
   return (
-    <li className="mt-3" data-category={row.category}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-        <span className="font-semibold">{row.category}</span>
-        <span>
-          {budget === undefined ? (
-            <>
-              {wholeDollars(row.spending)} <span className="text-gray-500">no Budget</span>
-            </>
-          ) : (
-            <>
-              {wholeDollars(row.spending)} of {wholeDollars(budget.amount)}{" "}
-              <Status {...STATUS_SHOWN[budget.status]} />
-            </>
-          )}
-        </span>
+    <li
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-t border-line-soft py-2.5 text-sm sm:grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)_9.75rem_minmax(0,1.3fr)] sm:gap-x-3.5"
+      data-category={props.category}
+    >
+      <div className="min-w-0">
+        <span className="font-semibold">{props.category}</span>
+        {props.facts}
       </div>
-      {budget?.context == null ? null : <p className="text-sm text-gray-600">{budget.context}</p>}
-      {budget?.reason == null ? null : (
-        <p className="text-sm text-gray-600" data-slot="budget-reason">
-          {budget.reason} <AiMark />
-        </p>
-      )}
-      {budget === undefined ? null : (
-        <>
-          {budget.pinned === null ? null : (
-            <FollowTheBill budget={budget} state={state} actions={actions} />
-          )}
+      <div className="col-start-2 row-start-1 flex flex-col items-end gap-1 text-right sm:col-start-4 sm:items-start sm:text-left">
+        <span className="tabular-nums">{props.spent}</span>
+        {budget === undefined ? null : (
+          <span className="text-small">
+            <Status {...budgetStatus(budget)} />
+          </span>
+        )}
+        {budget === undefined || budget.pinned === null ? null : (
+          <FollowTheBill budget={budget} state={state} actions={actions} />
+        )}
+      </div>
+      <Meter
+        share={budget === undefined ? 0 : barShare(props.spending, budget.amount)}
+        tone={tone}
+        size="small"
+        {...(budget === undefined || props.today === undefined ? {} : { today: props.today })}
+        className={`col-span-2 sm:col-span-1 sm:col-start-2 sm:row-start-1 ${budget === undefined ? "hidden sm:block" : ""}`}
+      />
+      <div
+        className={`col-span-2 sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:mt-0 sm:text-right ${budget === undefined ? "-mt-1.5" : ""}`}
+      >
+        {budget === undefined ? (
+          <span className="text-small text-muted">no Budget</span>
+        ) : (
           <BudgetEdit budget={budget} state={state} actions={actions} />
-        </>
+        )}
+      </div>
+      {state.error === undefined ? null : (
+        <div className="col-span-full">
+          <ErrorLine error={state.error} />
+        </div>
       )}
-      <ErrorLine error={state.error} />
     </li>
   );
 }
 
+// `monthGone` is the share of the month gone, for the "today" tick on each flexible Category's
+// meter. Bills come once a month, so they get none.
+export function BudgetRowItem(props: {
+  row: BudgetRow;
+  state: RowState;
+  actions: BudgetActions;
+  monthGone?: number;
+}) {
+  const { row, state, actions } = props;
+  const { budget } = row;
+  const flexible = budget?.categoryGroup !== "Bills";
+  return (
+    <BudgetLine
+      category={row.category}
+      spending={row.spending}
+      spent={`${wholeDollars(row.spending)} spent`}
+      budget={budget}
+      today={flexible ? props.monthGone : undefined}
+      facts={
+        <>
+          {budget?.context == null ? null : (
+            <p className="mt-0.5 text-small text-muted">{budget.context}</p>
+          )}
+          {budget?.reason == null ? null : (
+            <p className="mt-0.5 text-small text-muted" data-slot="budget-reason">
+              {budget.reason} <AiMark />
+            </p>
+          )}
+        </>
+      }
+      state={state}
+      actions={actions}
+    />
+  );
+}
+
 // A yearly Budget shows the year's Spending, the yearly Budget, and how much of the year has
-// passed. It is never On pace (spec 05, Yearly Budgets).
+// passed. It is never On pace (spec 05, Yearly Budgets). Its tick is the share of the year.
 export function YearlyBudgetItem(props: {
   budget: MonthBudgetView;
   state: RowState;
@@ -146,23 +249,130 @@ export function YearlyBudgetItem(props: {
 }) {
   const { budget, state, actions } = props;
   return (
-    <li className="mt-3" data-category={budget.category}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-        <span className="font-semibold">{budget.category}</span>
-        <span>
-          {wholeDollars(budget.spending)} of {wholeDollars(budget.amount)} this year{" "}
-          <Status {...STATUS_SHOWN[budget.status]} />
+    <BudgetLine
+      category={budget.category}
+      spending={budget.spending}
+      spent={`${wholeDollars(budget.spending)} spent this year`}
+      budget={budget}
+      today={budget.shareOfYear ?? undefined}
+      facts={
+        budget.shareOfYear === null ? null : (
+          <p className="mt-0.5 text-small text-muted">
+            {percent(budget.shareOfYear)} of the year has passed
+          </p>
+        )
+      }
+      state={state}
+      actions={actions}
+    />
+  );
+}
+
+// A Category group's box: its heading, "$spent of $Budget" for its monthly Budgets, and its status
+// (spec 07, 5. "A usual month"): "▲ N over", "◆ N on pace to go over", or "✓ on track".
+function GroupHeading(props: { title: string; group: BudgetsView["groups"][number] | undefined }) {
+  const { group } = props;
+  const status = groupStatus(group);
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pt-1.5 pb-2">
+      <h2 className="text-heading font-bold" id={`${fieldId(props.title)}-group`}>
+        {props.title}
+      </h2>
+      {group === undefined || group.monthly === 0 || group.spending === null ? null : (
+        <span className="text-small text-muted tabular-nums" data-slot="group-total">
+          {wholeDollars(group.spending)} of {wholeDollars(group.monthly)}
+        </span>
+      )}
+      {status === undefined ? null : (
+        <span className="ml-auto text-small" data-slot="group-status">
+          <Status {...status} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+// A Category group with no Budget, folded to one line: its name and its Spending, "no Budget".
+// Its name is a button that opens its rows in place; the rows have no Budget box to edit. As on
+// the board, folded groups that follow each other share one box. The page holds which are open.
+function FoldedGroup(props: {
+  title: string;
+  rows: BudgetRow[];
+  monthGone: number | undefined;
+  states: Readonly<Record<string, RowState>>;
+  actions: BudgetActions;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { open } = props;
+  const id = `${fieldId(props.title)}-group`;
+  const spending = props.rows.reduce((sum, row) => sum + row.spending, 0);
+  return (
+    <section
+      aria-labelledby={id}
+      className="border-t border-line-soft first:border-t-0"
+      data-slot="folded-group"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 py-1.5">
+        <h2 className="min-w-0 flex-1 text-heading font-bold" id={id}>
+          <button
+            type="button"
+            aria-controls={`${id}-rows`}
+            aria-expanded={open}
+            className="flex w-full items-center gap-2 rounded-control py-1.5 text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            onClick={props.onToggle}
+          >
+            <svg
+              aria-hidden="true"
+              className={`size-3.5 shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`}
+              viewBox="0 0 16 16"
+            >
+              <path
+                d="M6 3l5 5-5 5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+              />
+            </svg>
+            {props.title}
+          </button>
+        </h2>
+        <span className="text-small text-muted tabular-nums" data-slot="folded-total">
+          {wholeDollars(spending)} spent, no Budget
         </span>
       </div>
-      {budget.shareOfYear === null ? null : (
-        <p className="text-sm text-gray-600">
-          {percent(budget.shareOfYear)} of the year has passed
-        </p>
-      )}
-      <BudgetEdit budget={budget} state={state} actions={actions} />
-      <ErrorLine error={state.error} />
-    </li>
+      <ul hidden={!open} id={`${id}-rows`}>
+        {props.rows.map((row) => (
+          <BudgetRowItem
+            key={row.category}
+            row={row}
+            state={props.states[row.category] ?? {}}
+            actions={props.actions}
+            {...(props.monthGone === undefined ? {} : { monthGone: props.monthGone })}
+          />
+        ))}
+      </ul>
+    </section>
   );
+}
+
+// The Category groups in list order, with each run of groups that have no Budget at all folded
+// into one box.
+type GroupPart =
+  | { kind: "open"; group: BudgetRows["groups"][number] }
+  | { kind: "folded"; groups: BudgetRows["groups"] };
+
+function groupParts(groups: BudgetRows["groups"]): GroupPart[] {
+  const parts: GroupPart[] = [];
+  for (const group of groups) {
+    const last = parts.at(-1);
+    if (group.rows.some((row) => row.budget !== undefined)) parts.push({ kind: "open", group });
+    else if (last?.kind === "folded") last.groups.push(group);
+    else parts.push({ kind: "folded", groups: [group] });
+  }
+  return parts;
 }
 
 export function BudgetsReport(props: {
@@ -170,48 +380,96 @@ export function BudgetsReport(props: {
   states: Readonly<Record<string, RowState>>;
   accept: RowState;
   actions: BudgetActions;
+  // The share of the month gone, for the "today" ticks. None draws no tick.
+  monthGone?: number;
+  // The folded Category groups a Member opened, and the switch for each.
+  openGroups?: readonly string[];
+  toggleGroup?: (categoryGroup: string) => void;
 }) {
   const { view, states, actions } = props;
-  if (!view.drafted) return <p className="mt-4">{BEFORE_FIRST_DRAFT}</p>;
+  if (!view.drafted) {
+    return (
+      <Card>
+        <p className="text-muted">{BEFORE_FIRST_DRAFT}</p>
+      </Card>
+    );
+  }
   const { groups, yearly } = budgetRows(view);
   const stateOf = (category: string) => states[category] ?? {};
+  const groupOf = (name: string) => view.groups.find((group) => group.categoryGroup === name);
   return (
     <>
-      {view.notice === null ? null : <p className="mt-2 text-sm text-gray-600">{view.notice}</p>}
-      {view.fitNote === null ? null : <p className="mt-2">{view.fitNote}</p>}
-      <div className="mt-4">
-        {view.draftAccepted ? (
-          <p className="text-gray-600">The draft is accepted.</p>
-        ) : (
-          <button
+      {view.notice === null ? null : <p className="text-small text-muted">{view.notice}</p>}
+      {view.fitNote === null ? null : <p>{view.fitNote}</p>}
+      {view.draftAccepted ? (
+        <p className="text-small text-muted">The draft is accepted.</p>
+      ) : (
+        <section className={`flex flex-wrap items-center gap-3 ${DRAFT_BOX}`}>
+          <p className="min-w-[min(100%,260px)] flex-1">
+            These Budgets are a draft. Edit any of them, or take the whole draft at once.
+          </p>
+          <Button
             type="button"
-            className={ACCEPT}
             disabled={props.accept.busy === true}
             onClick={() => actions.acceptAll()}
           >
             Accept all
-          </button>
-        )}
-        <ErrorLine error={props.accept.error} />
-      </div>
-      {groups.map((group) => (
-        <section key={group.categoryGroup} className="mt-6">
-          <h2 className="text-lg font-semibold">{group.categoryGroup}</h2>
-          <ul>
-            {group.rows.map((row) => (
-              <BudgetRowItem
-                key={row.category}
-                row={row}
-                state={stateOf(row.category)}
-                actions={actions}
-              />
-            ))}
-          </ul>
+          </Button>
+          {props.accept.error === undefined ? null : (
+            <div className="basis-full">
+              <ErrorLine error={props.accept.error} />
+            </div>
+          )}
         </section>
-      ))}
+      )}
+      {groupParts(groups).map((part) => {
+        if (part.kind === "folded") {
+          return (
+            <Card
+              as="div"
+              key={part.groups.map((group) => group.categoryGroup).join("+")}
+              padding="list"
+            >
+              {part.groups.map((group) => (
+                <FoldedGroup
+                  key={group.categoryGroup}
+                  title={group.categoryGroup}
+                  rows={group.rows}
+                  monthGone={props.monthGone}
+                  states={states}
+                  actions={actions}
+                  open={props.openGroups?.includes(group.categoryGroup) === true}
+                  onToggle={() => props.toggleGroup?.(group.categoryGroup)}
+                />
+              ))}
+            </Card>
+          );
+        }
+        const { group } = part;
+        return (
+          <Card
+            key={group.categoryGroup}
+            padding="list"
+            aria-labelledby={`${fieldId(group.categoryGroup)}-group`}
+          >
+            <GroupHeading title={group.categoryGroup} group={groupOf(group.categoryGroup)} />
+            <ul>
+              {group.rows.map((row) => (
+                <BudgetRowItem
+                  key={row.category}
+                  row={row}
+                  state={stateOf(row.category)}
+                  actions={actions}
+                  {...(props.monthGone === undefined ? {} : { monthGone: props.monthGone })}
+                />
+              ))}
+            </ul>
+          </Card>
+        );
+      })}
       {yearly.length === 0 ? null : (
-        <section className="mt-6">
-          <h2 className="text-lg font-semibold">Yearly Budgets</h2>
+        <Card padding="list" aria-labelledby={`${fieldId("Yearly Budgets")}-group`}>
+          <GroupHeading title="Yearly Budgets" group={undefined} />
           <ul>
             {yearly.map((budget) => (
               <YearlyBudgetItem
@@ -222,17 +480,32 @@ export function BudgetsReport(props: {
               />
             ))}
           </ul>
-        </section>
+        </Card>
+      )}
+      {props.monthGone === undefined ? null : (
+        <p className="text-small text-muted" data-slot="tick-note">
+          The black tick on each meter is today. Bills have no tick: they come once a month.
+        </p>
       )}
     </>
   );
 }
 
+// "$1,220 of $5,400 spent": the month's Spending against its monthly Budgets, as Left to spend
+// counts them (spec 07, 2. Left to spend). Yearly Budgets stay out.
+export function monthSpentLine(view: BudgetsView): string | undefined {
+  const left = leftToSpend(view);
+  if (!left.drafted) return undefined;
+  return `${wholeDollars(left.spending)} of ${wholeDollars(left.budget)} spent`;
+}
+
 export function Budgets() {
   const [view, setView] = useState<BudgetsView | undefined>();
+  const [monthGone, setMonthGone] = useState<number | undefined>();
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [accept, setAccept] = useState<RowState>({});
   const [error, setError] = useState<string | undefined>();
+  const [openGroups, setOpenGroups] = useState<readonly string[]>([]);
   // Counts the page's reads, so the accepted Proposals read again with it.
   const [reads, setReads] = useState(0);
 
@@ -246,10 +519,14 @@ export function Budgets() {
       const facts = household.ok
         ? ((await household.json()) as { facts: HouseholdFactsView | null }).facts
         : null;
-      const month = calendarDateIn(new Date(), facts?.timeZone ?? browserZone()).slice(0, 7);
+      const zone = facts?.timeZone ?? browserZone();
+      const now = new Date();
+      const month = calendarDateIn(now, zone).slice(0, 7);
       const res = await budgetRequests.budgets(month);
       if (!res.ok) return setError("That did not work.");
+      const days = dashboardMonth(now, zone);
       setView((await res.json()) as BudgetsView);
+      setMonthGone(days.day / days.days);
       setReads((count) => count + 1);
       setError(undefined);
     } catch {
@@ -285,14 +562,35 @@ export function Budgets() {
     void load();
   }, []);
 
+  // The heading stays one element while the page loads, so the focus a menu choice puts on it
+  // stays there. The month joins it once the Budgets have loaded.
+  const spent = view === undefined ? undefined : monthSpentLine(view);
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Budgets</h1>
+    <Page width="wide">
+      <PageHeading title={view === undefined ? "Budgets" : `Budgets · ${monthName(view.month)}`}>
+        {spent === undefined ? null : (
+          <span className="text-muted tabular-nums" data-slot="month-spent">
+            {spent}
+          </span>
+        )}
+      </PageHeading>
       <ErrorLine error={error} />
       <UndoableProposals key={reads} kinds={["Budget change"]} onChanged={() => void load()} />
       {view === undefined ? null : (
-        <BudgetsReport view={view} states={states} accept={accept} actions={actions} />
+        <BudgetsReport
+          view={view}
+          states={states}
+          accept={accept}
+          actions={actions}
+          openGroups={openGroups}
+          toggleGroup={(name) =>
+            setOpenGroups((all) =>
+              all.includes(name) ? all.filter((each) => each !== name) : [...all, name],
+            )
+          }
+          {...(monthGone === undefined ? {} : { monthGone })}
+        />
       )}
-    </main>
+    </Page>
   );
 }

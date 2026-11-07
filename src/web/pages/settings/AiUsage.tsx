@@ -4,9 +4,12 @@ import { AI_USE_LABELS, type AiUsageView } from "../../../ai/ai-view.ts";
 import { callCost, capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import { api } from "../../api.ts";
+import { Card } from "../../components/Card.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
+import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
 import { todayHere } from "./Ai.tsx";
+import { TEXT_LINK } from "./settings-ui.tsx";
 
 // Settings → AI → AI usage (spec 08, AI usage page): each AI call this month, the month's total
 // against the AI cost cap, and the month's total per use. It shows metadata only: the app keeps no
@@ -14,82 +17,99 @@ import { todayHere } from "./Ai.tsx";
 
 const count = (tokens: number) => tokens.toLocaleString("en-US");
 
-const CELL = "border-b border-gray-200 px-2 py-1 text-left";
+const HEAD = "border-b border-line px-3 py-2.5 text-left text-xs font-semibold text-muted";
+const CELL = "border-b border-line-soft px-3 py-[11px] tabular-nums";
+// A number column, at the right.
+const NUMBER = `${CELL} text-right`;
+const NUMBER_HEAD = `${HEAD} text-right`;
 
 // The page once the usage has loaded. Times show in `zone`, the Household time zone.
 export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: string }) {
   const { usage, zone, today } = props;
   return (
     <>
-      <p className="mt-2 font-semibold" role="status">
-        {capLine(usage.totalNanos, usage.capCents)} this month
-      </p>
-      {usage.pausedUntil === null ? null : (
-        <p className="mt-1">
-          AI paused until {dateLabel(usage.pausedUntil, today)}: AI cost cap reached
+      <Card>
+        <p className="text-heading font-bold tabular-nums" role="status">
+          {capLine(usage.totalNanos, usage.capCents)} this month
         </p>
-      )}
-      {usage.calls.length === 0 ? (
-        <p className="mt-4 text-gray-600">No AI calls this month.</p>
-      ) : (
+        {usage.pausedUntil === null ? null : (
+          <p className="mt-1.5">
+            <StatusText tone="serious">
+              AI paused until {dateLabel(usage.pausedUntil, today)}: AI cost cap reached
+            </StatusText>
+          </p>
+        )}
+        {usage.calls.length === 0 ? (
+          <p className="mt-1.5 text-muted">No AI calls this month.</p>
+        ) : null}
+      </Card>
+      {usage.calls.length === 0 ? null : (
         <>
-          <h3 className="mt-6 text-lg font-semibold">This month by use</h3>
-          <div className="overflow-x-auto">
-            <table className="mt-2">
-              <thead>
-                <tr>
-                  <th className={CELL}>Use</th>
-                  <th className={CELL}>Calls</th>
-                  <th className={CELL}>Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.byUse.map((row) => (
-                  <tr key={row.use}>
-                    <td className={CELL}>{AI_USE_LABELS[row.use]}</td>
-                    <td className={CELL}>{count(row.calls)}</td>
-                    <td className={CELL}>{callCost(row.costNanos)}</td>
+          <Card aria-labelledby="ai-usage-by-use">
+            <h3 id="ai-usage-by-use" className="text-heading font-bold">
+              This month by use
+            </h3>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className={HEAD}>Use</th>
+                    <th className={NUMBER_HEAD}>Calls</th>
+                    <th className={NUMBER_HEAD}>Cost</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <h3 className="mt-6 text-lg font-semibold">Each call</h3>
-          <div className="overflow-x-auto">
-            <table className="mt-2">
-              <thead>
-                <tr>
-                  <th className={CELL}>Time</th>
-                  <th className={CELL}>Use</th>
-                  <th className={CELL}>Model</th>
-                  <th className={CELL}>Input without cache</th>
-                  <th className={CELL}>Cache read</th>
-                  <th className={CELL}>Cache write</th>
-                  <th className={CELL}>Output</th>
-                  <th className={CELL}>Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.calls.map((call) => {
-                  const at = new Date(call.at);
-                  return (
-                    <tr key={call.id}>
-                      <td className={CELL}>
-                        {dateLabel(calendarDateIn(at, zone), today)}, {timeLabel(at, zone)}
-                      </td>
-                      <td className={CELL}>{AI_USE_LABELS[call.use]}</td>
-                      <td className={CELL}>{call.model}</td>
-                      <td className={CELL}>{count(call.noCacheTokens)}</td>
-                      <td className={CELL}>{count(call.cacheReadTokens)}</td>
-                      <td className={CELL}>{count(call.cacheWriteTokens)}</td>
-                      <td className={CELL}>{count(call.outputTokens)}</td>
-                      <td className={CELL}>{callCost(call.costNanos)}</td>
+                </thead>
+                <tbody>
+                  {usage.byUse.map((row) => (
+                    <tr key={row.use}>
+                      <td className={CELL}>{AI_USE_LABELS[row.use]}</td>
+                      <td className={NUMBER}>{count(row.calls)}</td>
+                      <td className={NUMBER}>{callCost(row.costNanos)}</td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          <Card aria-labelledby="ai-usage-each-call">
+            <h3 id="ai-usage-each-call" className="text-heading font-bold">
+              Each call
+            </h3>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className={HEAD}>Time</th>
+                    <th className={HEAD}>Use</th>
+                    <th className={HEAD}>Model</th>
+                    <th className={NUMBER_HEAD}>Input without cache</th>
+                    <th className={NUMBER_HEAD}>Cache read</th>
+                    <th className={NUMBER_HEAD}>Cache write</th>
+                    <th className={NUMBER_HEAD}>Output</th>
+                    <th className={NUMBER_HEAD}>Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usage.calls.map((call) => {
+                    const at = new Date(call.at);
+                    return (
+                      <tr key={call.id}>
+                        <td className={`${CELL} whitespace-nowrap`}>
+                          {dateLabel(calendarDateIn(at, zone), today)}, {timeLabel(at, zone)}
+                        </td>
+                        <td className={CELL}>{AI_USE_LABELS[call.use]}</td>
+                        <td className={CELL}>{call.model}</td>
+                        <td className={NUMBER}>{count(call.noCacheTokens)}</td>
+                        <td className={NUMBER}>{count(call.cacheReadTokens)}</td>
+                        <td className={NUMBER}>{count(call.cacheWriteTokens)}</td>
+                        <td className={NUMBER}>{count(call.outputTokens)}</td>
+                        <td className={NUMBER}>{callCost(call.costNanos)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
       )}
     </>
@@ -113,12 +133,14 @@ export function AiUsage() {
 
   return (
     <>
-      <h2 className="text-xl font-semibold">AI usage</h2>
-      <p className="mt-1">
-        <Link className="text-blue-700 underline" to="/settings/ai">
-          Back to AI settings
-        </Link>
-      </p>
+      <div>
+        <h2 className="text-heading font-bold">AI usage</h2>
+        <p className="mt-1 text-sm">
+          <Link className={TEXT_LINK} to="/settings/ai">
+            Back to AI settings
+          </Link>
+        </p>
+      </div>
       <ErrorLine error={error} />
       {usage === undefined || zone === undefined ? null : (
         <AiUsageReport usage={usage} zone={zone} today={todayHere(new Date(), zone)} />

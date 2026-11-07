@@ -7,15 +7,15 @@ import {
   type TopMerchantView,
 } from "../../server/top-merchants-views.ts";
 import { api } from "../api.ts";
+import { SEGMENTS, Segment } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
+import { Meter } from "../components/Meter.tsx";
+import { Page, PageHeading } from "../components/Page.tsx";
 import { transactionsPath } from "../transactions.ts";
 
 // Top Merchants (spec 07, Top Merchants): a ranked list of Merchants by Spending, with a "This
 // month" or "Last 12 months" switch. Tapping a row opens the Transactions page for that Merchant.
-
-const LINK = "text-blue-700 underline";
-const SWITCH =
-  "rounded border border-gray-300 px-3 py-1 aria-pressed:bg-blue-700 aria-pressed:text-white";
 
 // "142 Transactions · Groceries".
 export function merchantFacts(merchant: TopMerchantView): string {
@@ -28,45 +28,75 @@ export function PeriodSwitch(props: {
   onChange(period: TopMerchantPeriod): void;
 }) {
   return (
-    <fieldset className="mt-4 flex gap-2">
+    <fieldset className={SEGMENTS}>
       <legend className="sr-only">Period</legend>
       {TOP_MERCHANT_PERIODS.map((period) => (
-        <button
+        <Segment
           key={period}
-          type="button"
-          className={SWITCH}
-          aria-pressed={period === props.period}
+          pressed={period === props.period}
           onClick={() => props.onChange(period)}
         >
           {period}
-        </button>
+        </Segment>
       ))}
     </fieldset>
   );
 }
 
+// Each row: the rank, the Merchant with its facts, a bar of its Spending against the top
+// Merchant's, and its Spending. On a phone the bar sits under the Merchant.
 export function TopMerchantList(props: { merchants: readonly TopMerchantView[] }) {
-  if (props.merchants.length === 0) return <p className="mt-4">No Spending yet.</p>;
+  if (props.merchants.length === 0) {
+    return (
+      <Card>
+        <p className="text-muted">No Spending yet.</p>
+      </Card>
+    );
+  }
+  const top = Math.max(...props.merchants.map((merchant) => merchant.spending));
   return (
-    <ol className="mt-4">
-      {props.merchants.map((merchant, index) => (
-        <li
-          key={merchant.id}
-          className="mt-2 flex flex-wrap items-baseline justify-between gap-x-4"
-        >
-          <span>
-            {index + 1}.{" "}
-            <Link className={LINK} to={transactionsPath({ merchant: merchant.merchantName })}>
-              {merchant.merchantName}
-            </Link>
-            <span className="ml-2 text-sm text-gray-600">{merchantFacts(merchant)}</span>
-          </span>
-          <span>{wholeDollars(merchant.spending)}</span>
-        </li>
-      ))}
-    </ol>
+    <>
+      <Card padding="list">
+        <ol>
+          {props.merchants.map((merchant, index) => (
+            <li
+              key={merchant.id}
+              className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 border-t border-line-soft py-[11px] text-sm first:border-t-0 sm:grid-cols-[1.75rem_minmax(0,1.3fr)_minmax(0,2fr)_6rem]"
+            >
+              <span className="text-muted tabular-nums">{index + 1}</span>
+              <span className="min-w-0">
+                <Link
+                  className="font-semibold text-ink hover:text-accent hover:underline"
+                  to={transactionsPath({ merchant: merchant.merchantName })}
+                >
+                  {merchant.merchantName}
+                </Link>
+                <span className="block text-small text-muted">{merchantFacts(merchant)}</span>
+              </span>
+              <Meter
+                share={top > 0 ? merchant.spending / top : 0}
+                track={false}
+                size="large"
+                className="col-span-2 col-start-2 sm:col-span-1 sm:col-start-3"
+              />
+              <span className="col-start-3 row-start-1 text-right tabular-nums sm:col-start-4">
+                {wholeDollars(merchant.spending)}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </Card>
+      <p className="text-small text-muted">Choose a Merchant to see its Transactions.</p>
+    </>
   );
 }
+
+// What the ranking counts, as src/server/top-merchants.ts counts it: Spending parts, less the
+// Refunds and Reimbursements that go back to the same Merchant. Transfers and Saving are never
+// read. A payment to a lender that the app counts as Spending, such as an untracked Purchase loan
+// payment (spec 03, Untracked loans), stays in, so the line does not say lenders are left out.
+export const TOP_MERCHANTS_RULE =
+  "Spending only, net of Refunds and Reimbursements. Transfers and Saving are left out.";
 
 export const topMerchantRequests = {
   view: (period: TopMerchantPeriod) => {
@@ -102,11 +132,15 @@ export function TopMerchants() {
   }, [period]);
 
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Top Merchants</h1>
-      <PeriodSwitch period={period} onChange={setPeriod} />
+    <Page>
+      <PageHeading title="Top Merchants">
+        <PeriodSwitch period={period} onChange={setPeriod} />
+      </PageHeading>
+      <p className="text-muted" data-slot="top-merchants-rule">
+        {TOP_MERCHANTS_RULE}
+      </p>
       <ErrorLine error={error} />
       {merchants === undefined ? null : <TopMerchantList merchants={merchants} />}
-    </main>
+    </Page>
   );
 }

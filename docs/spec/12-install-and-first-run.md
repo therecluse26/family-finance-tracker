@@ -129,24 +129,27 @@ The setup guide gives three ways, in this order:
 
 ## The first-run wizard
 
+The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, and Back.
+
 | Step | Required | Content |
 |---|---|---|
 | 1. Setup link | Yes | The code from `fft setup`'s link. |
-| 2. First Member | Yes | Name, email, password, TOTP, and backup codes. |
-| 3. Master key | Yes | Shown once. The Member pastes it back, using the same check as "Check my master key". |
-| 4. Household facts | Yes | The ZIP code, each person's age (people without a login included, such as children), and rent or own. |
-| 5. Banks | No | Plaid keys, then Connections, Unconnected accounts, and Manual loans. |
-| 6. AI | No | The AI setup screen. |
-| 7. Alerts | No | Email by SMTP, and web push on this device. |
-| 8. Invite Members | No | Invite links. |
-| 9. Finish | — | History loading. |
+| 2. Your login | Yes | Name, email, password, TOTP, and backup codes. This makes the first Member. |
+| 3. Master key | Yes | Shown with a Copy button until the Member presses "I saved it". |
+| 4. Household | Yes | The ZIP code, each person's age (people without a login included, such as children), and rent or own. |
+| 5. Banks | No | Plaid keys, then Plaid Link for each bank. Done only when a Connection exists. |
+| 6. Finish | — | History loading, and the optional extras. |
 
 **Order and resume rules:**
 
 - Until steps 1 to 4 are done, every page leads to the wizard, except `/healthz`.
 - The Master key step comes before the Banks step on purpose, so no token is stored before the key is saved.
-- Each optional step has a Skip button. Skipped steps appear in a "Finish setup" list on the dashboard until each one is done.
+- Only the Banks step can be skipped, with "Skip for now". A skipped Banks step appears in the "Finish setup" list on the dashboard until a Connection exists.
+- In the list of steps, a done step has a check mark. A skipped Banks step has no check mark: it shows "5. Banks (skipped)".
+- AI, Alerts, and Invite Members are not wizard steps. They are optional extras. Each one appears in the "Finish setup" list until it is done, and the Finish step lists the ones not yet done.
 - The wizard saves each step when the step is done. The next visit opens the first step that is neither done nor skipped.
+- Back opens the step before. A step whose work cannot change, such as the login or the saved Master key, then says that it is done and offers Continue.
+- Each button names where it goes, such as "Continue to the Master key" or "Save and continue to Banks".
 - Only the first Member goes through the wizard. A Member who joins by invite never sees it; they only make their own login.
 
 **Step 1, Setup link:**
@@ -154,44 +157,49 @@ The setup guide gives three ways, in this order:
 - The setup page reads the code from the part after `#`. Without it, the page asks the Member to enter the code.
 - Entered codes ignore letter case and dashes.
 - The page allows 5 wrong codes per 15 minutes.
+- After the server accepts the code, the page keeps it in the browser tab's session storage, exactly as the server accepted it. A reload then goes on to step 2 without the code from the terminal. The page checks the kept code with the server again before it uses it.
+- The page deletes the kept code when the first Member exists, and when the server refuses the code itself: a wrong code, a code with the wrong form, or a code sent after the first Member exists. The page keeps the code after "too many wrong codes" and after a server error, because the code can still be right. Closing the tab also deletes it.
 
-**Step 2, First Member:** the step makes the first Member and signs them in. From then on, the setup code no longer works. Login rules are in [Members, login, and security](09-members-login-security.md#signing-in).
+**Step 2, Your login:**
+
+- The step makes the first Member and signs them in. It shows the backup codes once. From then on, the setup code no longer works. Login rules are in [Members, login, and security](09-members-login-security.md#signing-in).
+- The page keeps the Name and Email typed so far in the tab's session storage with the setup code, so a reload does not empty them. It deletes them whenever it deletes the kept code. It never keeps the password.
 
 **Step 3, Master key:**
 
-- Until the paste-back succeeds, the step shows the Master key on each visit.
-- After it succeeds, the app never shows the Master key again.
+- The step shows the Master key on each visit, with a Copy button, until the Member presses "I saved it".
+- The app does not ask the Member to paste the key back. "Check my master key" in settings tests a saved copy later ([Members, login, and security](09-members-login-security.md#the-master-key)).
+- After "I saved it", the app never shows the Master key again.
 
-**Step 4, Household facts:** how the app uses these facts, and how Members edit them later, is in [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md).
+**Step 4, Household:** how the app uses these facts, and how Members edit them later, is in [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md).
 
 **Step 5, Banks:**
 
-- The step takes the Plaid keys, then offers Import Plaid Connection, a new Connection, an Unconnected account, and a Manual loan.
+- The step takes the Plaid keys, then offers Plaid Link for each bank. Under `pnpm dev`, it also offers the fake bank.
+- The step is done only when app.db holds a Connection. The server decides this. Until then, Continue is off.
+- "Skip for now" lets a self-hoster go on without a Connection, such as before Plaid approves the Trial plan. The Banks item then waits in the "Finish setup" list. Until a Connection exists, the dashboard shows "Link a bank to see your money here" in place of its boxes ([Dashboard and pages](07-dashboard-and-pages.md#the-dashboard)).
+- Unconnected accounts, Manual loans, and Import Plaid Connection are not in the wizard. They are in Settings, Banks. They do not make the Banks step done.
 - Every rule for these is in [Accounts and bank sync](02-accounts-and-bank-sync.md).
 - The step offers no sandbox dry run, because sandbox data would mix with real data.
 
-**Step 6, AI:**
-
-- The step holds the fields of the [AI settings page](08-ai.md#ai-settings-page).
-- It also shows the estimate for the first AI run on all history: about $0.20, counted against the AI cost cap ([AI](08-ai.md#the-ai-cost-cap)).
-
-**Step 7, Alerts:**
-
-- SMTP takes a host, a port, a sign-in name, a password, and a sender address.
-- SMTP has "Send a test email". It sends to the signed-in Member. The step is done only after a test email goes out.
-- "Turn on Alerts on this device" works over HTTPS only.
-- On an iPhone, the step first explains "Add to Home Screen".
-- On plain HTTP, the push part is hidden, with the reason shown.
-- Channel choices and delivery rules are in [Anomalies and Alerts](06-anomalies-and-alerts.md).
-
-**Step 8, Invite Members:** the step makes invite links under the rules in [Members, login, and security](09-members-login-security.md#invites).
-
-**Step 9, Finish:**
+**Step 6, Finish:**
 
 - The Finish step says that history is loading. The dashboard shows progress per Connection.
 - When every Connection's history is in, the AI's first run starts and the formula drafts the Budgets ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md), [AI](08-ai.md)).
 - Then one System notice says "Your history is ready".
 - If the Household has no Connection yet, the Finish step says so and points to the "Finish setup" list.
+- Below "Open the dashboard", the step lists each optional extra not yet done, with a link to its settings page:
+  - **AI helper:** the [AI settings page](08-ai.md#ai-settings-page). The step shows the estimate for the first AI run on all history: about $0.20, counted against the AI cost cap ([AI](08-ai.md#the-ai-cost-cap)).
+  - **Alerts by email:** Settings, Alerts ([Anomalies and Alerts](06-anomalies-and-alerts.md#recipients-and-channels)).
+  - **Invite Members:** invite links under the rules in [Members, login, and security](09-members-login-security.md#invites).
+- "Open the dashboard" and each extra's link end the wizard.
+
+**The "Finish setup" list:**
+
+- The dashboard shows it to every Member, once steps 1 to 4 are done ([Dashboard and pages](07-dashboard-and-pages.md#header-and-status-lines)).
+- It holds Banks while the Household has no Connection (a removed Connection does not count), then AI, Alerts, and Invite Members, each until it is done.
+- An item is done only on what the server knows. The Banks step is done once a Connection exists. AI is done once an AI provider is set. Alerts is done once a test email goes out. Invite Members is done once an invite link is made.
+- A done extra stays done, even if its provider or invite goes away later. A done Banks step also stays done, but Banks comes back to the list when the last Connection is removed.
 
 ## Updates
 

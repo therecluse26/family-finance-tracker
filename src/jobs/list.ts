@@ -12,6 +12,7 @@ import { MonthlyReviewDueJob, MonthlyReviewJob, ON_THE_FIRST } from "../monthly-
 import { AiBackJob } from "../redo/index.ts";
 import { BudgetTailoringJob } from "../tailoring/index.ts";
 import { UpdateCheckJob } from "../updates/index.ts";
+import { SUNDAY_MORNING, WeeklySummaryJob } from "../weekly-summary/index.ts";
 import { daily, everyMinute } from "./schedule.ts";
 import type { ScheduledTask } from "./scheduler.ts";
 
@@ -33,6 +34,7 @@ export {
   ProvisionalResultsJob,
   SyncScheduleJob,
   UpdateCheckJob,
+  WeeklySummaryJob,
 };
 
 // Every scheduled task. Each task's job is in the list above.
@@ -82,4 +84,8 @@ export const scheduledTasks: readonly ScheduledTask[] = [
     schedule: INSIGHT_CARD_CHECK_SCHEDULE,
     job: InsightCardCheckJob,
   },
+  // Sends each Member's weekly summary email on Sunday at 8:00 AM, Household time (spec 06,
+  // Weekly summary email). A Sunday missed while the app was down runs at the next start. Only
+  // this task starts its job.
+  { name: "weekly summary", schedule: SUNDAY_MORNING, job: WeeklySummaryJob },
 ];

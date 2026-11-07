@@ -18,6 +18,7 @@ import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { weeklySummarySettings } from "../weekly-summary/index.ts";
 import { aboutRoutes } from "./about.ts";
 import { aiBoxRoutes } from "./ai-box.ts";
 import { alertRoutes } from "./alerts.ts";
@@ -30,6 +31,7 @@ import { categoryRoutes } from "./categories.ts";
 import { chatRoutes } from "./chat.ts";
 import { comingUpRoutes } from "./coming-up.ts";
 import { dataExportRoutes } from "./data-export.ts";
+import { deviceRoutes } from "./devices.ts";
 import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
@@ -88,7 +90,7 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
     if (signedIn === undefined) return c.json({ error: "Sign in first" }, 401);
     for (const cookie of signedIn.setCookies) c.header("Set-Cookie", cookie, { append: true });
     c.set("member", signedIn.member);
-    c.set("checkFreshCode", (code) => auth.checkFreshCode(c.req.raw, c.var.clientAddress, code));
+    c.set("sessionId", signedIn.sessionId);
     await next();
   };
 }
@@ -139,7 +141,7 @@ function installableOverHttpsOnly(mode: "https" | "http"): MiddlewareHandler<Ser
   };
 }
 
-const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
+export const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sendsJson(c)) {
     return c.json({ error: "Send JSON." }, 415);
   }
@@ -169,12 +171,12 @@ const requestBodyLimit = bodyLimit({
 });
 
 // Until the wizard's step 3 is done, the API stores no Master-key secret (spec 12, Order and resume
-// rules). It refuses every write but step 3's own paste-back, so no route can store one early.
-const PASTE_BACK = "/api/setup/master-key";
+// rules). It refuses every write but step 3's own "I saved it", so no route can store one early.
+const SAVED_IT = "/api/setup/master-key";
 
 const masterKeyFirst: MiddlewareHandler<ServerEnv> = async (c, next) => {
   const write = c.req.method !== "GET" && c.req.method !== "HEAD";
-  if (write && c.req.path !== PASTE_BACK && !(await c.var.masterKey.saved())) {
+  if (write && c.req.path !== SAVED_IT && !(await c.var.masterKey.saved())) {
     return c.json({ error: "Save the Master key first: finish step 3 of setup." }, 409);
   }
   await next();
@@ -195,6 +197,8 @@ export function createApp(
     chat?: Chat;
     // Adding a Goal and editing its words, with the AI's reading. Without it, no Goal is added.
     goalWriting?: GoalWriting;
+    // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
+    devRoutes?: Hono<ServerEnv>;
   } = {},
 ) {
   const bank = bankViews(database);
@@ -215,6 +219,7 @@ export function createApp(
   const pictures = pictureRoutes(database);
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);
+  const weeklySummary = weeklySummarySettings(database);
   const topMerchants = topMerchantRoutes(database);
   const aiBox = aiBoxRoutes(database, services.ai);
   const proposals = proposalRoutes(database);
@@ -225,6 +230,7 @@ export function createApp(
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
   const members = memberRoutes(database, auth, security.appUrl);
+  const devices = deviceRoutes(auth);
   return (
     new Hono<ServerEnv>()
       .use(safetyHeaders)
@@ -274,6 +280,7 @@ export function createApp(
         c.set("pictures", pictures);
         c.set("comingUp", comingUp);
         c.set("channels", channels);
+        c.set("weeklySummary", weeklySummary);
         c.set("topMerchants", topMerchants);
         c.set("aiBox", aiBox);
         c.set("proposals", proposals);
@@ -284,6 +291,7 @@ export function createApp(
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
         c.set("members", members);
+        c.set("devices", devices);
         await next();
       })
       .use("/api/*", masterKeyFirst)
@@ -298,7 +306,9 @@ export function createApp(
       .use("/api/push/*", secretRoutes(database, "push", services.push))
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
+      .use("/api/weekly-summary", jsonOnly)
       .route("/api", api)
+      .route("/api/dev", services.devRoutes ?? new Hono<ServerEnv>())
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))
       .use(installableOverHttpsOnly(security.appUrl.mode))
       .use(serveStatic({ root: webRoot }))

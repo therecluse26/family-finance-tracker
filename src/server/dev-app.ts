@@ -2,11 +2,9 @@ import { mkdirSync } from "node:fs";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { aiCost, aiSettings, householdAi } from "../ai/index.ts";
-import { createAuth } from "../auth/index.ts";
-import { startBackups } from "../backups/index.ts";
-import { plaidSettings } from "../bank/index.ts";
-import { chat } from "../chat/index.ts";
+import { offerDemoBanks } from "../bank/demo.ts";
+import { FakeBankAdapter } from "../bank/fake.ts";
+import { CpiFetchJob } from "../benchmarks/index.ts";
 import {
   applyMigrations,
   closeDatabase,
@@ -14,8 +12,7 @@ import {
   hasMember,
   openDatabase,
 } from "../db/index.ts";
-import { householdTimeZone } from "../household/index.ts";
-import { pushSettings, startNotify } from "../notify/index.ts";
+import { scheduledTasks } from "../jobs/list.ts";
 import {
   checkDataKey,
   loadMasterKey,
@@ -23,22 +20,26 @@ import {
   MasterKeyError,
   makeMasterKey,
   setupCodeOf,
-  unlockSecrets,
   WrongMasterKeyError,
 } from "../secrets/index.ts";
-import { householdSummary } from "../summary/index.ts";
+import { UpdateCheckJob } from "../updates/index.ts";
 import { createApp } from "./app.ts";
+import { devRoutes } from "./dev-routes.ts";
 import { loadSecurity } from "./security-mode.ts";
+import { launchServices } from "./start.ts";
 
 // `pnpm dev` only: the Hono app on its own app.db in .dev/, which Vite hands /api and /healthz.
 // With no Master key set, it uses .dev/master.key, and makes it when it is missing.
 export const DEV_FOLDER = fileURLToPath(new URL("../../.dev", import.meta.url));
 const MIGRATIONS = fileURLToPath(new URL("../../drizzle", import.meta.url));
+// Sidequest imports each job class from the job list. Vite runs Sidequest's files too, so that
+// import reaches the modules this app runs.
+const JOB_LIST = new URL("../jobs/list.ts", import.meta.url).href;
 
 // The Master key settings that loadMasterKey reads.
 type MasterKeyEnv = Parameters<typeof loadMasterKey>[0];
 
-type DevEnv = {
+export type DevEnv = {
   APP_URL: string;
   TRUSTED_PROXIES?: string;
   FFT_MASTER_KEY_FILE?: string;
@@ -92,7 +93,7 @@ export async function openDevDatabase(
   }
   mkdirSync(folder, { recursive: true });
   const file = join(folder, "app.db");
-  const database = await openDatabase(`file:${file}`);
+  const database = await openDatabase(devDatabaseUrl(folder));
   try {
     await checkDataKey(database, masterKey);
     await applyMigrations(database, MIGRATIONS);
@@ -106,6 +107,8 @@ export async function openDevDatabase(
   return { masterKey, database };
 }
 
+const devDatabaseUrl = (folder: string) => `file:${join(folder, "app.db")}`;
+
 // The setup link goes to the terminal only, never to the app's log (spec 12, The `fft` command).
 // It shows until the first Member is made.
 export async function showSetupLink(
@@ -118,24 +121,51 @@ export async function showSetupLink(
   process.stdout.write(`\nOpen this setup link to make the first Member:\n  ${link}\n\n`);
 }
 
-export async function createDevApp(webRoot: string, env: DevEnv) {
+// `pnpm start`'s scheduled tasks, less the two that call outside services on their own: the update
+// check (GitHub) and the CPI fetch (BLS). `pnpm dev` makes no scheduled outside call.
+export const devScheduledTasks = scheduledTasks.filter(
+  (task) => task.job !== UpdateCheckJob && task.job !== CpiFetchJob,
+);
+
+// The services `pnpm start` runs, with the same start-up steps: the bank module, the job runner and
+// its schedule, the follow-up work, and email. Dev adds the fake adapter beside Plaid's, with each
+// demo bank scripted, and its fake bank route. close() stops them, as Vite closes or before a
+// restart. Tests pass their own folder, and no scheduled tasks.
+export async function createDevApp(
+  webRoot: string,
+  env: DevEnv,
+  { folder = DEV_FOLDER, tasks = devScheduledTasks } = {},
+) {
   const security = await loadSecurity(env);
-  const { masterKey, database } = await openDevDatabase(env, DEV_FOLDER);
-  await showSetupLink(database, security.appUrl.address("/setup"), masterKey);
-  const secrets = await unlockSecrets(database, masterKey);
-  // System notices, such as the AI cost cap's, go to the dev app.db. Vite starts the app once.
-  startNotify({ database });
-  // "Back up now" writes to .dev/backups.
-  const backupFolder = join(DEV_FOLDER, "backups");
-  mkdirSync(backupFolder, { recursive: true });
-  startBackups({ database, folder: backupFolder, timeZone: () => householdTimeZone(database) });
-  const auth = createAuth({ database, secrets, appOrigin: security.appUrl.origin });
-  const cost = aiCost({ database, timeZone: () => householdTimeZone(database) });
-  const ai = householdAi({ database, secrets, cost });
-  return createApp(webRoot, security, auth, database, secrets, {
-    plaid: plaidSettings({ database, secrets }),
-    push: pushSettings({ database, secrets, available: security.appUrl.mode === "https" }),
-    ai: aiSettings({ database, secrets, cost }),
-    chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
+  const opened = await openDevDatabase(env, folder);
+  try {
+    await showSetupLink(opened.database, security.appUrl.address("/setup"), opened.masterKey);
+  } finally {
+    closeDatabase(opened.database);
+  }
+  const fake = new FakeBankAdapter();
+  offerDemoBanks(fake);
+  // "Back up now" and the daily backup write to .dev/backups.
+  const backups = join(folder, "backups");
+  const services = await launchServices({
+    masterKey: opened.masterKey,
+    databaseUrl: devDatabaseUrl(folder),
+    migrationsFolder: MIGRATIONS,
+    jobs: { jobsDb: join(folder, "jobs.db"), jobList: JOB_LIST, tasks },
+    security,
+    extraBankAdapters: [fake],
+    backupFolders: { mounted: backups, fallback: backups },
   });
+  // A throw here, such as from a route that an edit broke, must not leave the services running:
+  // the next restart could not start them again.
+  try {
+    const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
+      ...services.routes,
+      devRoutes: devRoutes(services.database),
+    });
+    return { app, close: () => services.close() };
+  } catch (error) {
+    await services.close();
+    throw error;
+  }
 }

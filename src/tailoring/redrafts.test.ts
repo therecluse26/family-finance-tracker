@@ -139,17 +139,14 @@ describe("Redraft Proposals", () => {
   };
 
   const connectAi = async () => {
-    const saved = await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     expect(saved).toMatchObject({ saved: true });
     stub.calls.splice(0);
     stub.prompts.splice(0);

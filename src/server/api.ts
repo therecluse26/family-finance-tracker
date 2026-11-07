@@ -21,7 +21,7 @@ import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
-import { OPTIONAL_SETUP_STEPS, type SetupProgressView, type SetupRefusal } from "./setup-views.ts";
+import { type SetupProgressView, type SetupRefusal, SKIPPABLE_SETUP_STEPS } from "./setup-views.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -53,8 +53,6 @@ function checkAnswer(c: Context<ServerEnv>, result: MasterKeyCheckResult) {
       return c.json({ matches: false }, 200);
     case "too many tries":
       return c.json({ error: "Too many wrong keys. Wait 15 minutes, then try again." }, 429);
-    case "step done":
-      return c.json({ error: "This step is done. Use Check my master key in Settings." }, 409);
   }
 }
 
@@ -106,15 +104,11 @@ function transactionQuery(query: Record<string, string>): TransactionQuery | und
   return { ...(account === undefined ? {} : { accountId: account }), ...filters };
 }
 
-// Changing the Plaid keys is a sensitive action, so it takes a fresh TOTP or backup code.
+// The Plaid keys. TOTP is asked only at sign-in (spec 09, Sensitive actions).
 const plaidKeysBody = z.object({
   clientId: z.string().trim().regex(PLAID_KEY),
   secret: z.string().trim().regex(PLAID_KEY),
-  code: z.string().trim().min(1).max(64),
 });
-
-// A TOTP code or a backup code, asked again for a sensitive action (spec 09).
-const codeBody = z.object({ code: z.string().trim().min(1).max(64) });
 
 // Delete history's own confirmation.
 const deleteHistoryBody = z.object({ confirmed: z.literal(true) });
@@ -484,9 +478,8 @@ const MAX_PRICE = 1_000_000_000;
 const price = z.number().int().min(0).max(MAX_PRICE);
 const enteredPrice = z.object({ input: price, output: price });
 
-// Changing the API key, the gateway token, the AI provider, or the base URL takes a fresh TOTP or
-// backup code, checked when `code` is given. An API key or gateway token left out keeps the one
-// stored.
+// An API key or gateway token left out keeps the one stored, but only for the same AI provider and
+// base URL.
 const aiSettingsBody = z.object({
   provider: z.enum(AI_PROVIDERS),
   apiKey: aiSecret.optional(),
@@ -495,7 +488,6 @@ const aiSettingsBody = z.object({
   quickModel: modelId,
   writerModel: modelId,
   prices: z.object({ quick: enteredPrice.optional(), writer: enteredPrice.optional() }).optional(),
-  code: z.string().trim().min(1).max(64).optional(),
 });
 
 // The AI cost cap, in whole cents.
@@ -532,10 +524,6 @@ const BASE_URL_REFUSALS = {
 const SAVE_REFUSALS = {
   "key needed": { status: 400, error: "Enter the API key." },
   "token needed": { status: 400, error: "Enter the gateway token." },
-  "code needed": {
-    status: 400,
-    error: "Enter a code from your authenticator app, or a backup code.",
-  },
   changed: {
     status: 409,
     error: "The AI settings changed while the app checked them. Check and save again.",
@@ -587,9 +575,8 @@ function balanceQuery(query: Record<string, string>): BalanceQuery | undefined {
   return { ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) };
 }
 
-// The Household's SMTP server (spec 06, Recipients and channels). Changing the password, or the
-// server or sign-in name a stored password goes to, takes a fresh TOTP or backup code (spec 09,
-// Signing in), checked when `code` is given. A password left out keeps the one stored.
+// The Household's SMTP server (spec 06, Recipients and channels). A password left out keeps the one
+// stored, but only for the same server and sign-in name.
 const DNS_NAME =
   /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 const IPV6 = /^(?=.*:)[0-9A-Fa-f:.]{2,45}$/;
@@ -605,7 +592,6 @@ const smtpBody = z
     username: z.string().trim().min(1).max(320).regex(NO_CONTROL),
     password: z.string().min(1).max(1000).regex(NO_CONTROL).optional(),
     sender: z.email().max(320),
-    code: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
 
@@ -614,14 +600,13 @@ const smtpBody = z
 const testEmailBody = z.object({}).strict();
 
 const SMTP_REFUSALS: Record<SmtpRefusal, string> = {
-  "code needed": "Enter a code from your authenticator app, or a backup code.",
   "password needed": "Enter the SMTP password.",
 };
 
 const SEND_PROBLEMS: Record<SendProblem, string> = {
   "not set up": "Save the SMTP server first.",
   "password unreadable":
-    "The app cannot read the saved SMTP password. Enter the password again, with a code, and save.",
+    "The app cannot read the saved SMTP password. Enter the password again, and save.",
   "sign-in refused": "The SMTP server refused the sign-in name or password.",
   "no answer": "The app could not reach the SMTP server over TLS. Check the host and port.",
   "message refused": "The SMTP server did not take the email. Check the sender address.",
@@ -629,6 +614,9 @@ const SEND_PROBLEMS: Record<SendProblem, string> = {
 
 // A Member's own channels: push, email, both, or none.
 const channelsBody = z.object({ push: z.boolean(), email: z.boolean() }).strict();
+
+// A Member's own weekly summary email switch: on or off, for the signed-in Member only.
+const weeklySummaryBody = z.object({ on: z.boolean() }).strict();
 
 // A browser's push subscription (spec 06, Recipients and channels). Its keys are base64url: the
 // browser's P-256 public key, 65 bytes, and its auth secret, 16 bytes.
@@ -656,8 +644,8 @@ const DEVICE_REFUSALS: Record<DeviceRefusal, string> = {
     "Alerts are on for another Member in this browser. They turn them off first, in Settings, Alerts.",
 };
 
-// The wizard's steps 5 to 9 (spec 12, The first-run wizard).
-const setupStep = z.enum(OPTIONAL_SETUP_STEPS);
+// The wizard's step 5, Banks, the one step with "Skip for now" (spec 12, The first-run wizard).
+const setupStep = z.enum(SKIPPABLE_SETUP_STEPS);
 
 const SETUP_REFUSALS: Record<SetupRefusal, { status: 403 | 409; error: string }> = {
   "setup not done": { status: 409, error: "Finish the first-run wizard's steps 1 to 4 first." },
@@ -665,7 +653,7 @@ const SETUP_REFUSALS: Record<SetupRefusal, { status: 403 | 409; error: string }>
     status: 403,
     error: "Only the first Member goes through the first-run wizard.",
   },
-  "steps left": { status: 409, error: "Do or skip each step of the wizard first." },
+  "steps left": { status: 409, error: "Link a bank, or skip the Banks step for now, first." },
 };
 
 function setupAnswer(c: Context<ServerEnv>, answer: SetupProgressView | SetupRefusal) {
@@ -786,6 +774,15 @@ export const api = new Hono<ServerEnv>()
   })
   // The Alert list (spec 06, The Alert list), newest first.
   .get("/alerts", async (c) => c.json({ alerts: await c.var.alerts.list() }))
+  // "Ask the AI" (spec 06, "Ask the AI"): the Member's Chat thread about this Alert, 201 when new
+  // and 200 when it was already there. The route takes only JSON and reads no body: the app reads
+  // the Alert itself from its ID. It makes no AI call.
+  .post("/alerts/:id/ask-ai", jsonOnly, async (c) => {
+    const asked = await c.var.chat.askAboutAlert(chatMember(c), c.req.param("id"));
+    if ("threadId" in asked) return c.json({ threadId: asked.threadId }, asked.started ? 201 : 200);
+    const { status, ...refused } = asked;
+    return c.json(refused, status);
+  })
   // "Not a problem" (spec 06): any Member marks an Alert, or one part of a merged Alert, for the
   // whole Household. A Member's second press records nothing. It makes no AI call.
   .post("/alerts/:id/not-a-problem", jsonOnly, async (c) => {
@@ -990,7 +987,10 @@ export const api = new Hono<ServerEnv>()
     const { status, ...refused } = answered;
     return c.json(refused, status);
   })
-  .get("/connections", async (c) => c.json({ connections: await c.var.bank.connections() }))
+  // `fakeBank` is true only when the fake adapter runs, as under `pnpm dev`.
+  .get("/connections", async (c) =>
+    c.json({ connections: await c.var.bank.connections(), fakeBank: c.var.bank.fakeBank() }),
+  )
   // Progress per Connection while its history loads (spec 02, First history load).
   .get("/history-status", async (c) => c.json(await c.var.bank.historyStatus()))
   // Retry on the notice of a stopped First run or bank-added-later job (spec 08, When AI does not
@@ -998,16 +998,12 @@ export const api = new Hono<ServerEnv>()
   .post("/history-jobs/retry", async (c) => c.json(await c.var.bank.retryHistoryJobs()))
   // Sync now: any Member syncs every Healthy or Retrying Connection (spec 02, Sync now).
   .post("/sync-now", async (c) => c.json({ connections: await c.var.bank.syncNow() }))
-  // Removing a Connection asks for a TOTP code or a backup code again (spec 09, Sensitive
-  // actions). The Accounts become Closed, and their history stays.
+  // Removing a Connection takes an empty JSON body. The Accounts become Closed, and their history
+  // stays.
   .post("/connections/:id/remove", async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const removed = await c.var.removing.remove(c.req.param("id"));
     if (removed.outcome === "not found") return c.json({ error: "Not found" }, 404);
     if (removed.outcome === "provider error") {
@@ -1096,14 +1092,9 @@ export const api = new Hono<ServerEnv>()
   .post("/plaid/keys", async (c) => {
     const body = plaidKeysBody.safeParse(await jsonBody(c));
     if (!body.success) {
-      return c.json({ error: "Enter the client ID, the Production secret, and a code." }, 400);
+      return c.json({ error: "Enter the client ID and the Production secret." }, 400);
     }
-    const { clientId, secret, code } = body.data;
-    const fresh = await c.var.checkFreshCode(code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-    }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
+    const { clientId, secret } = body.data;
     const keys = await c.var.plaid.saveKeys({ clientId, secret });
     if (keys === "refused") {
       return c.json({ keys, error: "Plaid refused these keys. Nothing was saved." }, 422);
@@ -1215,7 +1206,8 @@ export const api = new Hono<ServerEnv>()
     if (saved.outcome === "duplicate") return duplicateBank(c, saved.coveredBy);
     return connectRefusal(c, saved);
   })
-  // The wizard's step 3 (spec 12): the Master key on each visit, until the paste-back succeeds.
+  // The wizard's step 3 (spec 12): the Master key on each visit, until the Member says they saved
+  // it.
   .get("/setup/master-key", async (c) => {
     c.header("Cache-Control", "no-store");
     const masterKey = await c.var.masterKey.shown();
@@ -1227,17 +1219,20 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ masterKey }, 200);
   })
-  .post("/setup/master-key", async (c) => {
-    const pasted = await pastedKey(c);
-    if (pasted === undefined) return c.json({ error: NO_KEY }, 400);
-    return checkAnswer(c, await c.var.masterKey.pasteBack(c.var.member.id, pasted));
+  // Step 3's "I saved it". The app asks for no paste-back: the key is never sent back to it here.
+  .post("/setup/master-key", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    await c.var.masterKey.confirmSaved();
+    return c.json({ saved: true }, 200);
   })
-  // The wizard's steps 5 to 9 (spec 12): the step it opens for the signed-in Member, and the
+  // The wizard's steps 5 and 6 (spec 12): the step it opens for the signed-in Member, and the
   // dashboard's "Finish setup" list (spec 07, Header and status lines).
   .get("/setup/progress", async (c) =>
     c.json({ progress: await c.var.setup.progress(c.var.member.id) }),
   )
-  // Skip on step 5, 6, 7, or 8.
+  // "Skip for now" on step 5, Banks.
   .post("/setup/steps/:step/skip", jsonOnly, async (c) => {
     const step = setupStep.safeParse(c.req.param("step"));
     if (!step.success) return c.json({ error: "Not found" }, 404);
@@ -1246,7 +1241,7 @@ export const api = new Hono<ServerEnv>()
     }
     return setupAnswer(c, await c.var.setup.skip(c.var.member.id, step.data));
   })
-  // Step 9's "Open the dashboard".
+  // Step 6's "Open the dashboard".
   .post("/setup/finish", jsonOnly, async (c) => {
     if (!emptyBody.safeParse(await jsonBody(c)).success) {
       return c.json({ error: "Send an empty body." }, 400);
@@ -1301,17 +1296,12 @@ export const api = new Hono<ServerEnv>()
     if (!result.ok) return c.json({ error: BACKUP_FAILURES[result.failure], backups }, 500);
     return c.json({ backup: { file: result.file, at: result.at }, backups }, 200);
   })
-  // "Download my data" (spec 11, Data export): any Member, with a fresh TOTP or backup code, since
-  // a data export is a sensitive action (spec 09). The ZIP is not encrypted, and streams as it is
-  // written.
+  // "Download my data" (spec 11, Data export): any Member, with an empty JSON body. The ZIP is not
+  // encrypted, and streams as it is written.
   .post("/export", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const { fileName, stream } = await c.var.dataExport.download();
     return c.body(stream, 200, {
       "Content-Type": "application/zip",
@@ -1321,22 +1311,17 @@ export const api = new Hono<ServerEnv>()
   })
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
-  // "Make an invite link": any Member, with a fresh TOTP or backup code, since a new login outlives
-  // a change to the maker's own (spec 09, Sensitive actions). The answer holds the link once; the
+  // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the
   // app keeps its hash.
   .post("/invites", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const made = await c.var.members.makeInvite(c.var.member.id);
     if (made === "wizard not done") {
       return c.json({ error: "Finish the first-run wizard first." }, 409);
     }
-    // The wizard's step 8 is done once an invite link is made.
+    // The "Finish setup" item for Invite Members is done once an invite link is made.
     await c.var.setup.done("invite members");
     c.header("Cache-Control", "no-store");
     return c.json({ invite: made }, 200);
@@ -1351,17 +1336,12 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ cancelled: true }, 200);
   })
-  // "Remove": any Member removes any Member, themselves included, with a fresh TOTP or backup
-  // code, since removing a Member is a sensitive action (spec 09). The app refuses to remove the
-  // last Member.
+  // "Remove": any Member removes any Member, themselves included, with an empty JSON body. The app
+  // refuses to remove the last Member.
   .post("/members/:id/remove", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
     }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const id = c.req.param("id");
     const removed = await c.var.members.remove(id);
     if (removed === "no such Member") return c.json({ error: "No Member has this ID." }, 404);
@@ -1370,25 +1350,51 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ removed: true, you: id === c.var.member.id }, 200);
   })
-  // "Reset login": any Member resets another Member's login with a fresh TOTP or backup code,
-  // since it is a sensitive action (spec 09). The answer holds the reset link once; the app keeps
-  // its hash. A Member's own login is refused before the code is checked, so no code is used up.
+  // "Reset login": any Member resets another Member's login, with an empty JSON body. The answer
+  // holds the reset link once; the app keeps its hash. A Member changes their own login in My login.
   .post("/members/:id/reset-login", jsonOnly, async (c) => {
-    const body = codeBody.safeParse(await jsonBody(c));
-    if (!body.success) return c.json({ error: "Enter a code." }, 400);
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
     const id = c.req.param("id");
     if (id === c.var.member.id) {
       return c.json({ error: "Change your own login in Settings, My login." }, 409);
     }
-    const fresh = await c.var.checkFreshCode(body.data.code);
-    if (fresh === "too many tries") {
-      return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-    }
-    if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
     const reset = await c.var.members.resetLogin(id);
     if (reset === "no such Member") return c.json({ error: "No Member has this ID." }, 404);
     c.header("Cache-Control", "no-store");
     return c.json({ reset }, 200);
+  })
+  // Settings, My login, Signed-in devices (spec 09): the signed-in Member's own sessions that have
+  // not expired. Each row has a name made from its user agent, never the user agent or the IP
+  // address.
+  .get("/my-login/devices", async (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json({ devices: await c.var.devices.devices(c.var.member.id, c.var.sessionId) });
+  })
+  // "Sign out" on another device, with an empty JSON body. Another Member's session, an expired
+  // one, and an unknown ID get the same answer, so it does not show that a session exists.
+  .post("/my-login/devices/:id/sign-out", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    const { id: memberId } = c.var.member;
+    const result = await c.var.devices.signOut(memberId, c.var.sessionId, c.req.param("id"));
+    if (result === "this device") {
+      return c.json({ error: "Sign this device out with Sign out." }, 409);
+    }
+    if (result === "already signed out") {
+      return c.json({ error: "That device is already signed out." }, 404);
+    }
+    return c.json({ signedOut: true }, 200);
+  })
+  // "Sign out everywhere else", with an empty JSON body. This device stays signed in.
+  .post("/my-login/sign-out-other-devices", jsonOnly, async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    await c.var.devices.signOutOthers(c.var.member.id, c.var.sessionId);
+    return c.json({ signedOut: true }, 200);
   })
   // Each Category's Benchmark and role (spec 05, Benchmarks), with the sample label while the
   // snapshot is the sample.
@@ -1568,7 +1574,7 @@ export const api = new Hono<ServerEnv>()
   .post("/ai/settings", async (c) => {
     const body = aiSettingsBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Check the AI provider's fields." }, 400);
-    const { code, ...fields } = body.data;
+    const fields = body.data;
     const baseUrl = aiBaseUrl(fields.baseUrl);
     if (baseUrl === undefined) {
       return c.json({ error: "Enter the base URL as an http or https address." }, 400);
@@ -1581,16 +1587,7 @@ export const api = new Hono<ServerEnv>()
     if (typeof fields.gatewayToken === "string" && !onGateway(baseUrl)) {
       return c.json({ error: "A gateway token needs a Cloudflare AI Gateway base URL." }, 400);
     }
-    let freshCode = false;
-    if (code !== undefined) {
-      const fresh = await c.var.checkFreshCode(code);
-      if (fresh === "too many tries") {
-        return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-      }
-      if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
-      freshCode = true;
-    }
-    const saved = await c.var.ai.save({ ...fields, baseUrl }, { freshCode });
+    const saved = await c.var.ai.save({ ...fields, baseUrl });
     if (!saved.saved) {
       if (saved.refusal === "price needed") {
         const error = `The app has no price for the ${TIER_NAMES[saved.tier]}. Enter its input and output prices.`;
@@ -1600,6 +1597,47 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error }, status);
     }
     return c.json({ check: saved.check, ai: saved.ai });
+  })
+  // "Test the key" (spec 08, Test the key): one call to the saved Quick model, with the result. A
+  // rate limit or an AI error is a result, not a failed request. The key is never in an answer.
+  .post("/ai/test", async (c) => {
+    if (!emptyBody.safeParse(await jsonBody(c)).success) {
+      return c.json({ error: "Send an empty body." }, 400);
+    }
+    const test = await c.var.ai.testKey();
+    if (test.tested) return c.json({ result: test.result, ai: test.ai }, 200);
+    switch (test.refusal) {
+      case "busy":
+        return c.json({ error: "A test of the key is running. Wait for its answer." }, 409);
+      case "too soon":
+        c.header("Retry-After", String(test.waitSeconds));
+        return c.json(
+          {
+            error: `Wait ${test.waitSeconds} ${test.waitSeconds === 1 ? "second" : "seconds"}, then test the key again.`,
+          },
+          429,
+        );
+      case "key unreadable":
+        return c.json(
+          { error: "The app cannot read the saved key. Enter it again, then save." },
+          409,
+        );
+      case "token unreadable":
+        return c.json(
+          { error: "The app cannot read the saved gateway token. Enter it again, then save." },
+          409,
+        );
+      case "price needed":
+        return c.json(
+          { error: "The app has no price for the Quick model. Enter its prices, then save." },
+          409,
+        );
+      case "changed":
+        return c.json(
+          { error: "The AI settings changed during the test. Test again.", ai: test.ai },
+          409,
+        );
+    }
   })
   .post("/ai/remove", async (c) => {
     await c.var.ai.remove();
@@ -1619,17 +1657,8 @@ export const api = new Hono<ServerEnv>()
   .post("/smtp/settings", async (c) => {
     const body = smtpBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Check the SMTP server's fields." }, 400);
-    const { code, ...fields } = body.data;
-    let freshCode = false;
-    if (code !== undefined) {
-      const fresh = await c.var.checkFreshCode(code);
-      if (fresh === "too many tries") {
-        return c.json({ error: "Too many wrong codes. Wait 15 minutes, then try again." }, 429);
-      }
-      if (fresh === "wrong") return c.json({ error: "Wrong code." }, 401);
-      freshCode = true;
-    }
-    const saved = await c.var.smtp.save(fields, { freshCode });
+    const fields = body.data;
+    const saved = await c.var.smtp.save(fields);
     if (!saved.saved) return c.json({ error: SMTP_REFUSALS[saved.refusal] }, 400);
     return c.json({ smtp: saved.smtp }, 200);
   })
@@ -1640,7 +1669,7 @@ export const api = new Hono<ServerEnv>()
     }
     const tested = await c.var.smtp.sendTest(c.var.member.email);
     if (tested.sent) {
-      // The wizard's step 7 is done only once a test email goes out.
+      // The "Finish setup" item for Alerts is done only once a test email goes out.
       await c.var.setup.done("alerts");
       return c.json({ sent: true }, 200);
     }
@@ -1656,6 +1685,17 @@ export const api = new Hono<ServerEnv>()
     const body = channelsBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Pick push, email, both, or none." }, 400);
     return c.json({ channels: await c.var.channels.set(c.var.member.id, body.data) }, 200);
+  })
+  // Settings, Alerts: the signed-in Member's own weekly summary email (spec 06, Weekly summary
+  // email). The Member comes from the session, never from the body.
+  .get("/weekly-summary", async (c) =>
+    c.json({ weeklySummary: await c.var.weeklySummary.view(c.var.member.id) }),
+  )
+  .put("/weekly-summary", async (c) => {
+    const body = weeklySummaryBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Turn the weekly summary on or off." }, 400);
+    const weeklySummary = await c.var.weeklySummary.set(c.var.member.id, body.data.on);
+    return c.json({ weeklySummary }, 200);
   })
   // Settings, Alerts: web push, over HTTPS only. The answer holds the VAPID public key, never the
   // private key.

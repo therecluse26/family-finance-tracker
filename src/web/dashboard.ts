@@ -26,6 +26,7 @@ import { loadAiBox } from "./ai-box.ts";
 import { api } from "./api.ts";
 import { browserZone } from "./browser-zone.ts";
 import { type GoalsAnswer, loadGoals } from "./goals.ts";
+import { SignedOut } from "./requests.ts";
 import { transactionsPath } from "./transactions.ts";
 
 // The dashboard's numbers and words (spec 07, The dashboard): its header, its status lines, Left
@@ -100,19 +101,58 @@ export type RepairBanner = { notice: NoticeView; connection: ConnectionView | un
 
 export type StatusLines = {
   repairs: RepairBanner[];
-  // "Loading history for <bank>", with its progress, one per Connection.
-  loading: { connectionId: string; text: string }[];
+  // "Your history is loading": each bank with its progress, one per Connection.
+  loading: { connectionId: string; bankName: string; text: string }[];
   // Every other open System notice.
   others: NoticeView[];
 };
 
 const count = (n: number) => n.toLocaleString("en-US");
 
-export function loadingLine(loading: HistoryStatusView["loading"][number], today: string): string {
-  const so = `${count(loading.transactions)} ${loading.transactions === 1 ? "Transaction" : "Transactions"} so far`;
-  const back =
-    loading.oldestDate === null ? "" : `, back to ${dateLabel(loading.oldestDate, today)}`;
-  return `Loading history for ${loading.bankName}: ${so}${back}`;
+// One history load's progress: "1,240 Transactions · back to Mar 2025".
+export function loadingLine(loading: HistoryStatusView["loading"][number]): string {
+  const so = `${count(loading.transactions)} ${loading.transactions === 1 ? "Transaction" : "Transactions"}`;
+  return loading.oldestDate === null ? so : `${so} · back to ${monthLabel(loading.oldestDate)}`;
+}
+
+// Whether a Connection's history load ended between two reads: it left the loading list. The
+// dashboard then reads every box again, since their numbers now count the whole history.
+export function historyLoadEnded(
+  before: Pick<HistoryStatusView, "loading">,
+  after: Pick<HistoryStatusView, "loading">,
+): boolean {
+  const still = new Set(after.loading.map((each) => each.connectionId));
+  return before.loading.some((each) => !still.has(each.connectionId));
+}
+
+// One read of the dashboard's history poll, given the progress it shows. It reads the progress
+// again and shows it. When a load ended, it reads the whole page instead (`whole` answers whether
+// that read worked): if it failed, the poll keeps going, within its cap, and the next read tries
+// the whole page again, so a finished bank does not stay in the list. A 401 ends the poll and
+// calls `signedOut`. Answers whether the poll keeps reading.
+export async function readHistoryAgain(
+  shown: Pick<HistoryStatusView, "loading"> | undefined,
+  io: {
+    history(): Promise<HistoryStatusView>;
+    whole(): Promise<boolean>;
+    show(fresh: HistoryStatusView): void;
+    signedOut(): void;
+  },
+): Promise<boolean> {
+  let fresh: HistoryStatusView;
+  try {
+    fresh = await io.history();
+  } catch (failure) {
+    if (!(failure instanceof SignedOut)) throw failure;
+    io.signedOut();
+    return false;
+  }
+  if (shown !== undefined && historyLoadEnded(shown, fresh)) {
+    if (!(await io.whole())) return true;
+  } else {
+    io.show(fresh);
+  }
+  return fresh.loading.length > 0;
 }
 
 // The lines above the boxes (spec 07, Header and status lines). A notice that asks for Repair is
@@ -121,7 +161,6 @@ export function statusLines(
   notices: readonly NoticeView[],
   connections: readonly ConnectionView[],
   history: Pick<HistoryStatusView, "loading">,
-  today: string,
 ): StatusLines {
   const byId = new Map(connections.map((connection) => [connection.id, connection]));
   return {
@@ -130,7 +169,8 @@ export function statusLines(
       .map((notice) => ({ notice, connection: byId.get(notice.repairConnectionId ?? "") })),
     loading: history.loading.map((each) => ({
       connectionId: each.connectionId,
-      text: loadingLine(each, today),
+      bankName: each.bankName,
+      text: loadingLine(each),
     })),
     others: notices.filter((notice) => notice.repairConnectionId === null),
   };
@@ -491,6 +531,7 @@ export type DashboardData = {
 
 async function read<T>(res: Promise<Response>): Promise<T> {
   const answer = await res;
+  if (answer.status === 401) throw new SignedOut();
   if (!answer.ok) throw new Error(`The dashboard's request answered ${answer.status}.`);
   return (await answer.json()) as T;
 }
@@ -534,6 +575,9 @@ export async function loadDashboard(now = new Date()): Promise<DashboardData> {
 
 // Closes an event notice for every Member.
 export const closeNotice = (id: string) => api.notices[":id"].close.$post({ param: { id } });
+
+// The history load progress alone, which the dashboard reads again while a load runs.
+export const loadHistoryStatus = () => read<HistoryStatusView>(api["history-status"].$get());
 
 // Retry on the notice of a stopped First run or bank-added-later job: starts it again.
 export const retryHistoryJobs = () => api["history-jobs"].retry.$post();

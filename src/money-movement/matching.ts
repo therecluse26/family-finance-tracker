@@ -40,7 +40,6 @@ import { Job } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { registerRedoStep } from "../redo/index.ts";
 import {
-  openReviewItem,
   openReviewItemBatch,
   openReviewItems,
   openReviewItemsOfKind,
@@ -370,19 +369,23 @@ async function updatePairItems(database: Database, pairing: PairingResult): Prom
   }
   await reviseReviewItems(database, revised);
   const unclear = settled.get(UNCLEAR_PAIR_KIND) ?? [];
-  for (const [key, item] of wanted) {
-    if (open.has(key)) continue;
-    await openReviewItem(database, {
-      kind: PAIR_KINDS[item.kind],
-      subject: {
-        type: "transactions",
-        transactionIds: [item.pair.outTransactionId, item.pair.inTransactionId],
-      },
-      decided: DECIDED[item.kind],
-      bestAnswer: LINK,
-      needsAi: item.needsAi,
-    });
-  }
+  // One moment for the run's new items, so the Review list runs them by their Transactions' date
+  // (spec 07, Review list page).
+  await openReviewItemBatch(
+    database,
+    [...wanted]
+      .filter(([key]) => !open.has(key))
+      .map(([, item]) => ({
+        kind: PAIR_KINDS[item.kind],
+        subject: {
+          type: "transactions" as const,
+          transactionIds: [item.pair.outTransactionId, item.pair.inTransactionId],
+        },
+        decided: DECIDED[item.kind],
+        bestAnswer: LINK,
+        needsAi: item.needsAi,
+      })),
+  );
   return unclear;
 }
 

@@ -22,12 +22,14 @@ import { type AlertFacts, alertText } from "../anomalies/index.ts";
 import {
   addGoal,
   addUnconnectedAccount,
+  deleteChatThread,
   listChatMessages,
   listGoals,
   loginTables,
   type NewBudget,
   removeMember,
   storeAlerts,
+  storeAlertThread,
   storeFirstDraft,
 } from "../db/index.ts";
 import { readEveryTable } from "../db/testing.ts";
@@ -36,6 +38,7 @@ import { createLogger } from "../log.ts";
 import { GUARDRAIL, propose } from "../proposals/index.ts";
 import {
   ANSWERS_PER_HOUR,
+  alertThreadTitle,
   CHAT_TASK,
   CHAT_TURNS,
   type Chat,
@@ -158,17 +161,14 @@ describe("Chat", () => {
       notices: { raise: async () => {}, end: async () => {} },
     };
     expect(
-      await aiSettings(options).save(
-        {
-          provider: "anthropic",
-          apiKey: newAiKey(),
-          baseUrl: null,
-          quickModel: "quick-model",
-          writerModel: "writer-model",
-          prices: { quick: PRICE, writer: PRICE },
-        },
-        { freshCode: true },
-      ),
+      await aiSettings(options).save({
+        provider: "anthropic",
+        apiKey: newAiKey(),
+        baseUrl: null,
+        quickModel: "quick-model",
+        writerModel: "writer-model",
+        prices: { quick: PRICE, writer: PRICE },
+      }),
     ).toMatchObject({ saved: true });
     ai = householdAi(options);
     talk = chat({
@@ -853,6 +853,347 @@ describe("Chat", () => {
       );
       const sent = JSON.stringify(prompts());
       for (const word of ["Dana", "Whitfield", "DANA", "dana"]) expect(sent).not.toContain(word);
+    });
+  });
+
+  describe('"Ask the AI" on an Alert', () => {
+    // Card interest of $48.21 on the Account whose last 4 is 4821, sent.
+    const interest: AlertFacts = {
+      kind: "Card interest or fee",
+      cardInterest: true,
+      merchant: null,
+      account: "Dana's Rewards Card ··4821",
+      amount: 4_821,
+      date: "2026-10-17",
+    };
+    // A Large purchase at a Merchant whose name holds a tab, a Member's name, and a card split by
+    // line breaks, held back by the weekly cap.
+    const purchase: AlertFacts = {
+      kind: "Large purchase",
+      merchant: { id: null, name: "PAID\tDana Whitfield 4111\n1111\n1111\n1111" },
+      amount: 31_240,
+      date: "2026-10-18",
+      budget: null,
+    };
+
+    const alertRow = (id: string, facts: AlertFacts, state: "sent" | "held back (weekly cap)") => ({
+      id,
+      kind: facts.kind,
+      createdAt: new Date(NOW.getTime() - HOUR),
+      facts,
+      text: alertText(facts, "2026-10-20"),
+      category: null,
+      state,
+      transactionIds: [],
+    });
+
+    beforeEach(async () => {
+      await storeAlerts(test.database, [
+        alertRow("interest", interest, "sent"),
+        alertRow("purchase", purchase, "held back (weekly cap)"),
+      ]);
+    });
+
+    async function asked(alertId: string, member = DANA) {
+      const result = await talk.askAboutAlert(member, alertId);
+      if (!("threadId" in result)) throw new Error(`Refused: ${result.refused}`);
+      return result;
+    }
+
+    const links = async () =>
+      (
+        await test.database.$client.execute(
+          "SELECT thread_id, alert_id, member_id FROM chat_alert_threads ORDER BY rowid",
+        )
+      ).rows.map((row) => ({ ...row }));
+
+    it("starts a thread titled after the Alert, with the Alert attached and no message, making no AI call", async () => {
+      const { threadId, started } = await asked("interest");
+
+      expect(started).toBe(true);
+      expect(await talk.thread(threadId)).toMatchObject({
+        title: "About: Card interest on Dana's Rewards Card ··4821",
+        note: {
+          kind: "Alert",
+          title: "Card interest on Dana's Rewards Card ··4821",
+          lines: ["Card interest: $48.21 on Dana's Rewards Card ··4821 on Oct 17."],
+        },
+        messages: [],
+        firstSent: null,
+        answering: false,
+      });
+      expect((await talk.threads()).map((thread) => thread.title)).toEqual([
+        "About: Card interest on Dana's Rewards Card ··4821",
+      ]);
+      expect(await links()).toEqual([
+        { thread_id: threadId, alert_id: "interest", member_id: "m1" },
+      ]);
+      expect(modelCalls()).toEqual([]);
+      // With nothing asked yet, there is nothing to answer.
+      expect(await talk.answer(DANA, threadId, { text: null, sendAnyway: false })).toEqual({
+        refused: "nothing to answer",
+      });
+      expect(modelCalls()).toEqual([]);
+    });
+
+    it("cuts the title to 60 characters", () => {
+      expect(alertThreadTitle("x".repeat(80))).toBe(`About: ${"x".repeat(53)}`);
+    });
+
+    it("gives the AI the Alert with each first question: its amounts and dates typed, its Account as a label, and no Member's name or number", async () => {
+      const { threadId } = await asked("interest");
+
+      const parts = await answered(threadId, "Why did this happen?");
+
+      expect(textOf(parts)).toBe("O");
+      const [, , task, note, question] = prompts().at(-1) ?? [];
+      expect(textsOf(task)).toEqual([CHAT_TASK]);
+      const text = textsOf(note).join("");
+      // $48.21 matches the Account's last 4, 4821, but goes as a typed amount, as the app made it.
+      expect(text).toBe(
+        "The Member asks about this Alert from the Alert list.\nAn Alert from the Alert list: Card interest or fee.\n- Card interest: $48.21 on an Account on 2026-10-17.\nThe app sent it to the Members.",
+      );
+      expect(textsOf(question)).toEqual(["Why did this happen?"]);
+      const typed = (calls.at(-1)?.note ?? []).filter((part) => typeof part !== "string");
+      expect(typed).toHaveLength(2);
+      const sent = JSON.stringify(prompts());
+      for (const word of PRIVATE) expect(sent).not.toContain(word);
+      // The title, which names the Account, never goes to the AI.
+      expect(sent).not.toContain("Rewards");
+    });
+
+    it("passes the Alert's words through the privacy filter as the model reads them: a name after a tab and a card split by line breaks are left out, with no letter escape", async () => {
+      await talk.askAboutAlert(DANA, "purchase").then(async (result) => {
+        if (!("threadId" in result)) throw new Error("Refused");
+        await answered(result.threadId, "What should we do?");
+      });
+
+      const [, , , note] = prompts().at(-1) ?? [];
+      const text = textsOf(note).join("");
+      expect(text).toContain("Large purchase: $312.40 at PAID Member A [removed] on 2026-10-18.");
+      expect(text).toContain("The weekly cap held it back, so the app sent no message for it.");
+      // The note's own line breaks start its lines. No other control character is left.
+      expect(
+        text
+          .split("\n")
+          .slice(1)
+          .every((line) => /^(- |An |The )/u.test(line)),
+      ).toBe(true);
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: the characters it must not hold.
+      expect(text).not.toMatch(/[\u0000-\u0009\u000B-\u001F]/u);
+      expect(text).not.toMatch(/\\[a-z]/iu);
+      const sent = JSON.stringify(prompts());
+      for (const word of [...PRIVATE, "DANA", "dana"]) expect(sent).not.toContain(word);
+    });
+
+    it("opens the same thread on the same Member's next press, and another thread for another Member or another Alert", async () => {
+      const first = await asked("interest");
+      await answered(first.threadId, "Why?");
+      const before = await readEveryTable(test.database);
+
+      expect(await talk.askAboutAlert(DANA, "interest")).toEqual({
+        threadId: first.threadId,
+        started: false,
+      });
+      expect(await readEveryTable(test.database)).toEqual(before);
+
+      const ravi = await asked("interest", RAVI);
+      const other = await asked("purchase");
+      expect(ravi.started).toBe(true);
+      expect(other.started).toBe(true);
+      expect(new Set([first.threadId, ravi.threadId, other.threadId]).size).toBe(3);
+      expect(await links()).toEqual([
+        { thread_id: first.threadId, alert_id: "interest", member_id: "m1" },
+        { thread_id: ravi.threadId, alert_id: "interest", member_id: "m2" },
+        { thread_id: other.threadId, alert_id: "purchase", member_id: "m1" },
+      ]);
+      // Every Member sees every thread.
+      expect(await talk.thread(ravi.threadId)).toMatchObject({ messages: [] });
+    });
+
+    it("starts one thread for presses at once, which share the first press", async () => {
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => talk.askAboutAlert(DANA, "interest")),
+      );
+
+      // Each later press joined the first one, so each answers as it did.
+      const [first] = results;
+      expect(first).toMatchObject({ started: true });
+      expect(results).toEqual(Array.from({ length: 5 }, () => first));
+      expect(await talk.threads()).toHaveLength(1);
+      expect(await links()).toHaveLength(1);
+    });
+
+    it("stores one thread for writes at once, as the link's unique index decides, and the loser leaves no thread", async () => {
+      const note = { kind: "Alert", title: "Card interest", lines: [], pieces: [] };
+      const link = { alertId: "interest", memberId: "m1" };
+      const results = await Promise.all(
+        Array.from({ length: 3 }, () =>
+          storeAlertThread(test.database, { title: "About: Card interest", note }, link, NOW),
+        ),
+      );
+
+      expect(new Set(results.map((result) => result?.threadId)).size).toBe(1);
+      expect(results.filter((result) => result?.started)).toHaveLength(1);
+      expect(await talk.threads()).toHaveLength(1);
+      expect(await links()).toHaveLength(1);
+    });
+
+    it("attaches every part of a merged Alert, from the merged Alert's ID or a part's", async () => {
+      const later: AlertFacts = { ...interest, amount: 1_250, date: "2026-10-18" };
+      await storeAlerts(test.database, [alertRow("interest-2", later, "sent")]);
+      await test.database.$client.execute(
+        "INSERT INTO alert_parts (alert_id, merged_into) VALUES ('interest-2', 'interest')",
+      );
+      await test.database.$client.execute(
+        "INSERT INTO alert_presses (alert_id, member_id, pressed_at) VALUES ('interest-2', 'm2', '2026-10-20T15:00:00.000Z')",
+      );
+
+      const { threadId } = await asked("interest-2");
+
+      expect(await asked("interest")).toEqual({ threadId, started: false });
+      expect(await links()).toEqual([
+        { thread_id: threadId, alert_id: "interest", member_id: "m1" },
+      ]);
+      expect((await talk.thread(threadId))?.title).toBe("About: 2 Card interest or fee charges");
+      await answered(threadId, "Why?");
+      const [, , , note] = prompts().at(-1) ?? [];
+      expect(textsOf(note).join("")).toBe(
+        'The Member asks about this Alert from the Alert list.\nAn Alert from the Alert list: Card interest or fee.\n- Card interest: $48.21 on an Account on 2026-10-17.\n- Card interest: $12.50 on an Account on 2026-10-18.\nThe app sent it to the Members.\nMembers marked 1 of its parts "Not a problem".',
+      );
+    });
+
+    it("gives the AI the Alert's advice, each part's joined with a space", async () => {
+      const later: AlertFacts = { ...interest, amount: 1_250, date: "2026-10-18" };
+      await storeAlerts(test.database, [alertRow("interest-2", later, "sent")]);
+      await test.database.$client.execute(
+        "INSERT INTO alert_parts (alert_id, merged_into) VALUES ('interest-2', 'interest')",
+      );
+      await test.database.$client.execute(
+        "UPDATE alerts SET advice = 'Ask the card issuer to waive it.' WHERE id = 'interest'",
+      );
+      await test.database.$client.execute(
+        "UPDATE alerts SET advice = 'Pay the full balance before the due date.' WHERE id = 'interest-2'",
+      );
+
+      const { threadId } = await asked("interest");
+
+      const advice = "Ask the card issuer to waive it. Pay the full balance before the due date.";
+      expect((await talk.thread(threadId))?.note?.lines.at(-1)).toBe(`Next step: ${advice}`);
+      await answered(threadId, "Why?");
+      const [, , , note] = prompts().at(-1) ?? [];
+      expect(textsOf(note).join("")).toBe(
+        `The Member asks about this Alert from the Alert list.\nAn Alert from the Alert list: Card interest or fee.\n- Card interest: $48.21 on an Account on 2026-10-17.\n- Card interest: $12.50 on an Account on 2026-10-18.\nThe app sent it to the Members.\nThe next step the AI gave: ${advice}`,
+      );
+    });
+
+    it("starts nothing when the Alert or the Member goes while the press reads the Alert, and leaves no thread", async () => {
+      // Delete history or a Member removal runs after the Alert is read, before the thread is stored.
+      const racing = (gone: () => Promise<unknown>) =>
+        chat({
+          database: test.database,
+          ai: {
+            ...ai,
+            accountLabels: async () => {
+              await gone();
+              return ai.accountLabels();
+            },
+          },
+          summary: { today: async () => ({ parts: [] }) },
+          now: () => clock,
+        });
+
+      const deleted = racing(() =>
+        test.database.$client.execute("DELETE FROM alerts WHERE id = 'interest'"),
+      );
+      expect(await deleted.askAboutAlert(DANA, "interest")).toEqual({ refused: "no alert" });
+      const removed = racing(() => removeMember(test.database, "m2", NOW));
+      expect(await removed.askAboutAlert(RAVI, "purchase")).toEqual({ refused: "no alert" });
+
+      // The thread and its link go in one write: a failed link leaves no thread.
+      expect(await talk.threads()).toEqual([]);
+      expect(await links()).toEqual([]);
+      expect(
+        await storeAlertThread(
+          test.database,
+          { title: "About: x", note: {} },
+          { alertId: "interest", memberId: "m1" },
+          NOW,
+        ),
+      ).toBeUndefined();
+      expect(await talk.threads()).toEqual([]);
+    });
+
+    it("starts nothing for an ID no Alert has, with no AI provider, or before history has loaded", async () => {
+      const before = await readEveryTable(test.database);
+
+      expect(await talk.askAboutAlert(DANA, "no-such-alert")).toEqual({ refused: "no alert" });
+      loaded = false;
+      expect(await talk.askAboutAlert(DANA, "interest")).toEqual({
+        refused: "paused",
+        pause: "waits for history",
+      });
+      loaded = true;
+      const off = chat({
+        database: test.database,
+        ai: { ...ai, pauseFor: async () => "no AI provider" },
+        summary: { today: async () => ({ parts: [] }) },
+        now: () => clock,
+      });
+      expect(await off.askAboutAlert(DANA, "interest")).toEqual({
+        refused: "paused",
+        pause: "no AI provider",
+      });
+
+      expect(await readEveryTable(test.database)).toEqual(before);
+      expect(modelCalls()).toEqual([]);
+    });
+
+    it("starts the thread at the AI cost cap, where each question asks Send anyway? and counts against the cap", async () => {
+      capped = true;
+      const { threadId, started } = await asked("interest");
+      expect(started).toBe(true);
+
+      expect(await talk.answer(DANA, threadId, { text: "Why?", sendAnyway: false })).toEqual({
+        refused: "paused",
+        pause: "send anyway?",
+      });
+      expect(await listChatMessages(test.database, threadId)).toEqual([]);
+      const response = await talk.answer(DANA, threadId, { text: "Why?", sendAnyway: true });
+      if (!(response instanceof Response)) throw new Error("Refused");
+      expect(textOf(await partsOf(response))).toBe("O");
+      // The answer is a Chat call, counted like every other.
+      expect((await cost.usage()).calls.map((each) => each.use)).toEqual([
+        "chat",
+        "check on save",
+        "check on save",
+      ]);
+    });
+
+    it("keeps the thread when its Alert is deleted or its Member removed, and a deleted thread starts again", async () => {
+      const dana = await asked("interest");
+      const ravi = await asked("purchase", RAVI);
+      await answered(dana.threadId, "Why?");
+
+      // Delete history deletes each Alert about the Transactions it deletes.
+      await test.database.$client.execute("DELETE FROM alerts WHERE id = 'interest'");
+      expect(await links()).toEqual([
+        { thread_id: ravi.threadId, alert_id: "purchase", member_id: "m2" },
+      ]);
+      expect(await talk.thread(dana.threadId)).toMatchObject({
+        note: { kind: "Alert" },
+        messages: [{ author: "Member", text: "Why?" }, { author: "AI" }],
+      });
+      expect(await talk.askAboutAlert(DANA, "interest")).toEqual({ refused: "no alert" });
+
+      expect(await removeMember(test.database, "m2", NOW)).toBe("removed");
+      expect(await links()).toEqual([]);
+      expect(await talk.thread(ravi.threadId)).toMatchObject({ note: { kind: "Alert" } });
+
+      const again = await asked("purchase");
+      expect(await deleteChatThread(test.database, again.threadId)).toBe(true);
+      expect(await links()).toEqual([]);
+      expect(await asked("purchase")).toMatchObject({ started: true });
     });
   });
 });

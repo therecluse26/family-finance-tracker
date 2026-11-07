@@ -10,11 +10,27 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
-// The words to show for a refused request: `wrong` for a wrong code, or the server's own message,
-// such as for too many tries or a password that is too short.
-export async function refusalText(res: Response, wrong: string): Promise<string> {
+// A 401 from the app's own routes while a page reads: the session ended, so the page stops reading
+// and sends the Member to sign-in, as the shell does.
+export class SignedOut extends Error {
+  constructor() {
+    super("The session ended.");
+  }
+}
+
+// The words to show for a refused request: `wrong` for a wrong password or code, or the words
+// `byCode` gives for the server's code, or the server's own message, such as for too many tries or
+// a password that is too short.
+export async function refusalText(
+  res: Response,
+  wrong: string,
+  byCode: Record<string, string> = {},
+): Promise<string> {
+  const body = (await res.json().catch(() => ({}))) as { code?: unknown; message?: unknown };
+  if (typeof body.code === "string" && Object.hasOwn(byCode, body.code)) {
+    return byCode[body.code] ?? wrong;
+  }
   if (res.status === 401) return wrong;
-  const body = (await res.json().catch(() => ({}))) as { message?: unknown };
   if ((res.status === 400 || res.status === 429) && typeof body.message === "string") {
     return body.message;
   }

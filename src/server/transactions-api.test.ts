@@ -314,6 +314,39 @@ describe("the Transactions page's routes", () => {
     }
   });
 
+  it("runs newest first by the date each row shows, and pages by that date with no row skipped or shown twice", async () => {
+    // Lunch and the refund post late but show earlier purchase dates; dinner shows lunch's date.
+    await test.database.$client.execute(
+      `UPDATE transactions SET authorized_date = CASE provider_transaction_id
+         WHEN 'lunch' THEN '2026-10-25' WHEN 'refund' THEN '2026-10-30' WHEN 'dinner' THEN '2026-10-25'
+       END WHERE provider_transaction_id IN ('lunch', 'refund', 'dinner')`,
+    );
+    const shownTie = [id("lunch"), id("dinner")].sort().map(providerIdOf);
+    const order = ["tonight", "paycheck", "refund", ...shownTie, "purchase"];
+
+    const whole = await list("");
+    expect(whole.transactions.map((txn) => providerIdOf(txn.id))).toEqual(order);
+    const shown = whole.transactions.map((txn) => txn.authorizedDate ?? txn.postedDate);
+    expect(shown).toEqual(shown.toSorted().reverse());
+    for (const limit of [1, 2, 3, 4, 5]) {
+      const paged: string[] = [];
+      let after: string | null = null;
+      do {
+        const page: TransactionListView = await list(
+          `?limit=${limit}${after === null ? "" : `&after=${after}`}`,
+        );
+        paged.push(...page.transactions.map((txn) => providerIdOf(txn.id)));
+        after = page.next;
+      } while (after !== null);
+      expect(paged, `limit ${limit}`).toEqual(order);
+    }
+    // The Account page's list, with its date filter, runs the same way.
+    const card = whole.transactions.find((txn) => txn.id === id("lunch"))?.accountId ?? "";
+    expect(await listed(`?account=${card}&from=2026-10-01`)).toEqual(
+      order.filter((each) => each !== "paycheck"),
+    );
+  });
+
   it("refuses a filter or a page it cannot read", async () => {
     for (const query of [
       "?from=October",

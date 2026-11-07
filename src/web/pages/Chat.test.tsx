@@ -15,7 +15,7 @@ import {
   problemOf,
   WAITS_FOR_HISTORY,
 } from "../chat.ts";
-import { Composer, NewThread, ThreadList, ThreadMessages } from "./Chat.tsx";
+import { AttachedNote, Chat, Composer, NewThread, ThreadList, ThreadMessages } from "./Chat.tsx";
 
 // The Chat page's parts as the browser first paints them (spec 07, Chat page). The requests go
 // through the app in src/server/chat-api.test.ts.
@@ -63,6 +63,31 @@ const thread = (fields: Partial<ChatThreadView> = {}): ChatThreadView => ({
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("the page", () => {
+  it("fills the screen above the phone's tab bar with no fixed overlay, under one hidden <h1>", () => {
+    const html = render(<Chat />);
+    const main = /<main class="([^"]*)"[^>]*data-slot="chat-page"/.exec(html)?.[1]?.split(" ");
+
+    // One heading, drawn before anything loads, for screen readers and the focus a menu choice
+    // moves; as on the board, the open thread's title heads the pane.
+    expect([...html.matchAll(/<h1[^>]*>(.*?)<\/h1>/g)].map((match) => match[0])).toEqual([
+      '<h1 class="sr-only">Chat</h1>',
+    ]);
+    // The page takes back the shell's padding and is the screen's height, less the 59 px tab bar
+    // below 900 px; nothing in it is fixed.
+    expect(main).toEqual(
+      expect.arrayContaining([
+        "h-dvh",
+        "-mb-24",
+        "pb-[calc(59px+env(safe-area-inset-bottom))]",
+        "min-[900px]:-mb-12",
+        "min-[900px]:pb-0",
+      ]),
+    );
+    expect(html).not.toMatch(/class="[^"]*\bfixed\b/);
+  });
 });
 
 describe("Ask about this", () => {
@@ -158,6 +183,21 @@ describe("a thread", () => {
     expect(html).toMatch(/<p class="[^"]*\bwrap-anywhere\b[^"]*">x{90}<\/p>/u);
   });
 
+  it("shows each line of the attached note, two that match too, each under its own key", () => {
+    const line = "Card interest: $12.50 on Northwind card on Oct 18.";
+    const note = { kind: "Alert", title: "2 Card interest or fee charges", lines: [line, line] };
+
+    expect(text(render(<AttachedNote note={note} />))).toBe(
+      `Alert: 2 Card interest or fee charges ${line} ${line}`,
+    );
+    // The server render checks no key, so the keys are read from the elements.
+    const [, lines] = (AttachedNote({ note }) as ReactElement<{ children: ReactElement[][] }>).props
+      .children;
+    const keys = (lines ?? []).map((each) => each.key);
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+  });
+
   it("lists the threads, the open one marked", () => {
     const html = render(
       <ThreadList
@@ -166,9 +206,12 @@ describe("a thread", () => {
           { id: "t1", title: "How are we doing?", lastMessageAt: "2026-10-20T16:00:00.000Z" },
         ]}
         open="t1"
+        today="2026-11-03"
+        zone="America/New_York"
       />,
     );
-    expect(text(html)).toBe("New thread Rent question How are we doing?");
+    // Each thread shows the day of its last message, in the browser's time zone.
+    expect(text(html)).toBe("New thread Rent question Oct 20 How are we doing? Oct 20");
     expect(html).toContain('aria-current="page" class="block truncate');
   });
 });

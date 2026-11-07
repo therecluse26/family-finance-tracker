@@ -2,17 +2,17 @@ import { useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
 import type { RecurringChargeView } from "../../server/recurring-views.ts";
 import { api } from "../api.ts";
-import { keepAmountsWhole } from "../components/Amounts.tsx";
+import { Button } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
+import { Page, PageHeading } from "../components/Page.tsx";
+import { Pill } from "../components/Pill.tsx";
 import { browserZone } from "./Accounts.tsx";
 
 // The Recurring charges page (spec 07, Recurring charges page): each Recurring charge by next
 // expected date. Tapping a row opens its price history. Inactive ones sit in a collapsed "Inactive"
 // section, with those a Member marked ended. A Member may mark one ended; it never comes back by
 // itself (spec 06, Inactive and ended).
-
-const BUTTON = "rounded border border-gray-300 px-3 py-1";
-const LINK = "text-left text-blue-700 underline";
 
 const byNextDate = (a: RecurringChargeView, b: RecurringChargeView) =>
   a.nextExpectedDate.localeCompare(b.nextExpectedDate) ||
@@ -29,17 +29,44 @@ export function recurringSections(charges: readonly RecurringChargeView[]): {
   };
 }
 
-// "Streamly · −$15.49 · monthly · next Oct 3 · Subscriptions · on card". An ended one says "ended".
-export function chargeLine(charge: RecurringChargeView, today: string): string {
-  return [
-    charge.merchantName,
-    dollarsAndCents(-charge.latestAmount),
-    charge.schedule,
-    `next ${dateLabel(charge.nextExpectedDate, today)}`,
-    ...(charge.category === null ? [] : [charge.category]),
-    ...(charge.onCard ? ["on card"] : []),
-    ...(charge.status === "ended" ? ["ended"] : []),
-  ].join(" · ");
+// The line under the Merchant: "monthly · Subscriptions". The page shows its first letter upper
+// case.
+export function chargeFacts(charge: RecurringChargeView): string {
+  return [charge.schedule, ...(charge.category === null ? [] : [charge.category])].join(" · ");
+}
+
+// The bars draw at most this many of the latest charges.
+const SHOWN_CHARGES = 12;
+
+// The price history as bars, oldest at the left, the latest in full color (spec 07, Charts). The
+// list under it says each charge's date and amount, so the bars are hidden from screen readers.
+function PriceBars(props: { history: RecurringChargeView["priceHistory"] }) {
+  const shown = props.history.slice(-SHOWN_CHARGES);
+  if (shown.length < 2) return null;
+  const top = Math.max(...shown.map((entry) => entry.amount), 1);
+  const height = 64;
+  return (
+    <svg
+      className="block h-16 w-full max-w-[240px]"
+      viewBox={`0 0 ${shown.length * 20} ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      {shown.map((entry, index) => {
+        const tall = Math.max(2, Math.round((Math.max(entry.amount, 0) / top) * height));
+        return (
+          <rect
+            key={entry.date}
+            className={index === shown.length - 1 ? "fill-accent" : "fill-accent/40"}
+            x={index * 20}
+            y={height - tall}
+            width={16}
+            height={tall}
+          />
+        );
+      })}
+    </svg>
+  );
 }
 
 export type ChargeState = {
@@ -58,6 +85,8 @@ export type ChargeActions = {
   keep(charge: RecurringChargeView): void;
 };
 
+// Each row: the next date, the Merchant with its marks and its interval and Category, and the
+// amount. The row is one button that opens the price history; "Mark ended" sits beside it.
 export function RecurringChargeRow(props: {
   charge: RecurringChargeView;
   state: ChargeState;
@@ -65,48 +94,101 @@ export function RecurringChargeRow(props: {
   actions: ChargeActions;
 }) {
   const { charge, state, actions } = props;
+  const historyId = `price-history-${charge.id}`;
   return (
-    <li className="mt-3" data-status={charge.status}>
-      <button
-        type="button"
-        className={LINK}
-        aria-expanded={state.open === true}
-        onClick={() => actions.toggle(charge)}
-      >
-        {keepAmountsWhole(chargeLine(charge, props.today))}
-      </button>
-      {state.open === true ? (
-        <ul className="ml-4 mt-1 text-gray-700" aria-label="Price history">
-          {[...charge.priceHistory].reverse().map((entry) => (
-            <li key={entry.date}>
-              {dateLabel(entry.date, props.today)} · {dollarsAndCents(-entry.amount)}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {charge.status === "ended" ? null : (
-        <div className="mt-1 flex flex-wrap gap-2">
-          {state.confirming === true ? (
+    <li
+      className="border-t border-line-soft py-[13px] first:border-t-0"
+      data-status={charge.status}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <button
+          type="button"
+          className="group grid min-w-0 flex-[1_1_100%] grid-cols-[3.5rem_minmax(0,1fr)_auto] items-start gap-x-3 rounded-control text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:flex-1 sm:grid-cols-[5.75rem_minmax(0,1fr)_110px]"
+          aria-expanded={state.open === true}
+          aria-controls={state.open === true ? historyId : undefined}
+          onClick={() => actions.toggle(charge)}
+        >
+          <span className="text-muted tabular-nums">
+            <span className="sr-only">next </span>
+            {dateLabel(charge.nextExpectedDate, props.today)}
+          </span>
+          <span className="min-w-0">
+            <span className="font-semibold text-ink group-hover:text-accent group-hover:underline">
+              {charge.merchantName}
+            </span>
+            {charge.onCard ? (
+              <>
+                {" "}
+                <Pill>on card</Pill>
+              </>
+            ) : null}
+            {charge.status === "ended" ? (
+              <>
+                {" "}
+                <Pill>ended</Pill>
+              </>
+            ) : null}
+            <span className="mt-0.5 block text-small text-muted first-letter:uppercase">
+              {chargeFacts(charge)}
+            </span>
+          </span>
+          <span className="whitespace-nowrap text-right font-semibold tabular-nums">
+            {dollarsAndCents(-charge.latestAmount)}
+          </span>
+        </button>
+        <div
+          // On a phone the buttons wrap under the row, in line with the Merchant.
+          className="flex flex-wrap gap-2 pl-[4.25rem] sm:min-w-[7.5rem] sm:justify-end sm:pl-0"
+        >
+          {charge.status === "ended" ? null : state.confirming === true ? (
             <>
-              <button
+              <Button
                 type="button"
-                className={BUTTON}
+                variant="outlined"
+                size="small"
                 disabled={state.busy === true}
                 onClick={() => actions.end(charge)}
               >
                 Yes, it ended
-              </button>
-              <button type="button" className={BUTTON} onClick={() => actions.keep(charge)}>
+              </Button>
+              <Button
+                type="button"
+                variant="outlined"
+                size="small"
+                onClick={() => actions.keep(charge)}
+              >
                 Keep it
-              </button>
+              </Button>
             </>
           ) : (
-            <button type="button" className={BUTTON} onClick={() => actions.askEnd(charge)}>
+            <Button
+              type="button"
+              variant="outlined"
+              size="small"
+              onClick={() => actions.askEnd(charge)}
+            >
               Mark ended
-            </button>
+            </Button>
           )}
         </div>
-      )}
+      </div>
+      {state.open === true ? (
+        <div id={historyId} className="mt-3 rounded-control bg-page p-3 sm:ml-[6.5rem]">
+          <p className="mb-1.5 text-small font-semibold">Price history</p>
+          <PriceBars history={charge.priceHistory} />
+          <ul
+            className="mt-2 grid grid-cols-2 gap-x-6 gap-y-0.5 text-small tabular-nums sm:grid-cols-3"
+            aria-label="Price history"
+          >
+            {[...charge.priceHistory].reverse().map((entry) => (
+              <li key={entry.date}>
+                {dateLabel(entry.date, props.today)} ·{" "}
+                <span className="whitespace-nowrap">{dollarsAndCents(-entry.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <ErrorLine error={state.error} />
     </li>
   );
@@ -130,13 +212,30 @@ export function RecurringChargeList(props: {
   );
   return (
     <>
-      {active.length === 0 ? <p className="mt-4">No active Recurring charges.</p> : null}
-      <ul>{active.map(row)}</ul>
+      {active.length === 0 ? (
+        <Card>
+          <p className="text-muted">No active Recurring charges.</p>
+        </Card>
+      ) : (
+        <Card padding="list">
+          <ul>{active.map(row)}</ul>
+        </Card>
+      )}
+      {active.some((charge) => charge.onCard) ? (
+        <p className="text-small text-muted">
+          "On card" means the charge lands on a credit card. Checking pays it later with the card
+          payment.
+        </p>
+      ) : null}
       {inactive.length === 0 ? null : (
-        <details className="mt-6">
-          <summary className="text-lg font-semibold">Inactive ({inactive.length})</summary>
-          <ul>{inactive.map(row)}</ul>
-        </details>
+        <Card padding="list">
+          <details className="py-2">
+            <summary className="cursor-pointer py-2 font-semibold">
+              Inactive ({inactive.length})
+            </summary>
+            <ul>{inactive.map(row)}</ul>
+          </details>
+        </Card>
       )}
     </>
   );
@@ -194,12 +293,18 @@ export function RecurringCharges() {
   }, []);
 
   return (
-    <main>
-      <h1 className="text-2xl font-semibold">Recurring charges</h1>
+    <Page>
+      <PageHeading title="Recurring charges">
+        {charges === undefined ? null : (
+          <span className="text-muted tabular-nums">
+            {recurringSections(charges).active.length} active
+          </span>
+        )}
+      </PageHeading>
       <ErrorLine error={error} />
       {charges === undefined ? null : (
         <RecurringChargeList charges={charges} states={states} today={today} actions={actions} />
       )}
-    </main>
+    </Page>
   );
 }

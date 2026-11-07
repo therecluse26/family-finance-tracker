@@ -6,16 +6,32 @@ import {
   typedDate,
   typedMonth,
 } from "../ai/index.ts";
-import { type AlertWriter, alertList, alertNotes, alertPieces } from "../anomalies/index.ts";
-import { type Database, listInsightCards, readShownTransactions } from "../db/index.ts";
+import {
+  type Alert,
+  type AlertWriter,
+  alertList,
+  alertNotes,
+  alertPieces,
+  alertTitle,
+  mergedAlertList,
+} from "../anomalies/index.ts";
+import {
+  type AlertState,
+  type Database,
+  listInsightCards,
+  readShownTransactions,
+} from "../db/index.ts";
+import { calendarDateIn } from "../format.ts";
+import { householdTimeZone } from "../household/index.ts";
 import { openProposals } from "../proposals/index.ts";
 
 // The note a Chat thread starts from with "Ask about this" (spec 08, Threads): an Alert note, an
-// open Proposal, or an Insight card in the AI box. The app reads the note itself from its ID, never
+// open Proposal, or an Insight card in the AI box. Or the Alert a thread starts from with "Ask the
+// AI" in the Alert list (spec 06, "Ask the AI"). The app reads the note itself from its ID, never
 // from the browser, and keeps a copy with the thread: the words the thread shows, and the pieces
 // the AI reads, with each amount, date, and month as a typed value (src/ai/typed.ts).
 
-const NOTE_KINDS = ["Alert note", "Proposal", "Insight card"] as const;
+const NOTE_KINDS = ["Alert note", "Proposal", "Insight card", "Alert"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
 // One piece of the note the AI reads: text, or a number the app made. app.db stores the pieces as
@@ -72,19 +88,13 @@ const ALERT_WRITER: AlertWriter<Piece[]> = {
   year: (year) => [{ count: Number(year) }],
 };
 
-// The Alert note in the box at `now` with this ID, with its parts, oldest first. An Account in its
-// facts goes as its label: the facts hold the Account's name as it was, which may name a Member.
-async function alertNote(
+// An Alert's parts, oldest first, as pieces: one line each. An Account in its facts goes as its
+// label: the facts hold the Account's name as it was, which may name a Member.
+async function partPieces(
   database: Database,
   ai: Pick<HouseholdAi, "accountLabels">,
-  id: string,
-  now: Date,
-): Promise<ChatNote | undefined> {
-  const note = (await alertNotes(database, now)).find((each) => each.id === id);
-  if (note === undefined) return undefined;
-  const parts = (await alertList(database))
-    .filter((alert) => alert.id === id || alert.mergedInto === id)
-    .toReversed();
+  parts: readonly Alert[],
+): Promise<Piece[]> {
   const labels = await ai.accountLabels();
   const accountOf = new Map(
     (
@@ -94,7 +104,7 @@ async function alertNote(
       )
     ).map((txn) => [txn.id, txn.accountId]),
   );
-  const pieces: Piece[] = [`An Alert note: ${note.kind}.`];
+  const pieces: Piece[] = [];
   for (const alert of parts) {
     let facts = alert.facts;
     if (facts.kind === "Duplicate charge" || facts.kind === "Card interest or fee") {
@@ -106,12 +116,85 @@ async function alertNote(
     }
     pieces.push("\n- ", ...alertPieces(facts, ALERT_WRITER).flat());
   }
+  return pieces;
+}
+
+// The Alert note in the box at `now` with this ID, with its parts, oldest first.
+async function alertNote(
+  database: Database,
+  ai: Pick<HouseholdAi, "accountLabels">,
+  id: string,
+  now: Date,
+): Promise<ChatNote | undefined> {
+  const note = (await alertNotes(database, now)).find((each) => each.id === id);
+  if (note === undefined) return undefined;
+  const parts = (await alertList(database))
+    .filter((alert) => alert.id === id || alert.mergedInto === id)
+    .toReversed();
+  const pieces: Piece[] = [
+    `An Alert note: ${note.kind}.`,
+    ...(await partPieces(database, ai, parts)),
+  ];
   if (note.nextStep !== null) pieces.push(`\nThe next step the AI gave: ${plain(note.nextStep)}`);
   return {
     kind: "Alert note",
     title: note.title,
     lines: [...note.why, ...(note.nextStep === null ? [] : [`Next step: ${note.nextStep}`])],
     pieces,
+  };
+}
+
+// What the Alerts step did with an Alert, as the AI reads it.
+const STATE_WORDS: Record<AlertState, string> = {
+  sent: "The app sent it to the Members.",
+  "held back (weekly cap)": "The weekly cap held it back, so the app sent no message for it.",
+  "found in history": "The app found it in loaded history, so it sent no message for it.",
+};
+
+// The Alert in the Alert list with this ID, the merged Alert's or any of its parts', with every
+// part, oldest first, titled on the Household's date at `now`. `alertId` is the merged Alert's ID.
+export async function listedAlert(
+  database: Database,
+  ai: Pick<HouseholdAi, "accountLabels">,
+  id: string,
+  now: Date,
+): Promise<{ alertId: string; note: ChatNote } | undefined> {
+  const alert = (await mergedAlertList(database)).find((each) =>
+    each.parts.some((part) => part.id === id),
+  );
+  const [first, ...later] = alert?.parts ?? [];
+  if (alert === undefined || first === undefined) return undefined;
+  const today = calendarDateIn(now, (await householdTimeZone(database)) ?? "UTC");
+  const title = alertTitle(alert.kind, [first.facts, ...later.map((part) => part.facts)], today);
+  const advice = [
+    ...new Set(alert.parts.flatMap((part) => (part.advice === null ? [] : [part.advice]))),
+  ];
+  const nextStep = advice.length === 0 ? null : advice.join(" ");
+  const pieces: Piece[] = [
+    `An Alert from the Alert list: ${alert.kind}.`,
+    ...(await partPieces(database, ai, alert.parts)),
+  ];
+  if (alert.state !== null) pieces.push(`\n${STATE_WORDS[alert.state]}`);
+  const marked = alert.parts.filter((part) => part.notAProblem.length > 0).length;
+  if (marked > 0) {
+    pieces.push(
+      ...(later.length === 0
+        ? ['\nA Member marked it "Not a problem".']
+        : ["\nMembers marked ", { count: marked }, ' of its parts "Not a problem".']),
+    );
+  }
+  if (nextStep !== null) pieces.push(`\nThe next step the AI gave: ${plain(nextStep)}`);
+  return {
+    alertId: alert.id,
+    note: {
+      kind: "Alert",
+      title,
+      lines: [
+        ...alert.parts.map((part) => part.text),
+        ...(nextStep === null ? [] : [`Next step: ${nextStep}`]),
+      ],
+      pieces,
+    },
   };
 }
 
@@ -208,7 +291,7 @@ async function insightCardNote(database: Database, id: string): Promise<ChatNote
 export function readNote(
   database: Database,
   ai: Pick<HouseholdAi, "accountLabels">,
-  note: { kind: NoteKind; id: string },
+  note: { kind: Exclude<NoteKind, "Alert">; id: string },
   now: Date,
 ): Promise<ChatNote | undefined> {
   switch (note.kind) {
@@ -246,7 +329,11 @@ export function storedNote(json: unknown): ChatNote | undefined {
 // The note's pieces as Chat sends them, with each number a typed value. Text next to text goes as
 // one. A piece that no longer fits its typed form, such as from an older app, leaves the note out.
 export function noteParts(note: ChatNote): SummaryPart[] | undefined {
-  const parts: SummaryPart[] = ["The Member asks about this note from the AI box.\n"];
+  const parts: SummaryPart[] = [
+    note.kind === "Alert"
+      ? "The Member asks about this Alert from the Alert list.\n"
+      : "The Member asks about this note from the AI box.\n",
+  ];
   try {
     for (const piece of note.pieces) {
       const part: SummaryPart =

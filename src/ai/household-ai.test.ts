@@ -78,7 +78,7 @@ describe("an AI call", () => {
     makeModels: AiModelMaker = stub.makeModels,
   ) {
     const settings = aiSettings(options(makeModels));
-    expect(await settings.save(settingsFor(provider), { freshCode: true })).toMatchObject({
+    expect(await settings.save(settingsFor(provider))).toMatchObject({
       saved: true,
     });
     return { ai: householdAi(options(makeModels)), settings };
@@ -465,6 +465,8 @@ describe("an AI call", () => {
 
     it.each([
       ["rate limit", "rate limit", 429],
+      // Only Test the key names a 404 (spec 08, Test the key).
+      ["unknown model", "server error", 404],
       ["fail", "server error", 500],
     ] as const)("treats a %s answer as a %s", async (answer, failure, status) => {
       const { ai } = await connect();
@@ -731,7 +733,7 @@ describe("an AI call", () => {
 
         // A Member saves a key that works: the notice ends, and AI calls again.
         stub.answers = { quick: "work", writer: "work" };
-        expect(await settings.save(settingsFor("anthropic"), { freshCode: true })).toMatchObject({
+        expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
           saved: true,
         });
         expect(ended).toEqual([KEY_REJECTED_CONDITION]);
@@ -750,7 +752,7 @@ describe("an AI call", () => {
 
       // A network error on each check says nothing about the key.
       stub.answers = { quick: "throw", writer: "throw" };
-      expect(await settings.save(settingsFor("anthropic"), { freshCode: true })).toMatchObject({
+      expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
         saved: true,
         check: { quick: "failed", writer: "failed" },
         ai: { status: { state: "key rejected" } },
@@ -762,7 +764,7 @@ describe("an AI call", () => {
 
       // One tier's check works: the key works, and the notice ends.
       stub.answers = { quick: "work", writer: "throw" };
-      expect(await settings.save(settingsFor("anthropic"), { freshCode: true })).toMatchObject({
+      expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
         saved: true,
         ai: { status: { state: "on" } },
       });
@@ -812,7 +814,7 @@ describe("an AI call", () => {
         if (saving) return;
         saving = true;
         stub.answers.quick = "work";
-        await settings.save(settingsFor("anthropic"), { freshCode: true });
+        await settings.save(settingsFor("anthropic"));
         stub.answers.quick = "reject";
       };
 

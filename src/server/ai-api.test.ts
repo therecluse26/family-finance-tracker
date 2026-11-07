@@ -16,7 +16,6 @@ import { type App, TestBrowser } from "./testing.ts";
 // keys (spec 08, AI settings page; spec 09, Signing in).
 
 const APP_URL = "http://nas.local:8080";
-const TOTP_STEP_MS = 30_000;
 const GATEWAY = "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai";
 
 // A local model's prices: $0.
@@ -76,12 +75,10 @@ describe("the AI routes", () => {
     await markSetupStep(test.database, "household facts", "done");
   }
 
-  // Signed in, with the clock moved on one TOTP step, so the next code is fresh.
   async function signedIn(): Promise<TestBrowser> {
     clients += 1;
     const tab = new TestBrowser(app, APP_URL, `192.168.1.${clients}`);
     await tab.signIn(alice);
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
     return tab;
   }
 
@@ -94,8 +91,8 @@ describe("the AI routes", () => {
     ...more,
   });
 
-  const save = async (tab: TestBrowser, body: Record<string, unknown>, code?: string) =>
-    tab.post("/api/ai/settings", { ...body, code: code ?? (await alice.totpCode()) });
+  const save = (tab: TestBrowser, body: Record<string, unknown>) =>
+    tab.post("/api/ai/settings", body);
 
   const shown = async (tab: TestBrowser) =>
     ((await (await tab.get("/api/ai/settings")).json()) as { ai: AiView | null }).ai;
@@ -171,23 +168,15 @@ describe("the AI routes", () => {
     ]);
   });
 
-  it("asks for a fresh TOTP code, or a backup code, to change the key", async () => {
+  it("sets and changes the key with no code: TOTP is asked only at sign-in", async () => {
     await finishWizard();
     const tab = await signedIn();
-    const code = await alice.totpCode();
-    const wrong = code.replace(/\d/g, (digit) => String((Number(digit) + 1) % 10));
-    const { code: _none, ...noCode } = { ...openai(), code: undefined };
-
-    expect((await tab.post("/api/ai/settings", noCode)).status).toBe(400);
-    expect((await save(tab, openai(), wrong)).status).toBe(401);
-    expect(stub.calls).toEqual([]);
 
     const first = openai();
-    expect((await save(tab, first, code)).status).toBe(200);
-    const second = openai();
-    expect((await save(tab, second, code)).status).toBe(401);
+    expect((await save(tab, first)).status).toBe(200);
     expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
-    expect((await save(tab, second, alice.backupCodes[0])).status).toBe(200);
+    const second = openai();
+    expect((await save(tab, second)).status).toBe(200);
     expect(stub.connections.at(-1)?.apiKey).toBe(second.apiKey);
   });
 
@@ -209,23 +198,7 @@ describe("the AI routes", () => {
     expect(stub.connections.at(-1)?.apiKey).toBe(first.apiKey);
   });
 
-  it("refuses every code after 5 wrong ones in 15 minutes, with 429", async () => {
-    await finishWizard();
-    const tab = await signedIn();
-    const wrong = (await alice.totpCode()).replace(/\d/g, (digit) =>
-      String((Number(digit) + 1) % 10),
-    );
-
-    const statuses: number[] = [];
-    for (let i = 0; i < 5; i += 1) statuses.push((await save(tab, openai(), wrong)).status);
-    const refused = await save(tab, openai());
-
-    expect(statuses).toEqual([401, 401, 401, 401, 401]);
-    expect(refused.status).toBe(429);
-    expect(stub.calls).toEqual([]);
-  });
-
-  it("refuses fields that cannot be sent as written, before it checks the code", async () => {
+  it("refuses fields that cannot be sent as written", async () => {
     await finishWizard();
     const tab = await signedIn();
 
@@ -241,7 +214,7 @@ describe("the AI routes", () => {
       openai({ gatewayToken: newAiKey() }),
       openai({ baseUrl: "https://proxy.example/v1", gatewayToken: newAiKey() }),
     ]) {
-      expect([body, (await save(tab, body, "000000")).status]).toEqual([body, 400]);
+      expect([body, (await save(tab, body)).status]).toEqual([body, 400]);
     }
     expect(stub.calls).toEqual([]);
   });
@@ -284,8 +257,6 @@ describe("the AI routes", () => {
       "http://host.docker.internal:11434/v1",
       "https://api.example.com/v1",
     ]) {
-      // Each change of base URL takes a fresh code.
-      vi.setSystemTime(Date.now() + TOTP_STEP_MS);
       expect([baseUrl, (await save(tab, compatible(baseUrl))).status]).toEqual([baseUrl, 200]);
     }
   });
@@ -403,9 +374,7 @@ describe("the AI routes", () => {
     await test.database.$client.execute("UPDATE ai_settings SET api_key = 'v1.not-a-ciphertext'");
     const { apiKey: _key, ...kept } = first;
 
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
     const again = await save(tab, kept);
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
     const fresh = openai();
     const replaced = await save(tab, fresh);
 
@@ -417,7 +386,7 @@ describe("the AI routes", () => {
   it("takes only a JSON body, and changes only from APP_URL's origin", async () => {
     await finishWizard();
     const tab = await signedIn();
-    const body = { ...openai(), code: await alice.totpCode() };
+    const body = openai();
 
     const text = await tab.send("POST", "/api/ai/settings", body, { "content-type": "text/plain" });
     expect(text.status).toBe(415);
@@ -470,5 +439,158 @@ describe("the AI routes", () => {
     expect(await res.json()).toEqual({ ai: null });
     expect(await shown(tab)).toBeNull();
     expect(await ready()).toBe(false);
+  });
+
+  describe("Test the key", () => {
+    const testKey = (tab: TestBrowser, body: unknown = {}, headers = {}) =>
+      tab.send("POST", "/api/ai/test", body, headers);
+
+    // The key test's calls on the AI usage page.
+    const keyTests = async () =>
+      (await aiCost({ database: test.database }).usage()).byUse.find(
+        ({ use }) => use === "key test",
+      )?.calls ?? 0;
+
+    // Moves the clock past the wait between tests.
+    const later = () => vi.setSystemTime(new Date(Date.now() + 10_000));
+
+    it("answers 401 to a browser with no session, and makes no call", async () => {
+      await finishWizard();
+      await save(await signedIn(), openai());
+      stub.calls.length = 0;
+      const tab = new TestBrowser(app, APP_URL, "192.168.1.200");
+
+      expect((await testKey(tab)).status).toBe(401);
+      expect(stub.calls).toEqual([]);
+      expect(await keyTests()).toBe(0);
+    });
+
+    it("answers 403 to another site's Origin and to no Origin, and 415 to a body that is not JSON, with no call", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      stub.calls.length = 0;
+
+      for (const origin of ["http://evil.example", `${APP_URL}.evil.example`, undefined]) {
+        expect((await testKey(tab, {}, { origin })).status).toBe(403);
+      }
+      const text = await testKey(tab, {}, { "content-type": "text/plain" });
+      expect(text.status).toBe(415);
+      expect((await testKey(tab, { apiKey: newAiKey() })).status).toBe(400);
+      expect(stub.calls).toEqual([]);
+      expect(await keyTests()).toBe(0);
+
+      // None of them took the test's place.
+      const tested = await testKey(tab);
+      expect(tested.status).toBe(200);
+      expect(stub.calls).toHaveLength(1);
+    });
+
+    it("refuses until the wizard's required steps are done", async () => {
+      const tab = await signedIn();
+
+      expect((await testKey(tab)).status).toBe(409);
+      expect(stub.calls).toEqual([]);
+    });
+
+    it("answers that no key is saved, with no call", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+
+      const res = await testKey(tab);
+
+      expect([res.status, await res.json()]).toEqual([200, { result: "no key", ai: null }]);
+      expect(stub.calls).toEqual([]);
+    });
+
+    it("answers each result with the AI settings after it, and never the key", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      const body = openai();
+      await save(tab, body);
+      const answers: unknown[] = [];
+
+      for (const [answer, result] of [
+        ["work", "works"],
+        ["rate limit", "rate limit"],
+        ["unknown model", "model unknown"],
+        ["fail", "no answer"],
+        ["reject", "key rejected"],
+      ] as const) {
+        stub.answers.quick = answer;
+        const res = await testKey(tab);
+        const json = (await res.json()) as { result: string; ai: AiView };
+        answers.push(json);
+        expect([res.status, json.result]).toEqual([200, result]);
+        later();
+      }
+
+      expect(answers.at(-1)).toMatchObject({ ai: { status: { state: "key rejected" } } });
+      expect(await keyTests()).toBe(1);
+      expect(JSON.stringify(answers)).not.toContain(body.apiKey);
+      expect(lines.join("\n")).not.toContain(body.apiKey);
+    });
+
+    it("answers 429 with Retry-After within 10 seconds of the last test, and 409 while one runs", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      let release = () => {};
+      stub.beforeAnswer = () => new Promise<void>((resolve) => (release = resolve));
+
+      const first = testKey(tab);
+      await vi.waitFor(() => expect(stub.calls).toHaveLength(3));
+      const during = await testKey(tab);
+      release();
+      expect((await first).status).toBe(200);
+      const soon = await testKey(tab);
+
+      expect([during.status, await during.json()]).toEqual([
+        409,
+        { error: "A test of the key is running. Wait for its answer." },
+      ]);
+      expect([soon.status, soon.headers.get("retry-after"), await soon.json()]).toEqual([
+        429,
+        "10",
+        { error: "Wait 10 seconds, then test the key again." },
+      ]);
+      expect(stub.calls).toHaveLength(3);
+    });
+
+    it("answers 409 with the AI settings as they are now when a save came during the test", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      stub.answers.quick = "reject";
+      stub.beforeAnswer = async () => {
+        stub.beforeAnswer = async () => {};
+        stub.answers.quick = "work";
+        await save(tab, openai({ writerModel: "gpt-6-luna" }));
+      };
+
+      const res = await testKey(tab);
+
+      expect([res.status, await res.json()]).toEqual([
+        409,
+        {
+          error: "The AI settings changed during the test. Test again.",
+          ai: expect.objectContaining({ writerModel: "gpt-6-luna", status: { state: "on" } }),
+        },
+      ]);
+    });
+
+    it("answers 409 when the stored key cannot be read", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      await test.database.$client.execute("UPDATE ai_settings SET api_key = 'v1.not-a-ciphertext'");
+
+      const res = await testKey(tab);
+
+      expect([res.status, await res.json()]).toEqual([
+        409,
+        { error: "The app cannot read the saved key. Enter it again, then save." },
+      ]);
+    });
   });
 });

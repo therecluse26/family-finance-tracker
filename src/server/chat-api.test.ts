@@ -7,10 +7,15 @@ import { type AiGates, aiCost, aiSettings, householdAi, typedCount } from "../ai
 import { newAiKey, StubModels } from "../ai/testing.ts";
 import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { chat } from "../chat/index.ts";
-import { markSetupStep, replaceInsightCards } from "../db/index.ts";
+import {
+  addUnconnectedAccount,
+  markSetupStep,
+  replaceInsightCards,
+  storeAlerts,
+} from "../db/index.ts";
 import { readEveryTable } from "../db/testing.ts";
 import { createLogger } from "../log.ts";
-import { deleteThread, loadChat, loadThread, startThread } from "../web/chat.ts";
+import { askAiAbout, deleteThread, loadChat, loadThread, startThread } from "../web/chat.ts";
 import { createApp } from "./app.ts";
 import type { ChatThreadView } from "./chat-views.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -80,17 +85,14 @@ describe("the Chat routes", () => {
       logger: QUIET,
       notices: { raise: async () => {}, end: async () => {} },
     };
-    await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     const ai = householdAi(options);
     const talk = chat({
       database: test.database,
@@ -430,6 +432,137 @@ describe("the Chat routes", () => {
       trigger: "submit-message",
       sendAnyway: false,
       messages: [{ role: "user", parts: [{ type: "text", text: "And last month?" }] }],
+    });
+  });
+
+  describe('"Ask the AI" on an Alert', () => {
+    const ALERT = "interest";
+    const ask = (browser = alice, id = ALERT, body: unknown = {}, headers = {}) =>
+      browser.send("POST", `/api/alerts/${encodeURIComponent(id)}/ask-ai`, body, headers);
+
+    beforeEach(async () => {
+      // The Account's last 4 is 4821, and the interest is $48.21.
+      await addUnconnectedAccount(test.database, {
+        subtype: "credit card",
+        institutionName: "Northwind",
+        name: "Alice's card",
+        mask: "4821",
+      });
+      await storeAlerts(test.database, [
+        {
+          id: ALERT,
+          kind: "Card interest or fee",
+          createdAt: new Date("2026-10-20T15:00:00.000Z"),
+          facts: {
+            kind: "Card interest or fee",
+            cardInterest: true,
+            merchant: null,
+            account: "Alice's card ··4821",
+            amount: 4_821,
+            date: "2026-10-17",
+          },
+          text: "Card interest: $48.21 on Alice's card ··4821 on Oct 17.",
+          category: null,
+          state: "sent",
+          transactionIds: [],
+        },
+      ]);
+    });
+
+    it("starts the Member's thread from the Alert's ID alone, opens it again on the next press, and answers with the Alert attached", async () => {
+      // A body the browser makes up is never read: the app reads the Alert from app.db.
+      const made = await ask(alice, ALERT, { title: "Made up", amount: 1, kind: "Over Budget" });
+      expect(made.status).toBe(201);
+      const { threadId } = (await made.json()) as { threadId: string };
+      const again = await ask();
+      expect([again.status, await again.json()]).toEqual([200, { threadId }]);
+      const bobs = await ask(bob);
+      expect(bobs.status).toBe(201);
+      expect(((await bobs.json()) as { threadId: string }).threadId).not.toBe(threadId);
+      expect(modelCalls()).toEqual([]);
+
+      // Every Member sees it, with the Alert and no message yet.
+      expect(await threadOf(threadId, bob)).toMatchObject({
+        title: "About: Card interest on Alice's card ··4821",
+        note: {
+          kind: "Alert",
+          title: "Card interest on Alice's card ··4821",
+          lines: ["Card interest: $48.21 on Alice's card ··4821 on Oct 17."],
+        },
+        messages: [],
+      });
+
+      const answer = await alice.post("/api/chat", answerBody(threadId, "Why?"));
+      expect(await streamedText(answer)).toBe("O");
+      const sent = JSON.stringify(stub.prompts.at(-1));
+      // $48.21 goes as the app made it, though it matches the last 4. The name never goes.
+      expect(sent).toContain("Card interest: $48.21 on an Account on 2026-10-17.");
+      for (const word of ["Alice", "4821", "Made up"]) expect(sent).not.toContain(word);
+      expect((await threadOf(threadId)).messages.map((message) => message.text)).toEqual([
+        "Why?",
+        "O",
+      ]);
+    });
+
+    it("refuses without a session, from another site or no Origin, and with another content type, changing nothing", async () => {
+      const before = await everyTable();
+      const stranger = new TestBrowser(app, APP_URL, "192.168.1.30");
+
+      expect((await ask(stranger)).status).toBe(401);
+      for (const origin of WRONG_ORIGINS) {
+        expect([origin, (await ask(alice, ALERT, {}, { origin })).status]).toEqual([origin, 403]);
+      }
+      expect((await ask(alice, ALERT, {}, { "content-type": "text/plain" })).status).toBe(415);
+
+      expect(await everyTable()).toEqual(before);
+      expect(modelCalls()).toEqual([]);
+    });
+
+    it("answers 404 to an ID no Alert has, and changes nothing", async () => {
+      const before = await everyTable();
+
+      const res = await ask(alice, "no-such-alert");
+
+      expect([res.status, await res.json()]).toEqual([404, { error: "No Alert has this ID." }]);
+      expect(await everyTable()).toEqual(before);
+    });
+
+    it("starts at the AI cost cap, where Chat asks Send anyway?, and waits for history with Chat's words", async () => {
+      capped = true;
+      const res = await ask();
+      expect(res.status).toBe(201);
+      const { threadId } = (await res.json()) as { threadId: string };
+      const refused = await alice.post("/api/chat", answerBody(threadId, "Why?"));
+      expect([refused.status, await refused.json()]).toEqual([
+        409,
+        { error: "Send anyway?", pause: "send anyway?" },
+      ]);
+
+      capped = false;
+      loaded = false;
+      const before = await everyTable();
+      const waits = await ask(bob);
+      expect([waits.status, await waits.json()]).toEqual([
+        409,
+        { error: "Chat opens when your history has loaded.", pause: "waits for history" },
+      ]);
+      expect(await everyTable()).toEqual(before);
+      expect(modelCalls()).toEqual([]);
+    });
+
+    it("acts through the Alert list page's own request", async () => {
+      vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input instanceof Request ? input.url : input), APP_URL);
+        const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const type = new Headers(init?.headers).get("content-type") ?? undefined;
+        return alice.send(init?.method ?? "GET", url.pathname, body, { "content-type": type });
+      });
+
+      const asked = await askAiAbout(ALERT);
+      if (!("threadId" in asked)) throw new Error(asked.error);
+      expect(await askAiAbout(ALERT)).toEqual(asked);
+      expect(await askAiAbout("no-such-alert")).toEqual({ error: "No Alert has this ID." });
+      expect((await loadThread(asked.threadId))?.note?.kind).toBe("Alert");
     });
   });
 });

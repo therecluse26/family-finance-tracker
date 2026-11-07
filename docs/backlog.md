@@ -44,7 +44,6 @@ Small items left open after the T107 notes triage, for after the first release (
 - N229 (S, security) No test covers a port change keeping passkeys; switching `passkeyHostOf` to `.host` would pass every test. In: src/auth/passkeys.ts tests.
 - N230 (S, security) `session.freshAge: 0` is safe only because `ROUTES` hides `/list-sessions`, `/unlink-account` and `/delete-user`; add a comment or a 404 test. In: src/auth/auth.ts, route tests.
 - N231 (S, security) A failed passkey check logs the full simplewebauthn Error and stack at error level; log a warn without the stack. In: src/auth/auth.ts.
-- N232 (S, polish) The fresh code is used up when the WebAuthn check then fails. In: src/auth/passkeys.ts.
 - N233 (S, polish) An IP-address `APP_URL` over HTTPS offers passkeys that always fail (WebAuthn refuses an IP RP ID). In: src/auth/passkeys.ts, Settings page.
 - N234 (S, security) No parallel passkey sign-in test (a probe holds). In: passkeys-api.test.ts.
 

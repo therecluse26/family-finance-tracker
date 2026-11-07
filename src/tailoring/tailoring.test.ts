@@ -105,17 +105,14 @@ describe("Budget tailoring", () => {
 
   // Connects the AI provider through the AI settings, as the settings page does.
   const connectAi = async () => {
-    const saved = await aiSettings(options).save(
-      {
-        provider: "anthropic",
-        apiKey: newAiKey(),
-        baseUrl: null,
-        quickModel: "quick-model",
-        writerModel: "writer-model",
-        prices: { quick: PRICE, writer: PRICE },
-      },
-      { freshCode: true },
-    );
+    const saved = await aiSettings(options).save({
+      provider: "anthropic",
+      apiKey: newAiKey(),
+      baseUrl: null,
+      quickModel: "quick-model",
+      writerModel: "writer-model",
+      prices: { quick: PRICE, writer: PRICE },
+    });
     expect(saved).toMatchObject({ saved: true });
     // Only the calls after the key check count.
     stub.calls.splice(0);
@@ -617,17 +614,14 @@ describe("Budget tailoring", () => {
     beforeEach(async () => {
       await draftFirstBudgets(bank.database, NOW, tailorFirstDraft);
       // Connected without the settings hook: no Tailoring run.
-      await aiSettings({ ...options, afterChange: undefined }).save(
-        {
-          provider: "anthropic",
-          apiKey: newAiKey(),
-          baseUrl: null,
-          quickModel: "quick-model",
-          writerModel: "writer-model",
-          prices: { quick: PRICE, writer: PRICE },
-        },
-        { freshCode: true },
-      );
+      await aiSettings({ ...options, afterChange: undefined }).save({
+        provider: "anthropic",
+        apiKey: newAiKey(),
+        baseUrl: null,
+        quickModel: "quick-model",
+        writerModel: "writer-model",
+        prices: { quick: PRICE, writer: PRICE },
+      });
       stub.calls.splice(0);
     });
 

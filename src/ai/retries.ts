@@ -194,7 +194,7 @@ export async function runAiRetries(now = new Date()): Promise<ModelUse[]> {
   const asked: ModelUse[] = [];
   for (const retry of await listDueAiRetries(database, now)) {
     const use = retry.use;
-    if (use === "check on save") continue;
+    if (use === "check on save" || use === "key test") continue;
     if (!(await markAiRetryAsked(database, use, retry.retryAt, now))) continue;
     const runner = runners[use];
     if (runner === undefined) {

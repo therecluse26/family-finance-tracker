@@ -246,9 +246,62 @@ describe("the Review list", () => {
     expect(await openCount()).toBe(3);
   });
 
+  it("runs items made at the same moment by their Transaction's shown date, newest first, with a loan item after them", async () => {
+    unregister();
+    const loanItems: ReviewKind = { otherChoices: async () => [], answer: async () => {} };
+    const unregisterLoan = registerReviewKind("link to this loan", loanItems);
+    unregister = registerReviewKind(KIND, categoryGuess);
+    // t2 posts last but shows its purchase date, the oldest of the three.
+    await query(
+      "UPDATE transactions SET posted_date = '2026-10-01' WHERE provider_transaction_id = 't1'",
+    );
+    await query(
+      "UPDATE transactions SET posted_date = '2026-10-20', authorized_date = '2026-09-28' WHERE provider_transaction_id = 't2'",
+    );
+    await query(
+      "UPDATE transactions SET posted_date = '2026-10-15' WHERE provider_transaction_id = 't3'",
+    );
+    const item = (transactionIds: string[]) => ({
+      kind: KIND,
+      subject: { type: "transactions" as const, transactionIds },
+      decided: "The AI guessed Restaurants, with medium confidence.",
+      bestAnswer: { value: "restaurants", label: "Yes, Restaurants" },
+    });
+    const [onlyT2, loan, onlyT1, t2AndT3] = await openReviewItemBatch(test.database, [
+      item([txns.t2 ?? ""]),
+      {
+        kind: "link to this loan",
+        subject: { type: "loan", accountId: "loan-account" },
+        decided: "This payment may belong to the Car Loan.",
+        bestAnswer: { value: "link", label: "Yes, link it" },
+      },
+      item([txns.t1 ?? ""]),
+      // An item about two Transactions runs by the newer one, t3.
+      item([txns.t2 ?? "", txns.t3 ?? ""]),
+    ]);
+    // An item made later comes first, whatever its Transaction's date.
+    vi.setSystemTime(new Date("2026-11-03T15:00:00.000Z"));
+    const later = await guess("t2");
+
+    const order = [later, t2AndT3, onlyT1, onlyT2, loan];
+    expect((await openItems()).map((open) => open.id)).toEqual(order);
+    // The same order on every read.
+    expect((await openItems()).map((open) => open.id)).toEqual(order);
+
+    // A Transaction the item no longer shows does not count: with t3 hidden, the item about t2 and
+    // t3 runs by t2's date, after t1.
+    await query(
+      "UPDATE transactions SET hidden_reason = 'posted' WHERE provider_transaction_id = 't3'",
+    );
+    const hidden = (await openItems()).map((open) => open.id);
+    expect(hidden.slice(0, 2)).toEqual([later, onlyT1]);
+    expect(hidden.at(-1)).toBe(loan);
+    unregisterLoan();
+  });
+
   // Items one follow-up job opens share their time, so they run by their Transactions' date: the
   // purchase date, else the posted date. The order is the same on every read.
-  it("runs items made at the same moment by their Transaction's date, newest first", async () => {
+  it("runs items made at the same moment by their purchase date, else their posted date, after a later moment", async () => {
     const loanItems: ReviewKind = { otherChoices: async () => [], answer: async () => {} };
     const unregisterLoan = registerReviewKind("link to this loan", loanItems);
     // t3 posted last but was bought first, so the posted date would run it first.
@@ -287,12 +340,11 @@ describe("the Review list", () => {
     const expected = [bought01, both, bought25, loan, earlier];
     expect((await openItems()).map((item) => item.id)).toEqual(expected);
     expect((await openItems()).map((item) => item.id)).toEqual(expected);
-    expect((await openReviewItemsOfKind(test.database, KIND)).map((item) => item.id)).toEqual([
-      bought01,
-      both,
-      bought25,
-      earlier,
-    ]);
+    // Items of one kind are for callers that settle or revise them: newest made first, with no
+    // further order, so they skip each item's Transaction dates.
+    const ofKind = (await openReviewItemsOfKind(test.database, KIND)).map((item) => item.id);
+    expect([...ofKind].sort()).toEqual([bought01, both, bought25, earlier].sort());
+    expect(ofKind.at(-1)).toBe(earlier);
     unregisterLoan();
   });
 

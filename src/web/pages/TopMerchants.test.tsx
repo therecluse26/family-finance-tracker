@@ -6,6 +6,7 @@ import {
   merchantFacts,
   PeriodSwitch,
   TopMerchantList,
+  TopMerchants,
   topMerchantRequests,
 } from "./TopMerchants.tsx";
 
@@ -43,8 +44,8 @@ describe("the Top Merchants page", () => {
     const rows = [...html.matchAll(/<li[^>]*>(.*?)<\/li>/gs)].map((match) => text(match[1] ?? ""));
 
     expect(rows).toEqual([
-      "1. Corner Grocer 142 Transactions · Groceries $12,480",
-      "2. Streamly 1 Transaction $15",
+      "1 Corner Grocer 142 Transactions · Groceries $12,480",
+      "2 Streamly 1 Transaction $15",
     ]);
     expect(merchantFacts(MERCHANTS[1] as TopMerchantView)).toBe("1 Transaction");
   });
@@ -60,6 +61,21 @@ describe("the Top Merchants page", () => {
       "/transactions?merchant=Corner+Grocer",
       "/transactions?merchant=Streamly",
     ]);
+  });
+
+  it("says what it counts under the heading, before the list loads", () => {
+    const html = renderToString(
+      <MemoryRouter>
+        <TopMerchants />
+      </MemoryRouter>,
+    );
+
+    // As the server counts it: Spending, less Refunds and Reimbursements; never Transfers or
+    // Saving. A lender's payment that counts as Spending stays in, so the line names no lender.
+    expect(text(html)).toBe(
+      "Top Merchants Period This month Last 12 months Spending only, net of Refunds and Reimbursements. Transfers and Saving are left out.",
+    );
+    expect(html).not.toMatch(/lender/i);
   });
 
   it('says "No Spending yet." with no Merchants', () => {

@@ -41,7 +41,7 @@ describe("Settings → Alerts", () => {
   // Made when the test runs.
   let password: string;
 
-  const server = (fields: Partial<SmtpView & { password: string; code: string }> = {}) => ({
+  const server = (fields: Partial<SmtpView & { password: string }> = {}) => ({
     host: "smtp.example.test",
     port: 587,
     username: "household@example.test",
@@ -70,12 +70,8 @@ describe("Settings → Alerts", () => {
     await markSetupStep(test.database, "household facts", "done");
   }
 
-  // Saves the SMTP server with a fresh code, and moves the clock on so the next code is fresh too.
-  async function save(tab: TestBrowser, member: TestMember, fields = server()) {
-    const res = await tab.post("/api/smtp/settings", { ...fields, code: await member.totpCode() });
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
-    return res;
-  }
+  // Saves the SMTP server. TOTP is asked only at sign-in (spec 09, Sensitive actions).
+  const save = (tab: TestBrowser, fields = server()) => tab.post("/api/smtp/settings", fields);
 
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -103,20 +99,12 @@ describe("Settings → Alerts", () => {
     test.close();
   });
 
-  it("saves the SMTP server with a fresh code, and never shows or logs the password", async () => {
+  it("saves the SMTP server with no code, and never shows or logs the password", async () => {
     await finishWizard();
     const tab = await signedIn(alice);
     expect(await smtpOf(tab)).toBeNull();
 
-    const noCode = await tab.post("/api/smtp/settings", server());
-    expect(noCode.status).toBe(400);
-    expect(await noCode.json()).toEqual({
-      error: "Enter a code from your authenticator app, or a backup code.",
-    });
-    expect((await tab.post("/api/smtp/settings", server({ code: "000000" }))).status).toBe(401);
-    expect(await storedRow()).toEqual([]);
-
-    const res = await save(tab, alice);
+    const res = await save(tab);
     expect(res.status).toBe(200);
     const shown = {
       host: "smtp.example.test",
@@ -133,43 +121,35 @@ describe("Settings → Alerts", () => {
     expect(lines.join("")).not.toContain(password);
   });
 
-  it("asks for a code again to change the password, or the server or sign-in name it goes to, but not the sender", async () => {
+  it("sends the stored password to no new server or sign-in name, and keeps it for a new sender", async () => {
     await finishWizard();
     const tab = await signedIn(alice);
-    expect((await save(tab, alice)).status).toBe(200);
+    expect((await save(tab)).status).toBe(200);
     const before = await storedRow();
 
-    // A new password, host, port, or sign-in name with no code changes nothing.
+    // A new host, port, or sign-in name with no password changes nothing.
     for (const change of [
-      { password: "a-new-password" },
       { host: "mail.example.test" },
       { port: 465 },
       { username: "other@example.test" },
     ]) {
-      const res = await tab.post("/api/smtp/settings", server(change));
+      const { password: _, ...noPassword } = server(change);
+      const res = await tab.post("/api/smtp/settings", noPassword);
       expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Enter the SMTP password." });
     }
-    // The stored password goes to no new server: one needs its password, even with a code.
-    const { password: _, ...noPassword } = server({ host: "mail.example.test" });
-    const res = await tab.post("/api/smtp/settings", {
-      ...noPassword,
-      code: await alice.totpCode(),
-    });
-    vi.setSystemTime(Date.now() + TOTP_STEP_MS);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "Enter the SMTP password." });
     expect(await storedRow()).toEqual(before);
 
-    // The sender changes with no code, and keeps the stored password.
+    // The sender changes with no password, and keeps the stored password.
     const { password: __, ...sameServer } = server({ sender: "family@example.test" });
     expect((await tab.post("/api/smtp/settings", sameServer)).status).toBe(200);
     expect(await smtpOf(tab)).toMatchObject({ sender: "family@example.test" });
     expect((await tab.post("/api/smtp/test")).status).toBe(200);
     expect(stub.servers.at(-1)?.password).toBe(password);
 
-    // With a fresh code, a new server and password save.
+    // A new server with its password saves, with no code.
     const moved = server({ host: "mail.example.test", port: 465, password: "a-new-password" });
-    expect((await save(tab, alice, moved)).status).toBe(200);
+    expect((await save(tab, moved)).status).toBe(200);
     expect(await smtpOf(tab)).toMatchObject({ host: "mail.example.test", port: 465 });
   });
 
@@ -186,7 +166,7 @@ describe("Settings → Alerts", () => {
       server({ password: "line\nbreak" }),
       { ...server(), extra: true },
     ]) {
-      const res = await tab.post("/api/smtp/settings", { ...fields, code: "123456" });
+      const res = await tab.post("/api/smtp/settings", fields);
       expect(res.status).toBe(400);
     }
     expect(await storedRow()).toEqual([]);
@@ -199,7 +179,7 @@ describe("Settings → Alerts", () => {
     expect(notSetUp.status).toBe(409);
     expect(await notSetUp.json()).toEqual({ sent: false, error: "Save the SMTP server first." });
 
-    expect((await save(tab, alice)).status).toBe(200);
+    expect((await save(tab)).status).toBe(200);
     // With no body, as a page that sends none, the write has no JSON content type: 415.
     const noBody = await tab.send("POST", "/api/smtp/test");
     expect(noBody.status).toBe(415);
@@ -253,7 +233,7 @@ describe("Settings → Alerts", () => {
   it("asks for the SMTP password again when the saved one cannot be read", async () => {
     await finishWizard();
     const tab = await signedIn(alice);
-    expect((await save(tab, alice)).status).toBe(200);
+    expect((await save(tab)).status).toBe(200);
     // As after a restore under another Master key.
     await test.database.$client.execute("UPDATE smtp_settings SET password = 'unreadable'");
 
@@ -261,17 +241,16 @@ describe("Settings → Alerts", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
       sent: false,
-      error:
-        "The app cannot read the saved SMTP password. Enter the password again, with a code, and save.",
+      error: "The app cannot read the saved SMTP password. Enter the password again, and save.",
     });
     expect(stub.emails).toEqual([]);
-    expect((await save(tab, alice)).status).toBe(200);
+    expect((await save(tab)).status).toBe(200);
     expect((await tab.send("POST", "/api/smtp/test", {})).status).toBe(200);
   });
 
   it("refuses to store the SMTP password until the wizard's required steps are done", async () => {
     const tab = await signedIn(alice);
-    expect((await save(tab, alice)).status).toBe(409);
+    expect((await save(tab)).status).toBe(409);
     expect((await tab.post("/api/smtp/test")).status).toBe(409);
     expect(await storedRow()).toEqual([]);
     expect(stub.emails).toEqual([]);
@@ -280,10 +259,10 @@ describe("Settings → Alerts", () => {
   it("answers 401 with no session, 403 to another site or no Origin, and 415 to a body that is not JSON, and changes nothing", async () => {
     await finishWizard();
     const tab = await signedIn(alice);
-    expect((await save(tab, alice)).status).toBe(200);
+    expect((await save(tab)).status).toBe(200);
     const before = await storedRow();
     const writes = [
-      ["POST", "/api/smtp/settings", server({ host: "evil.example.test", code: "123456" })],
+      ["POST", "/api/smtp/settings", server({ host: "evil.example.test" })],
       ["POST", "/api/smtp/test", {}],
       ["PUT", "/api/alert-channels", { push: false, email: false }],
     ] as const;
@@ -337,7 +316,7 @@ describe("Settings → Alerts", () => {
     }
     expect(await channelsOf(bobsTab)).toEqual({ push: true, email: true, emailSetUp: false });
 
-    expect((await save(alicesTab, alice)).status).toBe(200);
+    expect((await save(alicesTab)).status).toBe(200);
     expect(await channelsOf(bobsTab)).toEqual({ push: true, email: true, emailSetUp: true });
   });
 });

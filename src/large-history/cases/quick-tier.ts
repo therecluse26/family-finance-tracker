@@ -59,17 +59,14 @@ timedCase("Categories and Merchant names from the Quick tier", async (history, t
     secrets,
     makeModels: history.ai.makeModels,
     cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
-  }).save(
-    {
-      provider: "anthropic",
-      apiKey: newAiKey(),
-      baseUrl: null,
-      quickModel: "quick-model",
-      writerModel: "writer-model",
-      prices: { quick: PRICE, writer: PRICE },
-    },
-    { freshCode: true },
-  );
+  }).save({
+    provider: "anthropic",
+    apiKey: newAiKey(),
+    baseUrl: null,
+    quickModel: "quick-model",
+    writerModel: "writer-model",
+    prices: { quick: PRICE, writer: PRICE },
+  });
   expect(saved).toMatchObject({ saved: true });
   let calls = 0;
   history.ai.replyTo = (messages) => {

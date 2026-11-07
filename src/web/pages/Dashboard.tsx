@@ -19,10 +19,10 @@ import type {
   AiBoxReviewLinkView,
   AiBoxView,
 } from "../../server/ai-box-views.ts";
-import type { NumberTilesView } from "../../server/bank-views.ts";
+import type { HistoryStatusView, NumberTilesView } from "../../server/bank-views.ts";
 import type { BudgetsView, UsualMonthView } from "../../server/budgets-views.ts";
 import type { ComingUpView } from "../../server/coming-up-views.ts";
-import type { OptionalSetupStep } from "../../server/setup-views.ts";
+import type { FinishSetupItem } from "../../server/setup-views.ts";
 import {
   markAlertNoteDone,
   markInsightCardDone,
@@ -32,8 +32,10 @@ import {
   worthActingOnHeading,
 } from "../ai-box.ts";
 import { askAboutAlertNote, askAboutInsightCard, askAboutPath, askAboutProposal } from "../chat.ts";
+import { buttonClass } from "../components/Button.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
+import { Page } from "../components/Page.tsx";
 import { Picture } from "../components/Picture.tsx";
 import { ProposalCard } from "../components/Proposal.tsx";
 import { AiMark, Status, TONE_COLOR } from "../components/Status.tsx";
@@ -54,12 +56,15 @@ import {
   leftText,
   leftToSpend,
   loadDashboard,
+  loadHistoryStatus,
   lowestLine,
   meterLine,
+  monthName,
   type NumberTile,
   numberTiles,
   paceLine,
   projectedSpending,
+  readHistoryAgain,
   retryHistoryJobs,
   rowNote,
   type StatusLines,
@@ -79,6 +84,8 @@ import {
   WAITS_FOR_HISTORY,
 } from "../goals.ts";
 import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
+import { answerOrder, type PollPlan, type PollState, usePolling } from "../polling.ts";
+import { SignedOut } from "../requests.ts";
 import { FINISH_SETUP_LINKS } from "../setup-gate.ts";
 import { transactionsPath } from "../transactions.ts";
 import { BEFORE_FIRST_DRAFT } from "./Budgets.tsx";
@@ -89,16 +96,32 @@ import { UpdateMode } from "./settings/Connections.tsx";
 // From 900 px wide, the AI box is the left column and stays in view while the right column
 // scrolls. Narrower, every box stacks in one column, the AI box first.
 
-const BOX = "rounded border border-gray-200 p-4";
+// A box: the shared Card's look. The boxes carry the `data-slot` and aria names their tests and
+// screen readers use, which Card does not pass on yet, so they take its classes here.
+const BOX = "rounded-card border border-line bg-white p-4 min-[900px]:px-[22px] min-[900px]:py-5";
+// The small grey name at the top of a box, kept as its heading.
+const BOX_LABEL = "text-small font-semibold text-muted";
+// A box's big number.
+const BIG =
+  "mt-1 block text-[28px] leading-tight font-bold tracking-[-.01em] tabular-nums min-[900px]:text-[34px]";
+const TEXT_LINK = "text-accent underline hover:text-accent-dark";
 
-export function DashboardHeader(props: { month: DashboardMonth; line: string }) {
+// The month and the sync line. On a phone they sit in a white bar across the top of the screen;
+// from 900 px they sit on the page. The <h1> is drawn once, before the page has read anything,
+// and keeps its place, so the focus the shell puts on it after a menu choice stays there. It says
+// "Dashboard" until the Household's month is known.
+export function DashboardHeader(props: { month?: DashboardMonth; line?: string }) {
   return (
     <header
-      className="flex flex-wrap items-baseline justify-between gap-x-3"
+      className="-mx-4 -mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-line bg-white px-4 py-3.5 min-[900px]:m-0 min-[900px]:gap-x-3 min-[900px]:border-0 min-[900px]:bg-transparent min-[900px]:p-0"
       data-slot="dashboard-header"
     >
-      <h1 className="text-2xl font-semibold">{props.month.name}</h1>
-      <p className="text-sm text-gray-600">{props.line}</p>
+      <h1 className="text-[22px] font-bold min-[900px]:text-[28px]">
+        {props.month?.name ?? "Dashboard"}
+      </h1>
+      {props.line === undefined ? null : (
+        <p className="text-small text-muted min-[900px]:text-[15px]">{props.line}</p>
+      )}
     </header>
   );
 }
@@ -116,29 +139,36 @@ function Repair(props: { banner: StatusLines["repairs"][number]; onChanged: () =
     return <UpdateMode connection={connection} addAccounts={false} onChanged={props.onChanged} />;
   }
   return (
-    <Link className="underline" to="/settings/banks">
+    <Link
+      className="inline-flex h-[38px] items-center rounded-control bg-critical px-4 text-sm font-semibold text-white hover:bg-[#912018] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-critical"
+      to="/settings/banks"
+    >
       Repair
     </Link>
   );
 }
 
-// The "Finish setup" list: each skipped wizard step until it is done, with a link to where it is
-// done (spec 12, Order and resume rules). Every Member sees it.
-export function FinishSetupList(props: { steps: readonly OptionalSetupStep[] }) {
+// The "Finish setup" list: Banks while the Household has no Connection, and each optional extra
+// (AI, Alerts, Invite Members) until it is done, with a link to where it is done (spec 12, The
+// "Finish setup" list). Every Member sees it.
+export function FinishSetupList(props: { steps: readonly FinishSetupItem[] }) {
   if (props.steps.length === 0) return null;
   return (
     <section
       aria-labelledby="finish-setup"
-      className="mt-4 rounded border border-gray-200 px-3 py-2"
+      className="rounded-card border border-line bg-white p-4 min-[900px]:px-6 min-[900px]:py-5"
       data-slot="finish-setup"
     >
       <h2 id="finish-setup" className="font-semibold">
         Finish setup
       </h2>
-      <ul className="mt-1 flex flex-col gap-1">
+      <ul className="mt-2.5 flex flex-wrap gap-2.5">
         {props.steps.map((step) => (
           <li key={step}>
-            <Link className="text-blue-700 underline" to={FINISH_SETUP_LINKS[step].path}>
+            <Link
+              className="inline-flex min-h-10 items-center rounded-full border border-field bg-white px-3.5 py-1 text-sm text-ink hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              to={FINISH_SETUP_LINKS[step].path}
+            >
               {FINISH_SETUP_LINKS[step].label}
             </Link>
           </li>
@@ -150,24 +180,28 @@ export function FinishSetupList(props: { steps: readonly OptionalSetupStep[] }) 
 
 export function StatusLineList(props: {
   lines: StatusLines;
-  // The "Finish setup" list of skipped wizard steps.
+  // The "Finish setup" list: Banks while the Household has no Connection, and the extras not done.
   finishSetup?: ReactNode;
   onClose: (id: string) => void;
   // Retry on the notice of a stopped First run or bank-added-later job.
   onRetry: () => void;
   onChanged: () => void;
+  // Whether the page still reads the history loading progress again (HISTORY_POLL).
+  live?: PollState;
 }) {
   const { repairs, loading, others } = props.lines;
+  // The lines take their places in the page's column of boxes, 16 px apart, so the wrapper draws
+  // no box of its own. The shared notice list keeps a top margin from before the column had gaps.
   return (
-    <div data-slot="status-lines">
+    <div className="contents [&>ul]:mt-0" data-slot="status-lines">
       {repairs.length === 0 ? null : (
-        <ul aria-label="Broken Connections" className="mt-4 flex flex-col gap-2">
+        <ul aria-label="Broken Connections" className="flex flex-col gap-3">
           {repairs.map((banner) => (
             <li
               key={banner.notice.id}
-              className="flex flex-wrap items-start justify-between gap-3 rounded border border-red-200 bg-red-50 px-3 py-2"
+              className="flex flex-wrap items-center gap-3 rounded-card border border-[#FECDCA] bg-[#FEF3F2] px-4 py-3.5 min-[900px]:px-5 min-[900px]:py-4"
             >
-              <span>
+              <span className="min-w-[min(15rem,100%)] flex-1">
                 <span aria-hidden="true" className={TONE_COLOR.critical}>
                   {STATUS_ICON.critical}{" "}
                 </span>
@@ -181,13 +215,43 @@ export function StatusLineList(props: {
         </ul>
       )}
       {loading.length === 0 ? null : (
-        <ul aria-label="History loading" className="mt-4 flex flex-col gap-2">
-          {loading.map((line) => (
-            <li key={line.connectionId} className="rounded border border-gray-200 px-3 py-2">
-              {line.text}
-            </li>
-          ))}
-        </ul>
+        <section
+          aria-labelledby="history-loading"
+          className="rounded-card border border-line bg-white p-4 min-[900px]:px-6 min-[900px]:py-[22px]"
+          data-slot="history-loading"
+        >
+          <header className="flex flex-wrap items-center gap-2.5">
+            <h2 id="history-loading" className="flex-1 text-lg font-semibold">
+              Your history is loading
+            </h2>
+            {props.live === "polling" ? (
+              <span className="inline-flex items-center gap-1.5 text-small text-muted">
+                <span aria-hidden="true" className="size-2 rounded-full bg-good-bar" />
+                Live
+              </span>
+            ) : null}
+          </header>
+          <p className="mt-1 text-sm text-muted">
+            Numbers on this page grow as each bank sends older Transactions. The app tells you when
+            all of it is in.
+          </p>
+          <ul aria-label="History loading" className="mt-4 flex flex-col gap-3">
+            {loading.map((line) => (
+              <li
+                key={line.connectionId}
+                className="flex flex-wrap items-baseline justify-between gap-x-2"
+              >
+                <span className="font-semibold">{line.bankName}</span>{" "}
+                <span className="text-ink-soft tabular-nums">{line.text}</span>
+              </li>
+            ))}
+          </ul>
+          {props.live === "gave up" ? (
+            <p className="mt-3 text-small text-muted">
+              This page stopped checking. Reload it to see newer progress.
+            </p>
+          ) : null}
+        </section>
       )}
       {props.finishSetup ?? null}
       <NoticeList
@@ -208,9 +272,9 @@ export function StatusLineList(props: {
 
 function YearlyBudgetRow(props: { row: YearlyRow }) {
   return (
-    <li className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-      <span className="font-medium">{props.row.category}</span>
-      <span>
+    <li className="flex flex-wrap items-baseline justify-between gap-x-2">
+      <span>{props.row.category}</span>
+      <span className="text-muted tabular-nums">
         {yearlyLine(props.row)}
         {props.row.overBudget ? (
           <>
@@ -227,13 +291,13 @@ export function LeftToSpendBox(props: { left: LeftToSpend; month: DashboardMonth
   const { left, month } = props;
   return (
     <section aria-labelledby="left-to-spend" className={BOX} data-slot="left-to-spend">
-      <h2 id="left-to-spend" className="font-semibold">
+      <h2 id="left-to-spend" className={BOX_LABEL}>
         Left to spend in {month.name}
       </h2>
       {left.drafted ? (
         <LeftToSpendNumbers left={left} month={month} />
       ) : (
-        <p>{BEFORE_FIRST_DRAFT}</p>
+        <p className="mt-1 text-ink-soft">{BEFORE_FIRST_DRAFT}</p>
       )}
     </section>
   );
@@ -250,39 +314,52 @@ function LeftToSpendNumbers(props: {
   const gone = month.day / month.days;
   return (
     <>
-      <p className="mt-1 flex flex-wrap items-baseline gap-3">
-        <span className="text-3xl font-semibold" data-slot="left">
+      <p className="mt-1 flex flex-wrap items-baseline gap-x-3">
+        <span
+          className="text-[32px] leading-tight font-bold tracking-[-.01em] tabular-nums min-[900px]:text-[34px]"
+          data-slot="left"
+        >
           {big.text}
         </span>
-        {big.over ? <Status tone="critical" word="Over Budget" /> : null}
+        {big.over ? (
+          <span className="font-semibold">
+            <Status tone="critical" word="Over Budget" />
+          </span>
+        ) : null}
       </p>
       {pace === undefined ? null : (
-        <p className={TONE_COLOR[pace.tone]} data-slot="pace">
+        <p
+          className={`mt-0.5 text-small font-semibold min-[900px]:text-[15px] ${TONE_COLOR[pace.tone]}`}
+          data-slot="pace"
+        >
           <span aria-hidden="true">{STATUS_ICON[pace.tone]} </span>
           {pace.text}
         </p>
       )}
       <div
         aria-hidden="true"
-        className="relative mt-3 h-3 rounded bg-gray-100"
+        className="relative mt-3.5 h-2.5 rounded-full bg-line min-[900px]:h-3"
         data-slot="month-meter"
       >
         <div
-          className={`h-3 rounded ${big.over ? "bg-red-600" : "bg-blue-600"}`}
+          className={`h-full rounded-full ${big.over ? "bg-critical" : "bg-accent"}`}
           style={{ width: `${spent * 100}%` }}
         />
         <div
-          className="absolute -top-1 h-5 w-0.5 bg-gray-900"
+          className="absolute -top-1 -bottom-1 w-0.5 bg-ink"
           data-slot="today"
           style={{ left: `${gone * 100}%` }}
           title="Today"
         />
       </div>
-      <p className="mt-1 text-sm text-gray-600" data-slot="meter-line">
+      <p className="mt-2 text-small text-muted tabular-nums" data-slot="meter-line">
         {meterLine(left.spending, left.budget, month)}
       </p>
       {left.yearly.length === 0 ? null : (
-        <ul aria-label="Yearly Budgets" className="mt-3 flex flex-col gap-1">
+        <ul
+          aria-label="Yearly Budgets"
+          className="mt-3.5 flex flex-col gap-1.5 border-t border-line-soft pt-3 text-sm"
+        >
           {left.yearly.map((row) => (
             <YearlyBudgetRow key={row.category} row={row} />
           ))}
@@ -302,13 +379,13 @@ export function GoalsBox(props: { answer: GoalsAnswer }) {
   const active = activeGoals(props.answer.goals);
   return (
     <section aria-labelledby="goals" className={`${BOX} @container`} data-slot="goals">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id="goals" className="font-semibold">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2.5 gap-y-1">
+        <h2 id="goals" className="text-heading font-bold">
           Goals
           {/* A space, so a screen reader reads "Goals, 2 of 3 on track" as two words. */}
           {active.length === 0 ? null : " "}
           {active.length === 0 ? null : (
-            <span className="ml-1 font-normal text-gray-600" data-slot="on-track">
+            <span className="ml-1.5 text-small font-normal text-muted" data-slot="on-track">
               {onTrackLine(active)}
             </span>
           )}
@@ -316,11 +393,15 @@ export function GoalsBox(props: { answer: GoalsAnswer }) {
         {!props.answer.aiProvider ? (
           <NeedsAiLink />
         ) : props.answer.waitsForHistory ? (
-          <span className="text-sm text-gray-600" data-slot="goals-wait">
+          <span className="text-small text-muted" data-slot="goals-wait">
             {WAITS_FOR_HISTORY}
           </span>
         ) : (
-          <Link className="text-sm text-blue-700 underline" data-slot="add-goal" to={ADD_GOAL_PATH}>
+          <Link
+            className="text-small text-accent hover:text-accent-dark hover:underline"
+            data-slot="add-goal"
+            to={ADD_GOAL_PATH}
+          >
             Add a Goal
           </Link>
         )}
@@ -328,11 +409,14 @@ export function GoalsBox(props: { answer: GoalsAnswer }) {
       {active.length === 0 ? null : (
         <ul
           aria-label="Active Goals"
-          className="mt-3 grid grid-cols-1 gap-2 @min-[480px]:auto-cols-fr @min-[480px]:grid-flow-col"
+          className="mt-3 grid grid-cols-1 gap-3 @min-[480px]:auto-cols-fr @min-[480px]:grid-flow-col"
           data-slot="goal-boxes"
         >
           {active.map((goal) => (
-            <li key={goal.id} className="min-w-0 rounded border border-gray-100 p-2">
+            <li
+              key={goal.id}
+              className="min-w-0 rounded-[10px] border border-line-soft px-4 py-3.5"
+            >
               <GoalCard goal={goal} />
             </li>
           ))}
@@ -344,14 +428,19 @@ export function GoalsBox(props: { answer: GoalsAnswer }) {
 
 // --- Number tiles ------------------------------------------------------------------------------
 
-const FULL_COLOR = "#1d4ed8";
-const MUTED_COLOR = "#cbd5e1";
+// The boards' chart colors: blue (the accent) for this month, the input-border grey for past months,
+// a lighter grey for a tile's trend line, and the muted grey for a Budget's dashed line. Recharts
+// takes colors, not classes.
+const FULL_COLOR = "#1D4ED8";
+const MUTED_COLOR = "#C6CBD2";
+const TREND_COLOR = "#9AA3AE";
+const BUDGET_LINE_COLOR = "#5B6470";
 
 // A tile's trend line: 12 points, drawn by the app from its own data. The tile's words carry its
 // meaning, so the line is hidden from screen readers.
 function TrendLine(props: { trend: NumberTile["tile"]["trend"] }) {
   return (
-    <div aria-hidden="true" className="mt-2 h-8 w-full" data-slot="trend">
+    <div aria-hidden="true" className="mt-1.5 h-7 w-full" data-slot="trend">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           accessibilityLayer={false}
@@ -362,7 +451,7 @@ function TrendLine(props: { trend: NumberTile["tile"]["trend"] }) {
           <Line
             dataKey="amount"
             type="monotone"
-            stroke={FULL_COLOR}
+            stroke={TREND_COLOR}
             strokeWidth={1.5}
             dot={false}
             isAnimationActive={false}
@@ -377,10 +466,20 @@ function NumberTileItem(props: { tile: NumberTile }) {
   const { tile } = props;
   const direction = tileDirection(tile);
   return (
-    <li className="min-w-0 rounded border border-gray-200" data-slot="tile" data-tile={tile.key}>
-      <Link className="block h-full rounded p-3 hover:bg-gray-50" to={tile.to}>
-        <span className="block text-sm text-gray-600">{tile.label}</span>
-        <span className="block text-xl font-semibold" data-slot="tile-amount">
+    <li
+      className="min-w-0 rounded-card border border-line bg-white"
+      data-slot="tile"
+      data-tile={tile.key}
+    >
+      <Link
+        className="block h-full rounded-card p-3 hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-[900px]:px-[18px] min-[900px]:py-4"
+        to={tile.to}
+      >
+        <span className="block text-small font-semibold text-muted">{tile.label}</span>
+        <span
+          className="mt-0.5 block text-xl font-bold tabular-nums min-[900px]:mt-1 min-[900px]:text-2xl"
+          data-slot="tile-amount"
+        >
           {wholeDollars(tile.tile.amount)}
         </span>
         {direction === undefined ? null : (
@@ -388,7 +487,7 @@ function NumberTileItem(props: { tile: NumberTile }) {
         )}
         <TrendLine trend={tile.tile.trend} />
         {tile.note === undefined ? null : (
-          <span className="block text-xs text-gray-500">{tile.note}</span>
+          <span className="block text-xs text-muted">{tile.note}</span>
         )}
       </Link>
     </li>
@@ -397,13 +496,15 @@ function NumberTileItem(props: { tile: NumberTile }) {
 
 // Four tiles in a row, two by two on a phone (spec 07, 4. Number tiles), each in its own box, as in
 // prototype variant H. The space they share, not the screen, sets the columns: from 900 px the
-// right column can be narrower than a phone.
+// right column can be narrower than a phone. Four in a row need a 760 px box, so each tile keeps
+// its label and direction on one line; in the 1,280 px dashboard's right column they sit two by
+// two, as on the approved dashboard board.
 export function NumberTilesBox(props: { tiles: NumberTilesView }) {
   return (
     <section aria-label="Number tiles" className="@container" data-slot="number-tiles">
       <ul
         aria-label="Number tiles"
-        className="grid grid-cols-2 gap-3 @min-[480px]:grid-cols-4"
+        className="grid grid-cols-2 gap-3 @min-[760px]:grid-cols-4"
         data-slot="tiles"
       >
         {numberTiles(props.tiles).map((tile) => (
@@ -426,9 +527,9 @@ function BudgetMark(props: BarShapeProps) {
       x2={x + width}
       y1={y}
       y2={y}
-      stroke="#111827"
+      stroke={BUDGET_LINE_COLOR}
       strokeWidth={1.5}
-      strokeDasharray="3 2"
+      strokeDasharray="3 3"
     />
   );
 }
@@ -443,7 +544,7 @@ function SpendingBar(props: BarShapeProps) {
 // axis, so each one lies across its month's bar.
 function GroupChart(props: { bars: GroupBar[] }) {
   return (
-    <div aria-hidden="true" className="mt-2 h-16 w-full" data-slot="group-chart">
+    <div aria-hidden="true" className="mt-1.5 h-10 w-full" data-slot="group-chart">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           accessibilityLayer={false}
@@ -461,6 +562,18 @@ function GroupChart(props: { bars: GroupBar[] }) {
   );
 }
 
+// A group with no Spending in any of its 13 months and no Budget line has nothing to draw: its
+// chart would be an empty frame. It says so instead.
+function emptyChartLine(bars: GroupBar[]): string | undefined {
+  if (bars.some((bar) => bar.spending !== 0 || bar.budget != null)) return undefined;
+  const first = bars[0];
+  return first === undefined ? "No Spending yet" : `No Spending since ${first.label}`;
+}
+
+// A group: in a box under 480 px, as on a phone, a compact row (its name and "$spent of $Budget",
+// its status at the right), as on the approved phone dashboard board; from 480 px, a box with its
+// chart. The chart stays drawn under 480 px, clipped to no height, so its chart library always
+// has a width to measure.
 function GroupBox(props: {
   group: UsualGroup;
   view: BudgetsView;
@@ -473,22 +586,29 @@ function GroupBox(props: {
   const status = groupStatus(box);
   const spent = box?.spending ?? 0;
   const budget = box?.monthly ?? 0;
+  const bars = groupBars(group, month);
+  const empty = emptyChartLine(bars);
   return (
-    <li className="min-w-0 rounded border border-gray-100" data-group={group.categoryGroup}>
+    <li
+      className={`min-w-0 border-t border-line-soft @min-[480px]:rounded-[10px] @min-[480px]:border ${props.open ? "@max-[479px]:bg-selected @min-[480px]:border-accent" : ""}`}
+      data-group={group.categoryGroup}
+    >
       <button
         type="button"
         aria-expanded={props.open}
-        className="block w-full rounded p-2 text-left hover:bg-gray-50"
+        className="flex w-full items-baseline justify-between gap-x-3 px-1.5 py-2 text-left hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent @min-[480px]:block @min-[480px]:rounded-t-[10px] @min-[480px]:px-3 @min-[480px]:pt-3 @min-[480px]:pb-0"
         onClick={props.onOpen}
       >
-        <span className="block font-medium">{group.categoryGroup}</span>
-        <span className="block text-sm" data-slot="group-line">
-          {budget === 0
-            ? `${wholeDollars(spent)}, no Budget`
-            : `${wholeDollars(spent)} of ${wholeDollars(budget)}`}
+        <span className="block min-w-0">
+          <span className="block text-sm font-semibold">{group.categoryGroup}</span>
+          <span className="mt-0.5 block text-small text-muted tabular-nums" data-slot="group-line">
+            {budget === 0
+              ? `${wholeDollars(spent)}, no Budget`
+              : `${wholeDollars(spent)} of ${wholeDollars(budget)}`}
+          </span>
         </span>
         {status === undefined ? null : (
-          <span className="block text-sm">
+          <span className="block shrink-0 text-right text-small @min-[480px]:mt-0.5 @min-[480px]:text-left">
             <Status {...status} />
           </span>
         )}
@@ -496,8 +616,18 @@ function GroupBox(props: {
       {/* The chart opens the group too; the button above is the way in for a keyboard. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the button above does the same. */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the button above takes the keyboard. */}
-      <div className="cursor-pointer px-2" onClick={props.onOpen}>
-        <GroupChart bars={groupBars(group, month)} />
+      <div
+        className="cursor-pointer px-3 pb-3 @max-[479px]:invisible @max-[479px]:h-0 @max-[479px]:overflow-hidden @max-[479px]:p-0"
+        data-slot="group-chart-area"
+        onClick={props.onOpen}
+      >
+        {empty === undefined ? (
+          <GroupChart bars={bars} />
+        ) : (
+          <p className="mt-1.5 flex h-10 items-end text-small text-muted" data-slot="group-empty">
+            {empty}
+          </p>
+        )}
       </div>
     </li>
   );
@@ -512,16 +642,16 @@ function RowMeter(props: { row: GroupBudgetRow; month: DashboardMonth }) {
   return (
     <div
       aria-hidden="true"
-      className="relative mt-1 h-1.5 rounded bg-gray-100"
+      className="relative mt-1 h-1.5 rounded-full bg-line"
       data-slot="row-meter"
     >
       <div
-        className={`h-1.5 rounded ${over ? "bg-red-600" : "bg-blue-600"}`}
+        className={`h-1.5 rounded-full ${over ? "bg-critical" : "bg-accent"}`}
         style={{ width: `${barShare(row.spending, amount) * 100}%` }}
       />
       {row.flexible ? (
         <div
-          className="absolute -top-0.5 h-2.5 w-0.5 bg-gray-900"
+          className="absolute -top-0.5 -bottom-0.5 w-0.5 bg-ink"
           data-slot="today"
           style={{ left: `${(month.day / month.days) * 100}%` }}
           title="Today"
@@ -537,15 +667,15 @@ function GroupBudgetRowItem(props: { row: GroupBudgetRow; month: DashboardMonth 
   return (
     <li data-category={row.category}>
       <Link
-        className="block rounded px-1 py-1 hover:bg-gray-50"
+        className="block rounded-control px-1.5 py-1.5 hover:bg-page focus-visible:outline-2 focus-visible:outline-accent"
         to={transactionsPath({ category: row.category, month: month.month })}
       >
         <span className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
           <span className="font-medium">{row.category}</span>
-          <span>
+          <span className="tabular-nums">
             {row.budget === undefined ? (
               <>
-                {wholeDollars(row.spending)} <span className="text-gray-500">no Budget</span>
+                {wholeDollars(row.spending)} <span className="text-muted">no Budget</span>
               </>
             ) : (
               `${wholeDollars(row.spending)} / ${wholeDollars(row.budget.amount)}`
@@ -560,7 +690,7 @@ function GroupBudgetRowItem(props: { row: GroupBudgetRow; month: DashboardMonth 
         </span>
         {row.budget === undefined ? null : <RowMeter row={row} month={month} />}
         {row.budget?.context == null ? null : (
-          <span className="block text-xs text-gray-600">{row.budget.context}</span>
+          <span className="mt-0.5 block text-xs text-muted">{row.budget.context}</span>
         )}
       </Link>
     </li>
@@ -579,22 +709,26 @@ export function UsualMonthBox(props: {
   const projected = projectedSpending(budgets.groups);
   const line = projected === null ? undefined : usualMonthLine(month, projected, usual.usual);
   const shown = usual.groups.find((group) => group.categoryGroup === open);
+  // Whether any group's chart draws a dashed Budget line (BudgetMark draws one per bar with a Budget).
+  const budgetLine = usual.groups.some((group) => group.bars.some((bar) => bar.budget != null));
   return (
     <section aria-labelledby="usual-month" className={`${BOX} @container`} data-slot="usual-month">
-      <h2 id="usual-month" className="font-semibold">
+      <h2 id="usual-month" className={BOX_LABEL}>
         A usual month
       </h2>
-      <p className="mt-1 text-3xl font-semibold" data-slot="usual">
+      <p className={BIG} data-slot="usual">
         {usual.usual === null ? "No complete month yet" : wholeDollars(usual.usual)}
       </p>
       {line === undefined ? null : (
-        <p className={TONE_COLOR[line.tone]} data-slot="usual-line">
-          {line.text}
+        <p className="mt-0.5 text-small">
+          <span className={TONE_COLOR[line.tone]} data-slot="usual-line">
+            {line.text}
+          </span>
         </p>
       )}
       <ul
         aria-label="Category groups"
-        className="mt-3 grid grid-cols-1 gap-2 @min-[300px]:grid-cols-2 @min-[480px]:grid-cols-3"
+        className="mt-3 grid grid-cols-1 @min-[480px]:mt-3.5 @min-[480px]:grid-cols-3 @min-[480px]:gap-2.5"
         data-slot="groups"
       >
         {usual.groups.map((group) => (
@@ -608,23 +742,38 @@ export function UsualMonthBox(props: {
           />
         ))}
       </ul>
+      {/* The charts are hidden from screen readers, and each group's words say what they show, so
+          the key to the charts is hidden too. It names the dashed line only once a chart draws one,
+          and goes with the charts in a box under 480 px. */}
+      {usual.groups.length === 0 ? null : (
+        <p className="mt-2.5 text-small text-muted" data-slot="chart-key">
+          <span aria-hidden="true" className="@max-[479px]:hidden" data-slot="chart-key-bars">
+            Grey bars: the last 12 months. Blue: {month.name} so far.
+            {budgetLine ? " Dashed line: the Budget." : ""}
+          </span>{" "}
+          Choose a group to see its Budgets.
+        </p>
+      )}
       {shown === undefined ? null : (
         <section
           aria-label={`${shown.categoryGroup} Budgets`}
-          className="mt-3"
+          className="mt-3.5 border-t border-line-soft pt-3"
           data-slot="group-budgets"
         >
           <div className="flex items-baseline justify-between">
-            <h3 className="font-semibold">{shown.categoryGroup} Budgets</h3>
+            <h3 className="text-sm font-semibold">{shown.categoryGroup} Budgets</h3>
             <button
               type="button"
-              className="text-sm text-blue-700 underline"
+              className={`text-small ${TEXT_LINK}`}
               onClick={() => setOpen(undefined)}
             >
               Close
             </button>
           </div>
-          <ul aria-label={`${shown.categoryGroup} Budgets`} className="mt-1 flex flex-col gap-1">
+          <ul
+            aria-label={`${shown.categoryGroup} Budgets`}
+            className="mt-1.5 flex flex-col gap-0.5"
+          >
             {groupBudgetRows(shown, budgets).map((row) => (
               <GroupBudgetRowItem key={row.category} row={row} month={month} />
             ))}
@@ -640,93 +789,148 @@ export function UsualMonthBox(props: {
 // What is due from tomorrow to 14 days from today (spec 07, 6. Coming up). The rows show cents;
 // the big number is a total, in whole dollars. Tapping the box opens the Recurring charges page.
 // A narrow box shows each row on two lines; a wide one, a table.
+const DUE_HEAD = "border-b border-line px-1.5 py-2 font-semibold first:pl-0 last:pr-0";
+const DUE_CELL = "border-b border-line-soft px-1.5 py-[9px] tabular-nums first:pl-0 last:pr-0";
+
+// Below 900 px, as on the approved phone dashboard board, the box shows its first rows and a
+// button under the box's link that shows the rest in place: the rows hold paydays and payments
+// due that the Recurring charges page does not list.
+const PHONE_DUE_ROWS = 3;
+
 export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }) {
   const { view, month } = props;
+  const [all, setAll] = useState(false);
+  const listId = useId();
+  const tableId = useId();
   const lowest = lowestLine(view, month.today);
-  const rows = view.rows.map((each) => ({
+  const rows = view.rows.map((each, index) => ({
     key: `${each.kind}-${each.date}-${each.what}`,
     kind: each.kind,
+    // A row past the first few, hidden below 900 px until "All N items".
+    folded: !all && index >= PHONE_DUE_ROWS ? "max-[899px]:hidden" : "",
     ...comingUpRow(each, month.today),
   }));
   return (
-    <section aria-labelledby="coming-up" className={`${BOX} @container`} data-slot="coming-up">
-      <Link className="block rounded hover:bg-gray-50" to="/recurring-charges">
-        <h2 id="coming-up" className="font-semibold">
+    // The whole box is the link, so the whole box shows the hover.
+    <section
+      aria-labelledby="coming-up"
+      className={`${BOX} @container has-[a:hover]:bg-page`}
+      data-slot="coming-up"
+    >
+      <Link
+        className="block rounded-control focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+        to="/recurring-charges"
+      >
+        <h2 id="coming-up" className={BOX_LABEL}>
           Due in the next 14 days
         </h2>
-        <span className="mt-1 block text-3xl font-semibold" data-slot="due-total">
+        <span className={BIG} data-slot="due-total">
           {wholeDollars(view.outgoing)}
         </span>
         {lowest === undefined ? null : (
-          <span className="block text-gray-600" data-slot="lowest">
+          <span className="mt-0.5 block text-small text-ink-soft" data-slot="lowest">
             {lowest}
           </span>
         )}
         {/* In a box under 360 px, as at 900 px or on a phone, each row takes two lines: the date
             and what, then the amount and the checking balance after it. From 360 px, a table. */}
         <ul
+          id={listId}
           aria-label="Due rows"
-          className="mt-3 text-sm @min-[360px]:hidden"
+          className="mt-2.5 text-sm @min-[360px]:hidden"
           data-slot="due-lines"
         >
           {rows.map((row) => (
             <li
               key={row.key}
-              className={`mt-2 ${row.payday ? "font-semibold" : ""}`}
+              className={`border-t border-line-soft py-[7px] ${row.payday ? "font-semibold" : ""} ${row.folded}`}
               data-row={row.kind}
             >
-              <span className="flex justify-between gap-2">
-                <span className="shrink-0 whitespace-nowrap">{row.date}</span>
-                <span className="min-w-0 text-right break-words">{row.what}</span>
+              <span className="flex gap-2">
+                {/* At least 52 px, and wider for a date with its year, as across New Year. */}
+                <span
+                  className="min-w-[52px] shrink-0 font-normal whitespace-nowrap text-muted"
+                  data-slot="due-date"
+                >
+                  {row.date}
+                </span>
+                <span className="min-w-0 flex-1 break-words">{row.what}</span>
               </span>
               <span className="flex justify-end gap-3 tabular-nums">
                 <span>{row.amount}</span>
-                <span className="text-gray-600">{row.checkingAfter}</span>
+                <span className="font-normal text-muted">{row.checkingAfter}</span>
               </span>
             </li>
           ))}
         </ul>
-        <table className="mt-3 hidden w-full text-sm @min-[360px]:table" data-slot="due-rows">
+        <table
+          id={tableId}
+          className="mt-3 hidden w-full text-sm @min-[360px]:table"
+          data-slot="due-rows"
+        >
           <thead>
-            <tr className="text-left text-gray-600">
-              <th className="font-normal">Date</th>
-              <th className="font-normal">What</th>
-              <th className="text-right font-normal">Amount</th>
-              <th className="text-right font-normal">Checking after</th>
+            <tr className="text-left text-xs text-muted">
+              <th className={DUE_HEAD}>Date</th>
+              <th className={DUE_HEAD}>What</th>
+              <th className={`${DUE_HEAD} text-right`}>Amount</th>
+              <th className={`${DUE_HEAD} text-right`}>Checking after</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr
                 key={row.key}
-                className={row.payday ? "font-semibold" : undefined}
+                className={`${row.payday ? "font-semibold" : ""} ${row.folded}`.trim() || undefined}
                 data-row={row.kind}
               >
-                <td>{row.date}</td>
-                <td>{row.what}</td>
-                <td className="text-right tabular-nums">{row.amount}</td>
-                <td className="text-right tabular-nums">{row.checkingAfter}</td>
+                <td className={DUE_CELL}>{row.date}</td>
+                <td className={DUE_CELL}>{row.what}</td>
+                <td className={`${DUE_CELL} text-right`}>{row.amount}</td>
+                <td
+                  className={`${DUE_CELL} text-right ${row.checkingAfter === "on card" ? "text-muted" : ""}`}
+                >
+                  {row.checkingAfter}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </Link>
+      {rows.length <= PHONE_DUE_ROWS ? null : (
+        <button
+          type="button"
+          aria-controls={`${listId} ${tableId}`}
+          aria-expanded={all}
+          className={`mt-2 text-small ${TEXT_LINK} min-[900px]:hidden`}
+          data-slot="due-all"
+          onClick={() => setAll(!all)}
+        >
+          {all ? "Fewer items" : `All ${rows.length} items`}
+        </button>
+      )}
     </section>
   );
 }
 
 // --- AI box ------------------------------------------------------------------------------------
 
-const NOTE_BUTTON = "rounded border border-gray-300 px-2 py-0.5 text-sm disabled:opacity-50";
+// The outlined small button; 40 px tall below 900 px, as on the phone board, so a thumb finds it.
+const NOTE_BUTTON = `${buttonClass("outlined", "small")} max-[899px]:h-10 max-[899px]:text-sm`;
+// One row of the AI box: a line above it, the number column at the left.
+const NOTE_ROW = "flex gap-3.5 border-t border-line-soft py-3.5 wrap-anywhere";
+// The number column. It grows to fit its number, such as "$12,450.00", which never breaks.
+const NOTE_FIGURE = "min-w-20 max-w-32 shrink-0";
 
-function GroupStatus(props: { name: AiBoxGroupName }) {
+// A group's status word and its count, such as "◆ Worth acting on · 2".
+function GroupStatus(props: { name: AiBoxGroupName; count: number }) {
+  const detail = String(props.count);
   switch (props.name) {
     case "Worth acting on":
-      return <Status tone="serious" word="Worth acting on" />;
+      return <Status tone="serious" word="Worth acting on" detail={detail} />;
     case "Heads up":
-      return <Status tone="accent" word="Heads up" />;
+      return <Status tone="accent" word="Heads up" detail={detail} />;
     case "Good news":
-      return <Status tone="good" word="Good news" />;
+      return <Status tone="good" word="Good news" detail={detail} />;
   }
 }
 
@@ -749,22 +953,18 @@ function AiNote(props: {
   const whyId = useId();
   const card = note.kind === "Insight card" ? note : undefined;
   return (
-    <li
-      className={`flex gap-3 rounded border border-gray-100 p-2 wrap-anywhere ${note.done ? "opacity-50" : ""}`}
-      data-slot="ai-note"
-    >
-      {/* The column grows to fit its number, such as "$12,450.00", which never breaks. */}
-      <div className="min-w-20 max-w-32 shrink-0 text-center" data-slot="note-figure">
-        <p className="text-lg font-semibold whitespace-nowrap tabular-nums" data-slot="note-number">
+    <li className={`${NOTE_ROW} ${note.done ? "opacity-50" : ""}`} data-slot="ai-note">
+      <div className={NOTE_FIGURE} data-slot="note-figure">
+        <p className="text-xl font-bold whitespace-nowrap tabular-nums" data-slot="note-number">
           {note.figure}
         </p>
-        <p className="text-xs text-gray-600">{note.figureLabel}</p>
+        <p className="text-xs text-muted">{note.figureLabel}</p>
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-gray-600" data-slot="note-about">
+        <p className="text-small text-muted" data-slot="note-about">
           {note.about}
         </p>
-        <p className="font-medium" data-slot="note-title">
+        <p className="mt-0.5 font-semibold" data-slot="note-title">
           {note.title}
           {card === undefined ? null : (
             <>
@@ -775,14 +975,19 @@ function AiNote(props: {
         </p>
         <button
           type="button"
-          className="text-sm text-blue-700 underline"
+          className={`text-small ${TEXT_LINK}`}
           aria-expanded={whyOpen}
           aria-controls={whyId}
           onClick={() => setWhyOpen(!whyOpen)}
         >
           {whyOpen ? "Hide why" : "Why?"}
         </button>
-        <div id={whyId} hidden={!whyOpen} className="text-sm text-gray-700" data-slot="note-why">
+        <div
+          id={whyId}
+          hidden={!whyOpen}
+          className="mt-1 text-small text-ink-soft"
+          data-slot="note-why"
+        >
           {note.kind === "Alert note" ? (
             note.why.map((line, part) => (
               // Two parts of a merged Alert may read the same, so each line is keyed by its place.
@@ -804,16 +1009,16 @@ function AiNote(props: {
           )}
         </div>
         {note.nextStep === null ? null : (
-          <p className="mt-1 text-sm" data-slot="next-step">
+          <p className="mt-1.5 text-small text-ink-soft" data-slot="next-step">
             {card !== undefined && props.goodNews ? null : (
               <>
-                <span className="font-medium">Next step:</span>{" "}
+                <span className="font-semibold text-ink">Next step:</span>{" "}
               </>
             )}
             {note.nextStep} <AiMark />
           </p>
         )}
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
           <button
             type="button"
             className={NOTE_BUTTON}
@@ -841,14 +1046,28 @@ function AiNote(props: {
 // review. Done marks it for every Member, and it leaves the box.
 function ReviewLinkNote(props: { note: AiBoxReviewLinkView; busy: boolean; onDone: () => void }) {
   return (
-    <li className="rounded border border-gray-100 p-2 wrap-anywhere" data-slot="review-link">
-      <Link className="font-medium text-blue-700 underline" to={`/reviews/${props.note.id}`}>
-        {reviewLinkTitle(props.note.id)}
-      </Link>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" className={NOTE_BUTTON} disabled={props.busy} onClick={props.onDone}>
-          Done
-        </button>
+    <li className={NOTE_ROW} data-slot="review-link">
+      {/* The month in short, as the other notes show a number; the link says it in full. */}
+      <div aria-hidden="true" className={NOTE_FIGURE}>
+        <p className="text-xl font-bold">{monthName(props.note.id).slice(0, 3)}</p>
+        <p className="text-xs text-muted">review</p>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p>
+          <Link className={`font-semibold ${TEXT_LINK}`} to={`/reviews/${props.note.id}`}>
+            {reviewLinkTitle(props.note.id)}
+          </Link>
+        </p>
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            className={NOTE_BUTTON}
+            disabled={props.busy}
+            onClick={props.onDone}
+          >
+            Done
+          </button>
+        </div>
       </div>
     </li>
   );
@@ -890,29 +1109,37 @@ export function AiBox(props: {
   }
 
   return (
-    <section aria-label="This week" className={BOX} data-slot="ai-box">
-      <p className="text-sm font-semibold text-gray-600">This week</p>
-      <h2 className="text-lg font-semibold" data-slot="ai-heading">
+    <section
+      aria-label="This week"
+      className="rounded-card border border-line bg-white p-4 min-[900px]:p-5"
+      data-slot="ai-box"
+    >
+      <p className={BOX_LABEL}>This week</p>
+      <h2 className="mt-1 text-lg font-bold min-[900px]:text-xl" data-slot="ai-heading">
         {worthActingOnHeading(view.worthActingOn)}
       </h2>
       {paused === undefined ? null : (
-        <p className="text-sm text-gray-600" data-slot="ai-paused">
+        <p className="mt-1 text-small text-muted" data-slot="ai-paused">
           {paused}
         </p>
       )}
       <ErrorLine error={error} />
       {view.groups.length === 0 ? (
-        <p className="mt-3 text-gray-600" data-slot="nothing-new">
+        <p className="mt-3 text-muted" data-slot="nothing-new">
           {NOTHING_NEW}
         </p>
       ) : (
         view.groups.map((group) => (
-          <section key={group.name} className="mt-3" data-slot="ai-group">
-            <h3 className="flex items-baseline gap-2 font-semibold">
-              <GroupStatus name={group.name} />
-              <span className="text-sm font-normal text-gray-600">{group.notes.length}</span>
+          <section key={group.name} className="mt-4" data-slot="ai-group">
+            <h3 className="text-small font-bold">
+              <GroupStatus name={group.name} count={group.notes.length} />
             </h3>
-            <ul aria-label={group.name} className="mt-2 flex flex-col gap-2">
+            {/* A Proposal draws its own faint box; the margin parts it from the lines of the notes
+                around it. */}
+            <ul
+              aria-label={group.name}
+              className="mt-2 flex flex-col [&>[data-slot=proposal]]:my-2"
+            >
               {group.notes.map((note) =>
                 note.kind === "Proposal" ? (
                   <ProposalCard
@@ -952,8 +1179,8 @@ export function AiBox(props: {
         ))
       )}
       {view.setUpAi ? (
-        <p className="mt-3 rounded border border-gray-100 p-2" data-slot="set-up-ai">
-          <Link className="text-blue-700 underline" to={AI_SETTINGS}>
+        <p className="mt-3 border-t border-line-soft pt-3.5" data-slot="set-up-ai">
+          <Link className={TEXT_LINK} to={AI_SETTINGS}>
             {SET_UP_AI}
           </Link>
         </p>
@@ -975,7 +1202,7 @@ export function DashboardColumns(props: {
 }) {
   return (
     <div
-      className="mt-4 grid gap-4 min-[900px]:grid-cols-[minmax(16rem,22rem)_1fr] min-[900px]:items-start"
+      className="grid gap-4 min-[900px]:grid-cols-[minmax(16rem,22rem)_1fr] min-[900px]:items-start"
       data-slot="columns"
     >
       <div
@@ -995,6 +1222,51 @@ export function DashboardColumns(props: {
   );
 }
 
+// What the dashboard shows in place of its boxes while app.db holds no Connection, removed or not:
+// with no bank, no history ever loads, so empty boxes would only promise numbers that never come.
+export const NO_CONNECTION_YET = "Link a bank to see your money here";
+
+export function NoConnectionYet() {
+  return (
+    <section className={BOX} data-slot="no-connection">
+      <p className="font-semibold">
+        <Link className={TEXT_LINK} to="/settings/banks">
+          {NO_CONNECTION_YET}
+        </Link>
+      </p>
+      <p className="mt-1 text-sm text-muted">
+        The dashboard fills in once a bank is linked and its history has loaded.
+      </p>
+    </section>
+  );
+}
+
+// What the page shows: the header first, drawn once whether or not the page has read yet, then an
+// error, then the status lines and the boxes once it has.
+export function DashboardView(
+  props: Omit<Parameters<typeof DashboardReport>[0], "data"> & {
+    data: DashboardData | undefined;
+    error?: string | undefined;
+  },
+) {
+  const { data, error, ...report } = props;
+  return (
+    <Page width="wide">
+      <DashboardHeader
+        {...(data === undefined
+          ? {}
+          : {
+              month: data.month,
+              line: headerLine(data.month, data.connections, data.timeZone),
+            })}
+      />
+      <ErrorLine error={error} />
+      {data === undefined ? null : <DashboardReport data={data} {...report} />}
+    </Page>
+  );
+}
+
+// The status lines and the boxes, under the header.
 export function DashboardReport(props: {
   data: DashboardData;
   onClose: (id: string) => void;
@@ -1004,44 +1276,47 @@ export function DashboardReport(props: {
   openGroup?: string;
   // The AI box note whose reason shows when it first draws.
   whyOpen?: string;
+  // Whether the page still reads the history loading progress again.
+  live?: PollState;
 }) {
   const { data } = props;
   return (
     <>
-      <DashboardHeader
-        month={data.month}
-        line={headerLine(data.month, data.connections, data.timeZone)}
-      />
       <StatusLineList
-        lines={statusLines(data.notices, data.connections, data.history, data.month.today)}
+        lines={statusLines(data.notices, data.connections, data.history)}
         finishSetup={<FinishSetupList steps={data.setup.finishSetup} />}
         onClose={props.onClose}
         onRetry={props.onRetry}
         onChanged={props.onChanged}
+        {...(props.live === undefined ? {} : { live: props.live })}
       />
-      <DashboardColumns
-        ai={
-          <AiBox
-            view={data.aiBox}
-            today={data.month.today}
-            onChanged={props.onChanged}
-            {...(props.whyOpen === undefined ? {} : { whyOpen: props.whyOpen })}
-          />
-        }
-        leftToSpend={<LeftToSpendBox left={leftToSpend(data.budgets)} month={data.month} />}
-        goals={<GoalsBox answer={data.goals} />}
-        numberTiles={<NumberTilesBox tiles={data.numberTiles} />}
-        usualMonth={
-          <UsualMonthBox
-            key={data.month.month}
-            usual={data.usualMonth}
-            budgets={data.budgets}
-            month={data.month}
-            {...(props.openGroup === undefined ? {} : { initialOpen: props.openGroup })}
-          />
-        }
-        comingUp={<ComingUpBox view={data.comingUp} month={data.month} />}
-      />
+      {data.connections.length === 0 ? (
+        <NoConnectionYet />
+      ) : (
+        <DashboardColumns
+          ai={
+            <AiBox
+              view={data.aiBox}
+              today={data.month.today}
+              onChanged={props.onChanged}
+              {...(props.whyOpen === undefined ? {} : { whyOpen: props.whyOpen })}
+            />
+          }
+          leftToSpend={<LeftToSpendBox left={leftToSpend(data.budgets)} month={data.month} />}
+          goals={<GoalsBox answer={data.goals} />}
+          numberTiles={<NumberTilesBox tiles={data.numberTiles} />}
+          usualMonth={
+            <UsualMonthBox
+              key={data.month.month}
+              usual={data.usualMonth}
+              budgets={data.budgets}
+              month={data.month}
+              {...(props.openGroup === undefined ? {} : { initialOpen: props.openGroup })}
+            />
+          }
+          comingUp={<ComingUpBox view={data.comingUp} month={data.month} />}
+        />
+      )}
     </>
   );
 }
@@ -1049,18 +1324,49 @@ export function DashboardReport(props: {
 // How often the page checks whether the Household's date changed, to switch month on the 1st.
 const DATE_CHECK_MS = 60_000;
 
-export function Dashboard() {
-  const [data, setData] = useState<DashboardData | undefined>();
-  const [error, setError] = useState<string | undefined>();
+// While a history load runs, the dashboard reads GET /api/history-status again every 5 seconds, for
+// at most 10 minutes. Each read is that one request; the whole page is read again only when a load
+// ends.
+export const HISTORY_POLL: PollPlan = { everyMs: 5_000, maxReads: 120 };
 
-  async function load() {
+export function Dashboard() {
+  const navigate = useNavigate();
+  const [data, setData] = useState<DashboardData | undefined>();
+  // The history progress read since the page was last read whole.
+  const [history, setHistory] = useState<HistoryStatusView | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  // A poll's whole read and a Member action's can overlap: an older answer never replaces a newer.
+  const [order] = useState(answerOrder);
+
+  // Reads the whole page. Answers whether it read; an ended session goes to sign-in.
+  async function load(): Promise<boolean> {
+    const newest = order.begin();
     try {
-      setData(await loadDashboard());
+      const read = await loadDashboard();
+      if (!newest()) return true;
+      setData(read);
+      setHistory(undefined);
       setError(undefined);
-    } catch {
-      setError("The dashboard did not load.");
+      return true;
+    } catch (failure) {
+      if (failure instanceof SignedOut) void navigate("/sign-in", { replace: true });
+      else setError("The dashboard did not load.");
+      return false;
     }
   }
+
+  const shownHistory = history ?? data?.history;
+  const live = usePolling(
+    (shownHistory?.loading.length ?? 0) > 0,
+    () =>
+      readHistoryAgain(shownHistory, {
+        history: loadHistoryStatus,
+        whole: load,
+        show: setHistory,
+        signedOut: () => navigate("/sign-in", { replace: true }),
+      }),
+    HISTORY_POLL,
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
   useEffect(() => {
@@ -1095,18 +1401,15 @@ export function Dashboard() {
   }
 
   return (
-    <main>
-      <ErrorLine error={error} />
-      {data === undefined ? (
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-      ) : (
-        <DashboardReport
-          data={data}
-          onClose={close}
-          onRetry={() => void retry()}
-          onChanged={() => void load()}
-        />
-      )}
-    </main>
+    <DashboardView
+      data={
+        data === undefined || shownHistory === undefined ? data : { ...data, history: shownHistory }
+      }
+      error={error}
+      live={live}
+      onClose={close}
+      onRetry={() => void retry()}
+      onChanged={() => void load()}
+    />
   );
 }

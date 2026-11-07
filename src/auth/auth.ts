@@ -2,15 +2,17 @@ import { type BetterAuthOptions, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { isAPIError } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins/two-factor";
-import { type Database, loginTables } from "../db/index.ts";
+import { type Database, endOpenSession, listOpenSessions, loginTables } from "../db/index.ts";
 import { type Logger, log } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { deviceName } from "./device-names.ts";
 import { firstMember } from "./first-member.ts";
 import { invites, makeInvite } from "./invites.ts";
 import { loginResets, makeLoginReset } from "./login-resets.ts";
 import {
   APP_NAME,
   BACKUP_CODE_COUNT,
+  endOtherSignIns,
   myLogin,
   newTotpIdentifier,
   TOTP_DIGITS,
@@ -28,13 +30,14 @@ export const MIN_PASSWORD_LENGTH = 12;
 export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 
 // The only Better Auth routes the app answers. Every other route Better Auth has, such as sign-up,
-// turning TOTP off, or reading the TOTP secret again, answers 404.
+// turning TOTP off, or reading the TOTP secret again, answers 404. So does /get-session, which
+// would hand the page this session's token, IP address, and user agent: the app checks a session
+// through signedIn() instead, and the web app never read it.
 const ROUTES = new Set([
   "POST /sign-in/email",
   "POST /two-factor/verify-totp",
   "POST /two-factor/verify-backup-code",
   "POST /sign-out",
-  "GET /get-session",
   "POST /my-login/change-password",
   "POST /my-login/new-totp",
   "POST /my-login/confirm-totp",
@@ -57,24 +60,47 @@ const ROUTES = new Set([
   "POST /passkey/verify-authentication",
 ]);
 
-// A TOTP code is 6 digits. A backup code is two groups of 5 letters and digits.
-const TOTP_CODE = /^\d{6}$/;
-
 export type SignedInMember = { id: string; name: string; email: string };
+
+// One of a Member's sessions that has not expired, as Settings, My login lists it (spec 09,
+// Signed-in devices). The ID is the session row's own, never its token: Better Auth signs a Member
+// in only by the token, and the cookie holds that.
+export type SignedInDevice = {
+  id: string;
+  // "Firefox on Linux", made from the user agent. The user agent itself never leaves the module.
+  name: string;
+  signedInAt: Date;
+  thisDevice: boolean;
+};
+
+export type DeviceSignOut = "signed out" | "this device" | "already signed out";
 
 export type Auth = {
   // Answers a request under /api/auth/. The client address is the security check's
   // c.var.clientAddress, the only address Better Auth sees.
   handle(request: Request, clientAddress: string): Promise<Response>;
-  // The Member signed in on this request, and the Set-Cookie headers that renew their session.
+  // The Member signed in on this request, the ID of the session it uses, and the Set-Cookie headers
+  // that renew that session.
   signedIn(
     request: Request,
     clientAddress: string,
-  ): Promise<{ member: SignedInMember; setCookies: string[] } | undefined>;
-  // The sensitive-action helper: "fresh" only for a fresh TOTP or backup code from the Member
-  // signed in on this request. A wrong code counts as a failed sign-in, and a backup code is used
-  // up. Past the failed sign-in limit, every code is "too many tries" without being checked.
-  checkFreshCode(request: Request, clientAddress: string, code: string): Promise<FreshCode>;
+  ): Promise<{ member: SignedInMember; sessionId: string; setCookies: string[] } | undefined>;
+  // Signed-in devices (spec 09): the Member's own sessions that have not expired at `at`, this
+  // device first, then the newest first.
+  signedInDevices(memberId: string, sessionId: string, at: Date): Promise<SignedInDevice[]>;
+  // "Sign out" on another device: ends that one session. It ends only one of the Member's own
+  // sessions that has not expired, and never this one, which signs out by /sign-out instead.
+  // Another Member's session, an expired one, and an unknown ID all answer "already signed out",
+  // with nothing changed.
+  signOutDevice(
+    memberId: string,
+    sessionId: string,
+    deviceId: string,
+    at: Date,
+  ): Promise<DeviceSignOut>;
+  // "Sign out everywhere else": ends every other session of the Member and their sign-ins that
+  // wait for a code. This session stays.
+  signOutOtherDevices(memberId: string, sessionId: string): Promise<void>;
   // A new invite link's token, made by this Member, and when it stops working (spec 09, Invites).
   // The app keeps only its hash, so this is the one time anyone sees it.
   makeInvite(madeBy: string, at: Date): Promise<{ token: string; expiresAt: Date }>;
@@ -93,8 +119,6 @@ export type Auth = {
   // Returns how many Members lost a passkey.
   removeOtherHostPasskeys(at: Date): Promise<number>;
 };
-
-export type FreshCode = "fresh" | "wrong" | "too many tries";
 
 export type AuthOptions = {
   database: Database;
@@ -152,8 +176,7 @@ function buildBetterAuth(options: AuthOptions) {
   const { database, secrets, appOrigin } = options;
   // The login signing secret signs session cookies and encrypts TOTP secrets and backup codes.
   const signingSecret = secrets.derive("login signing secret").toString("hex");
-  const fresh = { check: async (_headers: Headers, _code: string) => false };
-  const passkey = passkeys({ appOrigin, freshCode: (headers, code) => fresh.check(headers, code) });
+  const passkey = passkeys({ appOrigin });
 
   const auth = betterAuth({
     appName: APP_NAME,
@@ -181,7 +204,7 @@ function buildBetterAuth(options: AuthOptions) {
       updateAge: 0,
       cookieCache: { enabled: false },
       // Better Auth's "fresh session" age, which its passkey plugin asks of a Member who adds a
-      // passkey, is off: a fresh TOTP or backup code stands for it instead.
+      // passkey, is off: the Member's current password stands for it instead.
       freshAge: 0,
     },
     rateLimit: { enabled: true, storage: "database" },
@@ -198,10 +221,13 @@ function buildBetterAuth(options: AuthOptions) {
     logger: loggerFor(options.logger ?? log),
     onAPIError: { onError: apiErrorsFor(options.logger ?? log) },
     plugins: [
-      myLogin({ database, secrets, freshCode: (headers, code) => fresh.check(headers, code) }),
+      myLogin({ database, secrets }),
       firstMember({ database, secrets, logger: options.logger ?? log }),
       invites({ database, secrets }),
       loginResets({ database, secrets }),
+      // Before the sign-in limit, so that a passkey refused for plain-HTTP mode or a long name does
+      // not count as a failed sign-in.
+      passkey.gate,
       signInLimit(database),
       // After the sign-in limit, so that a used code counts as a failed sign-in.
       totpOnce(database),
@@ -217,19 +243,7 @@ function buildBetterAuth(options: AuthOptions) {
     ],
   });
 
-  fresh.check = async (headers, code) => {
-    if (!(await auth.api.getSession({ headers }))) return false;
-    try {
-      if (TOTP_CODE.test(code)) await auth.api.verifyTOTP({ headers, body: { code } });
-      else await auth.api.verifyBackupCode({ headers, body: { code, disableSession: true } });
-      return true;
-    } catch (error) {
-      if (isAPIError(error) && error.status === "UNAUTHORIZED") return false;
-      throw error;
-    }
-  };
-
-  return { auth, checkFreshCode: fresh.check };
+  return { auth };
 }
 
 export type BetterAuthInstance = ReturnType<typeof buildBetterAuth>["auth"];
@@ -244,7 +258,7 @@ export function betterAuthOf(auth: Auth): BetterAuthInstance {
 }
 
 export function createAuth(options: AuthOptions): Auth {
-  const { auth, checkFreshCode } = buildBetterAuth(options);
+  const { auth } = buildBetterAuth(options);
 
   const made: Auth = {
     async handle(request, clientAddress) {
@@ -267,18 +281,35 @@ export function createAuth(options: AuthOptions): Auth {
       });
       if (!response) return undefined;
       const { id, name, email } = response.user;
-      return { member: { id, name, email }, setCookies: responseHeaders.getSetCookie() };
+      return {
+        member: { id, name, email },
+        sessionId: response.session.id,
+        setCookies: responseHeaders.getSetCookie(),
+      };
     },
 
-    async checkFreshCode(request, clientAddress, code) {
-      try {
-        const headers = withClientAddress(request.headers, clientAddress);
-        return (await checkFreshCode(headers, code)) ? "fresh" : "wrong";
-      } catch (error) {
-        // The sign-in limit's refusal. Better Auth's own routes answer it as 429 by themselves.
-        if (isAPIError(error) && error.status === "TOO_MANY_REQUESTS") return "too many tries";
-        throw error;
-      }
+    async signedInDevices(memberId, sessionId, at) {
+      const open = await listOpenSessions(options.database, memberId, at);
+      const devices = open.map((session) => ({
+        id: session.id,
+        name: deviceName(session.userAgent),
+        signedInAt: session.createdAt,
+        thisDevice: session.id === sessionId,
+      }));
+      return [
+        ...devices.filter((device) => device.thisDevice),
+        ...devices.filter((device) => !device.thisDevice),
+      ];
+    },
+
+    async signOutDevice(memberId, sessionId, deviceId, at) {
+      if (deviceId === sessionId) return "this device";
+      const ended = await endOpenSession(options.database, memberId, deviceId, at);
+      return ended ? "signed out" : "already signed out";
+    },
+
+    async signOutOtherDevices(memberId, sessionId) {
+      await endOtherSignIns(await auth.$context, memberId, sessionId);
     },
 
     makeInvite: (madeBy, at) => makeInvite(options.database, madeBy, at),
