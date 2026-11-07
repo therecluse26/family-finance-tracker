@@ -1,8 +1,9 @@
 import * as z from "zod";
 import {
-  type AiCall,
+  type AiReply,
   type BatchItem,
   batchReply,
+  generateBatch,
   type HouseholdAi,
   PrivacyRefusal,
   QUICK_BATCH_SIZE,
@@ -147,39 +148,41 @@ function batchesOf<T>(items: readonly T[], size: number): T[][] {
 // One call of a use in the run. Returns the reply's output, or undefined when it has none:
 // - The use stopped earlier in the run: no call goes out. Its questions wait for the retry, or take
 //   the no-AI path.
+// - A bad reply: the batch takes the no-AI path. The rest of the use's batches still go.
 // - A pause, or a failed call with no retry left: the use stops, and takes the no-AI path.
 // - A failed call whose retry is still to come: the use stops, and `waiting` waits for the retry.
 // - The privacy filter refused the batch: it did not go out, and takes the no-AI path. The rest of
 //   the use's batches still go.
-async function ask<OUTPUT>(
-  ai: HouseholdAi,
+async function ask<ANSWER extends { row: number }>(
   run: AiRun,
-  call: AiCall<OUTPUT> & { use: LinkAiUse },
+  use: LinkAiUse,
+  generate: () => Promise<AiReply<{ answers: ANSWER[] }>>,
   waiting: readonly string[],
-): Promise<OUTPUT | undefined> {
+): Promise<{ answers: ANSWER[] } | undefined> {
   const wait = () => {
     for (const id of waiting) run.waiting.add(id);
   };
-  const stopped = run.stopped.get(call.use);
+  const stopped = run.stopped.get(use);
   if (stopped !== undefined) {
     if (stopped === "retry") wait();
     return undefined;
   }
-  let reply: Awaited<ReturnType<typeof ai.generate<OUTPUT>>>;
+  let reply: AiReply<{ answers: ANSWER[] }>;
   try {
-    reply = await ai.generate(call);
+    reply = await generate();
   } catch (error) {
     if (!(error instanceof PrivacyRefusal)) throw error;
-    log.warn("The privacy filter refused a batch, which takes the no-AI path", { use: call.use });
+    log.warn("The privacy filter refused a batch, which takes the no-AI path", { use });
     return undefined;
   }
   if (reply.ready) return reply.output;
+  if ("badReply" in reply) return undefined;
   if ("retryAt" in reply) {
-    run.stopped.set(call.use, "retry");
+    run.stopped.set(use, "retry");
     if (run.retryAt === undefined || reply.retryAt < run.retryAt) run.retryAt = reply.retryAt;
     wait();
   } else {
-    run.stopped.set(call.use, "no AI");
+    run.stopped.set(use, "no AI");
   }
   return undefined;
 }
@@ -218,14 +221,15 @@ async function judge<CANDIDATE>(
   const labels = await ai.accountLabels();
   for (const batch of batchesOf(unasked, ROWS_OF_TWO)) {
     const output = await ask(
-      ai,
       run,
-      {
-        use: "unclear transfer",
-        task: shape.task,
-        batch: batch.map(({ candidate }) => shape.row(candidate, labels)),
-        output: batchReply(YES_OR_NO, batch.length),
-      },
+      "unclear transfer",
+      () =>
+        generateBatch(ai, batch, (asked) => ({
+          use: "unclear transfer",
+          task: shape.task,
+          batch: asked.map(({ candidate }) => shape.row(candidate, labels)),
+          output: batchReply(YES_OR_NO, asked.length),
+        })),
       batch.flatMap(({ candidate }) => shape.waiting(candidate)),
     );
     if (output === undefined) continue;
@@ -325,25 +329,40 @@ async function pickAll(
   for (const call of packPickCalls(found)) {
     const ids = call.money.map((each) => each.money.id);
     const output = await ask(
-      ai,
       run,
-      {
-        use: "reimbursement linking",
-        task: PICK_TASK,
-        batch: [
-          ...call.money.map((each) =>
-            moneyRow({ ...each, from: windowStart(each.money.postedDate) }, labels),
-          ),
-          ...call.spending.map(spendingRow),
-        ],
-        output: batchReply(PICK, call.money.length),
-      },
+      "reimbursement linking",
+      () =>
+        generateBatch(
+          ai,
+          call.money,
+          (asked) => ({
+            use: "reimbursement linking",
+            task: PICK_TASK,
+            batch: [
+              ...asked.map((each) =>
+                moneyRow({ ...each, from: windowStart(each.money.postedDate) }, labels),
+              ),
+              ...call.spending.map(spendingRow),
+            ],
+            output: batchReply(PICK, asked.length),
+          }),
+          // The Spending rows follow the money rows asked: a pick's row among all the money's.
+          (answer, asked) => ({
+            ...answer,
+            spendingRow:
+              answer.spendingRow === null
+                ? null
+                : answer.spendingRow - asked.length + call.money.length,
+          }),
+        ),
       ids,
     );
-    if (output === undefined) {
-      for (const id of ids) unanswered.add(id);
-      continue;
+    // A money with no good answer in this call has none.
+    const answeredRows = new Set(output?.answers.map(({ row }) => row));
+    for (const [index, id] of ids.entries()) {
+      if (!answeredRows.has(index + 1)) unanswered.add(id);
     }
+    if (output === undefined) continue;
     for (const { row, spendingRow: picked, confidence } of output.answers) {
       const each = call.money[row - 1];
       if (each === undefined) continue;

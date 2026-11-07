@@ -36,7 +36,14 @@ import {
   STREAM_CUT,
 } from "./outbound.ts";
 import { type PrivacyFacts, PrivacyRefusal, privacyFilter } from "./privacy.ts";
-import { type AiCall, type AiTools, buildPrompt, plainData } from "./prompt.ts";
+import {
+  type AiCall,
+  type AiTools,
+  buildPrompt,
+  goodRows,
+  plainData,
+  quickBatchOf,
+} from "./prompt.ts";
 import {
   type AiConnection,
   type AiModelMaker,
@@ -167,16 +174,19 @@ export async function checkModel(model: LanguageModel, logger: Logger): Promise<
 // other refusal by the AI provider, such as a 400, counts as a server error.
 export type AiFailure = "network" | "timeout" | "rate limit" | "server error" | "bad reply";
 
-// A failed AI call. It holds the kind of failure and the HTTP status, never the AI SDK's error,
-// which can hold the prompt, the reply, the request's headers, and the key.
+// A failed AI call. It holds the kind of failure, the HTTP status, and why the reply ended, such as
+// "length" for one cut off at its limit, never the AI SDK's error, which can hold the prompt, the
+// reply, the request's headers, and the key.
 export class AiCallError extends Error {
   readonly failure: AiFailure | "key rejected";
   readonly status: number | undefined;
-  constructor(failure: AiFailure | "key rejected", status?: number) {
+  finishReason: string | undefined;
+  constructor(failure: AiFailure | "key rejected", status?: number, finishReason?: string) {
     super(`The AI call failed: ${failure}.`);
     this.name = "AiCallError";
     this.failure = failure;
     this.status = status;
+    this.finishReason = finishReason;
   }
 }
 
@@ -226,7 +236,11 @@ function callErrorOf(error: unknown): AiCallError | undefined {
     InvalidResponseDataError.isInstance(last) ||
     EmptyResponseBodyError.isInstance(last)
   ) {
-    return new AiCallError("bad reply");
+    return new AiCallError(
+      "bad reply",
+      undefined,
+      NoObjectGeneratedError.isInstance(last) ? last.finishReason : undefined,
+    );
   }
   return networkCode(last) ? new AiCallError("network") : undefined;
 }
@@ -337,6 +351,9 @@ export async function callModel<OUTPUT>(
     CALL_TIMEOUT_MS,
   );
   const ran = { count: 0 };
+  // A Quick batch's reply that fails its schema keeps its good rows (spec 08, Limits on each call).
+  const batch = quickBatchOf(call);
+  let finishReason: string | undefined;
   try {
     const result = await generateText({
       model,
@@ -349,12 +366,25 @@ export async function callModel<OUTPUT>(
       maxRetries: 0,
       abortSignal: timeout.signal,
     });
+    finishReason = result.finishReason;
     // The AI SDK checks a structured reply against its schema when it is read.
     const output = (call.output === undefined ? undefined : result.output) as OUTPUT;
     return { text: result.text, output };
   } catch (error) {
     if (timeout.signal.aborted) throw new AiCallError("timeout");
-    throw callErrorOf(error) ?? error;
+    // A reply cut off at its limit gives no answers.
+    if (
+      batch !== undefined &&
+      NoObjectGeneratedError.isInstance(error) &&
+      error.finishReason !== "length"
+    ) {
+      const kept = goodRows(batch, error.text ?? "");
+      if (kept !== undefined) return { text: error.text ?? "", output: kept as OUTPUT };
+    }
+    const failed = callErrorOf(error);
+    if (failed === undefined) throw error;
+    failed.finishReason ??= finishReason;
+    throw failed;
   } finally {
     clearTimeout(timer);
   }

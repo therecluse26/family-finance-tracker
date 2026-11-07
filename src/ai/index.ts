@@ -32,7 +32,13 @@ export {
 } from "./ai-view.ts";
 export { AiCallError, type AiFailure, type StreamEnd } from "./call.ts";
 export { type AiCost, aiCost, type CountedCall } from "./cost.ts";
-export { type AiReply, type HouseholdAi, householdAi } from "./household-ai.ts";
+export {
+  type AiReply,
+  BAD_REPLIES_IN_A_ROW,
+  generateBatch,
+  type HouseholdAi,
+  householdAi,
+} from "./household-ai.ts";
 export { type AiPause, AiPausedError } from "./outbound.ts";
 export { PrivacyRefusal } from "./privacy.ts";
 export {

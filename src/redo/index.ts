@@ -17,6 +17,7 @@ export {
   type RedoStepName,
   registerRedoStep,
   requestRedo,
+  retryRedo,
   runRedo,
   runRedoJob,
   startRedo,

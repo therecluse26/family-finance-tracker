@@ -1,16 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as z from "zod";
-import { readAiRetry } from "../db/index.ts";
+import { readAiRedo, readAiRetry } from "../db/index.ts";
 import { createLogger } from "../log.ts";
 import type { AiProviderName, AiSettingsInput } from "./ai-view.ts";
 import { type AiCost, aiCost } from "./cost.ts";
-import { householdAi } from "./household-ai.ts";
+import { BAD_REPLIES_IN_A_ROW, generateBatch, householdAi } from "./household-ai.ts";
 import { MEMBER_TYPED } from "./privacy.ts";
 import { type AiCall, batchReply, buildPrompt } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { RETRY_DELAYS_MS, runAiRetries, startAiRetries } from "./retries.ts";
 import { aiSettings, KEY_REJECTED_CONDITION } from "./settings.ts";
-import { CapturingFetch, newAiKey, newTestAi, StubModels, type TestAi } from "./testing.ts";
+import {
+  CapturingFetch,
+  newAiKey,
+  newTestAi,
+  type StubMessage,
+  StubModels,
+  type TestAi,
+} from "./testing.ts";
 import { typedAmount, typedDate } from "./typed.ts";
 import { FIXED_RULES, plainVoice } from "./voice.ts";
 
@@ -345,8 +352,8 @@ describe("an AI call", () => {
 
   describe("reply limits", () => {
     it.each([
-      [{ use: "category fix", task: TASK, batch: [{ amount: 1 }] }, 4_000],
-      [{ use: "merchant cleanup", task: TASK, batch: [{ amount: 1 }] }, 4_000],
+      [{ use: "category fix", task: TASK, batch: [{ amount: 1 }] }, 6_000],
+      [{ use: "merchant cleanup", task: TASK, batch: [{ amount: 1 }] }, 6_000],
       [{ use: "reading a goal", task: "Read." }, 300],
       [{ use: "alert advice", task: "Advise.", alerts: 1 }, 300],
       [{ use: "alert advice", task: "Advise.", alerts: 3 }, 900],
@@ -430,12 +437,192 @@ describe("an AI call", () => {
       }
       expect(output.safeParse({ answers: [answer(2), answer(1)] }).success).toBe(true);
 
+      // The call path keeps each good row: a repeated row and one outside the batch have none.
+      stub.reply = JSON.stringify({ answers: [answer(1), answer(3)] });
+      expect(await ai.generate({ ...categoryFix(batch), output })).toMatchObject({
+        ready: true,
+        output: { answers: [answer(1)] },
+      });
       stub.reply = JSON.stringify({ answers: [answer(1), answer(1)] });
       expect(await ai.generate({ ...categoryFix(batch), output })).toEqual({
         ready: false,
-        retryAt: expect.any(Date),
+        failed: "bad reply",
+        badReply: true,
       });
+      expect(await readAiRetry(test.database, "category fix")).toBeUndefined();
+    });
+  });
+
+  // Spec 08, Limits on each call and Failures: a Quick batch keeps each good row, sends the rest
+  // once more in batches of half the size, and a bad reply is not an outage.
+  describe("Quick batches, row by row", () => {
+    const ROW_ANSWER = z.object({ category: z.enum(["Groceries", "Dining out"]) });
+    const shops = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({ merchant: `Shop ${index + 1}` }));
+    // The batch rows each call's model read, as JSON objects.
+    const rowsOf = (prompt: StubMessage[]) =>
+      prompt.flatMap((message) =>
+        typeof message.content === "string"
+          ? []
+          : message.content.flatMap((part) =>
+              part.text?.startsWith('{"row":') === true
+                ? [JSON.parse(part.text) as { row: number; merchant: string }]
+                : [],
+            ),
+      );
+    const batchCalls = () => stub.prompts.slice(2).map(rowsOf);
+    const askAll = (ai: ReturnType<typeof householdAi>, items: { merchant: string }[]) =>
+      generateBatch(ai, items, (asked) => ({
+        use: "category fix",
+        task: TASK,
+        batch: asked,
+        output: batchReply(ROW_ANSWER, asked.length),
+      }));
+    // Each row answered Groceries, unless `change` changes the answers of the call.
+    const answering = (
+      change: (answers: Record<string, unknown>[], call: number) => unknown[] = (answers) =>
+        answers,
+    ) => {
+      let call = 0;
+      stub.replyTo = (messages) => {
+        const answers = rowsOf(messages as StubMessage[]).map(({ row }) => ({
+          row,
+          category: "Groceries",
+        }));
+        call += 1;
+        return JSON.stringify({ answers: change(answers, call) });
+      };
+    };
+
+    it.each([
+      ["missing", (answers: Record<string, unknown>[]) => answers.filter(({ row }) => row !== 37)],
+      [
+        "repeated",
+        (answers: Record<string, unknown>[]) => [...answers, { row: 37, category: "Groceries" }],
+      ],
+      [
+        "outside the batch",
+        (answers: Record<string, unknown>[]) =>
+          answers.map((each) => (each.row === 37 ? { ...each, row: 101 } : each)),
+      ],
+      [
+        "failing its schema",
+        (answers: Record<string, unknown>[]) =>
+          answers.map((each) => (each.row === 37 ? { ...each, category: "Snacks" } : each)),
+      ],
+    ])(
+      "keeps 99 answers of 100 when one row is %s, and asks that row again alone",
+      async (_, bad) => {
+        const { ai } = await connect();
+        answering((answers, call) => (call === 1 ? bad(answers) : answers));
+        const items = shops(100);
+
+        const reply = await askAll(ai, items);
+
+        if (!reply.ready) throw new Error("Expected answers.");
+        expect(reply.output.answers.map(({ row }) => row).sort((a, b) => a - b)).toEqual(
+          items.map((_, index) => index + 1),
+        );
+        const [first, again] = batchCalls();
+        expect(first).toHaveLength(100);
+        // The one row goes alone, through the same call path: the same row, renumbered.
+        expect(again).toEqual([{ row: 1, merchant: "Shop 37" }]);
+        expect(batchCalls()).toHaveLength(2);
+        expect(await readAiRetry(test.database, "category fix")).toBeUndefined();
+      },
+    );
+
+    it("leaves a row still bad after its second try with no answer, and makes no third", async () => {
+      const { ai } = await connect();
+      answering((answers) =>
+        answers.map((each) =>
+          rowsOf(stub.prompts.at(-1) ?? []).find(({ row }) => row === each.row)?.merchant ===
+          "Shop 37"
+            ? { ...each, category: "Snacks" }
+            : each,
+        ),
+      );
+
+      const reply = await askAll(ai, shops(100));
+
+      if (!reply.ready) throw new Error("Expected answers.");
+      expect(reply.output.answers).toHaveLength(99);
+      expect(reply.output.answers.some(({ row }) => row === 37)).toBe(false);
+      expect(batchCalls().map((rows) => rows.length)).toEqual([100, 1]);
+      expect(await readAiRedo(test.database)).toMatchObject({ awayAt: null });
+    });
+
+    it("sends a reply cut off at its limit again as two halves, and logs why it ended", async () => {
+      const { ai } = await connect();
+      // A cut-off reply gives nothing usable, even rows that parse.
+      answering((answers, call) => {
+        stub.finishReason = call === 1 ? "length" : "stop";
+        return call === 1 ? answers.slice(0, 60) : answers;
+      });
+
+      const reply = await askAll(ai, shops(100));
+
+      if (!reply.ready) throw new Error("Expected answers.");
+      expect(reply.output.answers).toHaveLength(100);
+      expect(batchCalls().map((rows) => rows.length)).toEqual([100, 50, 50]);
+      expect(batchCalls()[1]?.[0]).toEqual({ row: 1, merchant: "Shop 1" });
+      expect(batchCalls()[2]?.[0]).toEqual({ row: 1, merchant: "Shop 51" });
+      const failed = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === "An AI call failed");
+      expect(failed).toEqual([
+        expect.objectContaining({
+          use: "category fix",
+          failure: "bad reply",
+          status: null,
+          finishReason: "length",
+        }),
+      ]);
+      // Never the prompt or the reply.
+      expect(lines.join("\n")).not.toMatch(/Shop|Groceries/);
+    });
+
+    it("counts a bad reply as no outage until the third in a row, which is an AI error", async () => {
+      const { ai } = await connect();
+      stub.reply = "Here are your answers!";
+      const call = () => ai.generate({ ...categoryFix(), output: batchReply(ROW_ANSWER, 1) });
+      const bad = { ready: false, failed: "bad reply", badReply: true };
+
+      for (let inARow = 1; inARow < BAD_REPLIES_IN_A_ROW; inARow += 1) {
+        expect(await call()).toEqual(bad);
+      }
+      expect(await readAiRetry(test.database, "category fix")).toBeUndefined();
+      expect(await readAiRedo(test.database)).toMatchObject({ awayAt: null });
+      // A reply that works ends the row.
+      stub.reply = JSON.stringify({ answers: [{ row: 1, category: "Groceries" }] });
+      expect(await call()).toMatchObject({ ready: true });
+      stub.reply = "Here are your answers!";
+      for (let inARow = 1; inARow < BAD_REPLIES_IN_A_ROW; inARow += 1) {
+        expect(await call()).toEqual(bad);
+      }
+      expect(await call()).toEqual({ ready: false, retryAt: expect.any(Date) });
       expect(await readAiRetry(test.database, "category fix")).toMatchObject({ failures: 1 });
+      expect(await readAiRedo(test.database)).toMatchObject({ awayReason: "outage" });
+      // A use that does not run in Quick batches keeps its retries for a bad reply.
+      expect(
+        await ai.generate({
+          use: "insight cards",
+          summary: SUMMARY,
+          task: "Cards.",
+          output: z.object({ cards: z.array(z.string()) }),
+        }),
+      ).toEqual({ ready: false, retryAt: expect.any(Date) });
+    });
+
+    it("stops a batch to a model that always answers badly after three calls, on the retry path", async () => {
+      const { ai } = await connect();
+      stub.reply = "Here are your answers!";
+
+      expect(await askAll(ai, shops(100))).toEqual({ ready: false, retryAt: expect.any(Date) });
+      expect(batchCalls().map((rows) => rows.length)).toEqual([100, 50, 50]);
+      // Until the retry, the use makes no call.
+      expect(await askAll(ai, shops(100))).toEqual({ ready: false, retryAt: expect.any(Date) });
+      expect(batchCalls()).toHaveLength(3);
     });
   });
 

@@ -135,6 +135,8 @@ export class StubModels {
   // When set, makes each reply that works from the request's messages in place of `reply`, such as
   // a Quick batch's answers to the rows it was sent.
   replyTo: ((messages: StubMessage[]) => string) | undefined;
+  // Why each text reply ends: "length" for one cut off at its reply limit.
+  finishReason: "stop" | "length" = "stop";
   // When set, a reply that works calls these tools in place of a text reply, while it returns any.
   callTools: ((messages: StubMessage[]) => readonly StubToolCall[]) | undefined;
   // The tools each call offered by name, and its tool choice, such as "auto" or "none".
@@ -303,7 +305,7 @@ export class StubModels {
             })),
       finishReason:
         toolCalls.length === 0
-          ? { unified: "length" as const, raw: "length" }
+          ? { unified: this.finishReason, raw: this.finishReason }
           : { unified: "tool-calls" as const, raw: "tool_use" },
       usage: {
         inputTokens: { total: noCache + cacheRead + cacheWrite, noCache, cacheRead, cacheWrite },

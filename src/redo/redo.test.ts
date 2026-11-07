@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AiGates, type AiOptions, aiCost, aiSettings, householdAi } from "../ai/index.ts";
+import {
+  type AiGates,
+  type AiOptions,
+  aiCost,
+  aiSettings,
+  householdAi,
+  RETRY_DELAYS_MS,
+  runAiRetries,
+  startAiRetries,
+} from "../ai/index.ts";
 import { newAiKey, type StubMessage, StubModels } from "../ai/testing.ts";
 import { seedDemoHousehold } from "../bank/demo.ts";
 import { type FakePage, fakeAccount, fakeTxn } from "../bank/fake.ts";
@@ -22,6 +31,7 @@ import {
   listOpenNotices,
   markAiAway,
   readAiRedo,
+  readAiRetry,
   storeAiFailure,
 } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
@@ -44,6 +54,7 @@ import {
   REDO_ATTEMPTS,
   REDO_STOPPED,
   registerRedoStep,
+  retryRedo,
   runRedo,
   runRedoJob,
   startRedo,
@@ -949,6 +960,142 @@ describe("the first AI run and the redo of no-AI work", () => {
           expect(works).toEqual(["finish"]);
         },
       );
+
+      // The owner's case: "Finish AI work now", and one bad reply to the Category fix.
+      it("goes on after a bad reply: its rows go again in halves, and the run finishes with no retry wait", async () => {
+        await atTheCap();
+        pausedUntil = undefined;
+        let bad = 1;
+        const replyTo = stub.replyTo;
+        stub.replyTo = (messages) => {
+          const reply = replyTo?.(messages) ?? "O";
+          if (useOf(textsOf(messages)) !== "category fix" || bad === 0) return reply;
+          bad -= 1;
+          return reply.replaceAll('"Pets"', '"Snacks"');
+        };
+
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        await runRedoJob("finish");
+
+        expect(callsOf("category fix").map((call) => call.rows.length)).toEqual([2, 1, 1]);
+        for (const id of ["guess-1", "guess-2"]) {
+          expect(await partOf(id)).toMatchObject({ category: "Pets", source: "AI", needsAi: 0 });
+        }
+        expect(await readAiRetry(bank.database, "category fix")).toBeUndefined();
+        expect(await readAiRedo(bank.database)).toMatchObject({ awayAt: null });
+        expect(await view()).toMatchObject({
+          running: null,
+          waits: null,
+          retryAt: null,
+          waiting: 0,
+          lastRun: { outcome: "finished" },
+        });
+      });
+
+      it("runs the later steps after a step's use always answers badly, and keeps that step's marks", async () => {
+        await atTheCap();
+        pausedUntil = undefined;
+        const replyTo = stub.replyTo;
+        stub.replyTo = (messages) => {
+          const reply = replyTo?.(messages) ?? "O";
+          return useOf(textsOf(messages)) === "pairs" ? "No JSON here." : reply;
+        };
+
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        await runRedoJob("finish");
+
+        // One pair: its one row goes once more, alone.
+        expect(callsOf("pairs").map((call) => call.rows.length)).toEqual([1, 1]);
+        expect(await itemsOf(UNCLEAR_PAIR_KIND)).toMatchObject([{ needsAi: true }]);
+        expect(fixedRows()).toEqual(
+          expect.arrayContaining(["CARD PURCHASE GUESS-1", "CARD PURCHASE GUESS-2"]),
+        );
+        expect(callsOf("picks").length).toBeGreaterThan(0);
+        expect((await view()).lastRun).toMatchObject({ outcome: "finished" });
+        expect(await readAiRedo(bank.database)).toMatchObject({ awayAt: null });
+      });
+
+      // The owner's case after an outage: the status line's retry time is when the run starts
+      // again (spec 08, Failures).
+      it("starts a run that stopped when AI went away again at the retry time, once, and finishes it", async () => {
+        await atTheCap();
+        pausedUntil = undefined;
+        stops.push(
+          startAiRetries({ database: bank.database, runners: { "category fix": retryRedo } }).stop,
+        );
+        // AI away with no run that stopped, such as after a follow-up job's call: the follow-up
+        // job's own call brings AI back.
+        await markAiAway(bank.database, "outage", NOW());
+        expect(await retryRedo()).toBe(false);
+        vi.useFakeTimers({ toFake: ["Date"], now: NOW() });
+        // The AI provider fails the Category fix.
+        stub.beforeAnswer = async () => {
+          const use = useOf(textsOf(stub.prompts.at(-1) ?? []));
+          stub.answers.quick = use === "category fix" ? "fail" : "work";
+        };
+
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        await runRedoJob("finish");
+
+        const stopped = await view();
+        expect(stopped).toMatchObject({ waits: "retry wait", lastRun: { outcome: "stopped" } });
+        expect(await partOf("guess-1")).toMatchObject({ source: "best guess", needsAi: 1 });
+        // A sync never starts it, and neither does the retry before its time.
+        await sync([]);
+        expect(await runAiRetries(new Date())).toEqual([]);
+        expect(started).toBe(0);
+
+        stub.beforeAnswer = async () => {};
+        stub.answers.quick = "work";
+        vi.setSystemTime(new Date(stopped.retryAt ?? 0));
+        expect(await runAiRetries(new Date())).toEqual(["category fix"]);
+        expect(started).toBe(1);
+        expect(await runRedo()).toBe("done");
+
+        // The failed call had no reply, so only the second run's call answered.
+        expect(fixedRows().sort()).toEqual(["CARD PURCHASE GUESS-1", "CARD PURCHASE GUESS-2"]);
+        expect(await partOf("guess-1")).toMatchObject({ source: "AI", needsAi: 0 });
+        expect(await view()).toMatchObject({
+          waits: null,
+          waiting: 0,
+          lastRun: { outcome: "finished" },
+        });
+        // The retry time starts it once.
+        expect(await runAiRetries(new Date())).toEqual([]);
+        expect(await retryRedo()).toBe(false);
+        expect(started).toBe(1);
+      });
+
+      it("stops a run whose model always answers badly: the third bad reply takes the retries, which end", async () => {
+        await atTheCap();
+        pausedUntil = undefined;
+        stops.push(
+          startAiRetries({ database: bank.database, runners: { "category fix": retryRedo } }).stop,
+        );
+        vi.useFakeTimers({ toFake: ["Date"], now: NOW() });
+        fixCategory("Snacks");
+
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        await runRedoJob("finish");
+        expect(callsOf("category fix").map((call) => call.rows.length)).toEqual([2, 1, 1]);
+        expect((await view()).lastRun).toMatchObject({ outcome: "stopped" });
+
+        // Each retry starts the run again, which makes one call and stops.
+        for (const delay of RETRY_DELAYS_MS) {
+          vi.setSystemTime(Date.now() + delay);
+          expect(await runAiRetries(new Date())).toEqual(["category fix"]);
+          expect(await runRedo()).toBe("AI away");
+        }
+        expect(callsOf("category fix").map((call) => call.rows.length)).toEqual([2, 1, 1, 2, 2, 2]);
+        expect(started).toBe(RETRY_DELAYS_MS.length);
+
+        // After the last retry, nothing more is due: the marks wait for AI's next return.
+        expect(await readAiRetry(bank.database, "category fix")).toBeUndefined();
+        vi.setSystemTime(Date.now() + 24 * 60 * 60_000);
+        expect(await runAiRetries(new Date())).toEqual([]);
+        expect(await partOf("guess-1")).toMatchObject({ source: "best guess", needsAi: 1 });
+        expect(await view()).toMatchObject({ waits: null, retryAt: null });
+      });
 
       it("refuses a press while AI waits, with no call, and gives the place back", async () => {
         const calls = stub.calls.length;
