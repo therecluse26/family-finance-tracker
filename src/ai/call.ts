@@ -27,7 +27,7 @@ import {
 } from "../db/index.ts";
 import { readHouseholdFacts } from "../household/index.ts";
 import type { Logger } from "../log.ts";
-import type { AiTier, ModelCheck, TierModels } from "./ai-view.ts";
+import type { AiProviderName, AiTier, ModelCheck, TierModels } from "./ai-view.ts";
 import {
   type AiPause,
   AiPausedError,
@@ -49,6 +49,7 @@ import {
   type AiModelMaker,
   type AiModels,
   makeFetchModels,
+  webSearchTools,
 } from "./providers.ts";
 import { callLog, type KeptFailure } from "./request-log.ts";
 
@@ -337,6 +338,11 @@ function toolLoop(tools: AiTools | undefined, ran: { count: number }) {
   };
 }
 
+// Whether the AI provider has a web search for the Merchant lookup (spec 08, Merchant web lookup).
+export function hasWebSearch(provider: AiProviderName): boolean {
+  return webSearchTools(provider) !== undefined;
+}
+
 // One call with a model from privateModels: the prompt in its one order, its use's reply limit,
 // and, with a schema, a structured reply checked against it. With tools, the AI SDK runs each tool
 // the AI calls and sends its result back, one model call each round. The AI SDK makes no retry of
@@ -347,8 +353,12 @@ function toolLoop(tools: AiTools | undefined, ran: { count: number }) {
 export async function callModel<OUTPUT>(
   model: LanguageModel,
   call: AiCall<OUTPUT>,
-  searchTools?: ToolSet,
+  webSearch?: AiProviderName,
 ): Promise<{ text: string; output: OUTPUT }> {
+  const searchTools = webSearch === undefined ? undefined : webSearchTools(webSearch);
+  if (webSearch !== undefined && searchTools === undefined) {
+    throw new TypeError("This AI provider has no web search.");
+  }
   if (searchTools !== undefined && call.tools !== undefined) {
     throw new TypeError("A call with web search takes no tools of its own.");
   }

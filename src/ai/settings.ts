@@ -1,4 +1,4 @@
-import type { LanguageModel, ToolSet } from "ai";
+import type { LanguageModel } from "ai";
 import { aiMayRun } from "../bank/index.ts";
 import {
   AI_SETTINGS_ROW,
@@ -37,11 +37,11 @@ import {
   type PriceSource,
   USE_TIERS,
 } from "./ai-view.ts";
-import { type AiFailure, checkModel, privateModels, testModel } from "./call.ts";
+import { type AiFailure, checkModel, hasWebSearch, privateModels, testModel } from "./call.ts";
 import type { AiCost } from "./cost.ts";
 import type { AiPause } from "./outbound.ts";
 import { type ModelPrice, memberPrice, tablePrice, WEB_SEARCH_FEES } from "./prices.ts";
-import { type AiConnection, type AiModelMaker, webSearchTools } from "./providers.ts";
+import type { AiConnection, AiModelMaker } from "./providers.ts";
 import { endRetriesRanOut } from "./retries.ts";
 
 // The Household's one AI provider (spec 08, AI settings page). The API key and the gateway token
@@ -238,7 +238,7 @@ export function aiSettings(options: AiOptions): AiSettings {
       status: await status(stored),
       webLookup: {
         on: await readWebLookupSwitch(database),
-        unavailable: webSearchTools(stored.provider) === undefined ? "no web search" : null,
+        unavailable: hasWebSearch(stored.provider) ? null : "no web search",
       },
     };
   }
@@ -465,9 +465,9 @@ export function aiSettings(options: AiOptions): AiSettings {
 
 // The model for one AI use, or why that use takes its no-AI path.
 // `generation` is the AI settings' generation the model was made from.
-// The Merchant lookup's model comes with its AI provider's web search tools, which the call offers.
+// The Merchant lookup's model comes with its AI provider, whose web search tools the call offers.
 export type ModelFor =
-  | { ready: true; model: LanguageModel; generation: number; tools?: ToolSet }
+  | { ready: true; model: LanguageModel; generation: number; webSearch?: AiProviderName }
   | { ready: false; pause: AiPause };
 
 export type AiCalls = {
@@ -533,11 +533,14 @@ export function aiCalls(options: AiOptions): AiCalls {
       if (!lookup) return { ready: true, model: models[tier], generation };
       // The caller checks first that the AI provider has a web search (spec 08, Merchant web
       // lookup), so a lookup with none is the app's own mistake.
-      const tools = webSearchTools(stored.provider);
-      if (models.lookup === undefined || tools === undefined || searchFee === undefined) {
+      if (
+        models.lookup === undefined ||
+        !hasWebSearch(stored.provider) ||
+        searchFee === undefined
+      ) {
         throw new TypeError("This AI provider has no web search.");
       }
-      return { ready: true, model: models.lookup, generation, tools };
+      return { ready: true, model: models.lookup, generation, webSearch: stored.provider };
     },
   };
 }

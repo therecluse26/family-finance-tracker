@@ -14,6 +14,7 @@ import {
   AiCallError,
   type AiFailure,
   callModel,
+  hasWebSearch,
   readPrivacyFacts,
   type StreamEnd,
   streamModel,
@@ -21,7 +22,6 @@ import {
 import { type AiPause, AiPausedError } from "./outbound.ts";
 import { memberLabel, PrivacyRefusal, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, isQuickBatchUse, plainData } from "./prompt.ts";
-import { webSearchTools } from "./providers.ts";
 import { aiRetries } from "./retries.ts";
 import { type AiOptions, aiCalls, markKeyRejected, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
@@ -166,7 +166,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
     const ended = isActivityUse(use) ? startAiActivity(use) : undefined;
     try {
       const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
-      const reply = await callModel(found.model, sent, found.tools);
+      const reply = await callModel(found.model, sent, found.webSearch);
       badReplies.delete(use);
       if (background) await retries.worked(use);
       return { ready: true, ...reply };
@@ -251,7 +251,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
     },
     async webLookupOn() {
       const stored = await readAiSettings(database);
-      if (stored === undefined || webSearchTools(stored.provider) === undefined) return false;
+      if (stored === undefined || !hasWebSearch(stored.provider)) return false;
       return readWebLookupSwitch(database);
     },
     async reserveLookup() {
