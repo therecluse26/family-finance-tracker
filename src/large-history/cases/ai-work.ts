@@ -21,6 +21,16 @@ const textsOf = (messages: StubMessage[]) =>
         : message.content.flatMap((part) => (part.text === undefined ? [] : [part.text])),
   );
 
+const charsOf = (messages: StubMessage[]) =>
+  messages.reduce(
+    (sum, message) =>
+      sum +
+      (typeof message.content === "string"
+        ? message.content.length
+        : message.content.reduce((n, part) => n + (part.text?.length ?? 0), 0)),
+    0,
+  );
+
 const insightCards = JSON.stringify({
   cards: [1, 2, 3, 4].map((n) => ({
     group: "heads_up",
@@ -38,8 +48,10 @@ const insightCards = JSON.stringify({
 // Settings → AI: AI work on your Transactions (spec 08) on the full history. The build ran with no
 // AI provider, so every Category step 6 guessed and every name the rules could not clean is marked.
 // The status line counts the marked items; "Finish AI work now" sends them, with the first AI run;
-// "Run AI on all history" then marks the last 18 months' AI and best-guess Categories and asks
-// again, in Quick batches of up to 100. Cleaned names and link answers are not asked twice.
+// "Run AI on all history" then sends the AI each Category of the last 18 months that no hand edit,
+// Category rule, or Money movement set, past the provider's category and Merchant history, in Quick
+// batches of up to 100. Cleaned names and link answers are not asked twice. The case logs the
+// characters each Category fix call sends and gets, for the run's Expected cost (spec 08).
 timedCase("AI work on your Transactions on the full history", async (history, time) => {
   const { database, secrets, browser } = history;
   const saved = await aiSettings({
@@ -59,6 +71,7 @@ timedCase("AI work on your Transactions on the full history", async (history, ti
   await markSetupStep(database, "household facts", "done");
   await claimHistoryWaitEnd(database, NOW());
   const calls = new Map<string, number>();
+  const fixChars = { sent: 0, got: 0 };
   history.ai.replyTo = (messages) => {
     const texts = textsOf(messages);
     const batch = texts
@@ -78,10 +91,14 @@ timedCase("AI work on your Transactions on the full history", async (history, ti
     calls.set(use, (calls.get(use) ?? 0) + 1);
     expect(batch.length).toBeLessThanOrEqual(100);
     switch (use) {
-      case "category fix":
-        return JSON.stringify({
+      case "category fix": {
+        const reply = JSON.stringify({
           answers: batch.map((row) => ({ row: row.row, category: "Hobbies", confidence: "high" })),
         });
+        fixChars.sent += charsOf(messages);
+        fixChars.got += reply.length;
+        return reply;
+      }
       case "merchant cleanup":
         return JSON.stringify({
           answers: batch.map((row) => ({ row: row.row, name: `Shop ${row.row}` })),
@@ -121,18 +138,18 @@ timedCase("AI work on your Transactions on the full history", async (history, ti
   expect(finished.lastRun).toMatchObject({ outcome: "finished", items: before.waiting });
   expect((await readAiRedo(database)).firstRunDoneAt).not.toBeNull();
 
-  // An install where the AI chose most Categories: Merchant history took the build's best guesses
-  // over once the names were cleaned, so untimed setup hands every such Category in the last 18
-  // months to the AI. Each one is then marked and asked again.
+  // Merchant history decided most Categories once the names were cleaned. Each Category of the last
+  // 18 months that no hand edit, Category rule, or Money movement set goes to the AI.
   const count = async (sql: string) => Number((await database.$client.execute(sql)).rows[0]?.n);
-  const inLast18Months = `transaction_id IN (SELECT id FROM transactions
-    WHERE posted_date >= '2025-05-01')`;
-  await database.$client.execute(`UPDATE transaction_parts SET category_source = 'AI'
-    WHERE category_source = 'Merchant history' AND ${inLast18Months}`);
-  const recent = await count(`SELECT count(*) AS n FROM transaction_parts
-    WHERE category_source IN ('AI', 'best guess') AND ${inLast18Months}`);
-  expect(recent).toBeGreaterThan(1_000);
+  const sent = await count(`SELECT count(DISTINCT transaction_id) AS n FROM transaction_parts
+    WHERE category_source IN ('provider', 'Merchant history', 'AI', 'best guess')
+      AND (type = 'Spending' OR (type = 'Refund' AND linked = 0))
+      AND transaction_id IN (SELECT id FROM transactions
+        WHERE posted_date >= '2025-05-01' AND hidden_reason IS NULL)`);
+  expect(sent).toBeGreaterThan(1_000);
   calls.clear();
+  fixChars.sent = 0;
+  fixChars.got = 0;
   const again = (await time.request("POST /api/ai/work/all-history", () =>
     browser.post("/api/ai/work/all-history"),
   )) as Answer;
@@ -142,15 +159,23 @@ timedCase("AI work on your Transactions on the full history", async (history, ti
   );
 
   const done = await workOf(await browser.get("/api/ai/work"));
+  const fixCalls = calls.get("category fix") ?? 0;
+  // About 4 characters a token, at the Quick tier's price (spec 08, Expected cost).
+  const tokens = { in: fixChars.sent / 4, out: fixChars.got / 4 };
+  const dollars = (tokens.in * 0.1 + tokens.out * 0.5) / 1_000_000;
   console.log(
-    `Run AI on all history: ${recent} AI and best-guess Categories in the last 18 months, ` +
-      `${done.lastRun?.items} items decided, ${calls.get("category fix") ?? 0} Category fix calls`,
+    `Run AI on all history: ${sent} Transactions sent, ${done.lastRun?.items} items decided, ` +
+      `the AI answered ${done.lastRun?.aiCategories}, ${fixCalls} Category fix calls, ` +
+      `about ${Math.round(tokens.in)} input and ${Math.round(tokens.out)} output tokens, ` +
+      `about $${dollars.toFixed(3)} at Haiku 5.5's price`,
   );
-  // Only Categories are asked again, and never one call for each Transaction. Merchant history,
-  // an earlier cascade step, decides most of them before the AI is asked.
+  // Only Categories are asked again, in Quick batches, never one call for each Transaction. The
+  // provider's category and Merchant history do not stop one.
   expect([...calls.keys()].filter((use) => use !== "category fix")).toEqual([]);
-  expect(done.lastRun?.items).toBe(recent);
-  expect(calls.get("category fix") ?? 0).toBeLessThanOrEqual(Math.ceil(recent / 100) + 1);
+  expect(done.lastRun?.items).toBe(sent);
+  expect(done.lastRun?.aiCategories).toBe(sent);
+  expect(fixCalls).toBeGreaterThanOrEqual(Math.ceil(sent / 100));
+  expect(fixCalls).toBeLessThanOrEqual(Math.ceil(sent / 100) + 1);
   expect(done).toMatchObject({ running: null, waiting: 0 });
   expect(done.lastRun).toMatchObject({ outcome: "finished" });
   expect(

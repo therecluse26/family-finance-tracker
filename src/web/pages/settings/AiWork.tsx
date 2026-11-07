@@ -31,6 +31,7 @@ const WAIT_TONE: Record<AiWorkWait, StatusTone> = {
 };
 
 const items = (n: number) => `${n} ${n === 1 ? "item" : "items"}`;
+const categories = (n: number) => `${n} ${n === 1 ? "Category" : "Categories"}`;
 
 // "Nov 6 at 3:12 PM", in `zone`, the Household time zone.
 function momentLabel(at: string, zone: string, now: Date): string {
@@ -52,9 +53,10 @@ export function aiWorkLine(
   const last = work.lastRun;
   if (last === null) return { tone: "muted", text: "No AI work has run yet" };
   const when = momentLabel(last.at, zone, now);
+  const did = `${items(last.items)} decided, and the AI answered ${categories(last.aiCategories)}`;
   return last.outcome === "finished"
-    ? { tone: "good", text: `Last run ${when}: ${items(last.items)} decided` }
-    : { tone: "serious", text: `Last run ${when} stopped: ${items(last.items)} decided` };
+    ? { tone: "good", text: `Last run ${when}: ${did}` }
+    : { tone: "serious", text: `Last run ${when} stopped: ${did}` };
 }
 
 export function AiWorkLine(props: { work: AiWorkView; zone: string; now: Date }) {
@@ -68,7 +70,7 @@ export function AiWorkLine(props: { work: AiWorkView; zone: string; now: Date })
 
 // The confirm step's words (spec 08): what the run does, and its cost against the cap.
 export const ALL_HISTORY_CONFIRM =
-  "The AI looks again at each Category that it or a best guess chose in the last 18 months. Hand-set Categories and Category rules still win. It costs about $0.20, and the cost counts against the AI cost cap.";
+  "The AI looks again at the Category of each Transaction in the last 18 months, even one the bank or the Merchant's history chose. Hand-set Categories and Category rules still win. It costs about $0.10, and the cost counts against the AI cost cap.";
 
 // The confirm step "Run AI on all history" opens: the AI runs only on its second press.
 export function AllHistoryConfirm(props: { busy: boolean; onRun(): void; onCancel(): void }) {

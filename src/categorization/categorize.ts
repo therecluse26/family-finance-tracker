@@ -141,6 +141,8 @@ type Waiting = {
   chosen: Map<number, Chosen>;
   // Step 4 needed an answer in this batch, so it is checked again once the answers come.
   historyWaits: boolean;
+  // The parts the AI decides past steps 3 and 4. With no answer, each keeps its Category and mark.
+  direct: ReadonlySet<number>;
 };
 
 // Runs the cascade on each Transaction's covered parts that have no Category chosen yet, in the
@@ -148,26 +150,31 @@ type Waiting = {
 // that waits for the AI joins Merchant history once its answer comes. A later Transaction whose
 // step 4 needs that answer joins the same batch, so a Merchant whose answers differ never sends a
 // batch for each Transaction; once the answers come, step 4 is checked again for it, and wins over
-// the AI's answer when it gives one. With `redo`, a best guess made without AI counts as not
-// chosen, so the AI decides it (spec 08, Redo of no-AI work); a hand-set Category is never one. So
-// does a Category the AI chose that "Run AI on all history" marked (spec 08, AI work on your
-// Transactions). A best guess never takes the place of the AI's Category: with no answer from the
-// AI, that part keeps its Category and its mark, for AI's next return. Returns what the Review list
-// holds for each Transaction the run decided, and the Transactions it left.
+// the AI's answer when it gives one.
+// - With `redo`, a best guess made without AI counts as not chosen, so the cascade decides it again
+//   (spec 08, Redo of no-AI work); a hand-set Category is never one. So does every other marked
+//   part: "Run AI on all history" marked it (spec 08, AI work on your Transactions), and steps 1
+//   and 2 still win, but the AI decides it at step 5, past the provider's category and Merchant
+//   history. With `allHistory`, a marked best guess goes past steps 3 and 4 too.
+// - A part the AI decides past steps 3 and 4 keeps its Category and its mark when the AI gives no
+//   answer, for AI's next return: a best guess never takes the place of a Category the AI or
+//   another step chose.
+// Returns what the Review list holds for each Transaction the run decided, the Transactions it
+// left, and how many Transactions' Categories the AI answered.
 export async function chooseCategories(
   database: Database,
   ids: readonly string[],
   ai: AiStep = undefined,
-  options: { redo?: boolean } = {},
-): Promise<CategoryRun & { reviews: Map<string, ReviewState> }> {
+  options: { redo?: boolean; allHistory?: boolean } = {},
+): Promise<CategoryRun & { reviews: Map<string, ReviewState>; answered: number }> {
   const unchosen = (part: RecordPart) =>
     part.categorySource === null ||
-    (options.redo === true &&
-      (part.categorySource === "best guess" ||
-        (part.categorySource === "AI" && part.categoryNeedsAi)));
-  // A best guess never replaces a Category the AI chose.
-  const keepsAi = (before: CategorySource | null | undefined, choice: Choice) =>
-    before === "AI" && choice.source === "best guess";
+    (options.redo === true && (part.categorySource === "best guess" || part.categoryNeedsAi));
+  // A marked part the AI decides at step 5, past steps 3 and 4.
+  const direct = (part: RecordPart) =>
+    options.redo === true &&
+    part.categoryNeedsAi &&
+    (part.categorySource !== "best guess" || options.allHistory === true);
   // Merchant history loads when a step first needs it. Until then, each Category chosen here waits
   // in `unloaded`, since the batch is stored only at its end.
   let history: MerchantHistory | undefined;
@@ -193,6 +200,7 @@ export async function chooseCategories(
   const left: string[] = [];
   let again: Date | undefined;
   let stopped = false;
+  let answered = 0;
   // Off once the AI is not available in this run, so no new retry cycle starts.
   let aiOn = ai !== undefined;
   let choices: PartCategory[] = [];
@@ -279,19 +287,28 @@ export async function chooseCategories(
     }
     if ("noAi" in answer && answer.noAi === "off") aiOn = false;
     const loaded = await loadHistory();
-    for (const [index, { record, txn, parts, chosen, historyWaits }] of asked.entries()) {
-      const answered = "answers" in answer ? answer.answers[index] : undefined;
+    for (const [index, { record, txn, parts, chosen, historyWaits, direct }] of asked.entries()) {
+      const reply = "answers" in answer ? answer.answers[index] : undefined;
+      const fromAi: Choice | undefined =
+        reply === undefined
+          ? undefined
+          : { category: reply.category, source: "AI", confidence: reply.confidence };
       // The earlier Transactions of this batch are in Merchant history by now.
       const history = historyWaits ? fromProviderOrHistory(txn, loaded) : undefined;
       const choice: Choice =
-        typeof history === "object"
-          ? history
-          : answered === undefined
-            ? bestGuess(txn, loaded)
-            : { category: answered.category, source: "AI", confidence: answered.confidence };
+        typeof history === "object" ? history : (fromAi ?? bestGuess(txn, loaded));
+      let tookAnswer = false;
       for (const part of parts) {
-        if (!keepsAi(chosen.get(part)?.source, choice)) choose(record, part, choice, chosen);
+        if (direct.has(part)) {
+          if (fromAi === undefined) continue;
+          choose(record, part, fromAi, chosen);
+          tookAnswer = true;
+        } else {
+          choose(record, part, choice, chosen);
+          if (choice === fromAi) tookAnswer = true;
+        }
       }
+      if (tookAnswer) answered += 1;
       joinHistory(record, txn, chosen);
       reviews.set(record.id, reviewState(record, chosen));
     }
@@ -325,20 +342,26 @@ export async function chooseCategories(
         { category: part.category, source: part.categorySource },
       ]),
     );
+    // Steps 3 and 4 give no answer for a part the AI decides at step 5.
+    const toAi = async (): Promise<Rest> => "ai";
     const picked: [number, Choice][] = [];
     const asking: number[] = [];
+    const straight = new Set<number>();
     let historyWaits = false;
     for (const part of record.parts) {
       if (!coveredByCascade(part) || !unchosen(part)) continue;
+      const past = direct(part);
       // A best guess is the cascade's own answer, never a Category Money movement named.
       const choice = await choosePart(
         part.categorySource === null ? part : { ...part, category: null },
         winning,
-        fromRest,
+        past ? toAi : fromRest,
       );
       if (choice === "waits") historyWaits = true;
-      if (choice === "ai" || choice === "waits") asking.push(part.part);
-      else if (!keepsAi(part.categorySource, choice)) picked.push([part.part, choice]);
+      if (choice === "ai" || choice === "waits") {
+        asking.push(part.part);
+        if (past) straight.add(part.part);
+      } else picked.push([part.part, choice]);
     }
     if (asking.length > 0 && ai === "follow-up job") return "later";
     for (const [part, choice] of picked) choose(record, part, choice, chosen);
@@ -347,7 +370,7 @@ export async function chooseCategories(
       reviews.set(record.id, reviewState(record, chosen));
       return "done";
     }
-    waiting.push({ record, txn, parts: asking, chosen, historyWaits });
+    waiting.push({ record, txn, parts: asking, chosen, historyWaits, direct: straight });
     if (waiting.length >= QUICK_BATCH_SIZE) await flush();
     return "done";
   }
@@ -372,7 +395,7 @@ export async function chooseCategories(
     await storePartCategories(database, choices);
     choices = [];
   }
-  return { reviews, left, again };
+  return { reviews, left, again, answered };
 }
 
 const transactionIdsOf = (item: ReviewItem) =>
@@ -434,11 +457,11 @@ export async function categorize(
   database: Database,
   ids: readonly string[],
   ai: AiStep = undefined,
-  options: { redo?: boolean } = {},
-): Promise<CategoryRun> {
-  const { reviews, left, again } = await chooseCategories(database, ids, ai, options);
+  options: { redo?: boolean; allHistory?: boolean } = {},
+): Promise<CategoryRun & { answered: number }> {
+  const { reviews, left, again, answered } = await chooseCategories(database, ids, ai, options);
   await updateReviewList(database, reviews);
-  return { left, again };
+  return { left, again, answered };
 }
 
 // The Categorization step with the Household's AI. AI cleanup comes first, since the cascade reads
@@ -490,10 +513,12 @@ function categoryReviewKind(database: Database): ReviewKind {
 }
 
 // The redo of no-AI work (spec 08, Redo of no-AI work), with the Household's AI. Each marked
-// Merchant name goes to the AI cleanup once, and each best guess from step 6 to step 5, in the
-// Quick tier's batches, with every Transaction an earlier redo step decided again. A Transaction
-// the AI did not reach keeps its best guess and its mark; one with no Category, such as one decided
-// again, takes the best guess.
+// Merchant name goes to the AI cleanup once, and each best guess from step 6 through the cascade
+// again, in the Quick tier's batches, with every Transaction an earlier redo step decided again.
+// Every other marked Category, which "Run AI on all history" marked, goes to the AI at step 5 (spec
+// 08, AI work on your Transactions), and so does a best guess in that run. A Transaction the AI did
+// not reach keeps its Category and its mark; one with no Category, such as one decided again, takes
+// the best guess. The step counts the Transactions whose Category the AI answered.
 function registerRedoSteps(database: Database, ai: HouseholdAi): (() => void)[] {
   return [
     registerRedoStep("Merchant names", async (run) => {
@@ -506,7 +531,11 @@ function registerRedoSteps(database: Database, ai: HouseholdAi): (() => void)[] 
         return [];
       }
       const ids = await listBestGuessIds(database, run.decided);
-      const { left } = await categorize(database, ids, ai, { redo: true });
+      const { left, answered } = await categorize(database, ids, ai, {
+        redo: true,
+        allHistory: run.allHistory,
+      });
+      run.countAiCategories(answered);
       if (left.length > 0) await categorize(database, left);
       return [];
     }),

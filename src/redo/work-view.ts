@@ -5,7 +5,8 @@
 // The two runs a Member starts.
 // - "finish": the redo of no-AI work at once, for every marked item, and the first AI run if it is
 //   not done.
-// - "all history": the first AI run's work again on the last 18 months.
+// - "all history": the AI decides again each Category of the last 18 months that no hand edit,
+//   Category rule, or Money movement set, past the provider's category and Merchant history.
 export const AI_WORK_KINDS = ["finish", "all history"] as const;
 
 export type AiWorkKind = (typeof AI_WORK_KINDS)[number];
@@ -18,7 +19,6 @@ export const ALL_HISTORY_MONTHS = 18;
 // between its job's attempts.
 export type AiWorkStep =
   | "starting"
-  | "marking history"
   | "Merchant names"
   | "Money movement"
   | "Categories"
@@ -39,8 +39,14 @@ export type AiWorkView = {
   waits: AiWorkWait | null;
   // The marked items that wait for the AI.
   waiting: number;
-  // The last redo that ended, its time as an ISO moment.
-  lastRun: { at: string; items: number; outcome: "finished" | "stopped" } | null;
+  // The last redo that ended, its time as an ISO moment: the marked items it decided, and how many
+  // Transactions' Categories the AI answered.
+  lastRun: {
+    at: string;
+    items: number;
+    aiCategories: number;
+    outcome: "finished" | "stopped";
+  } | null;
 };
 
 // Why a press started no run. Each one makes no AI call.

@@ -46,21 +46,36 @@ describe("Settings → AI: the AI work status line", () => {
     expect(AI_WORK_WAIT_LINES["cost cap"]).toBe("AI work waits: AI cost cap reached");
   });
 
-  it("says the last run in Household time, and how many items the run decided", () => {
+  it("says the last run in Household time, and how many items the run decided and how many Categories the AI answered", () => {
     // 8:12 PM UTC is 3:12 PM in New York.
     const at = "2026-11-06T20:12:00.000Z";
     expect(
-      aiWorkLine({ ...IDLE, lastRun: { at, items: 214, outcome: "finished" } }, ZONE, NOW),
-    ).toEqual({ tone: "good", text: "Last run Nov 6 at 3:12 PM: 214 items decided" });
+      aiWorkLine(
+        { ...IDLE, lastRun: { at, items: 214, aiCategories: 180, outcome: "finished" } },
+        ZONE,
+        NOW,
+      ),
+    ).toEqual({
+      tone: "good",
+      text: "Last run Nov 6 at 3:12 PM: 214 items decided, and the AI answered 180 Categories",
+    });
     expect(
       aiWorkLine(
-        { ...IDLE, lastRun: { at: "2026-11-02T13:05:00.000Z", items: 1, outcome: "stopped" } },
+        {
+          ...IDLE,
+          lastRun: {
+            at: "2026-11-02T13:05:00.000Z",
+            items: 1,
+            aiCategories: 1,
+            outcome: "stopped",
+          },
+        },
         ZONE,
         NOW,
       ),
     ).toEqual({
       tone: "serious",
-      text: "Last run Nov 2 at 8:05 AM stopped: 1 item decided",
+      text: "Last run Nov 2 at 8:05 AM stopped: 1 item decided, and the AI answered 1 Category",
     });
     expect(aiWorkLine(IDLE, ZONE, NOW)).toEqual({
       tone: "muted",
@@ -105,17 +120,18 @@ describe("Settings → AI: the AI work buttons", () => {
   });
 
   it("asks before a run on all history, with what it does and its cost against the cap", () => {
-    expect(ALL_HISTORY_CONFIRM).toContain("in the last 18 months");
+    expect(ALL_HISTORY_CONFIRM).toContain("each Transaction in the last 18 months");
+    expect(ALL_HISTORY_CONFIRM).toContain("even one the bank or the Merchant's history chose.");
     expect(ALL_HISTORY_CONFIRM).toContain("Hand-set Categories and Category rules still win.");
     expect(ALL_HISTORY_CONFIRM).toContain(
-      "It costs about $0.20, and the cost counts against the AI cost cap.",
+      "It costs about $0.10, and the cost counts against the AI cost cap.",
     );
     const html = renderToString(
       <AllHistoryConfirm busy={false} onRun={() => {}} onCancel={() => {}} />,
     );
     expect(html).toContain("Run AI on all history?");
     expect(html).toContain("Cancel");
-    expect(html).toContain("$0.20");
+    expect(html).toContain("$0.10");
   });
 
   it("posts an empty body to each button's route, and answers the status line after it", async () => {

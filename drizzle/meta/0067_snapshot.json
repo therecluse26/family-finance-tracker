@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "22dc94d1-0b7e-40f1-86e8-d152f8ca1620",
+  "id": "6ba1894c-a728-4616-9e41-ad578140f333",
   "prevId": "6af59c69-888c-4105-b35c-57b9c547cdd6",
   "tables": {
     "accounts": {
@@ -476,6 +476,14 @@
         },
         "last_run_items": {
           "name": "last_run_items",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "last_run_ai_categories": {
+          "name": "last_run_ai_categories",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,

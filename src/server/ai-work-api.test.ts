@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { type AiOptions, aiCost, aiSettings, householdAi } from "../ai/index.ts";
 import { newAiKey, StubModels } from "../ai/testing.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
-import { markSetupStep } from "../db/index.ts";
+import { claimHistoryWaitEnd, markSetupStep } from "../db/index.ts";
 import { createLogger } from "../log.ts";
 import { startNotify } from "../notify/index.ts";
 import {
@@ -27,6 +27,19 @@ import { type App, TestBrowser } from "./testing.ts";
 const APP_URL = "http://nas.local:8080";
 const PRICE = { input: 1_000_000, output: 2_000_000 };
 const PRESSES = ["/api/ai/work/finish", "/api/ai/work/all-history"] as const;
+const INSIGHT_CARDS = JSON.stringify({
+  cards: [1, 2, 3, 4].map((n) => ({
+    group: "heads_up",
+    about: `Topic ${n}`,
+    figure: n,
+    figureKind: "count",
+    figureLabel: "this month",
+    title: `Card ${n}`,
+    why: `Why card ${n} matters.`,
+    nextStep: `Step ${n}.`,
+    picture: null,
+  })),
+});
 
 let webRoot: string;
 
@@ -102,9 +115,11 @@ describe("the AI work routes", () => {
     test.close();
   });
 
+  // The wizard is done and the history has loaded: the first AI run is due, so a press has work.
   async function finishWizard(): Promise<void> {
     await markSetupStep(test.database, "master key", "done");
     await markSetupStep(test.database, "household facts", "done");
+    await claimHistoryWaitEnd(test.database, new Date("2026-11-06T14:00:00.000Z"));
   }
 
   async function signedIn(): Promise<TestBrowser> {
@@ -218,12 +233,19 @@ describe("the AI work routes", () => {
     const again = await tab.post("/api/ai/work/all-history");
     expect([again.status, await again.json()]).toEqual([409, { error: AI_WORK_REFUSALS.running }]);
 
+    // The first AI run's one call here: its Insight card run, as the database holds no Transaction.
+    stub.replyTo = () => INSIGHT_CARDS;
     await runRedoJob(works[0]);
     const done = await workOf(await tab.get("/api/ai/work"));
     expect(done).toMatchObject({
       running: null,
       waits: null,
-      lastRun: { at: "2026-11-06T15:00:00.000Z", items: 0, outcome: "finished" },
+      lastRun: {
+        at: "2026-11-06T15:00:00.000Z",
+        items: 0,
+        aiCategories: 0,
+        outcome: "finished",
+      },
     });
     // The first AI run is done, and nothing is marked: "Finish AI work now" has nothing to do.
     const nothing = await tab.post("/api/ai/work/finish");

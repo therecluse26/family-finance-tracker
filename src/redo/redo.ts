@@ -9,7 +9,7 @@ import {
   type Database,
   endAiRedo,
   markAiAway,
-  markAiCategoriesSince,
+  markCategoriesForAi,
   readAiRedo,
   readHistoryWait,
   recordAiRedoRun,
@@ -51,10 +51,13 @@ import {
 //   step and writes no Monthly review, so sent Alerts and written Monthly reviews stay as they
 //   were, and no Alert gets advice later.
 // - A Member starts it at once from Settings, AI (spec 08, AI work on your Transactions): "Finish
-//   AI work now" runs it even when AI has not come back, and "Run AI on all history" first marks
-//   each Category the AI or a best guess chose in the last 18 months. Each press is one Redo no-AI
-//   work job, with the job's attempts and System notice. One run goes at a time: a press while one
-//   waits or runs is refused, and a redo that AI's return starts gives way to a Member's run.
+//   AI work now" runs it even when AI has not come back. "Run AI on all history" first marks, at
+//   the press, each Category of the last 18 months that no hand edit, Category rule, or Money
+//   movement set; the run then asks the AI about each at step 5, past the provider's category and
+//   Merchant history. The press marks once, so a job's later attempt never asks again about a
+//   Category the AI answered. Each press is one Redo no-AI work job, with the job's attempts and
+//   System notice. One run goes at a time: a press while one waits or runs is refused, and a redo
+//   that AI's return starts gives way to a Member's run.
 
 // The steps of a redo, in this order: clean names first, since the Categories read them; Money
 // movement next, since a new decision clears a Transaction's Categories.
@@ -64,11 +67,15 @@ export type RedoStepName = (typeof REDO_STEPS)[number];
 
 // One step of a redo. `decided` are the Transactions the steps before it decided again. With `ai`
 // false, AI went away during an earlier step: the step makes no AI call, and only puts right what
-// the earlier steps left, such as the Categories of `decided`. Returns the Transactions it decided
-// again. A step must be safe to run twice, as every job is.
+// the earlier steps left, such as the Categories of `decided`. `allHistory` is true in a run of
+// "Run AI on all history". The Categories step counts the Transactions whose Category the AI
+// answered with countAiCategories. Returns the Transactions it decided again. A step must be safe
+// to run twice, as every job is.
 export type RedoStep = (run: {
   decided: readonly string[];
   ai: boolean;
+  allHistory: boolean;
+  countAiCategories(count: number): void;
 }) => Promise<readonly string[]>;
 
 const steps = new Map<RedoStepName, RedoStep>();
@@ -158,18 +165,13 @@ async function redo(
     return "AI away";
   }
   await clearAiAway(database);
-  if (kind === "all history") {
-    step = "marking history";
-    const today = calendarDateIn(now(), (await householdTimeZone(database)) ?? "UTC");
-    const marked = await markAiCategoriesSince(database, monthsBefore(today, ALL_HISTORY_MONTHS));
-    log.info("Run AI on all history marked the Categories it looks at again", { marked });
-  }
   // Each item whose mark goes away during the run is one the run decided: by the AI, or by an
   // earlier cascade step such as Merchant history.
   const before = await countMarkedItems(database);
   const decidedItems = async () => Math.max(0, before - (await countMarkedItems(database)));
+  let aiCategories = 0;
   const record = async (outcome: "finished" | "stopped") =>
-    recordAiRedoRun(database, { at: now(), items: await decidedItems(), outcome });
+    recordAiRedoRun(database, { at: now(), items: await decidedItems(), aiCategories, outcome });
   try {
     const decided = new Set<string>();
     let aiOn = true;
@@ -177,7 +179,15 @@ async function redo(
       const work = steps.get(name);
       if (work === undefined) continue;
       step = name;
-      for (const id of await work({ decided: [...decided], ai: aiOn })) decided.add(id);
+      const run = {
+        decided: [...decided],
+        ai: aiOn,
+        allHistory: kind === "all history",
+        countAiCategories: (count: number) => {
+          aiCategories += count;
+        },
+      };
+      for (const id of await work(run)) decided.add(id);
       // A call of this step found AI away: the later steps make no call.
       if (aiOn && (await readAiRedo(database)).awayAt !== null) aiOn = false;
     }
@@ -199,7 +209,12 @@ async function redo(
       }
       if (await claimFirstAiRunDone(database, now())) log.info("The first AI run finished");
     }
-    log.info("The redo of no-AI work finished", { firstRun, kind, decidedAgain: decided.size });
+    log.info("The redo of no-AI work finished", {
+      firstRun,
+      kind,
+      decidedAgain: decided.size,
+      aiCategories,
+    });
     await record("finished");
     return "done";
   } catch (error) {
@@ -279,20 +294,28 @@ export async function aiWorkView(): Promise<AiWorkView> {
 }
 
 // A press of "Finish AI work now" or "Run AI on all history": starts the run's job, or says why
-// not. A refused press makes no AI call and gives its place back.
+// not. A refused press makes no AI call and gives its place back. "Run AI on all history" marks
+// the last 18 months' Categories here, once, before its job starts: they then wait for the AI like
+// any marked item, even if the job never runs.
 export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
   const services = running();
+  const { database } = services;
   // The place is taken here, before the first await (K18).
   if (busy || pressed !== undefined) return { started: false, refusal: "running" };
   pressed = kind;
   let refusal: AiWorkRefusal | undefined;
   try {
     refusal = await waitsFor(services.ai);
-    if (refusal === undefined && kind === "finish") {
-      const { firstRunDoneAt } = await readAiRedo(services.database);
+    if (refusal === undefined && kind === "all history") {
+      const today = calendarDateIn(services.now(), (await householdTimeZone(database)) ?? "UTC");
+      const marked = await markCategoriesForAi(database, monthsBefore(today, ALL_HISTORY_MONTHS));
+      log.info("Run AI on all history marked the Categories it sends to the AI", { marked });
+    }
+    if (refusal === undefined) {
+      const { firstRunDoneAt } = await readAiRedo(database);
       const firstRun =
-        firstRunDoneAt === null && (await readHistoryWait(services.database)).endedAt !== null;
-      if (!firstRun && (await countMarkedItems(services.database)) === 0) refusal = "nothing waits";
+        firstRunDoneAt === null && (await readHistoryWait(database)).endedAt !== null;
+      if (!firstRun && (await countMarkedItems(database)) === 0) refusal = "nothing waits";
     }
     if (refusal === undefined) await services.startWork(kind);
   } catch (error) {

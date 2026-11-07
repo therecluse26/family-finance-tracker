@@ -13,7 +13,7 @@ export {
   listBestGuessIds,
   listMarkedNameIds,
   markAiAway,
-  markAiCategoriesSince,
+  markCategoriesForAi,
   readAiRedo,
   recordAiRedoRun,
 } from "./ai-redo.ts";
