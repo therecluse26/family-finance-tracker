@@ -117,9 +117,6 @@ export async function readCardFacts(
 }
 
 // The facts of every Transaction whose last result came from one of these steps, oldest first.
-export function listCardFactsAt(
-  database: Queries,
-  steps: readonly string[],
-): Promise<CardFacts[]> {
+export function listCardFactsAt(database: Queries, steps: readonly string[]): Promise<CardFacts[]> {
   return readFacts(database, inArray(transactionDecisions.step, [...steps]));
 }

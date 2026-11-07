@@ -11,6 +11,7 @@ export {
   answerReviewItem,
   countReviewItems,
   everAskedAbout,
+  kindsGroupedByAccounts,
   lastAskedAbout,
   NotAChoice,
   openReviewItem,

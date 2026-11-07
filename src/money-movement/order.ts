@@ -4,6 +4,7 @@ import { cardPayment, cardPaymentReceived, cardRewards } from "./card-payments.t
 import { type LoanFacts, loanPayout } from "./loans.ts";
 import { type ManualLoanFacts, manualLoanTreatment } from "./manual-loans.ts";
 import { oneSidedTransfer } from "./one-sided.ts";
+import type { RememberedAnswer } from "./one-sided-cards.ts";
 import { accountsTreatment, isExcluded, pairTreatment } from "./pairs.ts";
 import {
   cashWithdrawal,
@@ -11,7 +12,6 @@ import {
   paymentToPerson,
   zelleWithMember,
 } from "./payment-apps.ts";
-import type { RememberedAnswer } from "./one-sided-cards.ts";
 import { linkedTreatment, refundLink, unlinkedRefund } from "./refunds.ts";
 import { withSplit } from "./splits.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";

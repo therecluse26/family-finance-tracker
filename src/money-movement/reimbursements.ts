@@ -108,10 +108,7 @@ export function personKeyOf(txn: {
   providerCategory: string | null;
 }): string | null {
   // Plain forms with no marks first, so a full-width or accented spelling reads as its letters.
-  const plain = (text: string) =>
-    plainForms(text)
-      .normalize("NFKD")
-      .replace(/\p{M}/gu, "");
+  const plain = (text: string) => plainForms(text).normalize("NFKD").replace(/\p{M}/gu, "");
   const line = paymentAppLine({
     ...txn,
     description: plain(txn.description),

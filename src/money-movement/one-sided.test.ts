@@ -334,9 +334,9 @@ describe("one-sided Transfers and Saving", () => {
       transactionIds: [await idOf("to-hsa"), await idOf("rent")],
     });
 
-    expect(await answerReviewItem(bank.database, card?.id ?? "", `account ${hsa}`, "member-1")).toBe(
-      "answered",
-    );
+    expect(
+      await answerReviewItem(bank.database, card?.id ?? "", `account ${hsa}`, "member-1"),
+    ).toBe("answered");
     await runFollowUp(NOW);
 
     for (const id of ["rent", "to-hsa"]) {

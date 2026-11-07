@@ -1,9 +1,9 @@
 import {
-  type Database,
-  listDecisionAccounts,
-  listCardFactsAt,
-  listTransferAnswers,
   type CardFacts,
+  type Database,
+  listCardFactsAt,
+  listDecisionAccounts,
+  listTransferAnswers,
   type Queries,
   readCardFacts,
   removeTransferAnswer,
@@ -45,7 +45,11 @@ export function oneSidedKeyOf(txn: {
   if (name === null) return null;
   const key = merchantKey(name);
   if (key === "") return null;
-  return { merchantKey: key, merchantName: name, lastFours: accountLastFours(txn.description).join(",") };
+  return {
+    merchantKey: key,
+    merchantName: name,
+    lastFours: accountLastFours(txn.description).join(","),
+  };
 }
 
 export const keyText = (key: Pick<OneSidedKey, "merchantKey" | "lastFours">) =>
@@ -124,7 +128,11 @@ export async function updateOneSidedCards(database: Database, asked: Asked): Pro
     .filter((facts) => !facts.hidden)
     .map((facts) => {
       const key = oneSidedKeyOf(facts);
-      return { id: facts.id, postedDate: facts.postedDate, key: key === null ? null : keyText(key) };
+      return {
+        id: facts.id,
+        postedDate: facts.postedDate,
+        key: key === null ? null : keyText(key),
+      };
     });
   const fresh = new Set(asking);
   const regroup = regroupCards(

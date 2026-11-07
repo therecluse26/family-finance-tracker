@@ -284,7 +284,11 @@ describe("one-sided Transfer cards", () => {
     expect(
       await linkByHand(
         bank.database,
-        { kind: "Transfer", outTransactionId: await idOf("hand-out"), inTransactionId: await idOf("hand-in") },
+        {
+          kind: "Transfer",
+          outTransactionId: await idOf("hand-out"),
+          inTransactionId: await idOf("hand-in"),
+        },
         MEMBER,
         NOW(),
       ),
@@ -313,7 +317,11 @@ describe("one-sided Transfer cards", () => {
     // A second Connection whose Account is excluded, so it counts as an Unconnected account.
     const other = await bank.connect("fake-second-bank");
     const BROKERAGE = fakeAccount({ id: "acc-other", name: "Other Savings", mask: "8888" });
-    bank.fake.addPages("fake-second-bank", { accounts: [BROKERAGE], added: [], historyLoaded: true });
+    bank.fake.addPages("fake-second-bank", {
+      accounts: [BROKERAGE],
+      added: [],
+      historyLoaded: true,
+    });
     await syncConnection(other, NOW);
     const [excluded] = (
       await sql("SELECT id FROM household_accounts WHERE provider_account_id = ?", [BROKERAGE.id])

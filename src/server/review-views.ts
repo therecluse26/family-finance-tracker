@@ -32,6 +32,9 @@ export type ReviewItemView = {
   createdAt: string;
   // The AI decides it once AI is back.
   needsAi: boolean;
+  // Items the page shows as one group share it, such as Transfer pair guesses between the same two
+  // Accounts. Null for an item shown alone.
+  group: string | null;
 };
 
 export type ReviewRoutes = {

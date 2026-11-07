@@ -114,9 +114,9 @@ describe("Review list items on a large history", () => {
          '2026-10-01T00:00:00.000Z')`,
     );
     const answered = await timed(async () => {
-      expect(await answerReviewItem(bank.database, card?.id ?? "", `account ${added.id}`, "m")).toBe(
-        "answered",
-      );
+      expect(
+        await answerReviewItem(bank.database, card?.id ?? "", `account ${added.id}`, "m"),
+      ).toBe("answered");
       await runFollowUp(NOW);
     });
     expect(await ofKind("one-sided Transfer")).toEqual([]);

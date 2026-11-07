@@ -22,6 +22,7 @@ import {
   acceptOf,
   answerItem,
   changeOneCategory,
+  changeOneType,
   reviewListRequests,
   UNTRACKED_LOAN_KIND,
 } from "../review-list.ts";
@@ -29,12 +30,15 @@ import { routes } from "../routes.tsx";
 import {
   cardTitle,
   categoryPickerOf,
+  displayGroups,
+  groupTitle,
   type ItemActions,
   KIND_LABEL,
   matchingCategories,
   pickedCategoryValue,
   ReviewItems,
   ReviewListItem,
+  shownCount,
   withBusy,
 } from "./ReviewList.tsx";
 
@@ -69,6 +73,7 @@ const item = (
   bestAnswer,
   createdAt: "2026-11-03T14:00:00.000Z",
   needsAi: false,
+  group: null,
   ...fields,
 });
 
@@ -557,6 +562,120 @@ describe("the Review list page", () => {
           body: { category: "Gas", onlyThisTransaction: true },
         },
       ]);
+    });
+  });
+
+  describe("a Money movement card", () => {
+    const transfers = item(
+      "sav",
+      ONE_SIDED_KIND,
+      { value: "keep", label: "Keep it as a Transfer" },
+      {
+        subject: { type: "transactions", transactionIds: ["s1", "s2"] },
+        transactions: ["2026-11-02", "2026-10-02"].map((postedDate, i) =>
+          txn(`s${i + 1}`, {
+            amount: -50_000,
+            postedDate,
+            description: "ONLINE TRANSFER TO SAV XXXX5678",
+            merchantName: "Online Transfer To Sav",
+          }),
+        ),
+        decided: "They name no account, so they count as Transfers. Which account is this?",
+      },
+    );
+    const person = item(
+      "zelle",
+      MONEY_FROM_PERSON_KIND,
+      { value: "keep", label: "Keep all as Income" },
+      {
+        subject: { type: "transactions", transactionIds: ["p1", "p2", "p3"] },
+        transactions: ["p1", "p2", "p3"].map((id) =>
+          txn(id, { amount: 2_000, description: "ZELLE FROM JOHN SMITH", merchantName: null }),
+        ),
+        decided: "3 payments from this person have no link, so they count as Income.",
+      },
+    );
+
+    it("reads as its name and count, with a type Change on each row and no Category", () => {
+      const raw = inRouter(
+        <ReviewListItem item={transfers} state={{}} today={TODAY} actions={noActions} />,
+      );
+      const html = text(raw);
+
+      expect(html).toContain("One-sided Transfer Online Transfer To Sav · 2 Transactions");
+      expect(html).toContain("Nov 2 · −$500.00 · Everyday Checking Change");
+      expect(html).not.toContain("No Category yet");
+      expect(raw).toContain('aria-label="Change the type of Nov 2 · −$500.00 · Everyday Checking"');
+      expect(raw).not.toContain(">Open</a>");
+      expect(html).toContain("and nothing is remembered for it.");
+    });
+
+    it("opens each money from a person row's Transaction, and says why Not this has nothing", () => {
+      const raw = inRouter(
+        <ReviewListItem item={person} state={{ choices: [] }} today={TODAY} actions={noActions} />,
+      );
+      const html = text(raw);
+
+      expect(html).toContain("Money from a person ZELLE FROM JOHN SMITH · 3 Transactions");
+      expect(html).toContain("Keep all as Income");
+      expect(raw).toContain('href="/transactions/p1"');
+      expect(raw.match(/>Open<\/a>/g)).toHaveLength(3);
+      expect(html).toContain(
+        "No other answer covers the whole card. Change a row to set it alone.",
+      );
+    });
+
+    it("sets one row's type by hand", async () => {
+      const sent = recordRequests();
+
+      expect(await changeOneType("s2", "Spending")).toBeUndefined();
+      expect(await changeOneType("s2", "Refund")).toBe("Pick a type.");
+
+      expect(sent).toEqual([
+        { method: "PUT", path: "/api/transactions/s2/type", body: { type: "Spending" } },
+      ]);
+    });
+  });
+
+  describe("Transfer pair guesses between the same two Accounts", () => {
+    const guess = (id: string, group: string | null, accounts: [string, string]) =>
+      item(
+        id,
+        PAIR_GUESS_KIND,
+        { value: "yes", label: "Yes, it is a Transfer" },
+        {
+          subject: { type: "transactions", transactionIds: [`${id}-out`, `${id}-in`] },
+          transactions: [
+            txn(`${id}-out`, { accountName: accounts[0] }),
+            txn(`${id}-in`, { accountName: accounts[1] }),
+          ],
+          group,
+        },
+      );
+    const items = [
+      guess("g1", "accounts a b", ["Everyday Checking", "Savings"]),
+      item("other", BEST_GUESS_KIND, { value: "Gas", label: "Yes, Gas" }),
+      guess("g2", "accounts a b", ["Savings", "Everyday Checking"]),
+      guess("g3", "accounts a c", ["Everyday Checking", "Brokerage"]),
+    ];
+
+    it("show as one group where the first is, each with its own answer, and count once", () => {
+      expect(displayGroups(items).map((group) => group.map((each) => each.id))).toEqual([
+        ["g1", "g2"],
+        ["other"],
+        ["g3"],
+      ]);
+      expect(shownCount(items)).toBe(3);
+      expect(groupTitle(displayGroups(items)[0] ?? [])).toBe(
+        "Everyday Checking and Savings · 2 Transfer guesses",
+      );
+      const raw = inRouter(
+        <ReviewItems items={items} states={{}} today={TODAY} actions={noActions} />,
+      );
+      expect(text(raw)).toContain(
+        "Transfer guess Everyday Checking and Savings · 2 Transfer guesses",
+      );
+      expect(raw.match(/>Yes, it is a Transfer<\/button>/g)).toHaveLength(3);
     });
   });
 

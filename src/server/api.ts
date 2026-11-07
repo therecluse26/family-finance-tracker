@@ -807,6 +807,17 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ deleted: true }, 200);
   })
+  // Settings → Categories: every remembered one-sided Transfer answer, with Delete. Deleting one
+  // sends the one-sided Transfers it decided back through the follow-up job, so they ask again.
+  .get("/transfer-answers", async (c) =>
+    c.json({ answers: await c.var.moneyMovement.transferAnswers() }),
+  )
+  .delete("/transfer-answers/:id", async (c) => {
+    if (!(await c.var.moneyMovement.deleteTransferAnswer(c.req.param("id")))) {
+      return c.json({ error: "No remembered Transfer answer has this ID." }, 404);
+    }
+    return c.json({ deleted: true }, 200);
+  })
   // The Alert list (spec 06, The Alert list), newest first.
   .get("/alerts", async (c) => c.json({ alerts: await c.var.alerts.list() }))
   // "Ask the AI" (spec 06, "Ask the AI"): the Member's Chat thread about this Alert, 201 when new

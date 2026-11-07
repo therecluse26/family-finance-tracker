@@ -202,16 +202,6 @@ export {
   storeCategoryRule,
 } from "./category-rules.ts";
 export {
-  listCardFactsAt,
-  listTransferAnswers,
-  type NewTransferAnswer,
-  type CardFacts,
-  readCardFacts,
-  removeTransferAnswer,
-  type StoredTransferAnswer,
-  storeTransferAnswer,
-} from "./transfer-answers.ts";
-export {
   type ChatAuthor,
   type ChatMessageRow,
   deleteChatThread,
@@ -665,6 +655,16 @@ export {
   searchTransactions,
   type TransactionSearch,
 } from "./transaction-search.ts";
+export {
+  type CardFacts,
+  listCardFactsAt,
+  listTransferAnswers,
+  type NewTransferAnswer,
+  readCardFacts,
+  removeTransferAnswer,
+  type StoredTransferAnswer,
+  storeTransferAnswer,
+} from "./transfer-answers.ts";
 export {
   addUnconnectedAccount,
   assignToUnconnectedAccount,

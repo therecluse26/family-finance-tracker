@@ -65,6 +65,9 @@ export type ReviewKind = {
     choice: ReviewChoice,
     answered: { memberId: string; database: Database },
   ): Promise<void>;
+  // The page shows the kind's items between the same two Accounts as one group, for display only:
+  // each keeps its own answer, and the group counts once (spec 07, Review list page).
+  groupsByAccounts?: boolean;
 };
 
 const kinds = new Map<string, ReviewKind>();
@@ -161,8 +164,14 @@ export async function openReviewItemsOfKind(
   return (await listOpenReviewItemsOfKind(database, kind)).map(itemOf);
 }
 
+// The kinds whose items the page groups by their two Accounts.
+export function kindsGroupedByAccounts(): string[] {
+  return [...kinds].flatMap(([kind, handler]) => (handler.groupsByAccounts === true ? [kind] : []));
+}
+
+// How many open items the page shows, counting a group once.
 export function countReviewItems(database: Database): Promise<number> {
-  return countOpenReviewItems(database);
+  return countOpenReviewItems(database, kindsGroupedByAccounts());
 }
 
 async function openItem(database: Database, id: string) {

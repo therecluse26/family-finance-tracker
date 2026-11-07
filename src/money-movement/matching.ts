@@ -844,7 +844,7 @@ export function startMoneyMovement(options: { database: Database; ai?: Household
           registerRedoStep("Money movement", (run) => redoMarkedLinks(started.database, run.ai)),
         ]),
     registerReviewKind(UNCLEAR_PAIR_KIND, pairKind),
-    registerReviewKind(PAIR_GUESS_KIND, pairKind),
+    registerReviewKind(PAIR_GUESS_KIND, { ...pairKind, groupsByAccounts: true }),
     registerReviewKind(ONE_SIDED_KIND, oneSidedKind(started.database)),
     registerReviewKind(UNTRACKED_LOAN_KIND, untrackedLoanKind),
     registerReviewKind(POSSIBLE_PAYMENT_KIND, {

@@ -83,7 +83,9 @@ describe("money from a person cards", () => {
     ]);
     const card = await cardOf("z1");
     expect(transactionsOf(card)).toEqual(await idsOf(["z3", "z2", "z1"]));
-    expect(card?.decided).toBe("3 payments from this person have no link, so they count as Income.");
+    expect(card?.decided).toBe(
+      "3 payments from this person have no link, so they count as Income.",
+    );
     expect(card?.bestAnswer).toEqual({ value: "keep", label: "Keep all as Income" });
     // A link is about one Transaction, so a card of more offers none.
     expect(await otherReviewChoices(bank.database, card?.id ?? "")).toEqual([]);
@@ -91,7 +93,10 @@ describe("money from a person cards", () => {
     expect((await cardOf("cashout-1"))?.id).not.toBe((await cardOf("cashout-2"))?.id);
     expect(await cards()).toHaveLength(5);
     // A card of one works as before.
-    expect((await cardOf("morgan"))?.bestAnswer).toEqual({ value: "keep", label: "Keep as Income" });
+    expect((await cardOf("morgan"))?.bestAnswer).toEqual({
+      value: "keep",
+      label: "Keep as Income",
+    });
   });
 
   it("keeps only the money still on the card as Income, refuses a link on a card of more, and remembers nothing", async () => {
@@ -135,13 +140,17 @@ describe("money from a person cards", () => {
     await sql("DELETE FROM follow_up_changes");
 
     const link = `link ${await idOf("dinner")}`;
-    expect(await answerReviewItem(bank.database, card?.id ?? "", link, MEMBER)).toBe("not a choice");
+    expect(await answerReviewItem(bank.database, card?.id ?? "", link, MEMBER)).toBe(
+      "not a choice",
+    );
     // Not even as a best answer, which only a race leaves on a card of more.
     await sql("UPDATE review_items SET best_answer = ? WHERE id = ?", [
       JSON.stringify({ value: link, label: "Yes, it pays back dinner" }),
       card?.id ?? "",
     ]);
-    expect(await answerReviewItem(bank.database, card?.id ?? "", link, MEMBER)).toBe("not a choice");
+    expect(await answerReviewItem(bank.database, card?.id ?? "", link, MEMBER)).toBe(
+      "not a choice",
+    );
     expect((await sql("SELECT count(*) AS n FROM spending_links")).rows[0]?.n).toBe(1);
     await sql("UPDATE review_items SET best_answer = ? WHERE id = ?", [
       JSON.stringify(card?.bestAnswer),

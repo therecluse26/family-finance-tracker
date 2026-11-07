@@ -13,8 +13,15 @@ import { buttonClass } from "../components/Button.tsx";
 import { Card } from "../components/Card.tsx";
 import { ErrorLine, FIELD } from "../components/Fields.tsx";
 import { Page, PageHeading } from "../components/Page.tsx";
-import { acceptOf, answerItem, changeOneCategory, reviewListRequests } from "../review-list.ts";
+import {
+  acceptOf,
+  answerItem,
+  changeOneCategory,
+  changeOneType,
+  reviewListRequests,
+} from "../review-list.ts";
 import type { ShellContext } from "../Shell.tsx";
+import { HAND_SET_TYPES } from "../transactions.ts";
 import { browserZone } from "./Accounts.tsx";
 import { CategoryOptions } from "./TransactionDetail.tsx";
 
@@ -53,29 +60,46 @@ export function transactionLine(txn: ReviewTransactionView, today: string): stri
   ].join(" · ");
 }
 
-// The Category kinds, whose items are one card per Merchant (spec 04, Review list items).
-const CATEGORY_KINDS: ReadonlySet<string> = new Set([
-  "best guess made without AI",
-  "Category the AI was unsure of",
+// The kinds whose items are cards, one per key, with what "Change" on a row sets: the Category
+// kinds, one per Merchant (spec 04, Review list items), and the Money movement kinds, one per key
+// (spec 03, Review list items). A money from a person row also opens its Transaction, where a
+// Member links it as a Reimbursement.
+export type RowChange = { sets: "category" } | { sets: "type"; opens: boolean };
+const CARD_KINDS: ReadonlyMap<string, RowChange> = new Map<string, RowChange>([
+  ["best guess made without AI", { sets: "category" }],
+  ["Category the AI was unsure of", { sets: "category" }],
+  ["one-sided Transfer", { sets: "type", opens: false }],
+  ["money from a person", { sets: "type", opens: true }],
 ]);
 
-// A Category card of several Transactions: "Marathon · 14 Transactions". Undefined for any other
-// item, which shows each Transaction's line.
+export function rowChangeOf(kind: string): RowChange | undefined {
+  return CARD_KINDS.get(kind);
+}
+
+// A card of several Transactions: "Marathon · 14 Transactions". Undefined for any other item,
+// which shows each Transaction's line.
 export function cardTitle(item: ReviewItemView): string | undefined {
   const [first] = item.transactions;
-  if (!CATEGORY_KINDS.has(item.kind) || first === undefined || item.transactions.length < 2) {
+  if (!CARD_KINDS.has(item.kind) || first === undefined || item.transactions.length < 2) {
     return undefined;
   }
   return `${first.merchantName ?? first.description} · ${item.transactions.length} Transactions`;
 }
 
-// One row of a card: "Oct 9 · −$42.50 · Everyday Checking · Gas".
-export function cardRowLine(txn: ReviewTransactionView, today: string): string {
+// One row of a card: "Oct 9 · −$42.50 · Everyday Checking · Gas". A Money movement card's row
+// has no Category.
+export function cardRowLine(
+  txn: ReviewTransactionView,
+  today: string,
+  withCategory = true,
+): string {
   return [
     dateLabel(txn.authorizedDate ?? txn.postedDate, today),
     dollarsAndCents(txn.amount, { signed: true }),
     ...(txn.accountName === null ? [] : [txn.accountName]),
-    txn.categories.length === 0 ? "No Category yet" : txn.categories.join(", "),
+    ...(withCategory
+      ? [txn.categories.length === 0 ? "No Category yet" : txn.categories.join(", ")]
+      : []),
   ].join(" · ");
 }
 
@@ -107,16 +131,16 @@ export type ItemState = {
 export type ItemActions = {
   answer(item: ReviewItemView, value: string): void;
   notThis(item: ReviewItemView): void;
-  // Sets one Transaction's Category alone, as "only this Transaction" does. Resolves with the
-  // server's words when it did not work.
+  // Sets one Transaction's Category alone, as "only this Transaction" does, or its type by hand,
+  // by the card's kind. Resolves with the server's words when it did not work.
   changeOne(
     item: ReviewItemView,
     transactionId: string,
-    category: string,
+    value: string,
   ): Promise<string | undefined>;
 };
 
-// The folded list under a Category card: each Transaction, with "Change" to set its Category
+// The folded list under a card: each Transaction, with "Change" to set its Category or its type
 // alone. A changed row leaves the card. While the card's answer is saving, no row changes, and the
 // other way round.
 function CardRows(props: {
@@ -124,8 +148,10 @@ function CardRows(props: {
   today: string;
   actions: ItemActions;
   busy: boolean;
+  change: RowChange;
 }) {
-  const { item } = props;
+  const { item, change } = props;
+  const what = change.sets === "category" ? "Category" : "type";
   const [changing, setChanging] = useState<string | undefined>();
   const [category, setCategory] = useState("");
   const [saving, setBusy] = useState(false);
@@ -137,7 +163,7 @@ function CardRows(props: {
     setError(undefined);
   };
   const save = async (id: string) => {
-    if (category === "") return setError("Pick a Category.");
+    if (category === "") return setError(`Pick a ${what}.`);
     setBusy(true);
     const refused = await props.actions.changeOne(item, id, category);
     setBusy(false);
@@ -151,7 +177,7 @@ function CardRows(props: {
       </summary>
       <ul className="mt-1">
         {item.transactions.map((txn) => {
-          const line = cardRowLine(txn, props.today);
+          const line = cardRowLine(txn, props.today, change.sets === "category");
           const selectId = `change-${item.id}-${txn.id}`;
           return (
             <li
@@ -168,7 +194,7 @@ function CardRows(props: {
                   }}
                 >
                   <label htmlFor={selectId} className="sr-only">
-                    {`Category for ${line}, only this Transaction`}
+                    {`${change.sets === "category" ? "Category" : "Type"} for ${line}, only this Transaction`}
                   </label>
                   <select
                     id={selectId}
@@ -177,7 +203,18 @@ function CardRows(props: {
                     disabled={busy}
                     onChange={(event) => setCategory(event.target.value)}
                   >
-                    <CategoryOptions />
+                    {change.sets === "category" ? (
+                      <CategoryOptions />
+                    ) : (
+                      <>
+                        <option value="">Pick a type</option>
+                        {HAND_SET_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
                   <button type="submit" className={buttonClass("primary", "small")} disabled={busy}>
                     Save
@@ -197,22 +234,37 @@ function CardRows(props: {
                   )}
                 </form>
               ) : (
-                <button
-                  type="button"
-                  className={buttonClass("outlined", "small")}
-                  aria-label={`Change the Category of ${line}`}
-                  disabled={busy}
-                  onClick={() => start(txn.id)}
-                >
-                  Change
-                </button>
+                <span className="flex gap-2">
+                  {change.sets === "type" && change.opens ? (
+                    <Link
+                      className={buttonClass("outlined", "small")}
+                      to={`/transactions/${encodeURIComponent(txn.id)}`}
+                      aria-label={`Open ${line}`}
+                    >
+                      Open
+                    </Link>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={buttonClass("outlined", "small")}
+                    aria-label={`Change the ${what} of ${line}`}
+                    disabled={busy}
+                    onClick={() => start(txn.id)}
+                  >
+                    Change
+                  </button>
+                </span>
               )}
             </li>
           );
         })}
       </ul>
       <p className="mt-1 text-small text-muted">
-        Change sets only that Transaction, with no Category rule.
+        {change.sets === "category"
+          ? "Change sets only that Transaction, with no Category rule."
+          : change.opens
+            ? "Change sets only that Transaction's type. Open one to link it as a Reimbursement."
+            : "Change sets only that Transaction's type, and nothing is remembered for it."}
       </p>
     </details>
   );
@@ -398,6 +450,7 @@ export function ReviewListItem(props: {
   const open = state.choices !== undefined;
   const choicesId = `choices-${item.id}`;
   const picker = state.choices === undefined ? undefined : categoryPickerOf(state.choices);
+  const change = rowChangeOf(item.kind);
   return (
     <li
       className={`flex flex-wrap items-center gap-x-5 gap-y-3 rounded-card border bg-white px-4 py-4 min-[900px]:px-5 min-[900px]:py-[18px] ${open ? "border-accent/45" : "border-line"}`}
@@ -435,8 +488,14 @@ export function ReviewListItem(props: {
           Not this
         </button>
       </div>
-      {cardTitle(item) === undefined ? null : (
-        <CardRows item={item} today={props.today} actions={actions} busy={state.busy === true} />
+      {cardTitle(item) === undefined || change === undefined ? null : (
+        <CardRows
+          item={item}
+          today={props.today}
+          actions={actions}
+          busy={state.busy === true}
+          change={change}
+        />
       )}
       {picker === undefined ? null : (
         <CategoryPicker
@@ -453,6 +512,11 @@ export function ReviewListItem(props: {
           <p className="mb-2 text-small font-semibold" id={choicesId}>
             Other choices
           </p>
+          {state.choices.length === 0 ? (
+            <p className="text-small text-muted">
+              No other answer covers the whole card. Change a row to set it alone.
+            </p>
+          ) : null}
           <ul className="flex flex-wrap gap-2" aria-labelledby={choicesId}>
             {state.choices.map((choice) => (
               <li key={choice.value}>
@@ -478,6 +542,42 @@ export function ReviewListItem(props: {
   );
 }
 
+// The items as the page shows them: items that share a group, such as Transfer pair guesses
+// between the same two Accounts, show together where the first of them is, and every other item
+// alone. For display only: each item in a group keeps its own answer.
+export function displayGroups(items: readonly ReviewItemView[]): ReviewItemView[][] {
+  const groups: ReviewItemView[][] = [];
+  const byKey = new Map<string, ReviewItemView[]>();
+  for (const item of items) {
+    if (item.group === null) {
+      groups.push([item]);
+      continue;
+    }
+    const group = byKey.get(item.group);
+    if (group !== undefined) {
+      group.push(item);
+      continue;
+    }
+    const added = [item];
+    byKey.set(item.group, added);
+    groups.push(added);
+  }
+  return groups;
+}
+
+// How many things the page shows: a group counts once, as the main menu's count does.
+export function shownCount(items: readonly ReviewItemView[]): number {
+  return displayGroups(items).length;
+}
+
+// "Everyday Checking and Savings · 3 Transfer guesses", over a group of Transfer pair guesses.
+export function groupTitle(group: readonly ReviewItemView[]): string {
+  const names = [
+    ...new Set(group[0]?.transactions.map((txn) => txn.accountName ?? "A removed Account")),
+  ];
+  return `${names.join(" and ")} · ${group.length} Transfer guesses`;
+}
+
 export function ReviewItems(props: {
   items: readonly ReviewItemView[];
   states: Readonly<Record<string, ItemState>>;
@@ -491,17 +591,39 @@ export function ReviewItems(props: {
       </Card>
     );
   }
+  const shown = (item: ReviewItemView) => (
+    <ReviewListItem
+      key={item.id}
+      item={item}
+      state={props.states[item.id] ?? {}}
+      today={props.today}
+      actions={props.actions}
+    />
+  );
   return (
     <ul className="flex flex-col gap-3">
-      {props.items.map((item) => (
-        <ReviewListItem
-          key={item.id}
-          item={item}
-          state={props.states[item.id] ?? {}}
-          today={props.today}
-          actions={props.actions}
-        />
-      ))}
+      {displayGroups(props.items).map((group) => {
+        const [first] = group;
+        if (first === undefined) return null;
+        if (group.length === 1) return shown(first);
+        const titleId = `group-${first.id}`;
+        return (
+          <li
+            key={`group ${first.id}`}
+            className="rounded-card border border-line bg-page px-3 py-3 min-[900px]:px-4"
+          >
+            <p className="text-xs font-semibold uppercase tracking-[.05em] text-muted">
+              {KIND_LABEL[first.kind] ?? "Group"}
+            </p>
+            <p id={titleId} className="mt-1 font-semibold">
+              {groupTitle(group)}
+            </p>
+            <ul className="mt-3 flex flex-col gap-3" aria-labelledby={titleId}>
+              {group.map(shown)}
+            </ul>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -522,7 +644,7 @@ export function ReviewList() {
       const { items: open } = (await res.json()) as { items: ReviewItemView[] };
       setItems(open);
       setError(undefined);
-      shell?.setReviewListOpenCount(open.length);
+      shell?.setReviewListOpenCount(shownCount(open));
     } catch {
       setError("The server did not answer.");
     }
@@ -542,10 +664,13 @@ export function ReviewList() {
       setState(item.id, { ...before, busy: false, error: outcome.error });
       if (!outcome.stillOpen) await load();
     },
-    async changeOne(item, transactionId, category) {
+    async changeOne(item, transactionId, value) {
       // The card's own answer waits while a row saves, so the two never cross.
       setStates((all) => withBusy(all, item.id, true));
-      const refused = await changeOneCategory(transactionId, category);
+      const refused =
+        rowChangeOf(item.kind)?.sets === "type"
+          ? await changeOneType(transactionId, value)
+          : await changeOneCategory(transactionId, value);
       setStates((all) => withBusy(all, item.id, false));
       if (refused !== undefined) return refused;
       // The row leaves the card at once; the list read again shows what the server holds.
@@ -588,8 +713,8 @@ export function ReviewList() {
       <ErrorLine error={error} />
       {items === undefined || items.length === 0 ? null : (
         <p className="-mt-1 text-muted">
-          {items.length === 1 ? "1 thing" : `${items.length} things`} the app could not settle
-          alone. Nothing here is urgent: each already counts as the app decided.
+          {shownCount(items) === 1 ? "1 thing" : `${shownCount(items)} things`} the app could not
+          settle alone. Nothing here is urgent: each already counts as the app decided.
         </p>
       )}
       {items === undefined ? null : (
