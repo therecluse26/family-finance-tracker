@@ -13,6 +13,7 @@ import {
   dataUseLine,
   enteredPrices,
   KeyTestLine,
+  MODEL_NO_WEB_SEARCH,
   NO_WEB_SEARCH,
   priceOfText,
   saveCostCap,
@@ -398,7 +399,7 @@ describe("Settings → AI: Web lookup", () => {
 
   const switchOf = (html: string) => html.match(/<input[^>]*role="switch"[^>]*>/)?.[0] ?? "";
 
-  it("shows the switch on, off, and off with why when the AI provider has no web search", () => {
+  it("shows the switch on, off, and off with why when the AI provider or the Quick model has no web search", () => {
     const on = renderToString(<WebLookupCard ai={OPENAI} onSaved={() => {}} />);
     const off = renderToString(
       <WebLookupCard
@@ -426,6 +427,17 @@ describe("Settings → AI: Web lookup", () => {
     expect(switchOf(none)).toContain('aria-checked="false"');
     expect(switchOf(none)).toContain('disabled=""');
     expect(text(none)).toContain(NO_WEB_SEARCH);
+
+    const refused = renderToString(
+      <WebLookupCard
+        ai={{ ...OPENAI, webLookup: { on: true, unavailable: "model has no web search" } }}
+        onSaved={() => {}}
+      />,
+    );
+    expect(switchOf(refused)).toContain('aria-checked="false"');
+    expect(switchOf(refused)).toContain('disabled=""');
+    expect(text(refused)).toContain(MODEL_NO_WEB_SEARCH);
+    expect(text(refused)).not.toContain(NO_WEB_SEARCH);
   });
 
   it("turns the switch with one PUT, and shows the server's refusal", async () => {

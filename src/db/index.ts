@@ -13,6 +13,7 @@ export {
   listBestGuessIds,
   listMarkedNameIds,
   markAiAway,
+  markAiRedoDue,
   markCategoriesForAi,
   readAiRedo,
   recordAiRedoRun,
@@ -464,9 +465,11 @@ export {
   type KeptMerchantLookup,
   readMerchantLookups,
   readWebLookupSwitch,
+  readWebSearchRefused,
   reserveMerchantLookup,
   storeMerchantLookup,
   storeWebLookupSwitch,
+  storeWebSearchRefused,
 } from "./merchant-lookups.ts";
 export {
   applyMigrations,

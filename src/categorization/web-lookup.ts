@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { type AiReply, type HouseholdAi, PrivacyRefusal } from "../ai/index.ts";
+import { type AiReply, type HouseholdAi, PrivacyRefusal, plainVoice } from "../ai/index.ts";
 import { CATEGORIES, type Category, isCategory } from "../categories/index.ts";
 import {
   type Database,
@@ -26,6 +26,20 @@ export const NOTHING_FOUND_DAYS = 90;
 
 // The longest line about a business.
 export const DESCRIPTION_LENGTH = 120;
+
+// Control and format characters, such as a bell or a right-to-left override, which a web page can
+// put in the line: the stored line keeps none.
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
+
+// The line about the business as the app keeps and shows it: in the plain voice, with each control
+// or format character a space, and at most 120 characters. A "Member A" in it stays as written:
+// web text names no Member, so no label turns back into a name.
+export function cleanDescription(text: string): string {
+  return plainVoice(text.replace(CONTROL_OR_FORMAT, " "))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, DESCRIPTION_LENGTH);
+}
 
 const CATEGORY_NAMES = CATEGORIES.map((category) => category.name) as [Category, ...Category[]];
 
@@ -139,6 +153,7 @@ export type LookupResult =
 export class WebLookups {
   private made = 0;
   private stop: { mark: boolean } | undefined;
+  private overCap = false;
 
   private readonly database: Database;
   private readonly ai: HouseholdAi;
@@ -155,6 +170,12 @@ export class WebLookups {
     return new WebLookups(database, ai, await ai.webLookupOn());
   }
 
+  // True once a Merchant waits past the run's cap of 50 lookups, with its Category marked for the
+  // redo of no-AI work.
+  get waitsPastCap(): boolean {
+    return this.overCap;
+  }
+
   // Why this run makes no more lookups, once it stopped.
   get stopped(): { mark: boolean } | undefined {
     if (this.stop !== undefined) return this.stop;
@@ -168,7 +189,10 @@ export class WebLookups {
     const key = keptKey(merchant);
     if (!this.on || key === undefined) return "skipped";
     const stopped = this.stopped;
-    if (stopped !== undefined) return { stopped };
+    if (stopped !== undefined) {
+      if (this.stop === undefined) this.overCap = true;
+      return { stopped };
+    }
     // A pause, such as at the AI cost cap, or a wait for the AI retry: no call goes out, and the
     // Category waits for the redo.
     if (
@@ -201,18 +225,22 @@ export class WebLookups {
       return "skipped";
     }
     if (!reply.ready) {
-      // No call went out for a pause, such as the AI cost cap reached since the check, or the AI
-      // provider refused the key before any search. A failed call keeps its place.
-      if ("pause" in reply) await place.giveBack();
+      // No search ran for a pause, such as the AI cost cap reached since the check, for a refused
+      // key, or for a search the AI provider refused with this Quick model. A failed call keeps its
+      // place.
+      if ("pause" in reply || "noWebSearch" in reply) await place.giveBack();
       if ("badReply" in reply) return "skipped";
+      // The Quick model has no web search: the Category fix's answer stands, with no mark, and no
+      // lookup runs until the Quick model changes.
+      if ("noWebSearch" in reply) {
+        this.stop = { mark: false };
+        return { stopped: this.stop };
+      }
       this.stop = { mark: true };
       return { stopped: this.stop };
     }
     const answer = LOOKUP_ANSWER.parse(reply.output);
-    const description = (await this.ai.forScreen(answer.description))
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, DESCRIPTION_LENGTH);
+    const description = cleanDescription(answer.description);
     if (!answer.found || answer.category === null || description === "") {
       await storeMerchantLookup(this.database, key, {
         outcome: "nothing found",

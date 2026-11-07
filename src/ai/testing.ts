@@ -99,11 +99,18 @@ export type StubAnswer =
   | "reject"
   | "rate limit"
   | "unknown model"
+  | "bad request"
   | "fail"
   | "throw"
   | "hang";
 
-const STUB_STATUS = { reject: 401, "rate limit": 429, "unknown model": 404, fail: 500 } as const;
+const STUB_STATUS = {
+  reject: 401,
+  "rate limit": 429,
+  "unknown model": 404,
+  "bad request": 400,
+  fail: 500,
+} as const;
 
 // A reply's token counts, as an AI provider reports them.
 export type StubUsage = {
@@ -295,6 +302,7 @@ export class StubModels {
       answer === "reject" ||
       answer === "rate limit" ||
       answer === "unknown model" ||
+      answer === "bad request" ||
       answer === "fail"
     ) {
       throw Object.assign(

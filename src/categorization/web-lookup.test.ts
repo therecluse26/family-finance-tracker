@@ -9,6 +9,8 @@ import {
   countMerchantLookups,
   deleteRemovedConnection,
   markConnectionRemoved,
+  readAiRedo,
+  readAiRetry,
   readMerchantLookups,
   reserveMerchantLookup,
   storeMerchantLookup,
@@ -17,7 +19,7 @@ import {
 import { runFollowUp } from "../follow-up/index.ts";
 import { K7_LINES } from "../large-history/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
-import { runRedo, startRedo } from "../redo/index.ts";
+import { aiWorkView, runRedo, startRedo } from "../redo/index.ts";
 import { answerReviewItem, openReviewItems } from "../review/index.ts";
 import {
   AI_UNSURE_KIND,
@@ -27,11 +29,13 @@ import {
 } from "./index.ts";
 import { CATEGORY_FIX_TASK, MERCHANT_CLEANUP_TASK } from "./quick-tier.ts";
 import {
+  cleanDescription,
   LOOKUPS_A_RUN,
   type LookupLine,
   lookupKeys,
   MERCHANT_LOOKUP_TASK,
   skipsLookup,
+  WebLookups,
 } from "./web-lookup.ts";
 
 // The Web lookup (spec 04, Web lookup; spec 08, Merchant web lookup): when the Category fix is
@@ -81,10 +85,16 @@ describe("the Web lookup in the categorization step", () => {
   let answerCategory: (row: Row) => CategoryAnswer;
   let answerName: (row: Row) => string;
   let answerLookup: (merchant: string) => LookupAnswer | string;
+  // The end of the AI cost cap's pause while the cap is reached, else undefined.
+  let capUntil: string | undefined;
+  // How many times AI work asked for the redo of no-AI work to start.
+  let redoRequests: number;
+  // How many places under the month's cap the categorization step asked for.
+  let reservations: number;
 
   const gates: AiGates = {
     historyLoaded: async () => true,
-    costCapPausedUntil: async () => undefined,
+    costCapPausedUntil: async () => capUntil,
   };
   const aiOptions = () => ({
     database: bank.database,
@@ -93,13 +103,27 @@ describe("the Web lookup in the categorization step", () => {
     cost: aiCost({ database: bank.database }),
     gates,
     notices: { raise: async () => undefined, end: async () => undefined },
+    aiBack: async () => {
+      redoRequests += 1;
+    },
   });
-  const connectAi = async (provider: "anthropic" | "openai-compatible" = "anthropic") => {
+  // The Household AI, counting the places it reserves.
+  const counted = (ai: HouseholdAi): HouseholdAi => ({
+    ...ai,
+    reserveLookup: () => {
+      reservations += 1;
+      return ai.reserveLookup();
+    },
+  });
+  const connectAi = async (
+    provider: "anthropic" | "openai-compatible" = "anthropic",
+    quickModel = "quick-model",
+  ) => {
     const saved = await aiSettings(aiOptions()).save({
       provider,
       apiKey: provider === "anthropic" ? newAiKey() : undefined,
       baseUrl: provider === "anthropic" ? null : "http://192.168.1.50:8080/v1",
-      quickModel: "quick-model",
+      quickModel,
       writerModel: "writer-model",
       prices: { quick: PRICE, writer: PRICE },
     });
@@ -198,6 +222,9 @@ describe("the Web lookup in the categorization step", () => {
     stub = new StubModels();
     asked = [];
     lines = [];
+    capUntil = undefined;
+    redoRequests = 0;
+    reservations = 0;
     answerCategory = () => ({ category: "Restaurants", confidence: "medium", needsLookup: true });
     answerName = (row) => String(row.description);
     answerLookup = () => found("Pets");
@@ -223,7 +250,7 @@ describe("the Web lookup in the categorization step", () => {
     });
     stops = [
       startMoneyMovement({ database: bank.database }).stop,
-      startCategorization({ database: bank.database, ai: householdAi(aiOptions()) }).stop,
+      startCategorization({ database: bank.database, ai: counted(householdAi(aiOptions())) }).stop,
     ];
     connectionId = await bank.connect(BANK);
     bank.fake.addPages(BANK, { accounts: [CARD] });
@@ -296,6 +323,23 @@ describe("the Web lookup in the categorization step", () => {
         bestAnswer: { value: "Pets", label: "Yes, Pets" },
       },
     ]);
+  });
+
+  it("keeps the line about the business with no control or format character, and never turns a Member label into a name", async () => {
+    await addMorgan();
+    await connectAi();
+    answerLookup = () =>
+      found("Pets", "high", "A pet shop\u0007 that Member A\u202E runs\u200B\u001b here!");
+    await sync({ added: [buy("line", "2026-10-05", "Bluebird Pets")] });
+
+    const line = "A pet shop that Member A runs here.";
+    expect(await kept()).toEqual([
+      expect.objectContaining({ key: "name:bluebirdpets", description: line }),
+    ]);
+    expect(await transactionWebLookupLine(bank.database, await idOf("line"))).toBe(line);
+    expect(
+      cleanDescription("\u2066Shop\u2069\u00ad\ufeff sells\u0000 tea\u200f\u2028\u0085 and cake"),
+    ).toBe("Shop sells tea and cake");
   });
 
   it("takes a Member's correction over a Web lookup, as a Category rule the next Transaction uses", async () => {
@@ -573,6 +617,109 @@ describe("the Web lookup in the categorization step", () => {
       expect(await partOf("fail-3")).toMatchObject({ source: "AI", needsAi: 1 });
     });
 
+    it.each(["bad request", "unknown model"] as const)(
+      "takes a search the AI provider refuses with the Quick model (%s) as no web search: AI is not away, no retry waits, nothing is marked, and the switch says why",
+      async (refusal) => {
+        await connectAi();
+        stops.push(startRedo({ database: bank.database, ai: householdAi(aiOptions()) }).stop);
+        stub.lookupAnswer = refusal;
+        const searchCalls = () => stub.offered.filter((call) => call.tools.includes("web_search"));
+        await sync({
+          added: ["One", "Two"].map((name, index) =>
+            buy(`refused-${index}`, "2026-10-05", `${name} Shop`),
+          ),
+        });
+
+        // One refused request, then no more in the run, and its place goes back.
+        expect(searchCalls()).toHaveLength(1);
+        for (const id of ["refused-0", "refused-1"]) {
+          expect(await partOf(id)).toEqual({
+            category: "Restaurants",
+            source: "AI",
+            confidence: "medium",
+            needsAi: 0,
+          });
+        }
+        expect(await countMerchantLookups(bank.database, "2026-11")).toBe(0);
+        expect(await kept()).toEqual([]);
+        expect((await readAiRedo(bank.database)).awayAt).toBeNull();
+        expect(await readAiRetry(bank.database, "merchant lookup")).toBeUndefined();
+        // The redo of no-AI work is not held back.
+        expect(await aiWorkView()).toMatchObject({ waits: null, retryAt: null, waiting: 0 });
+        expect((await aiSettings(aiOptions()).view())?.webLookup).toEqual({
+          on: true,
+          unavailable: "model has no web search",
+        });
+
+        // The model is remembered: the next sync makes no lookup call.
+        await sync({ added: [buy("refused-2", "2026-10-06", "Three Shop")] });
+        expect(searchCalls()).toHaveLength(1);
+        expect(await partOf("refused-2")).toMatchObject({ source: "AI", needsAi: 0 });
+
+        // Another Quick model may search again.
+        stub.lookupAnswer = undefined;
+        await connectAi("anthropic", "quick-model-2");
+        expect((await aiSettings(aiOptions()).view())?.webLookup).toEqual({
+          on: true,
+          unavailable: null,
+        });
+        await sync({ added: [buy("refused-3", "2026-10-07", "Four Shop")] });
+        expect(lookedUp()).toEqual(["Four Shop"]);
+        expect(await partOf("refused-3")).toMatchObject({ source: "Web lookup", needsAi: 0 });
+      },
+    );
+
+    it("makes no lookup at the AI cost cap reached after the Category fix answered, marks the Categories, and takes no place", async () => {
+      await connectAi();
+      const reply = stub.replyTo;
+      stub.replyTo = (messages) => {
+        const answer = reply?.(messages) ?? "";
+        if (readCall(messages)?.use === "category fix") capUntil = "2026-12-01T05:00:00.000Z";
+        return answer;
+      };
+      await sync({
+        added: ["One", "Two"].map((name, index) =>
+          buy(`capped-${index}`, "2026-10-05", `${name} Shop`),
+        ),
+      });
+
+      expect(callsOf("category fix")).toHaveLength(1);
+      expect(lookedUp()).toEqual([]);
+      for (const id of ["capped-0", "capped-1"]) {
+        expect(await partOf(id)).toMatchObject({
+          category: "Restaurants",
+          source: "AI",
+          needsAi: 1,
+        });
+      }
+      expect(await countMerchantLookups(bank.database, "2026-11")).toBe(0);
+      // The cap stops the lookup before it takes a place.
+      expect(reservations).toBe(0);
+    });
+
+    it("gives back the place of a lookup the AI cost cap paused after it took the place", async () => {
+      await connectAi();
+      const ai = householdAi(aiOptions());
+      // The cap is reached between the place and the call.
+      const closing: HouseholdAi = {
+        ...ai,
+        reserveLookup: async () => {
+          const place = await ai.reserveLookup();
+          capUntil = "2026-12-01T05:00:00.000Z";
+          return place;
+        },
+      };
+      const lookups = await WebLookups.start(bank.database, closing);
+      const offered = stub.offered.length;
+
+      expect(await lookups.lookUp({ id: null, name: "Bluebird Books" }, NOW())).toEqual({
+        stopped: { mark: true },
+      });
+      expect(stub.offered).toHaveLength(offered);
+      expect(await countMerchantLookups(bank.database, "2026-11")).toBe(0);
+      expect(await kept()).toEqual([]);
+    });
+
     it("looks a marked Merchant up again in Finish AI work now, once the AI retry wait ends", async () => {
       await connectAi();
       stops.push(startRedo({ database: bank.database, ai: householdAi(aiOptions()) }).stop);
@@ -613,6 +760,47 @@ describe("the Web lookup in the categorization step", () => {
         { source: "AI", needsAi: 1, n: 5 },
         { source: "Web lookup", needsAi: 0, n: 50 },
       ]);
+    });
+
+    it("makes the redo due for the Merchants past a run's cap, and the redos look them up until none waits", async () => {
+      await connectAi();
+      stops.push(startRedo({ database: bank.database, ai: householdAi(aiOptions()) }).stop);
+      const shop = (index: number) =>
+        `Shop ${String.fromCharCode(65 + (index % 26))}${Math.floor(index / 26)}`;
+      await sync({
+        added: Array.from({ length: 105 }, (_, index) =>
+          buy(`chain-${index}`, "2026-10-05", shop(index)),
+        ),
+      });
+      const marked = async () =>
+        Number(
+          (
+            await bank.database.$client.execute(
+              "SELECT count(*) AS n FROM transaction_parts WHERE category_needs_ai = 1",
+            )
+          ).rows[0]?.n,
+        );
+
+      expect(lookedUp()).toHaveLength(LOOKUPS_A_RUN);
+      expect(await marked()).toBe(55);
+      expect((await readAiRedo(bank.database)).dueAt).not.toBeNull();
+      expect(redoRequests).toBe(1);
+
+      // The first redo looks up 50 more, and makes itself due again for the last 5.
+      expect(await runRedo()).toBe("done");
+      expect(lookedUp()).toHaveLength(2 * LOOKUPS_A_RUN);
+      expect(await marked()).toBe(5);
+      expect((await readAiRedo(bank.database)).dueAt).not.toBeNull();
+      expect(redoRequests).toBe(2);
+
+      // The last redo looks up the rest, and the chain ends.
+      expect(await runRedo()).toBe("done");
+      expect(lookedUp()).toHaveLength(105);
+      expect(await marked()).toBe(0);
+      expect((await readAiRedo(bank.database)).dueAt).toBeNull();
+      expect(redoRequests).toBe(2);
+      expect(await runRedo()).toBe("not due");
+      expect(new Set(lookedUp()).size).toBe(105);
     });
 
     it("stops at 200 lookups a month with no mark, and the AI usage page says so", async () => {

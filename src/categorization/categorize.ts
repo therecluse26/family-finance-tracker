@@ -478,6 +478,8 @@ export async function chooseCategories(
     await storePartCategories(database, choices);
     choices = [];
   }
+  // Merchants past the run's cap of lookups wait for the redo, which this makes due.
+  if (lookups?.waitsPastCap === true && typeof ai === "object") await ai.lookupsWait();
   return { reviews, left, again, answered };
 }
 

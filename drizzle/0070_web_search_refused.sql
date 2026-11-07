@@ -1,0 +1,1 @@
+ALTER TABLE `ai_settings` ADD `web_search_refused` text;

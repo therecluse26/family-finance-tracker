@@ -269,7 +269,11 @@ export type PriceSource =
 
 // The Web lookup's switch (spec 08, Merchant web lookup). "no web search" when the AI provider has
 // none, such as an OpenAI-compatible endpoint: the app makes no lookup, whatever the switch says.
-export type WebLookupView = { on: boolean; unavailable: "no web search" | null };
+export type WebLookupView = {
+  on: boolean;
+  // Why no lookup runs: the AI provider has no web search, or it refused the Quick model's.
+  unavailable: "no web search" | "model has no web search" | null;
+};
 
 // The most Merchant lookups in a month, in Household time. A kept answer does not count.
 export const MERCHANT_LOOKUPS_A_MONTH = 200;

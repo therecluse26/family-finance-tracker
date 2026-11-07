@@ -187,6 +187,19 @@ export async function claimAiBack(
   return claimed.length === 1;
 }
 
+// AI work waits that AI is on for, such as the Web lookups past one run's cap: makes a redo due at
+// `at`, or just after the due time already set. A redo running now ends only the due time it read,
+// so the new, later one stays due. Jobs run one at a time, so no other write comes between the read
+// and the write.
+export async function markAiRedoDue(database: Database, at: Date): Promise<void> {
+  const { dueAt } = await readAiRedo(database);
+  const due = dueAt !== null && dueAt >= at ? new Date(dueAt.getTime() + 1) : at;
+  await database
+    .insert(aiRedo)
+    .values({ id: AI_REDO_ROW, dueAt: due })
+    .onConflictDoUpdate({ target: aiRedo.id, set: { dueAt: due } });
+}
+
 // A redo starts with AI on: AI is not away. A call that finds AI away during the redo marks it
 // again.
 export async function clearAiAway(database: Database): Promise<void> {

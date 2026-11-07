@@ -3,9 +3,12 @@ import {
   giveBackMerchantLookup,
   listMemberNamesById,
   markAiAway,
+  markAiRedoDue,
   readAiSettings,
+  readAiSettingsVersion,
   readWebLookupSwitch,
   reserveMerchantLookup,
+  storeWebSearchRefused,
 } from "../db/index.ts";
 import { log } from "../log.ts";
 import { isActivityUse, startAiActivity } from "./activity.ts";
@@ -14,7 +17,6 @@ import {
   AiCallError,
   type AiFailure,
   callModel,
-  hasWebSearch,
   readPrivacyFacts,
   type StreamEnd,
   streamModel,
@@ -23,7 +25,14 @@ import { type AiPause, AiPausedError } from "./outbound.ts";
 import { memberLabel, PrivacyRefusal, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, isQuickBatchUse, plainData } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
-import { type AiOptions, aiCalls, markKeyRejected, noticesOf } from "./settings.ts";
+import {
+  type AiOptions,
+  aiCalls,
+  markKeyRejected,
+  noticesOf,
+  webSearchMissing,
+  webSearchModel,
+} from "./settings.ts";
 import { plainVoice } from "./voice.ts";
 
 // The AI's reply, or why the use has none.
@@ -37,16 +46,26 @@ import { plainVoice } from "./voice.ts";
 // - badReply: a Quick batch's reply that failed its schema, or was cut off (spec 08, Failures). It
 //   is not an outage: its rows take the no-AI path, and the use's later batches go on. Only the
 //   BAD_REPLIES_IN_A_ROW-th bad reply in a row of one use is an AI error, with its retries.
+// - noWebSearch: the AI provider refused a Merchant lookup's search request with the Quick model
+//   (spec 08, Merchant web lookup). It is not an AI error: AI is not away, no retry waits, and no
+//   lookup runs until the Quick model changes.
 export type AiReply<OUTPUT = undefined> =
   | { ready: true; text: string; output: OUTPUT }
   | { ready: false; pause: AiPause }
   | { ready: false; retryAt: Date }
   | { ready: false; failed: AiFailure }
-  | { ready: false; failed: "bad reply"; badReply: true };
+  | { ready: false; failed: "bad reply"; badReply: true }
+  | { ready: false; failed: "server error"; noWebSearch: true };
 
 // The bad reply in a row of one Quick batch use that counts as an AI error, so a model that always
 // answers badly stops after its retries (K4).
 export const BAD_REPLIES_IN_A_ROW = 3;
+
+// The statuses with which an AI provider refuses a request it cannot run, such as a web search
+// tool its model does not take: 400, 404 for a model it has no search for, and 422.
+const SEARCH_REFUSED = new Set([400, 404, 422]);
+const refusedSearch = (status: number | undefined) =>
+  status !== undefined && SEARCH_REFUSED.has(status);
 
 // The one way other modules call the AI. Every call goes out through the privacy filter (spec 08,
 // Privacy filter), then the cost gate, and its cost counts (src/ai/call.ts). AI text comes back
@@ -80,6 +99,10 @@ export type HouseholdAi = {
   // with an AI provider that has a web search, and the Web lookup's switch is on. It makes no call,
   // and says nothing of the AI cost cap, which pauses the call itself.
   webLookupOn(): Promise<boolean>;
+  // Merchants wait past one run's cap of lookups: makes the redo of no-AI work due, and starts it,
+  // so their lookups run without a Member's press. Each such redo takes 50 of the month's 200
+  // places, so the month's cap ends the chain (known finding K4).
+  lookupsWait(): Promise<void>;
   // Takes one lookup's place under the month's cap of 200, in one step, or undefined at the cap
   // (known finding K18). `giveBack` returns the place when no call went out.
   reserveLookup(): Promise<{ giveBack(): Promise<void> } | undefined>;
@@ -130,7 +153,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
         }
       } else if ("pause" in reply) {
         if (reply.pause !== "waits for history") await markAiAway(database, "pause", new Date());
-      } else if (!("badReply" in reply)) {
+      } else if (!("badReply" in reply) && !("noWebSearch" in reply)) {
         await markAiAway(database, "outage", new Date());
       }
     } catch (error) {
@@ -138,6 +161,15 @@ export function householdAi(options: AiOptions): HouseholdAi {
         error: error instanceof Error ? error.name : "unknown",
       });
     }
+  }
+
+  // The AI provider refused a lookup's search request with the Quick model it was made from, at
+  // `generation`. A save since then may have changed the model, so it notes nothing then.
+  async function searchRefused(generation: number): Promise<void> {
+    const { settings, generation: now } = await readAiSettingsVersion(database);
+    if (settings === undefined || now !== generation) return;
+    await storeWebSearchRefused(database, webSearchModel(settings));
+    logger.info("The AI provider refused web search with the Quick model");
   }
 
   async function generate<OUTPUT>(
@@ -186,6 +218,10 @@ export function householdAi(options: AiOptions): HouseholdAi {
         if (background) await retries.ended(use);
         await keyRejected(found.generation);
         return { ready: false, pause: "key rejected" };
+      }
+      if (use === "merchant lookup" && failure === "server error" && refusedSearch(status)) {
+        await searchRefused(found.generation);
+        return { ready: false, failed: failure, noWebSearch: true };
       }
       if (!background) return { ready: false, failed: failure };
       // A Merchant lookup reads web pages, so a bad reply is not an outage either.
@@ -251,8 +287,12 @@ export function householdAi(options: AiOptions): HouseholdAi {
     },
     async webLookupOn() {
       const stored = await readAiSettings(database);
-      if (stored === undefined || !hasWebSearch(stored.provider)) return false;
+      if (stored === undefined || (await webSearchMissing(database, stored)) !== null) return false;
       return readWebLookupSwitch(database);
+    },
+    async lookupsWait() {
+      await markAiRedoDue(database, new Date());
+      await options.aiBack?.();
     },
     async reserveLookup() {
       const month = await options.cost.currentMonth();

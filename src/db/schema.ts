@@ -527,6 +527,9 @@ export const aiSettings = sqliteTable(
     // The Web lookup's switch (spec 08, Merchant web lookup): on whenever AI is on, until a Member
     // turns it off. A save and a Remove AI provider keep it.
     webLookup: integer("web_lookup", { mode: "boolean" }).notNull().default(true),
+    // The AI provider and Quick model, as "provider:model", whose AI provider refused the Web
+    // lookup's search request: that model has no web search, until the Quick model changes.
+    webSearchRefused: text("web_search_refused"),
   },
   (table) => [
     check("ai_settings_one_row", sql`${table.id} = 1`),
@@ -1329,9 +1332,9 @@ export const merchantNameAnswers = sqliteTable("merchant_name_answers", {
 
 // The Web lookup's answer for each Merchant (spec 04, Web lookup), by the key Merchant identity
 // gives it: "id:" and the provider's Merchant ID, else "name:" and the clean name as identity
-// compares it. A Household-wide fact about the Merchant, not about a Connection, so no delete of
-// bank data touches it. A lookup that found nothing keeps no Category, and the Merchant is looked
-// up again only 90 days after it.
+// compares it. A Household-wide fact about the Merchant, not about a Connection: a Connection's
+// delete removes only the answers no Transaction's Merchant holds any more. A lookup that found
+// nothing keeps no Category, and the Merchant is looked up again only 90 days after it.
 export const merchantLookups = sqliteTable(
   "merchant_lookups",
   {

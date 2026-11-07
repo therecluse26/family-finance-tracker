@@ -167,3 +167,21 @@ export async function storeWebLookupSwitch(database: Database, on: boolean): Pro
     .where(eq(aiSettings.id, AI_SETTINGS_ROW));
   return result.rowsAffected === 1;
 }
+
+// The AI provider and Quick model, as "provider:model", that refused the Web lookup's search, or
+// null when none did.
+export async function readWebSearchRefused(database: Database): Promise<string | null> {
+  const [row] = await database
+    .select({ refused: aiSettings.webSearchRefused })
+    .from(aiSettings)
+    .where(eq(aiSettings.id, AI_SETTINGS_ROW));
+  return row?.refused ?? null;
+}
+
+// Notes that the AI provider refused the Web lookup's search with this Quick model.
+export async function storeWebSearchRefused(database: Database, model: string): Promise<void> {
+  await database
+    .update(aiSettings)
+    .set({ webSearchRefused: model })
+    .where(eq(aiSettings.id, AI_SETTINGS_ROW));
+}

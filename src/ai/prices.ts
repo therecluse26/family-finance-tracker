@@ -86,8 +86,9 @@ export function nanosOfDollars(dollars: number): number {
 // - OpenAI, https://developers.openai.com/api/docs/pricing: web search "$10.00 / 1k calls +
 //   Search content tokens billed at model rates". The tokens come in the reply's usage.
 // - OpenRouter, https://openrouter.ai/docs/guides/features/plugins/web-search: the Exa engine's
-//   "$0.007 per request" with up to 10 results, one search per call. The page does not say whether
-//   the reply's usage.cost holds it, so the fee counts on top, on the AI cost cap's safe side.
+//   "$0.007 per request", one search per call, for which the app asks 5 results
+//   (src/ai/providers.ts). The page does not say whether the reply's usage.cost holds it, so the
+//   fee counts on top, on the AI cost cap's safe side.
 // An OpenAI-compatible endpoint has no web search.
 export type WebSearchFee = { nanos: number; per: "search" | "call" };
 

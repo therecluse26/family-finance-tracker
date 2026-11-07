@@ -607,6 +607,8 @@ const SWITCH_TRACK =
   "relative inline-block h-6 w-10 shrink-0 rounded-full bg-field peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent peer-disabled:opacity-70 after:absolute after:top-[3px] after:left-[3px] after:size-[18px] after:rounded-full after:bg-white after:content-[''] peer-checked:after:left-[19px]";
 
 export const NO_WEB_SEARCH = "Your AI provider has no web search, so the app makes no Web lookup.";
+export const MODEL_NO_WEB_SEARCH =
+  "Your AI provider turned down web search with this Quick model, so the app makes no Web lookup. Pick another Quick model to turn it on.";
 
 // Turns the Web lookup on or off. Answers the AI settings after it, or the words for a refusal.
 export async function saveWebLookup(on: boolean): Promise<{ ai: AiView } | { error: string }> {
@@ -616,7 +618,8 @@ export async function saveWebLookup(on: boolean): Promise<{ ai: AiView } | { err
 }
 
 // The Web lookup's switch (spec 08, AI settings page; Merchant web lookup). It saves at once. With
-// an AI provider that has no web search, it shows off and says why.
+// an AI provider that has no web search, or a Quick model it refused a search with, it shows off
+// and says why.
 export function WebLookupCard(props: { ai: AiView; onSaved: (ai: AiView) => void }) {
   const { webLookup } = props.ai;
   const [busy, setBusy] = useState(false);
@@ -666,9 +669,11 @@ export function WebLookupCard(props: { ai: AiView; onSaved: (ai: AiView) => void
           <span className="min-w-0 flex-[1_1_220px]">
             <span className="block font-semibold">Look up unknown Merchants</span>
             <span id="web-lookup-what" className="mt-0.5 block text-small text-muted">
-              {unavailable
+              {webLookup.unavailable === "no web search"
                 ? NO_WEB_SEARCH
-                : `Only the Merchant's clean name is sent. At most ${MERCHANT_LOOKUPS_A_MONTH} new lookups a month; each search counts toward the AI cost cap.`}
+                : webLookup.unavailable === "model has no web search"
+                  ? MODEL_NO_WEB_SEARCH
+                  : `Only the Merchant's clean name is sent. At most ${MERCHANT_LOOKUPS_A_MONTH} new lookups a month; each search counts toward the AI cost cap.`}
             </span>
           </span>
         </label>

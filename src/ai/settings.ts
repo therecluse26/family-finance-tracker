@@ -10,6 +10,7 @@ import {
   readAiSettingsVersion,
   readMemberPrice,
   readWebLookupSwitch,
+  readWebSearchRefused,
   removeAiSettings,
   type StoredAiSettings,
   storeAiSettings,
@@ -36,6 +37,7 @@ import {
   onGateway,
   type PriceSource,
   USE_TIERS,
+  type WebLookupView,
 } from "./ai-view.ts";
 import { type AiFailure, checkModel, hasWebSearch, privateModels, testModel } from "./call.ts";
 import type { AiCost } from "./cost.ts";
@@ -57,6 +59,21 @@ const KEY_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.ap
 const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.gateway_token" };
 
 const TIERS = ["quick", "writer"] as const;
+
+// The Quick model as the Web lookup remembers a refused search for it: "provider:model".
+export const webSearchModel = (stored: { provider: AiProviderName; quickModel: string }) =>
+  `${stored.provider}:${stored.quickModel}`;
+
+// Why no Web lookup runs with these AI settings, or null when one may (spec 08, Merchant web
+// lookup): the AI provider has no web search, or it refused the search with this Quick model.
+export async function webSearchMissing(
+  database: Database,
+  stored: { provider: AiProviderName; quickModel: string },
+): Promise<WebLookupView["unavailable"]> {
+  if (!hasWebSearch(stored.provider)) return "no web search";
+  const refused = await readWebSearchRefused(database);
+  return refused === webSearchModel(stored) ? "model has no web search" : null;
+}
 
 // What stops AI besides the key.
 export type AiGates = {
@@ -238,7 +255,7 @@ export function aiSettings(options: AiOptions): AiSettings {
       status: await status(stored),
       webLookup: {
         on: await readWebLookupSwitch(database),
-        unavailable: hasWebSearch(stored.provider) ? null : "no web search",
+        unavailable: await webSearchMissing(database, stored),
       },
     };
   }
