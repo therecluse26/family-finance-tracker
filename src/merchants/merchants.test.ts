@@ -325,7 +325,7 @@ describe("card payment lines", () => {
   it.each([
     // Wells Fargo: the payer after the IDs, with no field name.
     ["CHASE CREDIT CRD EPAY 260105 8273645101 JAMIE RIVERA", "Chase card payment", false],
-    ["WF Credit Card AUTO PAY 260105 123456 JAMIE RIVERA", "Wf card payment", false],
+    ["WF Credit Card AUTO PAY 260105 123456 JAMIE RIVERA", "WF card payment", false],
     // ACH fields: the bank is the originator, and the payer is in a field.
     [
       "ORIG CO NAME:CITI CARD ONLINE ORIG ID:CITICTP CO ENTRY DESCR:PAYMENT SEC:WEB " +
@@ -343,7 +343,7 @@ describe("card payment lines", () => {
     ],
     // Only a known card issuer is sure to be a bank; the words after it may be the payer.
     ["PAYMENT TO CHASE JAMIE RIVERA", "Chase card payment", false],
-    ["FIRST NATIONAL BANK OF OMAHA PAYMENT", "First National Bank Of Omaha card payment", false],
+    ["FIRST NATIONAL BANK OF OMAHA PAYMENT", "First National Bank of Omaha card payment", false],
     // A payer the rules cannot tell from a bank: "Card payment", for AI cleanup.
     ["PAYMENT FROM JAMIE RIVERA", "Card payment", true],
     ["PAYMENT TO JAMIE RIVERA", "Card payment", true],
@@ -360,14 +360,22 @@ describe("card payment lines", () => {
     expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi });
   });
 
-  // The issuer reads as other clean names do, whatever the line's case.
+  // The issuer reads as the bank writes it, whatever the line's case.
   it.each([
     ["chase credit crd epay", "Chase card payment"],
-    ["BANK OF AMERICA ONLINE PMT Ref 4821", "Bank Of America card payment"],
+    ["wf credit card auto pay 260105", "WF card payment"],
+    ["Wf Credit Card Auto Pay", "WF card payment"],
+    ["BANK OF AMERICA ONLINE PMT Ref 4821", "Bank of America card payment"],
+    ["bank of america online pmt", "Bank of America card payment"],
+    ["first national bank of omaha payment", "First National Bank of Omaha card payment"],
     ["Capital one mobile pmt", "Capital One card payment"],
-    ["USAA CREDIT CARD PAYMENT", "Usaa card payment"],
+    ["USAA CREDIT CARD PAYMENT", "USAA card payment"],
+    ["pnc bank online pmt", "PNC card payment"],
+    ["Td Bank Payment", "TD Bank card payment"],
+    ["JPMORGAN CHASE EPAY", "JPMorgan Chase card payment"],
+    ["penfed payment", "PenFed card payment"],
     ["citi autopay payment Citicardap", "Citi card payment"],
-  ])("title-cases the issuer in %j", (description, name) => {
+  ])("writes the issuer in its own form in %j", (description, name) => {
     expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
   });
 });

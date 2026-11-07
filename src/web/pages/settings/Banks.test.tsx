@@ -152,6 +152,21 @@ describe("Settings → Banks: Unconnected accounts and Manual loans", () => {
     // The form the link opens is inside that part.
     const open = notSynced({ lender: "Riverbank Lending" });
     expect(open.slice(open.indexOf(`id="${id}"`))).toContain('id="add-manual-loan"');
+    // With the form shut, the part still holds the Manual loan rows, and no Unconnected account.
+    const shut = notSynced({ accounts: [HSA], loans: [FAMILY_LOAN] });
+    const part = text(shut.slice(shut.indexOf(`id="${id}"`)));
+    expect(part).toContain("Family loan · Manual loan");
+    expect(part).not.toContain("Family HSA");
+  });
+
+  it("keeps the line between the Unconnected account rows and the Manual loan rows", () => {
+    const both = notSynced({ accounts: [HSA], loans: [FAMILY_LOAN] });
+    expect(both).toContain(
+      'id="manual-loans"><div class="empty:hidden [&amp;&gt;details:first-child]:border-t">',
+    );
+    // With no Unconnected account rows, the loan rows start the list, as the account rows would.
+    const loansOnly = notSynced({ loans: [FAMILY_LOAN] });
+    expect(loansOnly).toContain('id="manual-loans"><div class="mt-2.5 empty:hidden">');
   });
 
   it("puts Sync now at the top of the tab, outside a card", () => {

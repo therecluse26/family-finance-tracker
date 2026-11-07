@@ -285,6 +285,8 @@ export function NotSyncedList(props: {
   };
 
   const none = accounts?.length === 0 && loans?.length === 0;
+  // The loan rows go on from the Unconnected account rows as one list, with a line between them.
+  const loansGoOn = (accounts?.length ?? 0) > 0 && !adding.account;
   return (
     <SettingCard
       id="not-synced"
@@ -325,7 +327,6 @@ export function NotSyncedList(props: {
         {accounts === undefined ? null : (
           <UnconnectedAccountRows accounts={accounts} today={props.today} onSaved={props.onSaved} />
         )}
-        {loans === undefined ? null : <ManualLoanRows loans={loans} onSaved={props.onSaved} />}
       </div>
       {adding.account ? (
         <AddUnconnectedAccount
@@ -334,8 +335,15 @@ export function NotSyncedList(props: {
           onCancel={() => close("account")}
         />
       ) : null}
-      {/* The Manual loans part: the Review list's link names it. */}
+      {/* The Manual loans part, its rows and its form: the Review list's link names it. */}
       <div id="manual-loans">
+        <div
+          className={
+            loansGoOn ? "empty:hidden [&>details:first-child]:border-t" : "mt-2.5 empty:hidden"
+          }
+        >
+          {loans === undefined ? null : <ManualLoanRows loans={loans} onSaved={props.onSaved} />}
+        </div>
         {adding.loan ? (
           <AddManualLoan
             id={ADD_LOAN}

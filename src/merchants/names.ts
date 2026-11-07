@@ -276,66 +276,67 @@ function cardPaymentBank(txn: {
       (_, index) => !first.slice(0, index).some((before) => first[index]?.startsWith(before)),
     );
   if (bank.length === 0) return { bank: "" };
-  const issuer = issuerWords(bank);
-  return { bank: issuer === 0 ? null : bank.slice(0, issuer).map(titleWord).join(" ") };
+  return { bank: issuerOf(bank) };
 }
 
 // The card issuers the rules know by name. The words after an issuer's name may be the payer, as
 // in `CHASE CREDIT CRD EPAY 260105 8273645101 JAMIE RIVERA`, so they go. A line that starts with
-// any other word is not sure to name a bank, so the name goes to AI cleanup.
-const CARD_ISSUERS = new Set([
-  "alliant",
-  "american express",
-  "amex",
-  "bank of america",
-  "barclaycard",
-  "barclays",
-  "bmo",
-  "boa",
-  "bofa",
-  "capital one",
-  "chase",
-  "citi",
-  "citibank",
-  "citizens",
-  "comenity",
-  "credit one",
-  "credit one bank",
-  "discover",
-  "elan",
-  "fifth third",
-  "first national bank of omaha",
-  "first premier",
-  "fnbo",
-  "goldman sachs",
-  "hsbc",
-  "huntington",
-  "jpmorgan chase",
-  "merrick bank",
-  "mission lane",
-  "navy federal",
-  "penfed",
-  "pnc",
-  "regions",
-  "synchrony",
-  "synchrony bank",
-  "td bank",
-  "truist",
-  "us bank",
-  "usaa",
-  "usbank",
-  "wells fargo",
-  "wf",
+// any other word is not sure to name a bank, so the name goes to AI cleanup. Each issuer maps to
+// the form the bank itself writes, such as "WF" or "Bank of America".
+const CARD_ISSUERS = new Map([
+  ["alliant", "Alliant"],
+  ["american express", "American Express"],
+  ["amex", "Amex"],
+  ["bank of america", "Bank of America"],
+  ["barclaycard", "Barclaycard"],
+  ["barclays", "Barclays"],
+  ["bmo", "BMO"],
+  ["boa", "BoA"],
+  ["bofa", "BofA"],
+  ["capital one", "Capital One"],
+  ["chase", "Chase"],
+  ["citi", "Citi"],
+  ["citibank", "Citibank"],
+  ["citizens", "Citizens"],
+  ["comenity", "Comenity"],
+  ["credit one", "Credit One"],
+  ["credit one bank", "Credit One Bank"],
+  ["discover", "Discover"],
+  ["elan", "Elan"],
+  ["fifth third", "Fifth Third"],
+  ["first national bank of omaha", "First National Bank of Omaha"],
+  ["first premier", "First Premier"],
+  ["fnbo", "FNBO"],
+  ["goldman sachs", "Goldman Sachs"],
+  ["hsbc", "HSBC"],
+  ["huntington", "Huntington"],
+  ["jpmorgan chase", "JPMorgan Chase"],
+  ["merrick bank", "Merrick Bank"],
+  ["mission lane", "Mission Lane"],
+  ["navy federal", "Navy Federal"],
+  ["penfed", "PenFed"],
+  ["pnc", "PNC"],
+  ["regions", "Regions"],
+  ["synchrony", "Synchrony"],
+  ["synchrony bank", "Synchrony Bank"],
+  ["td bank", "TD Bank"],
+  ["truist", "Truist"],
+  ["us bank", "US Bank"],
+  ["usaa", "USAA"],
+  ["usbank", "USBank"],
+  ["wells fargo", "Wells Fargo"],
+  ["wf", "WF"],
 ]);
-const LONGEST_ISSUER = Math.max(...[...CARD_ISSUERS].map((name) => name.split(" ").length));
+const LONGEST_ISSUER = Math.max(...[...CARD_ISSUERS.keys()].map((name) => name.split(" ").length));
 
-// How many of the first words name a known card issuer, longest first, or 0.
-function issuerWords(bank: readonly string[]): number {
+// The known card issuer the first words name, longest first, in its own form, or null.
+function issuerOf(bank: readonly string[]): string | null {
   const folded = bank.map((word) => word.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase());
   for (let count = Math.min(LONGEST_ISSUER, folded.length); count > 0; count--) {
-    if (CARD_ISSUERS.has(folded.slice(0, count).join(" "))) return count;
+    const issuer = CARD_ISSUERS.get(folded.slice(0, count).join(" "));
+    if (issuer !== undefined) return issuer;
   }
-  return 0;
+  return null;
 }
 
 // A card payment line, which Plaid files under its credit card payment code, is named
