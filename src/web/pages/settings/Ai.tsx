@@ -430,12 +430,16 @@ export function AiProviderForm(props: {
       )}
       <div className={BUTTONS}>
         <Button type="submit" disabled={busy}>
-          Check and save
+          Save
         </Button>
         <Button type="button" variant="outlined" disabled={testing} onClick={testKey}>
           Test the key
         </Button>
       </div>
+      {/* Spec 08, Check on save: the button says "Save", so this line says what else it does. */}
+      <p className={HINT}>
+        Save checks each model with one short call. The calls count toward this month's cost.
+      </p>
       <ErrorLine error={error} />
       <ErrorLine error={testError} />
       {tested === undefined ? null : <KeyTestLine result={tested} />}

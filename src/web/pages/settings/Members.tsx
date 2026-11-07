@@ -43,9 +43,18 @@ function dayOf(iso: string): string {
   return dateLabel(calendarDateIn(new Date(iso), zone), calendarDateIn(new Date(), zone));
 }
 
+// The line under a Household's one Member, which says why its Remove is off. The server refuses
+// that request too.
+const LAST_MEMBER_NOTE = "last-member-note";
+
 // One Member, with Remove, and with Reset login unless it is the Member signed in. Each asks the
-// Member to confirm first.
-export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean) => void }) {
+// Member to confirm first. The Household's last Member cannot be removed, so its Remove is off,
+// with the reason in the line under the list.
+export function MemberLine(props: {
+  member: MemberView;
+  last?: boolean;
+  onRemoved: (you: boolean) => void;
+}) {
   const { member } = props;
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -88,7 +97,14 @@ export function MemberLine(props: { member: MemberView; onRemoved: (you: boolean
           <ErrorLine error={error} />
         </form>
       ) : (
-        <Button type="button" variant="outlined" size="small" onClick={() => setAsking(true)}>
+        <Button
+          type="button"
+          variant="outlined"
+          size="small"
+          disabled={props.last === true}
+          aria-describedby={props.last === true ? LAST_MEMBER_NOTE : undefined}
+          onClick={() => setAsking(true)}
+        >
           Remove
         </Button>
       )}
@@ -269,11 +285,18 @@ export function MembersLists(props: {
       <SettingCard id="members" title="Members">
         <ul className="mt-2.5">
           {props.members.map((member) => (
-            <MemberLine key={member.id} member={member} onRemoved={props.onRemoved} />
+            <MemberLine
+              key={member.id}
+              member={member}
+              last={props.members.length === 1}
+              onRemoved={props.onRemoved}
+            />
           ))}
         </ul>
         {props.members.length === 1 ? (
-          <p className={HINT}>The app cannot remove the last Member.</p>
+          <p id={LAST_MEMBER_NOTE} className={HINT}>
+            The app cannot remove the last Member.
+          </p>
         ) : null}
       </SettingCard>
       <MakeInvite onMade={props.onChange} />

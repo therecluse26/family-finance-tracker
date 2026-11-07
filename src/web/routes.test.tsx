@@ -87,7 +87,7 @@ describe("the app shell", () => {
 
     expect(texts(outsideMenu(html), "button")).toEqual([
       "Change password",
-      "Set up a new TOTP",
+      "Move to a new phone",
       "Make new backup codes",
       "Sign out",
     ]);
@@ -101,13 +101,13 @@ describe("the app shell", () => {
     }
   });
 
-  it("gives Backups and data its Back up now button, its Check my master key form, and its Download my data form", () => {
+  it("gives Backups and data its Back up now button, its Check my Master key form, and its Download my data form", () => {
     const html = render("/settings/backups-and-data");
 
-    expect(texts(html, "h3")).toEqual(["Backups", "Check my master key", "Download my data"]);
+    expect(texts(html, "h3")).toEqual(["Backups", "Check my Master key", "Download my data"]);
     expect(texts(outsideMenu(html), "button")).toEqual([
       "Back up now",
-      "Check my master key",
+      "Check my Master key",
       "Download my data",
     ]);
     expect(html).toMatch(/<textarea[^>]*autoComplete="off"[^>]*spellCheck="false"/i);

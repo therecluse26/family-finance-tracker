@@ -67,6 +67,28 @@ describe("Settings, Members", () => {
     expect(html).toContain("The app cannot remove the last Member.");
     expect(html).not.toContain("Cancel");
   });
+
+  it("turns Remove off on the last Member, with the reason as text it points to", () => {
+    const render = (members: MemberView[]) =>
+      renderToString(
+        <MembersLists members={members} invites={[]} onChange={() => {}} onRemoved={() => {}} />,
+      );
+    const removeButtons = (html: string) =>
+      [...html.matchAll(/<button([^>]*)>Remove<\/button>/g)].map((match) => match[1] ?? "");
+
+    const alone = removeButtons(render([ALICE]));
+    expect(alone).toHaveLength(1);
+    expect(alone[0]).toContain('disabled=""');
+    expect(alone[0]).toContain('aria-describedby="last-member-note"');
+    expect(render([ALICE])).toMatch(
+      /<p id="last-member-note"[^>]*>The app cannot remove the last Member\.<\/p>/,
+    );
+
+    for (const attributes of removeButtons(render([ALICE, BOB]))) {
+      expect(attributes).not.toContain('disabled=""');
+      expect(attributes).not.toContain("aria-describedby");
+    }
+  });
 });
 
 // The routes answer 415 without a JSON content type, so each button sends a JSON body.

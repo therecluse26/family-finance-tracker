@@ -571,7 +571,7 @@ export function Setup() {
           step="master key"
           lines={[
             "You saved the Master key, so the app does not show it again.",
-            'To test your saved copy, use "Check my master key" in Settings, Backups and data.',
+            'To test your saved copy, use "Check my Master key" in Settings, Backups and data.',
           ]}
           next="Continue to Household"
           onBack={back("master key")}

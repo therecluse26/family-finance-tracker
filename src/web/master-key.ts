@@ -1,14 +1,14 @@
 import { calendarDateIn, dateLabel, timeLabel } from "../format.ts";
 import { postJson } from "./requests.ts";
 
-// "Check my master key" in Settings (spec 09, The Master key), and the key in groups of 4, as the
+// "Check my Master key" in Settings (spec 09, The Master key), and the key in groups of 4, as the
 // wizard's step 3 shows it.
 
 export type PasteResult = { matches: true } | { matches: false; error: string };
 
 export const WRONG_KEY = "That is not the Master key. Check the copy you saved.";
 
-// Sends a pasted key to "Check my master key". The key stays in the request body only.
+// Sends a pasted key to "Check my Master key". The key stays in the request body only.
 export async function sendPastedKey(
   path: "/api/master-key/check",
   masterKey: string,

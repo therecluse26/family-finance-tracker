@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { DeviceView } from "../../../server/devices-views.ts";
 import { ConfirmNewTotp, DeviceRows, signedInLine } from "./MyLogin.tsx";
 
-// Settings, My login after "Set up a new TOTP": the new TOTP as a QR code drawn on the page, and the
+// Settings, My login after "Move to a new phone": the new TOTP as a QR code drawn on the page, and the
 // field for its first code (spec 09, Members). src/web/components/Fields.test.tsx checks the drawing.
 
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";

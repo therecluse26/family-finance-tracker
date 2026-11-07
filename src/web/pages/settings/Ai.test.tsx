@@ -79,12 +79,12 @@ describe("Settings → AI", () => {
     expect(text(renderToString(<AiStatusLine ai={OPENAI} today={today} />))).toBe("✓ AI is on");
   });
 
-  it("offers Test the key beside Check and save, outlined, with or without an AI provider", () => {
+  it("offers Test the key beside Save, outlined, with or without an AI provider", () => {
     for (const ai of [null, OPENAI]) {
       const html = renderToString(<AiProviderForm ai={ai} onSaved={() => {}} />);
       const buttons = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)];
 
-      expect(buttons.map(([, words]) => words)).toEqual(["Check and save", "Test the key"]);
+      expect(buttons.map(([, words]) => words)).toEqual(["Save", "Test the key"]);
       expect(buttons[1]?.[0]).toContain('type="button"');
       expect(buttons[1]?.[0]).toContain("border-field");
     }

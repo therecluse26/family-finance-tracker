@@ -894,7 +894,7 @@ describe.each([PLAIN, HTTPS])("signing in, in $name", (mode) => {
       await tooManyFailed(await browser().password(alice));
     });
 
-    // Settings, My login's "Set up a new TOTP" and "Make new backup codes": each asks for the
+    // Settings, My login's "Move to a new phone" and "Make new backup codes": each asks for the
     // current password, so a stolen session cannot lock the Member out.
     const lockOutRoutes = ["/api/auth/my-login/new-totp", "/api/auth/my-login/new-backup-codes"];
 

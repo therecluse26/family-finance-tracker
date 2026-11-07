@@ -7,6 +7,7 @@ import {
   DownloadMyData,
   downloadMyData,
   exportFileName,
+  FolderPath,
   sizeLabel,
 } from "./BackupsAndData.tsx";
 
@@ -58,6 +59,21 @@ describe("Settings, Backups and data: backups", () => {
     const html = text(renderToString(<BackupLines backups={{ ...NO_BACKUP, readable: false }} />));
 
     expect(html).toContain("The app cannot read the backup folder.");
+  });
+
+  it("lets the folder wrap after each separator on a phone, and copies it unchanged", () => {
+    const html = renderToString(<FolderPath path="/srv/family-finance-tracker/backups" />);
+
+    expect(html).toContain("/<wbr/>srv/<wbr/>family-finance-tracker/<wbr/>backups");
+    expect(html).toContain("[overflow-wrap:anywhere]");
+    expect(html).not.toContain("break-all");
+    expect(text(html)).toBe("/srv/family-finance-tracker/backups");
+    expect(text(renderToString(<FolderPath path={"C:\\Data\\backups"} />))).toBe(
+      "C:\\Data\\backups",
+    );
+    expect(renderToString(<FolderPath path={"C:\\Data\\backups"} />)).toContain(
+      "C:\\<wbr/>Data\\<wbr/>backups",
+    );
   });
 
   it.each([

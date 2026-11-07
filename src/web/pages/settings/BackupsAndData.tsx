@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, Fragment, useEffect, useState } from "react";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { BackupsView } from "../../../server/backups-views.ts";
 import { api } from "../../api.ts";
@@ -18,7 +18,7 @@ import {
 } from "./settings-ui.tsx";
 
 // Settings, Backups and data (spec 07, Settings overview): backups and "Back up now" (spec 11),
-// "Check my master key" (spec 09, The Master key), and "Download my data" (spec 11, Data export).
+// "Check my Master key" (spec 09, The Master key), and "Download my data" (spec 11, Data export).
 
 // "Back up now" sends an empty JSON body: the route takes only JSON.
 export const backUpNow = () => api.backups.now.$post({ json: {} });
@@ -46,6 +46,25 @@ function momentLabel(at: string, now: Date): string {
   return `${dateLabel(calendarDateIn(moment, zone), calendarDateIn(now, zone))} at ${timeLabel(moment, zone)}`;
 }
 
+// A folder path that wraps on a phone at its separators, not mid-name: a line break may fall after
+// each "/" or "\". <wbr> adds no character, so the path copies as it is. A name too long for the
+// line still breaks, so the page never scrolls sideways.
+export function FolderPath(props: { path: string }) {
+  const parts = props.path.split(/(?<=[/\\])/);
+  return (
+    <code className="font-mono text-sm [overflow-wrap:anywhere]">
+      {parts.map((part, index) => (
+        // The parts of one path never move, so each one's place is its key.
+        // biome-ignore lint/suspicious/noArrayIndexKey: see above.
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 ? <wbr /> : null}
+        </Fragment>
+      ))}
+    </code>
+  );
+}
+
 export function BackupLines(props: { backups: BackupsView; now?: Date }) {
   const { backups } = props;
   const now = props.now ?? new Date();
@@ -53,8 +72,8 @@ export function BackupLines(props: { backups: BackupsView; now?: Date }) {
   return (
     <>
       <p className="mt-3">
-        Backups go to <code className="font-mono text-sm break-all">{backups.folder}</code>. The app
-        keeps the newest 7 backups and 3 safety copies, and uploads nothing.
+        Backups go to <FolderPath path={backups.folder} />. The app keeps the newest 7 backups and 3
+        safety copies, and uploads nothing.
       </p>
       {backups.readable ? (
         <p className="mt-1.5">
@@ -155,7 +174,7 @@ function CheckMasterKey() {
   }
 
   return (
-    <SettingCard id="check-my-master-key" title="Check my master key">
+    <SettingCard id="check-my-master-key" title="Check my Master key">
       <form onSubmit={submit}>
         <Lead>
           Paste the Master key you saved, and the app says whether it matches. The app never shows
@@ -176,7 +195,7 @@ function CheckMasterKey() {
         </label>
         <div className={BUTTONS}>
           <Button type="submit" disabled={busy}>
-            Check my master key
+            Check my Master key
           </Button>
         </div>
         <DoneLine done={done} />
