@@ -104,6 +104,7 @@ The `ai` module also follows these library rules:
 
 - The app logs to stdout. Docker keeps the log.
 - Logs never hold secrets, the setup code, prompt text, or Transaction details.
+- The AI request log is not a log. It is a table in app.db, off by default, that keeps each AI call's request and reply for a few days ([AI](08-ai.md#ai-request-log)). No log line holds its text.
 
 ## Jobs
 
