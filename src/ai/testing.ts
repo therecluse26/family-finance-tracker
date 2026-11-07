@@ -156,6 +156,8 @@ export class StubModels {
   // How many web searches the AI provider runs in each Merchant lookup before its reply. Each shows
   // in the reply as a provider-executed tool call and its result, as a real provider's does.
   searches = 1;
+  // How the lookup model answers, in place of the Quick model's answer, when set.
+  lookupAnswer: StubAnswer | undefined;
 
   readonly makeModels: AiModelMaker = (connection, models: TierModels) => {
     this.connections.push(connection);
@@ -288,7 +290,7 @@ export class StubModels {
       authorization: `Bearer ${connection.apiKey ?? ""}`,
       "cf-aig-authorization": `Bearer ${connection.gatewayToken ?? ""}`,
     };
-    const answer = this.answers[tier];
+    const answer = (lookup ? this.lookupAnswer : undefined) ?? this.answers[tier];
     if (
       answer === "reject" ||
       answer === "rate limit" ||

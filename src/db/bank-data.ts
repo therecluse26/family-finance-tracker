@@ -35,6 +35,7 @@ import type { PartType } from "./decisions.ts";
 import { markTransactionsUnhandled } from "./follow-up.ts";
 import { endRefusalsWithNoCopy, listHandLinkedOldOf } from "./link-carry-over.ts";
 import { carryLinks } from "./links.ts";
+import { deleteUnheldMerchantLookups } from "./merchant-lookups.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
 import {
   aiRequestLog,
@@ -964,6 +965,8 @@ export async function deleteRemovedConnection(
           tx.select({ description: transactions.description }).from(transactions),
         ),
       );
+    // A Web lookup's kept answer names a Merchant, so each one no Transaction holds goes too.
+    await deleteUnheldMerchantLookups(tx);
     await tx.delete(householdAccounts).where(eq(householdAccounts.connectionId, id));
     // Today's Household summary holds numbers and Merchants from this history, so the next Writer
     // use builds it again without them.

@@ -1,7 +1,8 @@
 import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { merchantKey } from "../merchants/identity.ts";
 import { AI_SETTINGS_ROW } from "./ai-settings.ts";
-import type { Database } from "./client.ts";
-import { aiSettings, merchantLookupMonths, merchantLookups } from "./schema.ts";
+import type { Database, Queries } from "./client.ts";
+import { aiSettings, merchantLookupMonths, merchantLookups, transactions } from "./schema.ts";
 
 // What the Web lookup keeps (spec 04, Web lookup; spec 08, Merchant web lookup): each Merchant's
 // answer, the month's count of lookups under their cap, and the switch. The categorization and ai
@@ -81,6 +82,35 @@ export async function storeMerchantLookup(
     .insert(merchantLookups)
     .values(row)
     .onConflictDoUpdate({ target: merchantLookups.merchantKey, set });
+}
+
+// The key a Transaction's Merchant keeps its lookup under, as src/categorization/web-lookup.ts
+// makes it: the provider's Merchant ID, else the clean name as identity compares it.
+function heldKey(merchantId: string | null, cleanName: string | null): string | undefined {
+  if (merchantId !== null) return `id:${merchantId}`;
+  const name = cleanName === null ? "" : merchantKey(cleanName);
+  return name === "" ? undefined : `name:${name}`;
+}
+
+// Deletes each kept answer no Transaction's Merchant holds any more, as when a Connection's
+// history goes (known finding K6): an answer names a Merchant from that history. Two reads and one
+// delete for each 500 answers, never a read per Transaction.
+export async function deleteUnheldMerchantLookups(database: Queries): Promise<void> {
+  const kept = await database.select({ key: merchantLookups.merchantKey }).from(merchantLookups);
+  if (kept.length === 0) return;
+  const merchants = await database
+    .selectDistinct({
+      id: transactions.merchantId,
+      name: transactions.merchantCleanName,
+    })
+    .from(transactions);
+  const held = new Set(merchants.map((row) => heldKey(row.id, row.name)));
+  const unheld = kept.map((row) => row.key).filter((key) => !held.has(key));
+  for (let start = 0; start < unheld.length; start += KEYS_PER_QUERY) {
+    await database
+      .delete(merchantLookups)
+      .where(inArray(merchantLookups.merchantKey, unheld.slice(start, start + KEYS_PER_QUERY)));
+  }
 }
 
 // Takes one lookup's place under the month's cap, in one statement, so lookups side by side

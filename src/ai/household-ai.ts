@@ -69,6 +69,8 @@ export type HouseholdAi = {
   // Why a use would pause now, as generate and stream pause, or undefined when it may call. It
   // makes no call.
   pauseFor(use: AiCall["use"], options?: { sendAnyway?: boolean }): Promise<AiPause | undefined>;
+  // Whether a background use waits for its AI retry, so a call now would not go out.
+  retryWaits(use: AiCall["use"]): Promise<boolean>;
   // Each Account's label, such as "Ally checking", by its ID, for the text of a call.
   accountLabels(): Promise<ReadonlyMap<string, string>>;
   // Each Member's label, such as "Member A", by their ID: the label the privacy filter gives the
@@ -244,6 +246,9 @@ export function householdAi(options: AiOptions): HouseholdAi {
         ]),
       ),
     toolResult: async (data) => (await filter()).json(plainData(data)),
+    async retryWaits(use) {
+      return (await retries.waitsUntil(use, new Date())) !== undefined;
+    },
     async webLookupOn() {
       const stored = await readAiSettings(database);
       if (stored === undefined || webSearchTools(stored.provider) === undefined) return false;

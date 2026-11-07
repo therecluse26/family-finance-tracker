@@ -1188,3 +1188,38 @@ describe("the privacy filter on app-built text", () => {
     expect(Math.min(...times)).toBeLessThan(100);
   });
 });
+
+describe("the privacy filter on a Merchant lookup", () => {
+  // The Merchant lookup's only input is a clean Merchant name (spec 08, Merchant web lookup).
+  it.each([
+    ["Bluebird Books", false],
+    ["Dana Whitfield Photo", true],
+    ["studioWhitfieldDanaPrints", true],
+    ["DANA–WHITFIELD DESIGNS", true],
+    ["Shop ４８２１", true],
+    ["Shop 4​821", true],
+    // A name the AI cleaned from a description the filter already took a number out of.
+    ["REF#[removed]", true],
+    ["[REMOVED]", true],
+  ])("finds %j a match: %j", (name, matched) => {
+    expect(filter.matches(name)).toBe(matched);
+  });
+
+  it("lets through only the web search tools the app names, as they are, and refuses any other provider tool", () => {
+    const prompt = [{ role: "user" as const, content: [{ type: "text" as const, text: "Hello" }] }];
+    const search = {
+      type: "provider" as const,
+      id: "anthropic.web_search_20260318" as const,
+      name: "web_search",
+      // Its settings are the app's own constants: 2 is never read as an age or a last 4.
+      args: { maxUses: 2 },
+    };
+
+    expect(filter.params({ prompt, tools: [search] }).tools).toEqual([search]);
+    for (const id of ["anthropic.code_execution_20250825", "openai.file_search"] as const) {
+      expect(() =>
+        filter.params({ prompt, tools: [{ ...search, id: id as `${string}.${string}` }] }),
+      ).toThrow(PrivacyRefusal);
+    }
+  });
+});

@@ -265,7 +265,7 @@ describe("Download my data", () => {
     );
     await insert(
       `INSERT INTO merchant_lookups (merchant_key, outcome, category, confidence, description, looked_up_at)
-        VALUES ('name:bluebird books', 'found', 'Shopping', 'high', 'A bookshop.', ?)`,
+        VALUES ('name:bluebird books', 'found', 'Books and education', 'high', 'A bookshop.', ?)`,
       [at],
     );
     await insert("INSERT INTO merchant_lookup_months (month, lookups) VALUES ('2026-11', 1)", []);

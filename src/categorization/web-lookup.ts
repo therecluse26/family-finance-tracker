@@ -169,7 +169,16 @@ export class WebLookups {
     if (!this.on || key === undefined) return "skipped";
     const stopped = this.stopped;
     if (stopped !== undefined) return { stopped };
-    // The place under the month's cap comes first, before any other wait. At the cap, no lookup
+    // A pause, such as at the AI cost cap, or a wait for the AI retry: no call goes out, and the
+    // Category waits for the redo.
+    if (
+      (await this.ai.pauseFor("merchant lookup")) !== undefined ||
+      (await this.ai.retryWaits("merchant lookup"))
+    ) {
+      this.stop = { mark: true };
+      return { stopped: this.stop };
+    }
+    // The place under the month's cap comes before the call, in one step. At the cap, no lookup
     // until the 1st: the Category fix's answer stands, with no mark.
     const place = await this.ai.reserveLookup();
     if (place === undefined) {
@@ -192,8 +201,9 @@ export class WebLookups {
       return "skipped";
     }
     if (!reply.ready) {
-      // No call went out for a pause or a retry wait.
-      if ("pause" in reply || "retryAt" in reply) await place.giveBack();
+      // No call went out for a pause, such as the AI cost cap reached since the check, or the AI
+      // provider refused the key before any search. A failed call keeps its place.
+      if ("pause" in reply) await place.giveBack();
       if ("badReply" in reply) return "skipped";
       this.stop = { mark: true };
       return { stopped: this.stop };

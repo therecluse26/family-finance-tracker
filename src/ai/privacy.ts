@@ -88,7 +88,9 @@ export class PrivacyRefusal extends Error {
 export type PrivacyFilter = {
   text(text: string): string;
   // Whether the filter finds anything to remove in the text, such as a Member's name or a protected
-  // number. Each text the filter only normalizes counts as clean.
+  // number, or the text holds the filter's own "[removed]", where an earlier call's text lost
+  // something, such as a name the AI cleaned from a filtered description. Each text the filter only
+  // normalizes counts as clean.
   matches(text: string): boolean;
   // A tool result: plain JSON data. Its typed values pass as they are (src/ai/typed.ts).
   json(value: unknown): unknown;
@@ -1456,7 +1458,9 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
 
   return {
     text,
-    matches: (input) => text(input) !== normalizeText(input).normalize("NFD").normalize("NFC"),
+    matches: (input) =>
+      text(input) !== normalizeText(input).normalize("NFD").normalize("NFC") ||
+      normalizeText(input).toLowerCase().includes(REMOVED),
     json: (value) => json(value, true),
     params,
     accountLabels,
