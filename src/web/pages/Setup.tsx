@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { HouseholdFactsView } from "../../server/household-views.ts";
 import { SETUP_EXTRAS, type SetupProgressView } from "../../server/setup-views.ts";
@@ -27,6 +27,7 @@ import {
   confirmMasterKeySaved,
   DoneStepView,
   FinishStep,
+  focusStepTitle,
   LEAD,
   PRIMARY_BUTTON,
   StepCard,
@@ -161,6 +162,15 @@ export function FirstMember(props: { setupCode: string; onBack: () => void; onDo
   const [backupCodes, setBackupCodes] = useState<string[] | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // Each new screen of the step takes the focus on the step's title, as a new step does.
+  const screen =
+    backupCodes !== undefined ? "backup codes" : totpURI !== undefined ? "authenticator" : "login";
+  const screenBefore = useRef(screen);
+  useEffect(() => {
+    if (screenBefore.current === screen) return;
+    screenBefore.current = screen;
+    focusStepTitle(document.querySelector("main"));
+  }, [screen]);
 
   async function run(work: () => Promise<void>) {
     setBusy(true);

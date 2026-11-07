@@ -17,6 +17,15 @@ const text = (html: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// The words of each item in the list of steps, as a screen reader reads them (the text without its
+// tags), and the "Step N of 6" line.
+const stepWords = (html: string) => [
+  text(html.match(/<p[^>]*>(.*?)<\/p>/)?.[1] ?? ""),
+  ...[...html.matchAll(/<li[^>]*>(.*?)<\/li>/g)].map((item) =>
+    (item[1] ?? "").replace(/<!-- -->/g, "").replace(/<[^>]+>/g, ""),
+  ),
+];
+
 const progress = (banks: SetupProgressView["steps"]["banks"]): SetupProgressView => ({
   next: "finish",
   steps: { banks, ai: null, alerts: null, "invite members": null },
@@ -30,22 +39,38 @@ describe("the setup page's header", () => {
       <WizardHeader shown="finish" reached="finish" progress={progress("skipped")} />,
     );
 
-    expect(text(html)).toBe(
-      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5 Banks (skipped) 6 Finish",
-    );
+    expect(stepWords(html)).toEqual([
+      "Step 6 of 6",
+      "✓ Setup link",
+      "✓ Your login",
+      "✓ Master key",
+      "✓ Household",
+      "5. Banks (skipped)",
+      "6. Finish",
+    ]);
   });
 
   it("shows a Banks step done once a bank is linked, and before any progress is read", () => {
     expect(
-      text(
+      stepWords(
         renderToString(
           <WizardHeader shown="finish" reached="finish" progress={progress("done")} />,
         ),
-      ),
-    ).toContain("✓ Household ✓ Banks 6 Finish");
+      ).slice(4),
+    ).toEqual(["✓ Household", "✓ Banks", "6. Finish"]);
     expect(
-      text(renderToString(<WizardHeader shown="banks" reached="banks" progress={undefined} />)),
-    ).toBe("Step 5 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5 Banks 6 Finish");
+      stepWords(
+        renderToString(<WizardHeader shown="banks" reached="banks" progress={undefined} />),
+      ),
+    ).toEqual([
+      "Step 5 of 6",
+      "✓ Setup link",
+      "✓ Your login",
+      "✓ Master key",
+      "✓ Household",
+      "5. Banks",
+      "6. Finish",
+    ]);
   });
 });
 

@@ -19,8 +19,10 @@ import {
   FinishStepView,
   finishLines,
   finishWizard,
+  focusStepTitle,
   LinkedBankList,
   linkedBanks,
+  movesFocusToTitle,
   openBanksStep,
   STEP_LABELS,
   STEP_TITLES,
@@ -30,6 +32,7 @@ import {
   stepAfter,
   stepBefore,
   WIZARD_STEPS,
+  WizardFrame,
 } from "./SetupSteps.tsx";
 import { NewBankLinks } from "./settings/Connections.tsx";
 import { CONNECTIONS_UNREAD, Refused, SYNC_POLL } from "./settings/connections-page.ts";
@@ -44,6 +47,15 @@ const text = (html: string) =>
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+// The words of each item in the list of steps, as a screen reader reads them (the text without its
+// tags), and the "Step N of 6" line.
+const stepWords = (html: string) => [
+  text(html.match(/<p[^>]*>(.*?)<\/p>/)?.[1] ?? ""),
+  ...[...html.matchAll(/<li[^>]*>(.*?)<\/li>/g)].map((item) =>
+    (item[1] ?? "").replace(/<!-- -->/g, "").replace(/<[^>]+>/g, ""),
+  ),
+];
 
 const NO_KEYS: PlaidView = {
   clientId: null,
@@ -99,9 +111,17 @@ describe("the wizard's frame", () => {
   it('says "Step N of 6", names each step, and marks the steps done', () => {
     const html = renderToString(<Stepper shown="master key" reached="household facts" />);
 
-    expect(text(html)).toBe(
-      "Step 3 of 6 ✓ Setup link ✓ Your login ✓ Master key 4 Household 5 Banks 6 Finish",
-    );
+    expect(stepWords(html)).toEqual([
+      "Step 3 of 6",
+      "✓ Setup link",
+      "✓ Your login",
+      "✓ Master key",
+      "4. Household",
+      "5. Banks",
+      "6. Finish",
+    ]);
+    // The number and its period are one text run in the circle.
+    expect(html).toMatch(/rounded-full[^"]*">4\.<\/span> <span>Household<\/span>/);
     expect(html).toContain('aria-current="step"');
   });
 
@@ -117,22 +137,79 @@ describe("the wizard's frame", () => {
     const skipped = skippedWizardSteps(afterSkip);
     const html = renderToString(<Stepper shown="finish" reached="finish" skipped={skipped} />);
 
-    expect(text(html)).toBe(
-      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5 Banks (skipped) 6 Finish",
-    );
+    expect(stepWords(html)).toEqual([
+      "Step 6 of 6",
+      "✓ Setup link",
+      "✓ Your login",
+      "✓ Master key",
+      "✓ Household",
+      "5. Banks (skipped)",
+      "6. Finish",
+    ]);
     expect(text(html)).not.toContain("✓ Banks");
     // Back to Banks from Finish: still skipped, not done.
     expect(
-      text(renderToString(<Stepper shown="banks" reached="finish" skipped={skipped} />)),
-    ).toContain("5 Banks (skipped)");
+      stepWords(renderToString(<Stepper shown="banks" reached="finish" skipped={skipped} />)),
+    ).toContain("5. Banks (skipped)");
     // Once a bank is linked, Banks is done.
     const linked = skippedWizardSteps({
       ...afterSkip,
       steps: { ...afterSkip.steps, banks: "done" },
     });
     expect(
-      text(renderToString(<Stepper shown="finish" reached="finish" skipped={linked} />)),
-    ).toContain("✓ Household ✓ Banks 6 Finish");
+      stepWords(renderToString(<Stepper shown="finish" reached="finish" skipped={linked} />)).slice(
+        4,
+      ),
+    ).toEqual(["✓ Household", "✓ Banks", "6. Finish"]);
+  });
+
+  it("moves the focus to the new step's title after Continue or Back, not when the page opens", () => {
+    expect(movesFocusToTitle(undefined, "setup link")).toBe(false);
+    expect(movesFocusToTitle("master key", "master key")).toBe(false);
+    expect(movesFocusToTitle("master key", "household facts")).toBe(true);
+    expect(movesFocusToTitle("household facts", "master key")).toBe(true);
+
+    const focused: string[] = [];
+    const element = (name: string, tabindex?: string) => {
+      const attributes = new Map(tabindex === undefined ? [] : [["tabindex", tabindex]]);
+      return {
+        attributes,
+        hasAttribute: (key: string) => attributes.has(key),
+        setAttribute: (key: string, value: string) => void attributes.set(key, value),
+        focus: () => void focused.push(name),
+      };
+    };
+    // The step's <h1> takes the focus, and stays out of the Tab order.
+    const title = element("h1");
+    const main = {
+      ...element("main"),
+      querySelector: (query: string) => (query === "h1" ? title : null),
+    };
+    focusStepTitle(main as unknown as Parameters<typeof focusStepTitle>[0]);
+    expect(focused).toEqual(["h1"]);
+    expect(title.attributes.get("tabindex")).toBe("-1");
+    // With no <h1>, the <main> takes it.
+    const bare = { ...element("main", "0"), querySelector: () => null };
+    focusStepTitle(bare as unknown as Parameters<typeof focusStepTitle>[0]);
+    expect(focused).toEqual(["h1", "main"]);
+    expect(bare.attributes.get("tabindex")).toBe("0");
+    focusStepTitle(null);
+    expect(focused).toEqual(["h1", "main"]);
+  });
+
+  it('shows "Step N of 6" at every width: in the header below 768 px, in the list from 768 px', () => {
+    const html = renderToString(
+      <WizardFrame shown="banks" steps={<Stepper shown="banks" reached="banks" />}>
+        <StepCard step="banks" />
+      </WizardFrame>,
+    );
+    // The header's copy shows below md and hides from md; the list's shows from md only. One
+    // breakpoint for both, so no width shows neither.
+    expect(html).toMatch(
+      /<span class="min-w-0 md:hidden" aria-hidden="true"><span[^>]*>Step <!-- -->5<!-- --> of <!-- -->6<\/span>/,
+    );
+    expect(html).toMatch(/<p class="[^"]*max-md:sr-only">Step <!-- -->5<!-- --> of <!-- -->6<\/p>/);
+    expect(html).not.toMatch(/\bsm:hidden\b|max-sm:hidden/);
   });
 
   it("names each step in the page's one h1, before the step's own reads answer", () => {

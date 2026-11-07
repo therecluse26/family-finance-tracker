@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { PlaidView } from "../../bank/plaid-view.ts";
 import type { StatusTone } from "../../format.ts";
@@ -97,6 +97,24 @@ function BrandMark() {
   );
 }
 
+// Whether the step's title takes the focus: only when the Member moves from one step to another
+// (Continue, Back, "I saved it"), not when the page first opens a step. The button they pressed is
+// gone with the step, so the focus would fall to the page.
+export function movesFocusToTitle(before: WizardStep | undefined, now: WizardStep | undefined) {
+  return before !== undefined && now !== undefined && before !== now;
+}
+
+type Focusable = Pick<HTMLElement, "hasAttribute" | "setAttribute" | "focus">;
+
+// The new step takes the focus on its <h1>, or on the <main>, as the Shell does for a page chosen in
+// the phone menu.
+export function focusStepTitle(main: (Focusable & Pick<ParentNode, "querySelector">) | null) {
+  if (main === null) return;
+  const target: Focusable = main.querySelector<HTMLElement>("h1") ?? main;
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus();
+}
+
 // The wizard's page: a white header with the app's name and a bar of the 6 steps, then the list of
 // steps beside the step's card. On a phone the header shows the step on the screen, and the list of
 // steps folds into lines above the card. The wizard has no menu and no tab bar.
@@ -106,18 +124,26 @@ export function WizardFrame(props: {
   children: ReactNode;
 }) {
   const shownAt = props.shown === undefined ? -1 : WIZARD_STEPS.indexOf(props.shown);
+  const main = useRef<HTMLElement>(null);
+  const shownBefore = useRef(props.shown);
+  useEffect(() => {
+    const before = shownBefore.current;
+    shownBefore.current = props.shown;
+    if (movesFocusToTitle(before, props.shown)) focusStepTitle(main.current);
+  }, [props.shown]);
   return (
     <div className="flex min-h-screen flex-col">
       <header className="bg-white">
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-8 sm:py-5">
           <div className="flex min-w-0 items-center gap-2.5 font-semibold">
             <BrandMark />
-            <span className="max-sm:hidden">Family Finance Tracker</span>
+            {/* Below 768 px the list of steps hides its "Step N of 6", so the header shows it. */}
+            <span className="max-md:hidden">Family Finance Tracker</span>
             {props.shown === undefined ? (
-              <span className="sm:hidden">Family Finance Tracker</span>
+              <span className="md:hidden">Family Finance Tracker</span>
             ) : (
               // The list of steps says the same to screen readers.
-              <span className="min-w-0 sm:hidden" aria-hidden="true">
+              <span className="min-w-0 md:hidden" aria-hidden="true">
                 <span className="block text-xs font-semibold tracking-[.06em] text-muted uppercase">
                   Step {shownAt + 1} of {WIZARD_STEPS.length}
                 </span>
@@ -137,7 +163,10 @@ export function WizardFrame(props: {
           ))}
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-[960px] flex-1 flex-col gap-4 px-4 pt-5 pb-10 sm:pt-8 md:flex-row md:items-start md:gap-10 md:pt-10">
+      <main
+        ref={main}
+        className="mx-auto flex w-full max-w-[960px] flex-1 flex-col gap-4 px-4 pt-5 pb-10 sm:pt-8 md:flex-row md:items-start md:gap-10 md:pt-10"
+      >
         {props.steps}
         <div className="flex min-w-0 flex-1 flex-col gap-5">{props.children}</div>
       </main>
@@ -173,7 +202,7 @@ export function Stepper(props: {
   const skipped = props.skipped ?? [];
   return (
     <nav aria-label="Setup steps" className="md:w-[220px] md:shrink-0">
-      {/* On a phone the header shows it. */}
+      {/* Below 768 px the header shows it, at the same width as WizardFrame's. */}
       <p className="text-small font-semibold tracking-[.06em] text-muted uppercase max-md:sr-only">
         Step {shownAt + 1} of {WIZARD_STEPS.length}
       </p>
@@ -195,8 +224,10 @@ export function Stepper(props: {
               <span
                 className={`flex size-5 shrink-0 items-center justify-center rounded-full text-xs md:size-6 md:text-[13px] ${mark}`}
               >
-                {done ? "✓" : at + 1}
-              </span>
+                {/* Spec 12's words: "5. Banks (skipped)". One text run, so the browser and screen
+                    readers read "5." whole. */}
+                {done ? "✓" : `${at + 1}.`}
+              </span>{" "}
               <span>
                 {STEP_LABELS[step]}
                 {skipped.includes(step) ? " (skipped)" : null}
