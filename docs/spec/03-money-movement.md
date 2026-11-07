@@ -195,12 +195,13 @@ The app ties each one-sided Transfer to one Unconnected account. The first case 
 | Case | Result | Review list |
 |---|---|---|
 | The description holds an Unconnected account's institution name or last 4 digits | That account | No |
+| No match, and a Member answered a one-sided Transfer card with the same key ([Review list items](#review-list-items)) | The remembered answer: its account, a Transfer with no account, or Spending | No |
 | No match, and Plaid files it under `TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS`, `TRANSFER_OUT_CRYPTO`, or `TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS` | Saving, with no account ([Saving](#saving)) | No |
 | No match, and the Household has exactly one Unconnected account | That account | Yes, to confirm |
 | No match, with no Unconnected account or several | A Transfer with no account | Yes: "Which account is this?" |
 
 - The account's kind decides the type. Kind "investment or retirement" makes it Saving. Kinds "savings", "HSA", and "other" make it a Transfer.
-- On the Review list, a Member may pick an account, add one, or choose "Not a Transfer". "Not a Transfer" sets the type to Spending by hand.
+- On the Review list, a Member may pick an account, add one, keep it as a Transfer, or choose "Not a Transfer". The answer covers the whole card and is remembered for its key ([Review list items](#review-list-items)). A remembered "Not a Transfer" makes the Transaction Spending, and the cascade picks its Category.
 - Goal progress for an Unconnected account uses these assignments ([Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md)).
 - A loan is never an Unconnected account. Neither is a payment app.
 
@@ -381,9 +382,24 @@ The Review list is optional. Each item below already has a result that counts, s
 |---|---|---|
 | An Unclear Transfer pair, with no AI or an AI answer below high | Nothing is linked, so both sides follow the one-sided rules | Accepting makes a hand-made link. "Not this" acts as an undo. |
 | A pair picked from two equally good choices | The choice is a guess | Same as above |
-| A one-sided Transfer not tied to an Unconnected account by its name or last 4 digits | It may be Spending, such as rent paid by transfer | Picks or adds an Unconnected account, or sets the type to Spending |
+| A one-sided Transfer not tied to an Unconnected account by its name or last 4 digits | It may be Spending, such as rent paid by transfer | Picks or adds an Unconnected account, keeps it as a Transfer, or makes it Spending. The answer is remembered for its key. |
 | Money from a person with no link | It counts as Income | Links it to Spending as a Reimbursement, or keeps it as Income |
 | An untracked loan whose payout the app saw | Its interest cannot show | Opens the Manual loan form ([Accounts and bank sync](02-accounts-and-bank-sync.md)) |
+
+- **One-sided Transfer cards.** One open item per key holds every one-sided Transfer that asks, as Category cards do ([Categorization](04-categorization.md#review-list-items)).
+  - The key is the clean Merchant name, by [Identity](04-categorization.md#identity), with the last 4 digits of each account number the line holds. The app finds an account number as Merchant cleanup does: after a lead-in such as "ACCT" or "ENDING IN", or after a mask such as `XXXX`. It reads the line in plain forms first: every digit script counts as 0 to 9, format characters go, and a short run of other characters is a gap. So `ONLINE TRANSFER TO SAV XXXX5678` and `ONLINE TRANSFER TO SAV XXXX9012` are two cards.
+  - A line with no clean Merchant name keeps an item of its own, and its answer is not remembered.
+  - The card reads like "Online Transfer To Sav · 14 Transactions". Its best answer is the newest Transaction's.
+  - The answer covers every Transaction still on the card: still shown, still one-sided, with no type or account set by hand. Each row has "Change", which sets that Transaction's type by hand alone, and it leaves the card.
+  - **Remembered answers.** The answer is kept for the key: the account picked, "Keep it as a Transfer", or "Not a Transfer". Each later one-sided Transfer with that key takes it, with no Review list item. It never beats a hand-set type, an account a Member picked for that Transaction, or an account the line names, and it never ends a link.
+  - Settings → Categories lists the remembered answers, with Delete ([Dashboard and pages](07-dashboard-and-pages.md#settings-overview)). Deleting one sends the Transactions it decided back through the follow-up job, so they ask again. When its account is deleted, the answer goes too.
+  - The digits stay in the app. The key and the remembered answers never go to the AI.
+- **Money from a person cards.** One open item per person on one payment app holds that person's money with no link. The key is the app with the person's name as a letter-only, case-folded skeleton, so "JOHN SMITH" and "John  Smith" are one card. A line that names no person, such as `VENMO CASHOUT` or a check deposit, keeps an item of its own.
+  - A card of one Transaction works as before: its best answer is the AI's pick, and "Not this" offers Keep as Income and each Spending it may pay back.
+  - A card of more has "Keep all as Income", which sets each one still on the card to Income by hand. A row opens its Transaction, where a Member links it as a Reimbursement.
+  - The answer is not remembered: later money from the same person may pay back Spending, so the AI still gets to pick for it.
+- **Transfer pair guesses** group on the page by their two Accounts, for display only. Each pair keeps its own answer, since it is about two given Transactions, and nothing is remembered.
+- **Items from before cards.** The first Matching run after the update groups the open items: the earlier items of one key close as "grouped", and one card holds their Transactions. Running it again changes nothing.
 
 Manual loan items, such as "Link to this loan?" and a missed payment, are in [Accounts and bank sync](02-accounts-and-bank-sync.md).
 

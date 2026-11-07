@@ -198,7 +198,9 @@ Using this page is never required.
 - Accepting a Category guess makes a Category rule ([Categorization](04-categorization.md)). Every answer counts as hand-set.
 - An item closes when a Member answers it, or when a later event settles it. Otherwise it stays.
 - **Category cards.** A Category item holds all of one Merchant's Transactions of its kind, such as "Marathon · 14 Transactions · The AI chose Gas, but it was unsure." Its answer covers every Transaction on the card. A folded list under the card shows each Transaction's date, amount, Account, and Category, with "Change" to set that Transaction alone; a changed row leaves the card ([Categorization](04-categorization.md#review-list-items)).
-- The menu's count and the page's count count items, so a card counts once.
+- **Money movement cards.** A one-sided Transfer item holds every one-sided Transfer of one key, and money from a person holds one person's money on one payment app. A card's answer covers every Transaction still on it, and a one-sided Transfer answer is remembered for its key. Each row has "Change", which sets that Transaction's type alone, and, for money from a person, a link to its Transaction to link a Reimbursement ([Money movement](03-money-movement.md#review-list-items)).
+- **Transfer pair guesses** between the same two Accounts show as one card, for display only. Each pair keeps its own buttons.
+- The menu's count and the page's count count items, so a card counts once, and so does a group of Transfer pair guesses.
 - Newest first. Items made at the same moment, such as by one follow-up job, run by their Transaction's date, newest first. With no items, the page says "Nothing to check."
 
 ### Recurring charges page
@@ -276,7 +278,7 @@ Settings has one section per area. Each owner file holds the rules.
 | Members | Members, invite links, removing a Member, resetting a login | [09](09-members-login-security.md) |
 | My login | Password, TOTP, backup codes, passkeys, signed-in devices | [09](09-members-login-security.md) |
 | Banks | Plaid keys, Connections, Repair, Remove, "Import Plaid Connection", "at least N of 10 used", Unconnected accounts, Manual loans | [02](02-accounts-and-bank-sync.md) |
-| Categories | Category rules, with Delete | [04](04-categorization.md) |
+| Categories | Category rules, with Delete; remembered one-sided Transfer answers, with Delete | [04](04-categorization.md), [03](03-money-movement.md#review-list-items) |
 | Alerts | Weekly cap, my channels, the weekly summary email, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
 | AI | AI provider, key, models, prices, AI cost cap, base URL, the AI usage page, and the AI request log | [08](08-ai.md#ai-settings-page) |
 | Backups and data | "Back up now", last backup, "Check my Master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |
