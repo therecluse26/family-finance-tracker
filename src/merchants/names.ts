@@ -83,19 +83,21 @@ const NUMBER_WORD = /^(?:#\d*|[A-Z]{0,2}-?\d{3,}|\d+)$|\d{4}/i;
 // Where the rules put a phone number. A phone number is always a place marker.
 const PHONE_MARK = "\u0000PHONE";
 
-// The 50 states, DC, and Puerto Rico. A bank puts a city and its state at the end of a description.
+// The 50 states, DC, and Puerto Rico. A bank puts a city and its state at the end of a
+// description.
 const STATES = new Set(
   (
-    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ " +
-    "NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY"
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV " +
+    "NH NJ NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY"
   ).split(" "),
 );
 
 // Descriptions of a paper check. A check has no Merchant.
 const CHECK = /^(?:CHECK|CHK|CHEQUE)(?:\s+PAID)?\s*(?:#|NO\.?|NUMBER)?\s*\d*$/i;
 
-// A word that is only digits or symbols.
-const NO_LETTERS = /^[^\p{L}]+$/u;
+// A word that is only digits or symbols. A modifier letter, such as "ｰ" in "4ｰ8ｰ2ｰ1", looks like
+// a symbol, so it counts as one.
+const NO_LETTERS = /^[\P{L}\p{Lm}]+$/u;
 
 function words(text: string): string[] {
   return text.split(/\s+/).filter((word) => word !== "");
@@ -128,19 +130,18 @@ function placeIndex(parts: readonly string[]): number {
   });
 }
 
-// "TRADER JOE'S" is "Trader Joe's". Text with any lowercase letter keeps its case, and so does a
-// word with "&", such as H&M or AT&T.
+// "TRADER" is "Trader". A word with "&", such as H&M or AT&T, keeps its case.
+const titleWord = (word: string) =>
+  word.includes("&")
+    ? word
+    : word
+        .toLowerCase()
+        .replace(/(^|[-/])(\p{L})/gu, (_, before, letter) => before + letter.toUpperCase());
+
+// "TRADER JOE'S" is "Trader Joe's". Text with any lowercase letter keeps its case.
 function titleCase(text: string): string {
   if (/\p{Ll}/u.test(text)) return text;
-  return words(text)
-    .map((word) =>
-      word.includes("&")
-        ? word
-        : word
-            .toLowerCase()
-            .replace(/(^|[-/])(\p{L})/gu, (_, before, letter) => before + letter.toUpperCase()),
-    )
-    .join(" ");
+  return words(text).map(titleWord).join(" ");
 }
 
 // The rules' words for one bank description, before title case. `unsure` when a card number or a
@@ -198,10 +199,10 @@ const CARD_PAYMENT = "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT";
 // The words of a card payment line that name the payment, not the bank.
 const PAYMENT_WORDS = new Set(
   (
-    "payment payments epayment pmt pmts pymt pymnt pymnts paymt pmnt pay paid autopay autopmt auto " +
-    "automatic epay e-pay e-payment e-pmt online mobile web internet banking phone tel thank " +
-    "thanks you thankyou card crd cd dc bill billpay received recd rcvd ach to id ppd ccd web acct " +
-    "account ending in ref conf confirmation transfer xfer electronic elec recurring"
+    "payment payments epayment pmt pmts pymt pymnt pymnts paymt pmnt pay paid autopay autopmt " +
+    "auto automatic epay e-pay e-payment e-pmt online mobile web internet banking phone tel " +
+    "thank thanks you thankyou card crd cd dc bill billpay received recd rcvd ach to id ppd ccd " +
+    "web acct account ending in ref conf confirmation transfer xfer electronic elec recurring"
   ).split(" "),
 );
 // "CREDIT" names the payment only before "CARD", so "CREDIT ONE BANK" keeps it.
@@ -213,13 +214,30 @@ const PERSON_WORDS = /^(?:from|by|for|per)$/i;
 // them, or after "ORIG CO NAME:", and the payer's name is in one of them. A run of 6 or more digits
 // is an ID, and a bank such as Wells Fargo puts the payer's name after it with no field name.
 const ORIGINATOR = /\bORIG(?:INATOR)?\s?CO\s?NAME\s?:\s?/i;
-const ACH_FIELD =
-  /\b(?:DES|DESCR|INDN|IND\s?NAME|IND\s?ID|NAME|CO\s?ID|ORIG\s?ID|CO\s?ENTRY\s?DESCR|RECEIVER|RECV|TRN|SEC|TRACE|EED|DESC\s?DATE)\s?[:#]|\d{6,}/i;
+const ACH_FIELD_NAMES = [
+  "DES",
+  "DESCR",
+  "INDN",
+  "IND\\s?NAME",
+  "IND\\s?ID",
+  "NAME",
+  "CO\\s?ID",
+  "ORIG\\s?ID",
+  "CO\\s?ENTRY\\s?DESCR",
+  "RECEIVER",
+  "RECV",
+  "TRN",
+  "SEC",
+  "TRACE",
+  "EED",
+  "DESC\\s?DATE",
+];
+const ACH_FIELD = new RegExp(`\\b(?:${ACH_FIELD_NAMES.join("|")})\\s?[:#]|\\d{6,}`, "i");
 
 // The bank a card payment line names: Plaid's financial institution on the line, when it has one.
 // Otherwise the rule-cleaned line up to its first ACH field, with no payment words, when the rules
-// are sure: 1 to 3 words of letters, and nothing that may name a person. `bank` is null when the
-// rules are not sure.
+// are sure: a known card issuer's words at the start, title-cased as other clean names are, and
+// nothing that may name a person. `bank` is null when the rules are not sure.
 function cardPaymentBank(txn: {
   description: string;
   counterparties?: readonly { name: string; type: string }[];
@@ -239,7 +257,7 @@ function cardPaymentBank(txn: {
   if (cleaned.unsure) return { bank: null };
 
   const kept: string[] = [];
-  const parts = words(titleCase(cleaned.parts.join(" ")));
+  const parts = cleaned.parts;
   for (const [index, word] of parts.entries()) {
     if (PERSON_WORDS.test(word)) return { bank: null };
     if (PAYMENT_WORDS.has(word.toLowerCase())) continue;
@@ -248,14 +266,18 @@ function cardPaymentBank(txn: {
     const rest = pieces.join("-").replace(/^[-,:#.]+|[-,:#.]+$/g, "");
     if (rest !== "") kept.push(rest);
   }
-  // A word that starts with an earlier one names the payment, as in "CITI ... CITICARDAP".
-  const bank = kept.filter(
-    (word, index) =>
-      !kept.slice(0, index).some((before) => word.toLowerCase().startsWith(before.toLowerCase())),
-  );
+  // A word that starts with an earlier one names the payment, as in "CITI ... CITICARDAP". Only
+  // the first words can name an issuer, so only they are read, and a long line costs no more
+  // than a short one (K3).
+  const first = kept.slice(0, LONGEST_ISSUER).map((word) => word.toLowerCase());
+  const bank = kept
+    .slice(0, LONGEST_ISSUER)
+    .filter(
+      (_, index) => !first.slice(0, index).some((before) => first[index]?.startsWith(before)),
+    );
   if (bank.length === 0) return { bank: "" };
   const issuer = issuerWords(bank);
-  return { bank: issuer === 0 ? null : bank.slice(0, issuer).join(" ") };
+  return { bank: issuer === 0 ? null : bank.slice(0, issuer).map(titleWord).join(" ") };
 }
 
 // The card issuers the rules know by name. The words after an issuer's name may be the payer, as

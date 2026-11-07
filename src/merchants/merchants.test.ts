@@ -325,10 +325,11 @@ describe("card payment lines", () => {
   it.each([
     // Wells Fargo: the payer after the IDs, with no field name.
     ["CHASE CREDIT CRD EPAY 260105 8273645101 JAMIE RIVERA", "Chase card payment", false],
-    ["WF Credit Card AUTO PAY 260105 123456 JAMIE RIVERA", "WF card payment", false],
+    ["WF Credit Card AUTO PAY 260105 123456 JAMIE RIVERA", "Wf card payment", false],
     // ACH fields: the bank is the originator, and the payer is in a field.
     [
-      "ORIG CO NAME:CITI CARD ONLINE ORIG ID:CITICTP CO ENTRY DESCR:PAYMENT SEC:WEB IND NAME:JAMIE RIVERA",
+      "ORIG CO NAME:CITI CARD ONLINE ORIG ID:CITICTP CO ENTRY DESCR:PAYMENT SEC:WEB " +
+        "IND NAME:JAMIE RIVERA",
       "Citi card payment",
       false,
     ],
@@ -357,6 +358,17 @@ describe("card payment lines", () => {
     ["CHASE CARD ENDING IN 4́8́2́1́", "Chase card payment", false],
   ])("names %j %j", (description, name, needsAi) => {
     expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi });
+  });
+
+  // The issuer reads as other clean names do, whatever the line's case.
+  it.each([
+    ["chase credit crd epay", "Chase card payment"],
+    ["BANK OF AMERICA ONLINE PMT Ref 4821", "Bank Of America card payment"],
+    ["Capital one mobile pmt", "Capital One card payment"],
+    ["USAA CREDIT CARD PAYMENT", "Usaa card payment"],
+    ["citi autopay payment Citicardap", "Citi card payment"],
+  ])("title-cases the issuer in %j", (description, name) => {
+    expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
   });
 });
 
@@ -416,6 +428,34 @@ describe("card numbers in other forms", () => {
     "NORTHWIND ENDING INXXXX4821",
     "NORTHWIND 4.8.2.1",
     "NORTHWIND ④⑧②①",
+    // Characters a reader never sees, or that look like a gap, but that Unicode counts as letters
+    // or marks: Hangul fillers, Mongolian and other variation selectors, the grapheme joiner, an
+    // unassigned invisible code point, and modifier letters that look like a dash or a colon.
+    "NORTHWIND ENDING IN 4\u3164821",
+    "NORTHWIND ENDING IN 4\u115F8\u11602\uFFA01",
+    "NORTHWIND 4\u3164821",
+    "NORTHWIND ENDING\u3164IN\u31644821",
+    "NORTHWIND ACCT\uFFA0ENDING 4821",
+    "NORTHWIND ENDING IN 4\u180B8\u180D2\u180F1",
+    "NORTHWIND ENDING IN 4\uFE0F8\u{E0100}21",
+    "NORTHWIND ENDING IN 4\u034F8\u17B421",
+    "NORTHWIND ENDING IN 4\u20658\u{E0FFF}21",
+    "NORTHWIND ENDING IN 4\uFF708\uFF702\uFF701",
+    "NORTHWIND ENDING IN 4\u30FC8\u30FC2\u30FC1",
+    "NORTHWIND 4\u02D08\u02D02\u02D01",
+    "NORTHWIND CARD \u02E3\u02E3\u02E3\u02E3 4821",
+    "NORTHWIND ACCT ENDING \u2800 4821",
+    // A number in brackets or quotes takes them with it.
+    "NORTHWIND ACCT ENDING IN (4821)",
+    "NORTHWIND ACCT [4821]",
+    "NORTHWIND ACCT {XXXX4821}",
+    'NORTHWIND ACCT "4821"',
+    "NORTHWIND ACCT \u201C4821\u201D",
+    "NORTHWIND ACCT #4821.",
+    "NORTHWIND (ACCT ENDING IN 4821)",
+    "NORTHWIND ( ACCT ENDING IN 4821 )",
+    "NORTHWIND [CARD XXXX 4821",
+    "NORTHWIND \uFF08ACCT 4821\uFF09",
   ])("cleans %j to Northwind", (description) => {
     expect(fromBank(description)).toEqual({
       merchant: { id: null, name: "Northwind" },
@@ -423,9 +463,18 @@ describe("card numbers in other forms", () => {
     });
   });
 
+  it.each([
+    ["NORTHWIND (NYC) ACCT 4821", "Northwind (nyc)"],
+    ["DONUTS' ACCT 4821", "Donuts'"],
+    ["BLUEBIRD BOOKS (PORTLAND) ACCT ENDING IN (4821)", "Bluebird Books (portland)"],
+    ["CAFÉ LUNA ACCT 4821, THANK YOU", "Café Luna Thank You"],
+  ])("keeps the brackets and quotes that are not around the number in %j", (description, name) => {
+    expect(fromBank(description).merchant?.name).toBe(name);
+  });
+
   // The rules run in the sync, so no line may take long, however it is built (K3).
   // The short lines come first, so a slow rule fails in a second instead of hanging the run.
-  it("cleans a 10,000-character line in a few milliseconds", () => {
+  it("cleans a 40,000-character line in a few milliseconds", () => {
     const line = (piece: string, length: number) =>
       piece.repeat(Math.ceil(length / piece.length)).slice(0, length);
     const pieces = [
@@ -443,8 +492,16 @@ describe("card numbers in other forms", () => {
       "LAST 4 ",
       "ENDING IN ",
       "❹ ",
+      // A card payment line of many short words, each starting with the one before it.
+      "A AB ",
+      "CHASE CHASEX ",
+      "ACCT (4821) ",
+      "( ",
+      "\u3164",
+      "4\u3164",
+      "4\uFF70",
     ];
-    const lines = [250, 10_000].flatMap((length) =>
+    const lines = [250, 10_000, 40_000].flatMap((length) =>
       pieces.flatMap((piece) => ["", " 4821 SHOP"].map((end) => `${line(piece, length)}${end}`)),
     );
     for (const description of lines) {
