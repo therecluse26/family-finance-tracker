@@ -298,7 +298,9 @@ describe("card payment lines", () => {
     expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
   });
 
-  it("keeps the provider's Merchant ID, and the provider's Merchant name wins", () => {
+  // A card payment never shares a Merchant with the brand's purchases, so the provider's Merchant
+  // ID and name both give way (owner decision D23).
+  it("drops the provider's Merchant ID, and the card payment name wins over the provider's", () => {
     expect(
       cleanMerchant({
         description: "PAYMENT TO CHASE CARD ENDING IN 7731",
@@ -306,7 +308,7 @@ describe("card payment lines", () => {
         merchantId: "m-chase",
         category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
       }).merchant,
-    ).toEqual({ id: "m-chase", name: "Chase card payment" });
+    ).toEqual({ id: null, name: "Chase card payment" });
     expect(
       cleanMerchant({
         description: "PAYMENT TO CHASE CARD ENDING IN 7731",
@@ -314,7 +316,29 @@ describe("card payment lines", () => {
         merchantId: "m-chase",
         category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
       }).merchant,
-    ).toEqual({ id: "m-chase", name: "Chase" });
+    ).toEqual({ id: null, name: "Chase card payment" });
+  });
+
+  it("takes the bank from a provider Merchant name that is a card issuer, else from the line", () => {
+    const card = (merchantName: string, description: string) =>
+      cleanMerchant({
+        description,
+        merchantName,
+        merchantId: "m-1",
+        category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+      });
+    expect(card("Capital One", "THANK YOU-MOBILE")).toEqual({
+      merchant: { id: null, name: "Capital One card payment" },
+      needsAi: false,
+    });
+    expect(card("Bluebird Books", "CITI AUTOPAY 4821")).toEqual({
+      merchant: { id: null, name: "Citi card payment" },
+      needsAi: false,
+    });
+    expect(card("Bluebird Books", "PAYMENT FROM JAMIE RIVERA")).toEqual({
+      merchant: { id: null, name: "Card payment" },
+      needsAi: true,
+    });
   });
 
   it("names the bank by Plaid's financial institution when the line has one", () => {
@@ -382,6 +406,17 @@ describe("card payment lines", () => {
     ]) {
       expect(cardPayment(description).merchant?.name, description).toBe("Chase card payment");
     }
+  });
+
+  it("names the card payment even when the provider names a Merchant", () => {
+    expect(
+      cleanMerchant({
+        description: "CHASE CARD ENDING IN 4821",
+        merchantName: "Chase",
+        merchantId: "m-chase",
+        category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+      }).merchant,
+    ).toEqual({ id: null, name: "Chase card payment" });
   });
 
   it("leaves a line under any other code to the usual rules", () => {

@@ -58,8 +58,9 @@ Upkeep stays with what it maintains: home repairs in Home and garden, and car re
 - "Card" alone before digits, as in `GIFT CARD 2500` or `STARBUCKS CARD 1234`, may be part of the name. Its words stay, and the name is marked for AI cleanup. On a card payment line, or when the digits carry a mask, the word and the digits go.
 - A lead-in that ends the line with no number after it, as when the bank cut the line short (`CHASE CARD ENDING IN`), goes too. A lead-in or mask the rules leave in the name, as in `ENDS WITH 99 BOUTIQUE`, marks the name for AI cleanup.
 - A name counts as fixed when the result has 1 to 4 words. No word may be only digits or symbols.
-- **A card payment line,** which Plaid files under its credit card payment code, with no provider Merchant name, gets the name "<bank> card payment", such as "Chase card payment".
+- **A card payment line,** which Plaid files under its credit card payment code, gets the name "<bank> card payment", such as "Chase card payment", and no Merchant ID, whatever Merchant the provider names.
   - The bank is Plaid's financial institution counterparty, when the line has one.
+  - Otherwise, when the provider's Merchant name starts with a card issuer the rules know, that issuer is the bank.
   - Otherwise it is the card issuer the line names first, from a list the rules know, such as Chase, Citi, Capital One or Discover, after the rules remove payment words, such as "card ending in", "mobile pymt", "autopay", "online" and "thank you", and every run of digits. On an ACH line, the bank is the originator (`ORIG CO NAME:`), and the text from the first field name (`IND NAME:`, `INDN:`, `NAME:`, `RECEIVER:`, `ID:` and the like) or the first run of 6 or more digits on goes, because the payer's name follows it.
   - When the line names no bank, as in `THANK YOU-MOBILE` on the card's own Account, the name is "Card payment".
   - The words after the issuer's name go, because they may be the payer, as in `CHASE CREDIT CRD EPAY 260105 8273645101 JAMIE RIVERA` ("Chase card payment").
