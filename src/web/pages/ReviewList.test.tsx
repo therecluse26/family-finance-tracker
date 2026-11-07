@@ -5,6 +5,7 @@ import { isValidElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { categoryChoiceValue, readCategoryChoice } from "../../categorization/category-choice.ts";
 import { AI_UNSURE_KIND, BEST_GUESS_KIND } from "../../categorization/index.ts";
 import {
   MISSED_PAYMENT_KIND,
@@ -19,7 +20,14 @@ import type { ReviewItemView, ReviewTransactionView } from "../../server/review-
 import { MAIN_MENU } from "../menu.ts";
 import { acceptOf, answerItem, reviewListRequests, UNTRACKED_LOAN_KIND } from "../review-list.ts";
 import { routes } from "../routes.tsx";
-import { type ItemActions, KIND_LABEL, ReviewItems, ReviewListItem } from "./ReviewList.tsx";
+import {
+  categoryPickerOf,
+  type ItemActions,
+  KIND_LABEL,
+  matchingCategories,
+  ReviewItems,
+  ReviewListItem,
+} from "./ReviewList.tsx";
 
 // The Review list page (spec 07, Review list page), with an item of every kind the app opens.
 
@@ -334,7 +342,7 @@ describe("the Review list page", () => {
     const html = inRouter(
       <ReviewListItem
         item={EVERY_KIND[0] as ReviewItemView}
-        state={{ choices: [{ value: "Groceries", label: "Groceries" }] }}
+        state={{ choices: [{ value: "other", label: "Something else" }] }}
         today={TODAY}
         actions={noActions}
       />,
@@ -342,7 +350,94 @@ describe("the Review list page", () => {
     expect(html).toContain('aria-expanded="true"');
     expect(html).toMatch(/<p [^>]*id="choices-guess"[^>]*>Other choices<\/p>/);
     expect(html).toContain('<ul class="flex flex-wrap gap-2" aria-labelledby="choices-guess">');
-    expect(text(html)).toContain("Not this Other choices Groceries");
+    expect(text(html)).toContain("Not this Other choices Something else");
+  });
+
+  // The choices the server sends behind "Not this" on a Category item: each Category, and each
+  // Category for only this Transaction when the Merchant may have a rule.
+  const categoryChoices = (onlyThis: boolean) => [
+    { value: "Groceries", label: "Groceries" },
+    { value: "Restaurants", label: "Restaurants" },
+    ...(onlyThis
+      ? [
+          {
+            value: categoryChoiceValue("Groceries", true),
+            label: "Groceries, only this Transaction",
+          },
+          {
+            value: categoryChoiceValue("Restaurants", true),
+            label: "Restaurants, only this Transaction",
+          },
+        ]
+      : []),
+  ];
+
+  it("shows a Category item's choices as a Category search box and Only this Transaction", () => {
+    const html = inRouter(
+      <ReviewListItem
+        item={EVERY_KIND[0] as ReviewItemView}
+        state={{ choices: categoryChoices(true) }}
+        today={TODAY}
+        actions={noActions}
+      />,
+    );
+    expect(html).toMatch(/<label [^>]*for="category-guess"[^>]*>Another Category<\/label>/);
+    expect(html).toMatch(/<input [^>]*id="category-guess"[^>]*role="combobox"/);
+    expect(html).toMatch(/role="combobox"[^>]*aria-controls="categories-guess"/);
+    expect(html).toMatch(/<div [^>]*id="categories-guess"[^>]*role="listbox"/);
+    expect(html.match(/role="option"/g)).toHaveLength(2);
+    expect(html).toMatch(/<input type="checkbox"[^>]*aria-describedby="only-this-guess"/);
+    expect(text(html)).toContain("Groceries Restaurants Only this Transaction Without it");
+    expect(text(html)).not.toContain("Other choices");
+    expect(text(html)).not.toContain(", only this Transaction");
+  });
+
+  it("shows no Only this Transaction box when the server offers no such choice", () => {
+    const html = inRouter(
+      <ReviewListItem
+        item={EVERY_KIND[0] as ReviewItemView}
+        state={{ choices: categoryChoices(false) }}
+        today={TODAY}
+        actions={noActions}
+      />,
+    );
+    expect(html).toContain('role="combobox"');
+    expect(html).not.toContain('type="checkbox"');
+    expect(text(html)).not.toContain("Only this Transaction");
+  });
+
+  it("reads Category choices as one Category list, and leaves any other list as round choices", () => {
+    expect(categoryPickerOf(categoryChoices(true))).toEqual({
+      categories: ["Groceries", "Restaurants"],
+      onlyThisOffered: true,
+    });
+    expect(categoryPickerOf(categoryChoices(false))).toEqual({
+      categories: ["Groceries", "Restaurants"],
+      onlyThisOffered: false,
+    });
+    expect(categoryPickerOf([...categoryChoices(true), { value: "other", label: "Other" }])).toBe(
+      undefined,
+    );
+    expect(categoryPickerOf([])).toBe(undefined);
+  });
+
+  it("finds Categories by any part of their name, in either case", () => {
+    const all = ["Groceries", "Home and garden", "Alcohol and tobacco", "Gas"] as const;
+    expect(matchingCategories(all, "gro")).toEqual(["Groceries"]);
+    expect(matchingCategories(all, " AND ")).toEqual(["Home and garden", "Alcohol and tobacco"]);
+    expect(matchingCategories(all, "")).toEqual(all);
+    expect(matchingCategories(all, "shopping")).toEqual([]);
+  });
+
+  it("sends a picked Category with or without only this Transaction as the server reads it", () => {
+    expect(readCategoryChoice(categoryChoiceValue("Groceries", false))).toEqual({
+      category: "Groceries",
+      onlyThisTransaction: false,
+    });
+    expect(readCategoryChoice(categoryChoiceValue("Groceries", true))).toEqual({
+      category: "Groceries",
+      onlyThisTransaction: true,
+    });
   });
 
   it('says "Nothing to check." with no items', () => {
