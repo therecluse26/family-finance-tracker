@@ -11,7 +11,7 @@ import {
 import { budgetSpending, budgetsForMonth } from "../budgets/index.ts";
 import { CATEGORIES, type Category, categoryGroupOf } from "../categories/index.ts";
 import { type Database, listAccounts, readShownParts, searchTransactions } from "../db/index.ts";
-import { type Goal, readGoalsWithProgress } from "../goals/index.ts";
+import { type Goal, progressDetailPieces, readGoalsWithProgress } from "../goals/index.ts";
 import { TRANSACTION_TYPES } from "../money-movement/index.ts";
 import { householdToday, recurringCharges } from "../recurring/index.ts";
 import { balanceHistory, DAILY_DAYS, tileAccounts } from "./balance-history.ts";
@@ -64,6 +64,21 @@ function dollars(cents: number): string {
 }
 
 const cents = (amount: number) => Math.round(amount * 100);
+
+// The largest amount a typed value holds: under 10^12 cents.
+const TYPED_AMOUNT_CAP = 10 ** 12;
+
+// A Goal's progress detail (src/goals/progress.ts) in parts: its words as text, and each amount
+// the app computed as a typed value, as the Household summary sends it. An amount too large for a
+// typed value goes as text.
+const progressDetail = (detail: string) =>
+  progressDetailPieces(detail).map((piece) =>
+    typeof piece === "string"
+      ? piece
+      : Math.abs(piece.cents) < TYPED_AMOUNT_CAP
+        ? typedAmount(piece.cents)
+        : dollars(piece.cents),
+  );
 
 // The Account with this label, in any case.
 function accountWithLabel(labels: ReadonlyMap<string, string>, label: string): string | undefined {
@@ -123,7 +138,7 @@ function goalOf(goal: Goal, labels: ReadonlyMap<string, string>) {
             kind: goal.progress.kind,
             percentage: goal.progress.percentage,
             state: goal.progress.state,
-            detail: goal.progress.detail,
+            detail: progressDetail(goal.progress.detail),
             estimated: goal.progress.estimated,
           },
   };
@@ -189,7 +204,7 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         transactions: found.transactions.map((txn) => {
           const shown = parts.get(txn.id) ?? [];
           return {
-            date: typedDate(txn.postedDate),
+            date: typedDate(txn.shownDate),
             merchant: txn.merchantCleanName,
             amount: typedAmount(txn.amount),
             category: joined(shown.map((part) => part.category)),

@@ -1,5 +1,6 @@
 import {
   type AnyColumn,
+  aliasedTable,
   and,
   eq,
   exists,
@@ -20,6 +21,8 @@ import {
   connections,
   householdAccounts,
   loanLinks,
+  refusedLinks,
+  refusedTransferLinks,
   spendingLinks,
   transactions,
   transferLinks,
@@ -94,6 +97,31 @@ function handLinked(database: Queries): SQL {
   ) as SQL;
 }
 
+// A refusal that names the Transaction on either side: an undone Transfer pair, or an undone
+// Refund, Reimbursement, or loan link (spec 03, Undo and hand links).
+function refused(database: Queries): SQL {
+  const id = transactions.id;
+  return or(
+    exists(
+      database
+        .select({ one: sql`1` })
+        .from(refusedTransferLinks)
+        .where(
+          or(
+            eq(refusedTransferLinks.outTransactionId, id),
+            eq(refusedTransferLinks.inTransactionId, id),
+          ),
+        ),
+    ),
+    exists(
+      database
+        .select({ one: sql`1` })
+        .from(refusedLinks)
+        .where(or(eq(refusedLinks.transactionId, id), eq(refusedLinks.otherId, id))),
+    ),
+  ) as SQL;
+}
+
 // An old Transaction of a carried Account: hidden as "replaced by re-link", and from another
 // Connection than the one its Account now belongs to.
 const replacedOld = and(
@@ -153,7 +181,9 @@ export async function listPossibleCopies(
   return found;
 }
 
-// The old Transactions on these Accounts, posted on these days, that a Member linked by hand.
+// The old Transactions on these Accounts, posted on these days, that a Member linked by hand, or
+// that a refusal names, so the refusal moves to the copy too and the app never makes the undone
+// link again on it.
 export async function listHandLinkedOld(
   database: Database,
   filter: { accountIds: readonly string[]; postedDates: readonly string[] },
@@ -170,7 +200,7 @@ export async function listHandLinkedOld(
             inArray(transactions.accountId, accounts),
             inArray(transactions.postedDate, dates),
             replacedOld,
-            handLinked(database),
+            or(handLinked(database), refused(database)),
           ),
         );
       found.push(...rows);
@@ -255,10 +285,54 @@ export async function endCopyWaits(
     for (const { connectionId } of ended) {
       const awaited = await listHandLinkedOldOf(tx, connectionId);
       await markTransactionsUnhandled(tx, awaited);
+      await endRefusalsWithNoCopy(tx, connectionId);
       unhandled += awaited.length;
     }
     return unhandled;
   });
+}
+
+// When a Connection's wait for copies ends, the refusals on its old Transactions that have no copy
+// end too, as their hand-made links do, so a copy that comes later takes none. An old Transaction
+// whose copy is stored keeps its refusals for the follow-up job that moves them. One statement a
+// refusal table.
+export async function endRefusalsWithNoCopy(tx: Queries, connectionId: string): Promise<void> {
+  const copy = aliasedTable(transactions, "copy");
+  const noCopy = tx
+    .select({ id: transactions.id })
+    .from(transactions)
+    .innerJoin(householdAccounts, eq(householdAccounts.id, transactions.accountId))
+    .where(
+      and(
+        eq(householdAccounts.connectionId, connectionId),
+        replacedOld,
+        notExists(
+          tx
+            .select({ one: sql`1` })
+            .from(copy)
+            .where(
+              and(
+                eq(copy.accountId, transactions.accountId),
+                eq(copy.postedDate, transactions.postedDate),
+                eq(copy.amount, transactions.amount),
+                eq(copy.connectionId, householdAccounts.connectionId),
+                isNull(copy.hiddenReason),
+              ),
+            ),
+        ),
+      ),
+    );
+  await tx
+    .delete(refusedTransferLinks)
+    .where(
+      or(
+        inArray(refusedTransferLinks.outTransactionId, noCopy),
+        inArray(refusedTransferLinks.inTransactionId, noCopy),
+      ),
+    );
+  await tx
+    .delete(refusedLinks)
+    .where(or(inArray(refusedLinks.transactionId, noCopy), inArray(refusedLinks.otherId, noCopy)));
 }
 
 // The old Transactions on a Connection's Accounts whose hand-made links wait for a copy. The end of
@@ -282,8 +356,8 @@ function moved(column: AnyColumn, moves: readonly LinkMove[]): SQL {
   return sql`CASE ${column} ${sql.join(cases, sql` `)} ELSE ${column} END`;
 }
 
-// Moves every link a Member made from each old Transaction to its copy, in one transaction, one
-// statement a table. Each link keeps its ID, kind, evidence, and who made it. Returns the
+// Moves every link a Member made, and every refusal, from each old Transaction to its copy, in one
+// transaction, one statement a table. Each link keeps its ID, kind, evidence, and who made it. Returns the
 // Transactions on the links' other sides, and the Manual loans whose links moved.
 export async function moveHandLinks(
   database: Database,
@@ -338,6 +412,64 @@ export async function moveHandLinks(
         .where(and(eq(loanLinks.madeBy, "Member"), inArray(loanLinks.transactionId, from)))
         .returning({ loanAccountId: loanLinks.loanAccountId });
       for (const link of loans) loanAccountIds.add(link.loanAccountId);
+      // Every refusal moves with the hand-made links, on either side, so the app never makes an
+      // undone link again on the copy. One the copy already holds stays on the old Transaction.
+      const takenPair = aliasedTable(refusedTransferLinks, "taken_pair");
+      await tx
+        .update(refusedTransferLinks)
+        .set({
+          outTransactionId: moved(refusedTransferLinks.outTransactionId, chunk),
+          inTransactionId: moved(refusedTransferLinks.inTransactionId, chunk),
+        })
+        .where(
+          and(
+            or(
+              inArray(refusedTransferLinks.outTransactionId, from),
+              inArray(refusedTransferLinks.inTransactionId, from),
+            ),
+            notExists(
+              tx
+                .select({ one: sql`1` })
+                .from(takenPair)
+                .where(
+                  and(
+                    eq(
+                      takenPair.outTransactionId,
+                      moved(refusedTransferLinks.outTransactionId, chunk),
+                    ),
+                    eq(
+                      takenPair.inTransactionId,
+                      moved(refusedTransferLinks.inTransactionId, chunk),
+                    ),
+                  ),
+                ),
+            ),
+          ),
+        );
+      const taken = aliasedTable(refusedLinks, "taken");
+      await tx
+        .update(refusedLinks)
+        .set({
+          transactionId: moved(refusedLinks.transactionId, chunk),
+          otherId: moved(refusedLinks.otherId, chunk),
+        })
+        .where(
+          and(
+            or(inArray(refusedLinks.transactionId, from), inArray(refusedLinks.otherId, from)),
+            notExists(
+              tx
+                .select({ one: sql`1` })
+                .from(taken)
+                .where(
+                  and(
+                    eq(taken.kind, refusedLinks.kind),
+                    eq(taken.transactionId, moved(refusedLinks.transactionId, chunk)),
+                    eq(taken.otherId, moved(refusedLinks.otherId, chunk)),
+                  ),
+                ),
+            ),
+          ),
+        );
     }
   });
   for (const move of moves) others.delete(move.to);

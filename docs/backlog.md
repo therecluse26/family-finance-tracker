@@ -16,6 +16,7 @@ Small items left open after the T107 notes triage, for after the first release (
 - N28 (S, security) `parsePnpmTreePaths` accepts `[]` or a missing `dependencies` key without error, so the shipped-package list can silently fall back and leave out optional native packages. In: scripts/licenses.ts.
 - N29 (S, polish) In a checkout with a symlinked `node_modules`, the native package drops out of the shipped license list with no error (CI and image not affected). In: scripts/licenses.ts.
 - N30 (S, polish) Dev-only moderate advisory GHSA-67mh-4wv8-2f99 in `esbuild@0.18.20` through `drizzle-kit`, below the high bar. In: package.json.
+- N254 (S, security) The 6-character floor for registered secrets also drops their JSON and URL forms, so a short secret's JSON-escaped form (`a"b`) is not refused; apply the floor to base64 forms only. In: src/log.ts.
 
 ## Login, Members and the web server
 
@@ -81,6 +82,11 @@ Small items left open after the T107 notes triage, for after the first release (
 - N235 (S, polish) After 5 failed tries to end a copies wait, no System notice is raised (K4 word for word). In: src/bank/copies-wait.ts.
 - N236 (M, polish) A carry-over onto a Connection whose first load already ended (or whose 7-day cap passed) ends hand links at once, though the copy may still arrive. In: src/db/link-carry-over.ts, src/db/bank-data.ts carryOver.
 - N237 (S, polish) One new Connection carrying Accounts from two old ones records only the last old one (`onConflictDoUpdate` on `connection_carry_overs`). In: src/db/bank-data.ts.
+- N255 (M, security) Raw Plaid data stored before X17 still holds the `payment_meta` fields X17 now drops; a one-time migration should remove them. In: src/db/ (migration).
+- N256 (M, cannot tell) An old Connection that finished syncs but never finished its history load still splits at its last sync, so older history goes missing on the new Connection; needs a spec 02 rule. In: src/bank/, docs/spec/02.
+- N257 (S, polish) Two refused old Transactions with the same Account, date and amount but one new copy leave one refusal on a hidden Transaction; move every refusal to the one copy. In: src/db/link-carry-over.ts.
+- N258 (S, polish) `refused()` in link carry-over, and `carryLinks`, scan all of `refused_links` once per old Transaction (`other_id` has no index, and the OR blocks the `transaction_id` index); 10,000 × 5,000 took 3.3 s. Add the index and split the OR. In: src/db/link-carry-over.ts (migration).
+- N259 (S, polish) List and search date filters use the posted date while rows sort by purchase date. In: Transactions list and search.
 
 ## Money movement
 
@@ -92,6 +98,8 @@ Small items left open after the T107 notes triage, for after the first release (
 - N224 (S, polish) `calendarDateIn` builds a new `Intl.DateTimeFormat` for each removed card on each card payment. In: card-payments.ts.
 - N225 (S, polish) The `(?!\p{L})` after the card word in the last-4 pattern does nothing. In: card-payments.ts.
 - N226 (S, polish) `0x4821` reads as a card's last 4 (harmless). In: card-payments.ts.
+- N260 (S, polish) A cash-back-only line that Plaid fills with the store's Merchant name or code takes the store's Category; only bare lines stay Cash. In: src/money-movement/.
+- N261 (S, polish) Spending a Reimbursement could pay back still breaks ties on row ID. In: src/db/refunds.ts.
 
 ## Categorization and the Review list
 
@@ -121,6 +129,9 @@ Small items left open after the T107 notes triage, for after the first release (
 - N168 (S, polish) The advice reply schema is not `.strict()`: an extra field is dropped, not refused (same as other Quick replies). In: src/anomalies/advice.ts and other Quick reply schemas.
 - N239 (S, polish) A Recurring charge saved before X5 that fits no fixed day can show inactive a few days early until the next follow-up job. In: src/recurring.
 - N240 (S, polish) The schedule cache's tie-break between two months is untested. In: src/recurring.
+- N262 (S, polish) A `PAYPAL *ETSY SHOP` line whose provider Merchant name is "PayPal" gets PayPal as its Merchant, so it never gets a Duplicate charge (cleanup takes the provider name first). In: src/merchants/.
+- N263 (S, polish) `isPaymentApp`'s fallback treats "Payment", "Transfer", "Received", "Pmt" and "Web Id" as a payment app, so a non-app line that cleans to "Payment" gets no Duplicate charge. In: src/anomalies/checks.ts.
+- N264 (S, polish) Card payment Merchant names keep noise ("St National Bank card payment" from 1ST, city words, "Target Srvcs", full-width payment words, a person's name on the line; no last 4 survives), and a card payment keeps the provider's Merchant ID, so it may share a Merchant with that brand's purchases. In: src/merchants/.
 
 ## Budgets, Benchmarks and Goals
 
@@ -136,6 +147,9 @@ Small items left open after the T107 notes triage, for after the first release (
 - N223 (S, polish) `rent: ["Rented dwellings"]` in `CE_LINE_MAP` is dead data, kept on purpose. In: src/benchmarks/ce-lines.ts.
 - N228 (M, polish) Late bank data with an earlier posted date still moves an n = 0 Budget figure; freezing it needs a stored snapshot. In: src/budgets/.
 - N244 (S, polish) Test name reads "an Proposal". In: src/budgets tests.
+- N265 (S, polish) After an undone first Budget, the Budgets page shows no form to set a Budget for that Category; only a later Proposal or the API can. In: src/web/pages/Budgets.tsx.
+- N266 (S, polish) Goal amount Accept reads the Goal's start before its transaction, so a new AI reading landing in between stores the old start; refuse inside the transaction when the reading changed. In: src/goals/.
+- N267 (S, polish) When Month start hits its cap and stops, its Goal Done check stops too; follow-up jobs still check. In: src/goals/, src/jobs/.
 
 ## Household summary, Insight cards, Monthly review and Tailoring
 
@@ -155,6 +169,8 @@ Small items left open after the T107 notes triage, for after the first release (
 - N212 (S, polish) No daylight-saving or far-time-zone test for the 6 AM Insight card rule. In: src/insights/.
 - N213 (S, polish) The `start.ts` "insight cards" retry line is untested. In: src/server/start.test.ts.
 - N221 (S, polish) The Household summary gives a renter the fixed note that Housing and Car Spending "can sit above their Benchmarks", though a renter has no Housing Benchmark. In: src/summary/summary.ts.
+- N268 (S, polish) Chat Proposals from one AI round are stored in transaction order, not tool-call order; it matters only for two Budget changes on one Category in one round. In: src/chat/.
+- N269 (S, polish) Redraft triggers firing together can log "A redraft already waits" one extra time. In: src/tailoring/.
 
 ## Pages and dev tools
 
@@ -170,6 +186,8 @@ Small items left open after the T107 notes triage, for after the first release (
 - N171 (S, cannot tell) At 375 px the cards' picture cuts card names short ("Rewards ..."). In: src/web/components/Picture.tsx.
 - N216 (S, polish) The wizard's Finish step says history "can take a few hours"; no spec gives that figure. In: SetupSteps.tsx.
 - N217 (S, polish) The iPhone "Add to Home Screen" note also shows on Chrome and Firefox for iPhone but says "In Safari, tap Share", and names only Alerts though System notices also come by push. In: SetupSteps.tsx.
+- N270 (S, polish) A failed Household time-zone read hides a Settings page's times until the next page load, with no retry and no message. In: src/web/household-zone.ts.
+- N281 (S, polish) No test pins the 128 MiB `MAX_ZIP_ENTRY_BYTES` default. In: scripts/zip-table.ts.
 
 ## Backups, export, jobs and start-up
 
@@ -182,6 +200,14 @@ Small items left open after the T107 notes triage, for after the first release (
 - N196 (S, polish) The export's 4 GB stop is checked only after a file streams, and has no test. In: src/server/zip.ts.
 - N198 (S, polish) The export's status cell is lower case `pending`/`posted`; spec 11 says "Pending or posted". In: src/server/data-export.ts or spec 11.
 - N249 (S, polish) Optional: pin the Compose subnet so the Tailscale gateway address stays fixed. In: docker/ compose file.
+- N271 (M, polish) A hung backup mount still hangs start-up: `chooseBackupFolder` runs `stat`, `mkdir` and `chmod` with no time limit, and `docker/entrypoint.sh` runs `find /backups` and `chmod` before Node starts. Fix both together. In: src/backups/folder.ts, docker/entrypoint.sh.
+- N272 (S, polish) On a hung backup mount the stop still ends with Docker's kill, because `process.exit(0)` waits while a file-system thread is blocked. In: src/server/stop.ts.
+- N273 (S, polish) `VACUUM INTO` and the integrity check run synchronously, so no time limit covers them and Member writes wait during a backup (under 1 s on 5 years of history); a copy that timed out can still run `VACUUM INTO` later into an untracked temporary file, which the next start deletes. In: src/db/backup.ts, src/backups/.
+- N274 (S, polish) The backup folder code follows a `/data/backups` that is itself a link; fix the "follows no link" wording or skip a linked folder. In: src/backups/folder.ts.
+- N275 (S, security) Add `cap_drop` for the root `docker-init` process. In: compose.yaml.
+- N276 (S, polish) Platforms without Compose can still miss a stop in the first half second. In: src/server/main.ts.
+- N282 (S, flaky test) The install drill can fail if the 30-second TOTP step rolls over mid-step. In: scripts/quick-start-test.sh.
+- N283 (S, security) The drill containers keep normal outbound network; an internal-only Compose network would guarantee no request leaves. In: scripts/quick-start-test.sh.
 
 ## Specs
 
@@ -189,10 +215,13 @@ Small items left open after the T107 notes triage, for after the first release (
 - N191 (S, polish) Undo of an accepted redraft keeps its inputs recorded, so the trigger does not repeat (matches Skip; spec 05 silent). In: spec 05.
 - N227 (S, polish) Spec 05 says the days of history run "to the day the app computes", but the code counts to the day m's figure is set (the day before the 1st for the Month start). In: spec 05.
 - N252 (S, polish) Spec 08's "data, not instructions" sentence sits under "Prompt order and caching"; may belong under "Privacy filter". In: spec 08.
+- N277 (S, polish) Spec 02's first sentence says raw data holds no personal detail, which contradicts the D20 line that keeps `verification_name`. In: docs/spec/02.
 
 ## Tests
 
 - N88 (M, flaky test) Run the full suite with the clock a year ahead and fix every date-bound test. In: test suite.
+- N278 (S, polish) No test fails without the `connectionId !== null` filter in `balanceTile`; without it a Manual loan makes Debt say "estimated usual". In: src/server/bank-data.ts.
+- N279 (S, polish) No test covers the `main.ts` stop wiring, and the auth test's `holding === false` check is weak alone. In: src/server/main.ts, src/auth/.
 
 ## Owner
 

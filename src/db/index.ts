@@ -202,6 +202,7 @@ export {
   listCardPaymentsSince,
   listDueAccounts,
   listPairedLoanPayments,
+  listTransferTargets,
   listUntrackedLoanPaymentsSince,
 } from "./coming-up.ts";
 export {
@@ -273,6 +274,7 @@ export {
   storeSmtpSettings,
   type WaitingEmail,
 } from "./deliveries.ts";
+export { type FirstMemberRows, makeFirstMember } from "./first-member.ts";
 export {
   listUnhandledTransactions,
   markTransactionsHandled,
@@ -466,6 +468,7 @@ export {
   addNotice,
   closeEventNotice,
   endNoticeCondition,
+  isNoticeConditionOpen,
   listOpenNotices,
   type NewNotice,
   type StoredNotice,
@@ -501,7 +504,6 @@ export {
   type ProposalSource,
   type ProposalStatus,
   readProposal,
-  reopenProposal,
   type StoredProposal,
   type StoredProposalBudget,
   storeBudgetChangeAccept,
@@ -518,6 +520,7 @@ export {
   handOutPushes,
   listWaitingPushes,
   type PushDeviceFields,
+  readPushDeviceMember,
   readVapidKeys,
   removeMemberPushDevices,
   removePushDevice,

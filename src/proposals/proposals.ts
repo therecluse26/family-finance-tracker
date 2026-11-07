@@ -21,18 +21,18 @@ import {
   type ProposalStatus,
   readGoal,
   readProposal,
-  reopenProposal,
   type StoredBudget,
   type StoredGoal,
   storeBudgetChangeAccept,
   storeGoalAmountApplied,
+  storeGoalStart,
   storeNewGoalAccept,
   storeProposal,
   storeProposalSkip,
   storeProposalUndo,
 } from "../db/index.ts";
 import { calendarDateIn, wholeDollars } from "../format.ts";
-import { startGoal } from "../goals/index.ts";
+import { goalStartToday } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { log } from "../log.ts";
 import { totalsByMonth } from "../money-movement/index.ts";
@@ -470,7 +470,12 @@ export async function acceptProposal(
     });
     if (goalId === undefined) return "not open";
   } else {
-    const refused = await acceptGoalAmount(database, row, memberId, edit.goalAmount, now);
+    const refused = await acceptGoalAmount(database, row, {
+      memberId,
+      edited: edit.goalAmount,
+      now,
+      today,
+    });
     if (refused !== undefined) return refused;
   }
   // A new Goal, or a Goal amount, is in the next Writer use's Household summary at once.
@@ -484,47 +489,40 @@ export async function acceptProposal(
 
 const GOAL_START_REFUSAL = "This Goal cannot take a Goal amount now.";
 
-// Sets a Goal amount through the goals module, once the Proposal is claimed. When the goals module
-// refuses, or a step fails, the Goal gets back what it held, the Proposal opens again, and nothing
-// stays changed.
+// Sets a Goal amount, which takes effect `today`. The goals module reads the Goal's start first:
+// it reads through other modules, outside any write. Then the claim, the Goal's amount and start,
+// and the record of what Accept set are one write, so a failure at any point leaves the Proposal
+// open and the Goal as it was.
 async function acceptGoalAmount(
   database: Database,
   row: ProposalRow,
-  memberId: string,
-  edited: number | undefined,
-  now: Date,
+  accept: { memberId: string; edited: number | undefined; now: Date; today: string },
 ): Promise<"not open" | { refused: string } | undefined> {
-  const goalAmount = edited ?? row.goalAmount;
-  if (row.goalId === null || goalAmount === null) return { refused: GOAL_START_REFUSAL };
-  const before = await readGoal(database, row.goalId);
-  if (before === undefined || before.status !== "active") return { refused: GOAL_START_REFUSAL };
-  if (!(await claimGoalAmount(database, { id: row.id, memberId, at: now }))) return "not open";
-  const goal = {
-    id: row.goalId,
-    before: {
-      goalAmount: before.goalAmount,
-      startsOn: before.startsOn,
-      startBalance: before.startBalance,
-      baseline: before.baseline,
-    },
-  };
-  try {
-    const started = await startGoal(database, row.goalId, { goalAmount, now });
-    if (typeof started === "string") {
-      await reopenProposal(database, row.id);
-      return { refused: GOAL_START_REFUSAL };
-    }
+  const { memberId, now, today } = accept;
+  const goalAmount = accept.edited ?? row.goalAmount;
+  const goalId = row.goalId;
+  if (goalId === null || goalAmount === null) return { refused: GOAL_START_REFUSAL };
+  const start = await goalStartToday(database, goalId, now);
+  if (start === undefined) return { refused: GOAL_START_REFUSAL };
+  return database.transaction(async (tx) => {
+    const before = await readGoal(tx, goalId);
+    if (before === undefined || before.status !== "active") return { refused: GOAL_START_REFUSAL };
+    if (!(await claimGoalAmount(tx, { id: row.id, memberId, at: now }))) return "not open";
+    const { startBalance, baseline } = start;
+    await storeGoalStart(tx, goalId, { goalAmount, startsOn: today, startBalance, baseline });
     const applied: AppliedGoalChange = {
-      goalAmount: started.goalAmount,
-      startsOn: started.startsOn,
-      before: goal.before,
+      goalAmount,
+      startsOn: today,
+      before: {
+        goalAmount: before.goalAmount,
+        startsOn: before.startsOn,
+        startBalance: before.startBalance,
+        baseline: before.baseline,
+      },
     };
-    await storeGoalAmountApplied(database, row.id, applied);
+    await storeGoalAmountApplied(tx, row.id, applied);
     return undefined;
-  } catch (error) {
-    await reopenProposal(database, row.id, goal);
-    throw error;
-  }
+  });
 }
 
 // A Member skips an open Proposal: it closes, and nothing changes. It makes no AI call. False when

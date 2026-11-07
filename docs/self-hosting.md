@@ -39,8 +39,8 @@ These steps work on any computer with Docker. On a rented server, first follow [
 
 ```sh
 mkdir family-finance-tracker && cd family-finance-tracker
-curl -fsSL -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/main/compose.yaml \
-  -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/main/.env.example
+curl -fsSL -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/v1.0.0/compose.yaml \
+  -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/v1.0.0/.env.example
 cp .env.example .env
 ```
 

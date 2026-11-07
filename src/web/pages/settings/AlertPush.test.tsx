@@ -1,16 +1,16 @@
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { addDevice, askDeviceOwner, removeDevice } from "../../push-device.ts";
 import { ChannelsForm } from "./AlertEmail.tsx";
 import {
   AlertPush,
-  addDevice,
+  ANOTHER_MEMBERS_PUSH,
   DevicePush,
   HOME_SCREEN_NOTE,
   keyBytes,
   needsHomeScreen,
   PLAIN_HTTP_NOTE,
   PushPart,
-  removeDevice,
 } from "./AlertPush.tsx";
 
 // Settings, Alerts: push on this device, as the browser first paints it, in HTTPS mode and in
@@ -36,6 +36,15 @@ describe("Settings, Alerts: push on this device", () => {
     expect(text(html)).toContain("Alerts are on for this device.");
     expect(text(html)).toContain("Turn off Alerts on this device");
     expect(text(html)).not.toContain("Turn on Alerts on this device");
+  });
+
+  it("says push on a shared browser is another Member's, and offers nothing that could end it", () => {
+    const html = renderToString(<DevicePush publicKey={PUBLIC_KEY} initial="another Member" />);
+
+    expect(text(html)).toContain("Push on this device is on for another Member.");
+    expect(text(html)).toContain(ANOTHER_MEMBERS_PUSH);
+    expect(html).not.toContain("<button");
+    expect(text(html)).not.toContain("Alerts are on for this device.");
   });
 
   it("hides push in plain-HTTP mode, with a note that says why", () => {
@@ -99,11 +108,17 @@ describe("Settings, Alerts: push requests", () => {
 
     await addDevice(subscription);
     await removeDevice(subscription.endpoint);
+    await askDeviceOwner(subscription.endpoint);
 
     expect(sent).toEqual([
       { method: "POST", contentType: "application/json", body: JSON.stringify(subscription) },
       {
         method: "DELETE",
+        contentType: "application/json",
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      },
+      {
+        method: "POST",
         contentType: "application/json",
         body: JSON.stringify({ endpoint: subscription.endpoint }),
       },

@@ -38,7 +38,13 @@ const INVITE: InviteView = {
 const lists = (members: MemberView[], invites: InviteView[]) =>
   text(
     renderToString(
-      <MembersLists members={members} invites={invites} onChange={() => {}} onRemoved={() => {}} />,
+      <MembersLists
+        members={members}
+        invites={invites}
+        zone="America/New_York"
+        onChange={() => {}}
+        onRemoved={() => {}}
+      />,
     ),
   );
 
@@ -71,7 +77,13 @@ describe("Settings, Members", () => {
   it("turns Remove off on the last Member, with the reason as text it points to", () => {
     const render = (members: MemberView[]) =>
       renderToString(
-        <MembersLists members={members} invites={[]} onChange={() => {}} onRemoved={() => {}} />,
+        <MembersLists
+          members={members}
+          invites={[]}
+          zone="America/New_York"
+          onChange={() => {}}
+          onRemoved={() => {}}
+        />,
       );
     const removeButtons = (html: string) =>
       [...html.matchAll(/<button([^>]*)>Remove<\/button>/g)].map((match) => match[1] ?? "");

@@ -8,7 +8,12 @@ import { startCategorization } from "../categorization/index.ts";
 import { addConnection, listConnections, storeAlerts } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
-import { recurringCharges, startRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
+import {
+  addDays,
+  recurringCharges,
+  startRecurringCharges,
+  typeSteadyIncome,
+} from "../recurring/index.ts";
 import {
   type Alert,
   ANOMALY_CHECKS_CAP,
@@ -294,10 +299,12 @@ describe("the Anomaly checks", () => {
     it("matches the hard Merchant lines through the real cleanup rules", async () => {
       // Each pair is two posted lines on one day for one amount: whether they are one Merchant.
       const pairs: [string, string, string | null][] = [
-        // A payment-app line that names no one has the app as its Merchant (spec 04, Identity).
-        ["VENMO PAYMENT 1234567890 WEB ID", "VENMO PAYMENT 9876543210 WEB ID", "Venmo"],
-        ["ZELLE PAYMENT TO 5551234", "ZELLE PAYMENT TO 5559876", "Zelle"],
-        ["CASH APP*SENT", "CASH APP*SENT", "Cash App"],
+        // A payment-app line that names no one has the app as its Merchant (spec 04, Identity),
+        // and two of them are often payments to different people: no Duplicate charge.
+        ["VENMO PAYMENT 1234567890 WEB ID", "VENMO PAYMENT 9876543210 WEB ID", null],
+        ["ZELLE PAYMENT TO 5551234", "ZELLE PAYMENT TO 5559876", null],
+        ["CASH APP*SENT", "CASH APP*SENT", null],
+        ["VENMO CASHOUT", "VENMO CASHOUT", null],
         // A line that names a person or a shop has that one as its Merchant.
         ["VENMO *MORGAN LEE", "VENMO *JOHN SMITH", null],
         ["ZELLE PAYMENT TO JOHN SMITH", "CASH APP*JOHN SMITH", "John Smith"],
@@ -329,6 +336,40 @@ describe("the Anomaly checks", () => {
         );
       expect(named.sort()).toEqual(
         pairs.flatMap(([, , merchant], at) => (merchant === null ? [] : [[1_000 + at, merchant]])),
+      );
+    });
+
+    it("never fires when the Merchant is the payment app, but does for a shop or a person", async () => {
+      // Two lines each, for one amount on one day (spec 06, A payment app as the Merchant).
+      const pairs: [string, string, string | null][] = [
+        ["ZELLE PAYMENT TO 5551234", "ZELLE PAYMENT TO 5559876", null],
+        ["VENMO PAYMENT 1234567890 WEB ID", "VENMO PAYMENT 1234567890 WEB ID", null],
+        ["PAYPAL *INST XFER", "PAYPAL *INST XFER", null],
+        ["CASH APP*SENT", "CASH APP*SENT", null],
+        // The shop or the person is the Merchant, and the check applies as usual.
+        ["PAYPAL *ETSY SHOP", "PAYPAL *ETSY SHOP", "Etsy Shop"],
+        ["VENMO *MORGAN LEE", "VENMO *MORGAN LEE", "Morgan Lee"],
+        ["CORNER HARDWARE", "CORNER HARDWARE", "Corner Hardware"],
+      ];
+      await sync("fake-chase", {
+        added: pairs.flatMap(([first, second], at) =>
+          [first, second].map((description, each) =>
+            purchase(`app-${at}-${each}`, CHASE, "2026-11-10", 2_000 + at, "unused", {
+              merchantName: null,
+              merchantId: null,
+              description,
+            }),
+          ),
+        ),
+      });
+
+      const named = (await ofKind("Duplicate charge"))
+        .filter((alert) => alert.state === null)
+        .flatMap(({ facts }) =>
+          facts.kind === "Duplicate charge" ? [[facts.amount, facts.merchant.name]] : [],
+        );
+      expect(named.sort()).toEqual(
+        pairs.flatMap(([, , merchant], at) => (merchant === null ? [] : [[2_000 + at, merchant]])),
       );
     });
   });
@@ -553,6 +594,100 @@ describe("the Anomaly checks", () => {
       expect(await laterTexts("New Recurring charge")).toEqual([
         "New Recurring charge? Taco Spot, $24.50 on Sep 3 and Oct 3. Next expected Nov 3.",
       ]);
+    });
+
+    it("never fires for a frequent purchase: 3 others at any amount in the 60 days after", async () => {
+      // A cafe visited 3 times after the first of a monthly-looking pair, and never before it.
+      await sync("fake-capital-one", {
+        added: [
+          taqueria("taco-sep", "2026-09-03", 2_400),
+          taqueria("taco-sep-10", "2026-09-10", 1_150),
+          taqueria("taco-sep-25", "2026-09-25", 6_480),
+          taqueria("taco-oct", "2026-10-03", 2_450),
+          taqueria("taco-oct-20", "2026-10-20", 3_725),
+        ],
+      });
+      expect(await laterTexts("New Recurring charge")).toEqual([]);
+    });
+
+    it("never counts the later Transaction of the pair as a visit", async () => {
+      // 2 visits after Sep 3, and the pair's own Oct 3: only 2 others.
+      await sync("fake-capital-one", {
+        added: [
+          taqueria("taco-sep", "2026-09-03", 2_400),
+          taqueria("taco-sep-10", "2026-09-10", 1_150),
+          taqueria("taco-sep-25", "2026-09-25", 6_480),
+          taqueria("taco-oct", "2026-10-03", 2_450),
+        ],
+      });
+      expect(await laterTexts("New Recurring charge")).toEqual([
+        "New Recurring charge? Taco Spot, $24.50 on Sep 3 and Oct 3. Next expected Nov 3.",
+      ]);
+    });
+
+    it("never fires for the demo's frequent shops, in the history load or a later sync", async () => {
+      const shops = [
+        "Greenleaf Market",
+        "QuickFuel",
+        "Noodle House",
+        "Blue Door Cafe",
+        "Pasta Corner",
+        "ShopMart Marketplace",
+      ];
+      const atShops = async () =>
+        (await ofKind("New Recurring charge")).flatMap(({ facts }) =>
+          facts.kind === "New Recurring charge" && shops.includes(facts.merchant.name)
+            ? [facts.merchant.name]
+            : [],
+        );
+      expect(await atShops()).toEqual([]);
+
+      // A later sync brings November's visits to the shops, as the demo made them a year before.
+      now = new Date("2026-12-05T14:00:00.000Z");
+      const aYearOn = (date: string | null) => (date === null ? null : addDays(date, 365));
+      const visited = new Set<string>();
+      for (const { bankId, accounts } of DEMO_BANKS) {
+        const added = demoRecords()
+          .filter(
+            (record) =>
+              shops.includes(record.merchantName ?? "") &&
+              !record.pending &&
+              record.postedDate.startsWith("2025-11") &&
+              accounts.some((account) => account.id === record.accountId),
+          )
+          .map((record) => ({
+            ...record,
+            id: `later-${record.id}`,
+            postedDate: addDays(record.postedDate, 365),
+            authorizedDate: aYearOn(record.authorizedDate),
+          }));
+        for (const record of added) visited.add(record.merchantName ?? "");
+        if (added.length > 0) await sync(bankId, { added });
+      }
+      expect([...visited].sort()).toEqual([...shops].sort());
+      expect(await atShops()).toEqual([]);
+    });
+
+    it("never fires for Spending in Interest and fees", async () => {
+      const interest = (id: string, date: string, spent: number) =>
+        purchase(id, CAPITAL_ONE, date, spent, "unused", {
+          description: "INTEREST CHARGE ON PURCHASES",
+          merchantName: null,
+          merchantId: null,
+          category: {
+            name: "BANK_FEES_INTEREST_CHARGE",
+            confidence: "VERY_HIGH",
+            version: "v2",
+            mcc: null,
+          },
+        });
+      // After the demo's own card interest ends, so these two are the only ones on a schedule.
+      now = new Date("2027-01-15T14:00:00.000Z");
+      await sync("fake-capital-one", {
+        added: [interest("int-dec", "2026-12-10", 3_120), interest("int-jan", "2027-01-10", 3_150)],
+      });
+
+      expect(await laterTexts("New Recurring charge")).toEqual([]);
     });
 
     it("never counts a Recurring charge's Transactions as frequent purchases", async () => {

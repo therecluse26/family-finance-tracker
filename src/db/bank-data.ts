@@ -33,7 +33,7 @@ import { saveDailyBalance } from "./balances.ts";
 import type { Database, Queries } from "./client.ts";
 import type { PartType } from "./decisions.ts";
 import { markTransactionsUnhandled } from "./follow-up.ts";
-import { listHandLinkedOldOf } from "./link-carry-over.ts";
+import { endRefusalsWithNoCopy, listHandLinkedOldOf } from "./link-carry-over.ts";
 import { carryLinks } from "./links.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
 import {
@@ -295,9 +295,11 @@ async function carriedAccount(
 // Moves an old Account onto this Connection under its new provider ID. It keeps its ID, hand-set
 // fields, and history, and is open again. When its Transactions came from another Connection,
 // history splits at day D, the old Connection's last successful sync: the old Transactions dated
-// on or after D are hidden now, and the new ones dated before D as they arrive. The same write
-// records the old Connection on this one, and makes the hidden ones unhandled, so Matching ends
-// their app-made links and moves their hand-made ones to the new copies (spec 02, Link carry-over).
+// on or after D are hidden now, and the new ones dated before D as they arrive. An old Connection
+// that never finished a sync has no day D: all of its Transactions on the Account are hidden, no
+// new one is, and the Account keeps any day D it already had. The same write records the old
+// Connection on this one, and makes the hidden ones unhandled, so Matching ends their app-made
+// links and moves their hand-made ones to the new copies (spec 02, Link carry-over).
 async function carryOver(
   tx: Transaction,
   connection: StoredConnection,
@@ -313,16 +315,20 @@ async function carryOver(
       .select({ lastSyncedAt: connections.lastSyncedAt })
       .from(connections)
       .where(eq(connections.id, old.connectionId));
-    // An old Connection that never finished a sync splits at the day of the carry-over.
-    historySplitDate = calendarDateIn(oldConnection?.lastSyncedAt ?? at, timeZone);
+    const lastSyncedAt = oldConnection?.lastSyncedAt ?? null;
+    if (lastSyncedAt !== null) historySplitDate = calendarDateIn(lastSyncedAt, timeZone);
     const hidden = await tx
       .update(transactions)
       .set({ hiddenReason: "replaced by re-link", hiddenAt: at })
       .where(
         and(
           eq(transactions.accountId, old.id),
-          ne(transactions.connectionId, connection.id),
-          gte(transactions.postedDate, historySplitDate),
+          historySplitDate === undefined
+            ? eq(transactions.connectionId, old.connectionId)
+            : and(
+                ne(transactions.connectionId, connection.id),
+                gte(transactions.postedDate, historySplitDate),
+              ),
           isNull(transactions.hiddenReason),
         ),
       )
@@ -671,6 +677,7 @@ export async function finishSync(
     const awaited =
       historyLoaded && !loadedBefore ? await listHandLinkedOldOf(tx, connectionId) : [];
     await markTransactionsUnhandled(tx, awaited);
+    if (historyLoaded && !loadedBefore) await endRefusalsWithNoCopy(tx, connectionId);
     return { historyLoaded, laterHooksDue, copiesNoLongerAwaited: awaited.length };
   });
 }
@@ -736,8 +743,10 @@ export async function setHandSetFields(
     .where(eq(transactions.id, transactionId));
 }
 
-// A Member closes any Account by hand. An Account already Closed keeps its date and reason.
-// Returns false when no Account has the ID.
+// A Member closes any Account by hand. An Account already Closed keeps its date. One Closed because
+// its provider stopped returning it becomes closed by the Member, so it opens again only when a
+// Member reopens it, not when the provider returns it. Any other reason stays. Returns false when
+// no Account has the ID.
 export async function closeAccount(
   database: Database,
   id: string,
@@ -750,6 +759,11 @@ export async function closeAccount(
       .update(householdAccounts)
       .set({ closedAt: at, closedReason: "closed by a member" })
       .where(eq(householdAccounts.id, id));
+  } else {
+    await database
+      .update(householdAccounts)
+      .set({ closedReason: "closed by a member" })
+      .where(and(eq(householdAccounts.id, id), eq(householdAccounts.closedReason, "vanished")));
   }
   return true;
 }
@@ -812,6 +826,7 @@ async function removeConnection(tx: Transaction, id: string, at: Date): Promise<
     .where(and(eq(householdAccounts.connectionId, id), isNull(householdAccounts.closedAt)));
   const awaited = await listHandLinkedOldOf(tx, id);
   await markTransactionsUnhandled(tx, awaited);
+  await endRefusalsWithNoCopy(tx, id);
   return { removed: true, copiesNoLongerAwaited: awaited.length };
 }
 
@@ -1131,9 +1146,17 @@ function filtered(database: Queries, filter: TransactionFilter): SQL[] {
   return where;
 }
 
-// The date each listed row shows: the purchase date, else the posted date. The list runs newest
-// first by it, then by ID (spec 07, Transactions page).
-const shownDate = sql<string>`coalesce(${transactions.authorizedDate}, ${transactions.postedDate})`;
+// The date a Transaction's row shows: its purchase date when the bank gives one, else its posted
+// date (spec 07, Transactions page).
+export const shownDate = sql<string>`coalesce(${transactions.authorizedDate}, ${transactions.postedDate})`;
+
+// Newest first by the date each row shows, then by the posted date, then by ID, so the order is
+// the same on every read.
+export const NEWEST_SHOWN_FIRST = [
+  desc(shownDate),
+  desc(transactions.postedDate),
+  asc(transactions.id),
+] as const;
 
 // The Transactions that are not hidden, newest first, that pass the filter.
 export async function listTransactions(database: Database, filter: TransactionFilter = {}) {
@@ -1141,7 +1164,7 @@ export async function listTransactions(database: Database, filter: TransactionFi
     .select(LISTED)
     .from(transactions)
     .where(and(...filtered(database, filter)))
-    .orderBy(desc(shownDate), asc(transactions.id));
+    .orderBy(...NEWEST_SHOWN_FIRST);
 }
 
 // One page of listTransactions, and the ID to read the next page after, or null on the last page.
@@ -1153,16 +1176,23 @@ export async function listTransactionPage(
 ) {
   const where = filtered(database, filter);
   if (page.after !== undefined) {
-    // The page goes on after the anchor in the list's own order: its shown date, then its ID.
+    // The page goes on after the anchor in the list's own order: its shown date, its posted date,
+    // then its ID.
     const [anchor] = await database
-      .select({ id: transactions.id, shownDate })
+      .select({ id: transactions.id, postedDate: transactions.postedDate, shownDate })
       .from(transactions)
       .where(eq(transactions.id, page.after));
     if (anchor === undefined) return undefined;
     where.push(
       or(
         lt(shownDate, anchor.shownDate),
-        and(eq(shownDate, anchor.shownDate), gt(transactions.id, anchor.id)),
+        and(
+          eq(shownDate, anchor.shownDate),
+          or(
+            lt(transactions.postedDate, anchor.postedDate),
+            and(eq(transactions.postedDate, anchor.postedDate), gt(transactions.id, anchor.id)),
+          ),
+        ),
       ) as SQL,
     );
   }
@@ -1170,7 +1200,7 @@ export async function listTransactionPage(
     .select(LISTED)
     .from(transactions)
     .where(and(...where))
-    .orderBy(desc(shownDate), asc(transactions.id))
+    .orderBy(...NEWEST_SHOWN_FIRST)
     .limit(page.limit + 1);
   const shown = rows.slice(0, page.limit);
   return {

@@ -224,10 +224,20 @@ export function adapterConnection(stored: StoredConnection): BankConnection {
   };
 }
 
-export async function loadConnection(connectionId: string): Promise<LoadedConnection> {
-  const { database, adapters, timeZone } = runningBank();
-  const stored = await readConnection(database, connectionId);
+// Loads a Connection that may sync, with its adapter. A removed Connection has no credential and
+// never syncs, nor does a held one, so both are undefined here, before any credential is
+// decrypted.
+export async function loadConnection(connectionId: string): Promise<LoadedConnection | undefined> {
+  const stored = await readConnection(runningBank().database, connectionId);
   if (stored === undefined) throw new Error(`No Connection has the ID ${connectionId}.`);
+  if (stored.removedAt !== null || stored.syncHeld) return undefined;
+  return loadedFrom(stored);
+}
+
+// The stored Connection with its adapter and its decrypted credential. The caller has checked that
+// it is neither removed nor held.
+async function loadedFrom(stored: StoredConnection): Promise<LoadedConnection> {
+  const { database, adapters, timeZone } = runningBank();
   const adapter = adapters.get(stored.provider);
   if (adapter === undefined) throw new Error(`No adapter for the provider "${stored.provider}".`);
   const connection = adapterConnection(stored);
@@ -245,8 +255,7 @@ async function syncOnce(
   options: SyncOptions,
 ): Promise<SyncReport> {
   const loaded = await loadConnection(connectionId);
-  // A removed Connection has no credential, and never syncs; nor does a held one.
-  if (loaded.stored.removedAt !== null || loaded.stored.syncHeld) return NOTHING_SYNCED;
+  if (loaded === undefined) return NOTHING_SYNCED;
   const startedAt = now();
   let pulled: { report: SyncReport; finished: FinishedSync };
   try {
@@ -347,13 +356,13 @@ export async function runSyncJob(
   return oneAtATimeFor(connectionId, async () => {
     // A job started before the Connection was removed finds it removed, or its history deleted,
     // and does nothing.
-    if ((await readConnection(runningBank().database, connectionId)) === undefined) {
-      return "not polled";
-    }
-    const { stored, adapter, connection, context } = await loadConnection(connectionId);
+    const stored = await readConnection(runningBank().database, connectionId);
+    if (stored === undefined) return "not polled";
+    // Checked before the credential is decrypted, so a held Connection's never is.
     if (stored.health === "broken" || stored.removedAt !== null || stored.syncHeld) {
       return "not polled";
     }
+    const { adapter, connection, context } = await loadedFrom(stored);
     if (stored.health === "needs a member") {
       const at = now();
       try {

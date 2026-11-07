@@ -40,6 +40,7 @@ import type {
   AccountView,
   BalanceQuery,
   BalancesView,
+  BalanceTileView,
   BankViews,
   NumberTileView,
   UnconnectedAccountBody,
@@ -168,23 +169,34 @@ export function bankViews(database: Database): BankViews {
   // Cash on hand or Debt (spec 07, 4. Number tiles): today's current balances of `counted`, and
   // their sum at each of the 12 month-ends before `month` from `start`, the Household's first month
   // of history, on. Each Account counts at every one of those month-ends, before its first balance
-  // too. Debt is what is owed, so `owed` turns the sign.
+  // too. A month-end before a synced Account's first sync is estimated, and so is the usual then.
+  // Debt is what is owed, so `owed` turns the sign.
   async function balanceTile(
     counted: readonly AccountView[],
     month: string,
     today: string,
     owed: boolean,
     start: string | undefined,
-  ): Promise<NumberTileView> {
+  ): Promise<BalanceTileView> {
     const shown = (cents: number) => (owed ? 0 - cents : cents);
     const months = monthsBefore(month, 12);
     const known = months.filter((each) => start !== undefined && each >= start);
     const ends = known.map(lastDayOf);
     const sums = ends.map(() => 0);
+    let estimatedUsual = false;
     for (const account of counted) {
       const { points = [] } = (await balances(account.id, {})) ?? {};
       const first = points[0];
       if (first === undefined) continue;
+      // A synced Account's saved balances start at its first sync. A Manual loan's are the app's
+      // own estimates, which the Debt tile counts on its own.
+      const firstSync = points.find((point) => !point.estimated)?.date;
+      if (
+        account.connectionId !== null &&
+        ends.some((end) => firstSync === undefined || end < firstSync)
+      ) {
+        estimatedUsual = true;
+      }
       const before = await balanceBefore(account, first);
       balancesOn(points, ends).forEach((balance, index) => {
         sums[index] = (sums[index] ?? 0) + (balance ?? before);
@@ -198,6 +210,7 @@ export function bankViews(database: Database): BankViews {
       amount,
       usual: median(monthEnds.map((point) => point.amount)),
       trend: [...recent, { at: today, amount }],
+      estimatedUsual,
     };
   }
 

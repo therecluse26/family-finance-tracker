@@ -18,8 +18,6 @@ USDA asks that a copy whose contents are altered in any way not cite USDA. The a
 ## Sources and data dates
 
 <!-- sources:start -->
-**Sample numbers, not real data.** The release script has not yet run on the real files. Every Benchmark figure the app ships now is made up.
-
 | Agency | Table | Data date |
 |---|---|---|
 | Bureau of Labor Statistics | [Consumer Expenditure Survey, calendar-year table by income before taxes](https://www.bls.gov/cex/tables.htm) | 2025 |
@@ -49,17 +47,17 @@ Our own work, under the AGPL. Each Category's Benchmark share is the sum of its 
 | Insurance | context | Vehicle insurance; Health insurance; Life and other personal insurance |
 | Taxes and government | none | None |
 | Interest and fees | none | None |
-| Groceries | drafts shared | USDA Moderate-Cost plan, plus Housekeeping supplies; Personal care products |
-| Superstores | drafts shared | USDA Moderate-Cost plan, plus Housekeeping supplies; Personal care products |
+| Groceries | drafts shared | USDA Moderate-Cost plan, plus Housekeeping supplies |
+| Superstores | drafts shared | USDA Moderate-Cost plan, plus Housekeeping supplies |
 | Clothing | drafts | Apparel and services |
 | Home and garden | drafts | Household furnishings and equipment; Other household expenses |
 | Alcohol and tobacco | drafts | Alcoholic beverages; Tobacco products and smoking supplies |
 | General goods | none | None |
-| Gas | drafts | Gasoline, other fuels, and motor oil |
+| Gas | drafts | Gasoline and other fuels |
 | Car | drafts | Maintenance and repairs; Vehicle rental, leases, licenses, and other charges |
 | Transit and rideshare | drafts | Public and other transportation |
 | Health | drafts | Medical services; Drugs; Medical supplies |
-| Personal care | drafts | Personal care services |
+| Personal care | drafts | Personal care products and services |
 | Childcare | drafts | Personal services |
 | Pets | drafts | Pets |
 | Fitness | drafts | Fees and admissions |

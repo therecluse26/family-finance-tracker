@@ -4,7 +4,8 @@ import { paymentAppLine } from "./payment-apps.ts";
 // Merchant names (spec 04, Names). The provider's Merchant name wins. Otherwise fixed rules clean
 // the bank's original description: they remove store numbers, payment-processor prefixes, cities,
 // dates, and card and Account numbers with the words that introduce them, such as "ACCT ENDING"
-// (lead-ins.ts). A card payment line gets the name "<bank> card payment". A name the rules cannot
+// (lead-ins.ts). A card payment line gets the name "<bank> card payment", over any provider
+// Merchant name, and no Merchant ID. A name the rules cannot
 // fix keeps the rule-cleaned text and is marked for AI cleanup, which runs later in the
 // categorization step. When a rule cannot decide, it marks the name for AI
 // cleanup rather than guess. The rules run when a Transaction arrives, in the sync, before
@@ -234,21 +235,49 @@ const ACH_FIELD_NAMES = [
 ];
 const ACH_FIELD = new RegExp(`\\b(?:${ACH_FIELD_NAMES.join("|")})\\s?[:#]|\\d{6,}`, "i");
 
+// A card payment line with its digits apart from the letters glued before them, as in "CHASE4821",
+// so the bank's word stays when its card number goes. A mask such as "XXXX4821" stays whole, so it
+// goes with its digits. One pass over the line.
+function digitsApart(text: string): string {
+  let out = "";
+  let letters = "";
+  for (const char of text) {
+    if (/\p{L}/u.test(char)) {
+      letters += char;
+      continue;
+    }
+    const glued = letters !== "" && char >= "0" && char <= "9" && !/^x+$/i.test(letters);
+    out += glued ? `${letters} ${char}` : letters + char;
+    letters = "";
+  }
+  return out + letters;
+}
+
 // The bank a card payment line names: Plaid's financial institution on the line, when it has one.
-// Otherwise the rule-cleaned line up to its first ACH field, with no payment words, when the rules
-// are sure: a known card issuer's words at the start, title-cased as other clean names are, and
-// nothing that may name a person. `bank` is null when the rules are not sure.
+// Then the provider's Merchant name, when it starts with a known card issuer. Otherwise the
+// rule-cleaned line up to its first ACH field, with no payment words, when the rules are sure: a
+// known card issuer's words at the start, and nothing that may name a person. A known issuer is
+// written in its own form, such as "WF" or "Bank of America". `bank` is null when the rules are
+// not sure.
 function cardPaymentBank(txn: {
   description: string;
+  merchantName: string | null;
   counterparties?: readonly { name: string; type: string }[];
 }): { bank: string | null } {
   const institution = txn.counterparties
     ?.find((party) => party.type === "financial_institution")
     ?.name.replace(/\s+/g, " ")
     .trim();
-  if (institution !== undefined && institution !== "") return { bank: institution };
+  // A known issuer is written in its own form; any other institution stays as Plaid sends it.
+  if (institution !== undefined && institution !== "") {
+    const whole = words(institution);
+    const issuer = issuerOf(whole);
+    return { bank: issuer !== null && issuerLength(whole) === whole.length ? issuer : institution };
+  }
+  const providerIssuer = issuerOf(words(txn.merchantName ?? ""));
+  if (providerIssuer !== null) return { bank: providerIssuer };
 
-  let text = plainForms(txn.description);
+  let text = digitsApart(plainForms(txn.description));
   const originator = ORIGINATOR.exec(text);
   if (originator !== null) text = text.slice(originator.index + originator[0].length);
   const field = ACH_FIELD.exec(text);
@@ -329,14 +358,21 @@ const CARD_ISSUERS = new Map([
 ]);
 const LONGEST_ISSUER = Math.max(...[...CARD_ISSUERS.keys()].map((name) => name.split(" ").length));
 
-// The known card issuer the first words name, longest first, in its own form, or null.
-function issuerOf(bank: readonly string[]): string | null {
+// How many of the first words name a known card issuer, longest first, or 0.
+function issuerLength(bank: readonly string[]): number {
   const folded = bank.map((word) => word.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase());
   for (let count = Math.min(LONGEST_ISSUER, folded.length); count > 0; count--) {
-    const issuer = CARD_ISSUERS.get(folded.slice(0, count).join(" "));
-    if (issuer !== undefined) return issuer;
+    if (CARD_ISSUERS.has(folded.slice(0, count).join(" "))) return count;
   }
-  return null;
+  return 0;
+}
+
+// The known card issuer the first words name, in its own form, or null.
+function issuerOf(bank: readonly string[]): string | null {
+  const count = issuerLength(bank);
+  if (count === 0) return null;
+  const folded = bank.slice(0, count).map((word) => word.normalize("NFKD").replace(/\p{M}/gu, ""));
+  return CARD_ISSUERS.get(folded.join(" ").toLowerCase()) ?? null;
 }
 
 // A card payment line, which Plaid files under its credit card payment code, is named
@@ -345,6 +381,7 @@ function issuerOf(bank: readonly string[]): string | null {
 // marked for AI cleanup. The card's last 4 never stays in the name.
 function cardPaymentName(txn: {
   description: string;
+  merchantName: string | null;
   counterparties?: readonly { name: string; type: string }[];
 }): { name: string; needsAi: boolean } {
   const { bank } = cardPaymentBank(txn);
@@ -362,7 +399,9 @@ export function isFixedName(name: string): boolean {
 // a payment-app line that names a person, that person is the Merchant, with no Merchant ID, so two
 // people never share the app's ID. In one that names no one, such as `VENMO PAYMENT`, the payment
 // app is the Merchant (spec 04, Identity). A line that names another Merchant is an ordinary
-// purchase. A card payment line with no provider Merchant name is "<bank> card payment".
+// purchase. A card payment line, under Plaid's credit card payment code, is "<bank> card payment"
+// with no Merchant ID, whatever Merchant the provider gives it: a card payment never shares a
+// Merchant with the brand's purchases.
 export function cleanMerchant(txn: {
   description: string;
   merchantName: string | null;
@@ -375,15 +414,14 @@ export function cleanMerchant(txn: {
   if (line !== undefined && typeof line.party === "object") {
     return { merchant: { id: null, name: line.party.person }, needsAi: false };
   }
+  if (txn.category?.name === CARD_PAYMENT) {
+    const { name, needsAi } = cardPaymentName(txn);
+    return { merchant: { id: null, name }, needsAi };
+  }
   const providerName = txn.merchantName?.replace(/\s+/g, " ").trim() ?? "";
   if (providerName !== "") return { merchant: { id, name: providerName }, needsAi: false };
   if (line?.party === "no one" && line.app !== null) {
     return { merchant: { id, name: line.app }, needsAi: false };
-  }
-
-  if (txn.category?.name === CARD_PAYMENT) {
-    const { name, needsAi } = cardPaymentName(txn);
-    return { merchant: { id, name }, needsAi };
   }
 
   const description = txn.description.replace(/\s+/g, " ").trim();

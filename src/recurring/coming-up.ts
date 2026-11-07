@@ -4,6 +4,7 @@ import {
   listDueAccounts,
   listLoanLinkedTransactions,
   listPairedLoanPayments,
+  listTransferTargets,
   listUntrackedLoanPaymentsSince,
 } from "../db/index.ts";
 import { chargeSchedule, recurringCharges } from "./charges.ts";
@@ -15,8 +16,10 @@ import { addDays, addMonths, nextExpected } from "./schedules.ts";
 // checking balance after each row. Each active Recurring charge and each counted Income series
 // shows at every expected date in the window, from its next expected date on (spec 05, Paydays),
 // at its latest amount. An active Recurring charge whose expected date has come with no charge
-// yet shows on today, as late when that date is before today. Excluded and Closed Accounts owe nothing here and hold no checking
-// balance. The dashboard shows it, and the Household summary holds it (spec 08, Household summary).
+// yet shows on today, as late when that date is before today. A loan payment shows once: a
+// Recurring charge whose last Transaction pays a loan with its own row does not show. Excluded and
+// Closed Accounts owe nothing here and hold no checking balance. The dashboard shows it, and the
+// Household summary holds it (spec 08, Household summary).
 
 // One row of "Coming up".
 export type ComingUpRow = {
@@ -65,6 +68,8 @@ const LOAN_PAYMENT_MONTHS = 3;
 type DueAccount = Awaited<ReturnType<typeof listDueAccounts>>[number];
 type Row = Omit<ComingUpRow, "checkingAfter">;
 type Payment = { postedDate: string; amount: number };
+// The loan each known payment pays, by the payment's Transaction ID.
+type PaidLoans = Map<string, string>;
 
 const nameOf = (account: DueAccount) => account.memberName ?? account.name;
 const counted = (account: DueAccount) => account.closedAt === null && !account.excluded;
@@ -159,6 +164,7 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
     loans: DueAccount[],
     openLoans: DueAccount[],
     today: string,
+    paidLoans: PaidLoans,
   ) {
     const last = new Map<string, Payment>();
     if (loans.length === 0) return last;
@@ -177,7 +183,7 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
       const lender = lenderKey(loan.institutionName);
       loansAt.set(lender, (loansAt.get(lender) ?? 0) + 1);
     }
-    const paymentsTo = new Map<string, Payment[]>();
+    const paymentsTo = new Map<string, (Payment & { id: string })[]>();
     for (const payment of await listUntrackedLoanPaymentsSince(database, since)) {
       const lender = lenderKey(payment.lender);
       paymentsTo.set(lender, [...(paymentsTo.get(lender) ?? []), payment]);
@@ -189,7 +195,9 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
       const months = new Set(payments.map((payment) => payment.postedDate.slice(0, 7)));
       if (months.size !== payments.length) continue;
       const payment = payments.at(-1);
-      if (payment !== undefined) last.set(loan.id, payment);
+      if (payment === undefined) continue;
+      last.set(loan.id, payment);
+      for (const each of payments) paidLoans.set(each.id, loan.id);
     }
     return last;
   }
@@ -197,13 +205,14 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
   // Each loan payment due. A connected loan with a minimum payment pays it on its due date. A
   // Manual loan pays its regular payment, or its last linked payment's amount, a month after that
   // payment; so does a connected loan with no minimum payment, from its last payment. With no
-  // payment to give the day, a loan has no row.
+  // payment to give the day, a loan has no row. The payments to a loan it read go in `paidLoans`.
   async function loanRows(
     loans: DueAccount[],
     openLoans: DueAccount[],
     today: string,
     from: string,
     within: (date: string) => boolean,
+    paidLoans: PaidLoans,
   ) {
     const rows: Row[] = [];
     const row = (loan: DueAccount, date: string, amount: number): Row => ({
@@ -231,7 +240,11 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
       connected.filter((loan) => !withMinimum.includes(loan)),
       openLoans,
       today,
+      paidLoans,
     );
+    for (const each of linked) {
+      if (each.amount < 0) paidLoans.set(each.transactionId, each.loanAccountId);
+    }
     for (const loan of manual) {
       const payment = linked
         .filter((each) => each.loanAccountId === loan.id && each.amount < 0)
@@ -261,8 +274,35 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
     (account) => account.kind === "depository" && account.subtype === "checking",
   );
 
-  const charges = (await recurringCharges(database, now))
-    .filter((charge) => charge.status === "active")
+  const paidLoans: PaidLoans = new Map();
+  const loans = await loanRows(
+    open.filter((account) => account.kind === "loan"),
+    // Every loan not closed, Excluded ones too, to know which loans share a lender.
+    accounts.filter((account) => account.kind === "loan" && account.closedAt === null),
+    today,
+    from,
+    within,
+    paidLoans,
+  );
+  const active = (await recurringCharges(database, now)).filter(
+    (charge) => charge.status === "active",
+  );
+  // A loan payment shows once (spec 07, 6. Coming up): the loan's row, not a Recurring charge whose
+  // last Transaction pays it, as the paying side of a Transfer pair, a payment linked to a Manual
+  // loan, or an untracked payment that gives the loan its row. Only a row in the window counts: a
+  // loan whose next payment is after the window, or that has none, shows no row, so its Recurring
+  // charge shows.
+  const lastIds = active.flatMap((charge) => charge.priceHistory.at(-1)?.transactionId ?? []);
+  for (const { transactionId, accountId } of await listTransferTargets(database, lastIds)) {
+    paidLoans.set(transactionId, accountId);
+  }
+  const withRows = new Set(loans.map((row) => row.accountId));
+  const paysLoanWithRow = (charge: (typeof active)[number]) => {
+    const loanId = paidLoans.get(charge.priceHistory.at(-1)?.transactionId ?? "");
+    return loanId !== undefined && withRows.has(loanId);
+  };
+  const charges = active
+    .filter((charge) => !paysLoanWithRow(charge))
     .flatMap((charge): Row[] => {
       const account = byId.get(charge.accountId);
       const onCard = account !== undefined && isCard(account);
@@ -304,14 +344,7 @@ export async function comingUp(database: Database, now = new Date()): Promise<Co
     ...charges,
     ...income,
     ...(await cardRows(connected.filter(isCard), within)),
-    ...(await loanRows(
-      open.filter((account) => account.kind === "loan"),
-      // Every loan not closed, Excluded ones too, to know which loans share a lender.
-      accounts.filter((account) => account.kind === "loan" && account.closedAt === null),
-      today,
-      from,
-      within,
-    )),
+    ...loans,
   ].sort(byDate);
 
   const checking =

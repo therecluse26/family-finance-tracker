@@ -1,7 +1,6 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PlaidView } from "../../../bank/plaid-view.ts";
-import { timeLabel } from "../../../format.ts";
 import type { UnconnectedAccountView } from "../../../server/bank-views.ts";
 import type { ManualLoanView } from "../../../server/money-movement-views.ts";
 import {
@@ -55,23 +54,24 @@ describe("Settings → Banks", () => {
   it("says what Sync now did with each bank, and when a skipped one can sync again", () => {
     const base = { connectionId: "c1", bankName: "First Fake Bank" };
     const canSyncAt = new Date("2026-11-04T15:30:00.000Z");
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const zone = "America/New_York";
 
-    expect(syncNowLine({ ...base, outcome: "syncing", refreshed: false })).toBe(
+    expect(syncNowLine({ ...base, outcome: "syncing", refreshed: false }, zone)).toBe(
       "First Fake Bank: syncing now.",
     );
-    expect(syncNowLine({ ...base, outcome: "syncing", refreshed: true })).toBe(
+    expect(syncNowLine({ ...base, outcome: "syncing", refreshed: true }, zone)).toBe(
       "First Fake Bank: syncing now, and again in 5 minutes for the bank's fresh data.",
     );
     expect(
       syncNowLine(
         { ...base, outcome: "skipped", canSyncAt: canSyncAt.toISOString() },
+        zone,
         new Date(canSyncAt.getTime() - 60_000),
       ),
-    ).toBe(
-      `First Fake Bank synced a short while ago. It can sync again at ${timeLabel(canSyncAt, zone)}.`,
+    ).toBe("First Fake Bank synced a short while ago. It can sync again at 10:30 AM.");
+    expect(text(renderToString(<SyncNowResults results={[]} zone={zone} />))).toBe(
+      "No bank is ready to sync.",
     );
-    expect(text(renderToString(<SyncNowResults results={[]} />))).toBe("No bank is ready to sync.");
   });
 });
 

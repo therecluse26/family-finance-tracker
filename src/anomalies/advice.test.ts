@@ -16,6 +16,7 @@ import {
   storeHouseholdFacts,
 } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
+import { markGoal, readGoalsWithProgress } from "../goals/index.ts";
 import { log } from "../log.ts";
 import { ADVICE_ALERTS_CAP, ALERT_ADVICE_TASK } from "./advice.ts";
 import {
@@ -433,6 +434,37 @@ describe("the AI's advice on Alerts", () => {
       })),
     );
     expect(bank.deliveriesAsked()).toBe(1);
+  });
+
+  // Spec 05, Rules: done and dropped Goals leave the AI's context, though a Goal done this month
+  // still shows with the active ones on the Goals page.
+  it("lists only the active Goals: a Goal done this month is not in the call", async () => {
+    await connectAi();
+    const goal = (words: string) =>
+      addGoal(bank.database, {
+        words,
+        authorId: "member-1",
+        date: "2026-11-01",
+        target: { kind: "Category", category: "Restaurants" },
+        change: { amount: $(100) },
+        deadline: null,
+      });
+    await goal("Cook at home more");
+    const done = await goal("Put money aside for the beach trip");
+    expect(await markGoal(bank.database, done, "done", "member-1", NOW)).toBe("marked");
+    expect(
+      (await readGoalsWithProgress(bank.database, NOW)).find((each) => each.id === done),
+    ).toMatchObject({ status: "done", list: "active" });
+
+    await syncThreeAlerts();
+    await runFollowUp(() => new Date());
+
+    expect(asked).toHaveLength(1);
+    const read = asked[0]?.text ?? "";
+    expect(read).toMatch(
+      /\nActive Goals:\n- "Cook at home more"; about Category Restaurants; status active\n/,
+    );
+    expect(read).not.toContain("beach trip");
   });
 
   it("makes no call for a sync that creates no Alerts", async () => {

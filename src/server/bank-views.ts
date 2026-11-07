@@ -173,6 +173,10 @@ export type NumberTileView = {
   trend: { at: string; amount: number }[];
 };
 
+// Cash on hand or Debt. `estimatedUsual` is true when any month-end balance behind the usual is
+// from before an Account's first sync, which is estimated (spec 02, Balance history).
+export type BalanceTileView = NumberTileView & { estimatedUsual: boolean };
+
 // The four number tiles. Spending and Income are the last complete month's; Cash on hand and Debt
 // are today's current balances. Debt is what is owed, so it is positive.
 export type NumberTilesView = {
@@ -180,9 +184,9 @@ export type NumberTilesView = {
   lastMonth: string;
   spending: NumberTileView;
   income: NumberTileView;
-  cashOnHand: NumberTileView;
+  cashOnHand: BalanceTileView;
   // How many Manual loans the Debt counts: their balances are the app's own estimates.
-  debt: NumberTileView & { estimatedLoans: number };
+  debt: BalanceTileView & { estimatedLoans: number };
 };
 
 export type BankViews = {

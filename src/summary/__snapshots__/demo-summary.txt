@@ -9,11 +9,11 @@ Today is 2026-11-20, day 20 of the 30 days of 2026-11. Days left: 10.
 - Phone and internet: 0.00 of a Budget of 90.00, on track, projected 0.00
 - Interest and fees: 0.00 of a Budget of 0.00, on track
 - Groceries: 0.00 of a Budget of 542.00, on track, projected 0.00
-- Home and garden: 0.00 of a Budget of 123.00, on track, projected 0.00
+- Home and garden: 0.00 of a Budget of 144.00, on track, projected 0.00
 - General goods: 0.00 of a Budget of 93.00, on track, projected 0.00
 - Gas: 0.00 of a Budget of 203.00, on track, projected 0.00
 - Fitness: 0.00 of a Budget of 55.00, on track, projected 0.00
-- Restaurants: 0.00 of a Budget of 315.00, on track, projected 0.00
+- Restaurants: 0.00 of a Budget of 319.00, on track, projected 0.00
 - Entertainment: 0.00 of a Budget of 32.00, on track, projected 11.99
 - Payments to people: 0.00 of a Budget of 209.00, on track, projected 120.00
 - Cash: 0.00 of a Budget of 33.00, on track, projected 0.00
@@ -73,15 +73,11 @@ In 2026-11, so far: meals out (Restaurants Transactions) 0, delivery orders 0.
 ## Coming up, 2026-11-21 to 2026-12-04
 - 2026-11-20: Tunebox, -11.99, Recurring charge, late
 - 2026-11-24: Morgan Lee, -120.00, Recurring charge
-- 2026-11-28: Interest Charge On Purchases, -19.95, Recurring charge
 Checking now: 18950.32. Lowest in the window: 18830.32 on 2026-11-24.
 
 ## Recurring charges: amount, interval, next date, Category, and price history
 - Tunebox: 11.99 monthly, next 2026-11-18, Entertainment; prices: 11.99 from 2025-05-18
 - Morgan Lee: 120.00 monthly, next 2026-11-24, Payments to people; prices: 120.00 from 2025-05-24
-- Interest Charge On Purchases: 19.95 monthly, next 2026-11-28, Interest and fees; prices: 23.75 from 2026-07-28, 25.00 from 2026-08-28, 22.20 from 2026-09-28, 19.95 from 2026-10-28
-- Blue Door Cafe: 41.69 yearly, next 2027-05-05, Restaurants; prices: 47.05 from 2025-05-02, 41.69 from 2026-05-05
-- HomeWorks Supply: 222.52 yearly, next 2027-05-19, Home and garden; prices: 214.32 from 2025-05-18, 222.52 from 2026-05-19
 - ShopMart Plus: 139.00 yearly, next 2027-06-14, General goods; prices: 139.00 from 2025-06-14
 
 ## Goals

@@ -7,7 +7,12 @@ import { type AiGates, aiCost, aiSettings, householdAi, typedCount } from "../ai
 import { newAiKey, StubModels } from "../ai/testing.ts";
 import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { chat } from "../chat/index.ts";
-import { addUnconnectedAccount, markSetupStep, storeAlerts } from "../db/index.ts";
+import {
+  addUnconnectedAccount,
+  markSetupStep,
+  replaceInsightCards,
+  storeAlerts,
+} from "../db/index.ts";
 import { readEveryTable } from "../db/testing.ts";
 import { createLogger } from "../log.ts";
 import { askAiAbout, deleteThread, loadChat, loadThread, startThread } from "../web/chat.ts";
@@ -243,6 +248,63 @@ describe("the Chat routes", () => {
     expect((await alice.post("/api/chat", answerBody(id, " "))).status).toBe(400);
 
     expect(await everyTable()).toEqual(before);
+    expect(modelCalls()).toEqual([]);
+  });
+
+  it("starts a thread about an Insight card by its ID, and refuses one with no session, from another site or no Origin, or with another content type", async () => {
+    const cardId = crypto.randomUUID();
+    await replaceInsightCards(test.database, [
+      {
+        id: cardId,
+        position: 1,
+        writtenAt: new Date(),
+        month: "2026-10",
+        group: "heads_up",
+        about: "Restaurants",
+        figure: 84,
+        figureKind: "dollars",
+        figureLabel: "on takeout fees",
+        title: "Delivery fees add up",
+        why: "Six delivery orders this month each paid a fee.",
+        nextStep: "Pick up two orders a week instead.",
+        picture: null,
+      },
+    ]);
+    const body = {
+      text: "Tell me more about this: Delivery fees add up",
+      note: { kind: "Insight card", id: cardId },
+      sendAnyway: false,
+    };
+    const stranger = new TestBrowser(app, APP_URL, "192.168.1.30");
+    const before = await everyTable();
+
+    expect((await stranger.post("/api/chat/threads", body)).status).toBe(401);
+    for (const origin of WRONG_ORIGINS) {
+      const res = await alice.send("POST", "/api/chat/threads", body, { origin });
+      expect([origin, res.status]).toEqual([origin, 403]);
+    }
+    const plain = await alice.send("POST", "/api/chat/threads", body, {
+      "content-type": "text/plain",
+    });
+    expect(plain.status).toBe(415);
+    const madeUp = await alice.post("/api/chat/threads", {
+      ...body,
+      note: { kind: "Insight card", id: "no-such-card" },
+    });
+    expect(madeUp.status).toBe(404);
+    expect(await everyTable()).toEqual(before);
+
+    const res = await alice.post("/api/chat/threads", body);
+    expect(res.status).toBe(201);
+    const { threadId } = (await res.json()) as { threadId: string };
+    expect((await threadOf(threadId)).note).toEqual({
+      kind: "Insight card",
+      title: "Delivery fees add up",
+      lines: [
+        "Six delivery orders this month each paid a fee.",
+        "Next step: Pick up two orders a week instead.",
+      ],
+    });
     expect(modelCalls()).toEqual([]);
   });
 

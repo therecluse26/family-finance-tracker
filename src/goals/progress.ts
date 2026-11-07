@@ -1,4 +1,4 @@
-import { wholeDollars } from "../format.ts";
+import { MINUS, wholeDollars } from "../format.ts";
 
 // Goal progress math (spec 05, Progress). The app computes every number; the AI never does. Every
 // amount is in whole cents, and every date is written YYYY-MM-DD.
@@ -81,6 +81,28 @@ export function goalAmountFrom(
 
 const pace = (ahead: number) =>
   ahead >= 0 ? `${wholeDollars(ahead)} ahead of pace` : `${wholeDollars(-ahead)} behind pace`;
+
+// One piece of a progress detail: its words, or one of its whole-dollar amounts, in cents.
+export type DetailPiece = string | { cents: number };
+
+// A whole-dollar amount as wholeDollars writes it, such as "$12,480" or "−$5".
+const AMOUNT = String.raw`${MINUS}?\$\d{1,3}(?:,\d{3})*`;
+const DETAIL = new RegExp(
+  `^(?:On pace for ${AMOUNT} this month; Goal is ${AMOUNT}|${AMOUNT} of ${AMOUNT}(?: paid)?(?:; ${AMOUNT} (?:ahead of|behind) pace)?)$`,
+  "u",
+);
+
+// A progress detail that one of the templates below wrote, in pieces, with each amount in cents, so
+// an AI use can send each as a typed value (spec 08, Privacy filter). Any other detail, such as
+// NO_GOAL_AMOUNT, is one piece of words.
+export function progressDetailPieces(detail: string): DetailPiece[] {
+  if (!DETAIL.test(detail)) return [detail];
+  return detail.split(new RegExp(`(${AMOUNT})`, "u")).flatMap((each, index): DetailPiece[] => {
+    if (index % 2 === 0) return each === "" ? [] : [each];
+    const cents = Number(each.replace(/\D/gu, "")) * 100;
+    return [{ cents: each.startsWith(MINUS) ? -cents : cents }];
+  });
+}
 
 // A spend less Goal: P is this month's projected Spending. Percentage = (baseline − P) ÷
 // (baseline − Goal amount). On track when P ≤ the Goal amount. Its "Done when" rule reads complete

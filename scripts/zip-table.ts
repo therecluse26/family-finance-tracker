@@ -32,18 +32,34 @@ export const NWS_TIME_ZONES: Readonly<Record<string, string>> = {
   S: "Pacific/Pago_Pago",
 };
 
-// One file from a .zip archive, found by its name.
-export function readZipEntry(archive: Uint8Array, wanted: (name: string) => boolean): Uint8Array {
+// The most one file in a .zip archive may unpack to. The files the release script unpacks, the
+// sheets of the BLS and USDA workbooks and the NWS .dbf, are far smaller, so a file that unpacks to
+// more is broken or hostile, and the read stops before it takes the memory.
+export const MAX_ZIP_ENTRY_BYTES = 128 * 1024 * 1024;
+
+// What readZipEntry says about a file that is not a .zip archive, such as an HTML "Access Denied"
+// page saved in place of a download. An .xlsx workbook is a .zip archive too. The caller adds the
+// file's name.
+export const NOT_A_ZIP =
+  'it is not a real .xlsx or .zip file. The download may be an error page, such as "Access Denied": download it again in a browser.';
+
+// One file from a .zip archive, found by its name. It unpacks at most `maxBytes`.
+export function readZipEntry(
+  archive: Uint8Array,
+  wanted: (name: string) => boolean,
+  maxBytes = MAX_ZIP_ENTRY_BYTES,
+): Uint8Array {
   const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
   let end = archive.length - 22;
   while (end >= 0 && view.getUint32(end, true) !== 0x06054b50) end--;
-  if (end < 0) throw new Error("The archive has no .zip directory.");
+  if (end < 0) throw new Error(NOT_A_ZIP);
   const count = view.getUint16(end + 10, true);
   let at = view.getUint32(end + 16, true);
   for (let i = 0; i < count; i++) {
     if (view.getUint32(at, true) !== 0x02014b50) throw new Error("The .zip directory is broken.");
     const method = view.getUint16(at + 10, true);
     const size = view.getUint32(at + 20, true);
+    const unpacked = view.getUint32(at + 24, true);
     const nameLength = view.getUint16(at + 28, true);
     const skip = nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
     const name = new TextDecoder().decode(archive.subarray(at + 46, at + 46 + nameLength));
@@ -52,9 +68,27 @@ export function readZipEntry(archive: Uint8Array, wanted: (name: string) => bool
       const start =
         local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
       const data = archive.subarray(start, start + size);
-      if (method === 0) return data;
-      if (method === 8) return new Uint8Array(inflateRawSync(data));
-      throw new Error(`${name} uses .zip method ${method}, which this script cannot read.`);
+      let file: Uint8Array;
+      if (method === 0) file = data;
+      else if (method === 8) {
+        // The inflating stops at the limit, whatever size the file claims.
+        try {
+          file = new Uint8Array(inflateRawSync(data, { maxOutputLength: maxBytes }));
+        } catch (error) {
+          if ((error as { code?: unknown } | null)?.code === "ERR_BUFFER_TOO_LARGE") {
+            throw new Error(`${name} unpacks to more than ${maxBytes} bytes, so it was not read.`);
+          }
+          throw new Error(`${name} in the .zip archive is broken.`);
+        }
+      } else {
+        throw new Error(`${name} uses .zip method ${method}, which this script cannot read.`);
+      }
+      if (file.length !== unpacked) {
+        throw new Error(
+          `${name} in the .zip archive is broken: it unpacks to ${file.length} bytes, not the ${unpacked} it claims.`,
+        );
+      }
+      return file;
     }
     at += 46 + skip;
   }

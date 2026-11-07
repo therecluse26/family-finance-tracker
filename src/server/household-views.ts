@@ -21,6 +21,9 @@ export type HouseholdFactsBody = {
 export type HouseholdRoutes = {
   // Null until the wizard's step 4 is done.
   facts(): Promise<HouseholdFactsView | null>;
+  // The Household time zone alone, for pages that show times (spec 10, Data conventions). Null until the
+  // wizard's step 4 is done.
+  timeZone(): Promise<string | null>;
   save(
     body: HouseholdFactsBody,
     memberId: string,

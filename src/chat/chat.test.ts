@@ -553,6 +553,20 @@ describe("Chat", () => {
       expect(threads[1]?.title).toBe("Rent question");
     });
 
+    it("starts threads sent together: one by each of two Members, then 15 by one Member", async () => {
+      const both = await Promise.all([started("Groceries?", DANA), started("Rent?", RAVI)]);
+      const many = await Promise.all(
+        Array.from({ length: 15 }, (_, each) => started(`Question ${each}`)),
+      );
+
+      const threads = await talk.threads();
+      expect(threads.map((each) => each.id).sort()).toEqual([...both, ...many].sort());
+      expect(new Set(threads.map((each) => each.title)).size).toBe(17);
+      for (const id of [...both, ...many]) {
+        expect((await talk.thread(id))?.messages).toHaveLength(1);
+      }
+    });
+
     it(`sends the last ${CHAT_TURNS} turns, and marks where older ones stop going to the AI`, async () => {
       const id = await started("Turn 1");
       await answered(id, null);

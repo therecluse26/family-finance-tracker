@@ -43,11 +43,11 @@ const linesSchema = z.strictObject(
   >,
 );
 
-// One income column of a CE table: its mean income after taxes, its mean total yearly Spending,
+// One income column of a CE table: its mean income before taxes, its mean total yearly Spending,
 // and its mean yearly Spending on each CE line. A line BLS suppresses is null.
 const ceColumnSchema = z.strictObject({
   label: z.string().min(1),
-  incomeAfterTaxes: z.number(),
+  incomeBeforeTaxes: z.number(),
   totalSpending: z.number().positive(),
   lines: linesSchema,
 });
@@ -77,6 +77,21 @@ const foodPlanSchema = z.strictObject({
   costs: z.array(foodCostSchema).min(1),
 });
 
+// A Thrifty plan's monthly cost for USDA's reference family: a couple aged 20-50 with children aged
+// 6-8 and 9-11. USDA publishes the Alaska and Hawaii Thrifty plans only for this family, so the
+// state food rule compares the reference family's costs.
+const thriftyPlanSchema = z.strictObject({
+  plan: z.literal("Thrifty"),
+  area: z.string().min(1),
+  month: z.string().regex(MONTH),
+  pricedAt: cpiSchema,
+  family: z.strictObject({
+    group: z.string().min(1),
+    age: z.string().min(1),
+    monthly: z.number().positive(),
+  }),
+});
+
 // USDA's household-size adjustment: the percent to add to the sum of the people's costs, for a
 // household of fromSize to toSize people. toSize is null for "or more".
 const sizeAdjustmentSchema = z.strictObject({
@@ -99,7 +114,11 @@ export const benchmarkSnapshotSchema = z.strictObject({
   }),
   food: z.strictObject({
     moderate: foodPlanSchema,
-    thrifty: z.strictObject({ us: foodPlanSchema, alaska: foodPlanSchema, hawaii: foodPlanSchema }),
+    thrifty: z.strictObject({
+      us: thriftyPlanSchema,
+      alaska: thriftyPlanSchema,
+      hawaii: thriftyPlanSchema,
+    }),
     sizeAdjustment: z.array(sizeAdjustmentSchema).min(1),
   }),
   sources: z.array(sourceSchema).min(1),
@@ -109,6 +128,7 @@ export type BenchmarkSnapshot = z.infer<typeof benchmarkSnapshotSchema>;
 export type BenchmarkSource = z.infer<typeof sourceSchema>;
 export type CeTable = z.infer<typeof ceTableSchema>;
 export type FoodPlan = z.infer<typeof foodPlanSchema>;
+export type ThriftyPlan = z.infer<typeof thriftyPlanSchema>;
 
 let parsed: BenchmarkSnapshot | undefined;
 

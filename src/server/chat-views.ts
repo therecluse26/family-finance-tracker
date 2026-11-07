@@ -29,9 +29,10 @@ export type ChatMessageView = {
   createdAt: string;
 };
 
-// The note a thread started from with "Ask about this", or the Alert it started from with "Ask the
-// AI" in the Alert list.
-export type ChatNoteKindView = "Alert note" | "Proposal" | "Alert";
+// The note a thread started from with "Ask about this" (CHAT_NOTE_KINDS), or the Alert it started
+// from with "Ask the AI" in the Alert list.
+export const CHAT_NOTE_KINDS = ["Alert note", "Proposal", "Insight card"] as const;
+export type ChatNoteKindView = (typeof CHAT_NOTE_KINDS)[number] | "Alert";
 export type ChatNoteView = { kind: ChatNoteKindView; title: string; lines: string[] };
 
 // A Proposal the thread's AI made: its card, the answer it came with (null when that answer

@@ -6,6 +6,7 @@ import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import { BOX, BUTTONS, HINT, Lead, ROW, SettingCard, TabHeading } from "./settings-ui.tsx";
 
 // Settings, Members (spec 09, Members; Invites; Login reset): every Member, "Make an invite link",
@@ -37,9 +38,8 @@ async function errorOf(res: Response): Promise<string> {
   return typeof body.error === "string" ? body.error : "That did not work.";
 }
 
-// "Nov 12", in this browser's time zone.
-function dayOf(iso: string): string {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+// "Nov 12", in `zone`, the Household time zone.
+function dayOf(iso: string, zone: string): string {
   return dateLabel(calendarDateIn(new Date(iso), zone), calendarDateIn(new Date(), zone));
 }
 
@@ -114,8 +114,8 @@ export function MemberLine(props: {
 }
 
 // One open invite link, with Cancel.
-export function InviteLine(props: { invite: InviteView; onCancelled: () => void }) {
-  const { invite } = props;
+export function InviteLine(props: { invite: InviteView; zone: string; onCancelled: () => void }) {
+  const { invite, zone } = props;
   const [error, setError] = useState<string | undefined>();
 
   function cancel() {
@@ -131,7 +131,8 @@ export function InviteLine(props: { invite: InviteView; onCancelled: () => void 
   return (
     <li className={ROW}>
       <p className="min-w-0 flex-[1_1_220px]">
-        Made {dayOf(invite.createdAt)} by {invite.madeBy}. Works until {dayOf(invite.expiresAt)}.
+        Made {dayOf(invite.createdAt, zone)} by {invite.madeBy}. Works until{" "}
+        {dayOf(invite.expiresAt, zone)}.
       </p>
       <Button type="button" variant="outlined" size="small" onClick={cancel}>
         Cancel
@@ -144,8 +145,8 @@ export function InviteLine(props: { invite: InviteView; onCancelled: () => void 
 }
 
 // A new invite or reset link, shown once for the Member to copy.
-export function LinkToCopy(props: { made: { link: string; expiresAt: string } }) {
-  const { made } = props;
+export function LinkToCopy(props: { made: { link: string; expiresAt: string }; zone: string }) {
+  const { made, zone } = props;
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -171,7 +172,7 @@ export function LinkToCopy(props: { made: { link: string; expiresAt: string } })
           </p>
         ) : null}
       </div>
-      <p className={HINT}>It works until {dayOf(made.expiresAt)}.</p>
+      <p className={HINT}>It works until {dayOf(made.expiresAt, zone)}.</p>
       <ErrorLine error={error} />
     </div>
   );
@@ -185,6 +186,7 @@ export function ResetLogin(props: { member: MemberView }) {
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -207,7 +209,7 @@ export function ResetLogin(props: { member: MemberView }) {
           {member.name} is signed out on every device. Their old password, TOTP, and backup codes no
           longer work. Give them this reset link to set a new login. It works once.
         </p>
-        <LinkToCopy made={made} />
+        {zone === undefined ? null : <LinkToCopy made={made} zone={zone} />}
       </>
     );
   }
@@ -242,6 +244,7 @@ export function MakeInvite(props: { onMade: () => void }) {
   const [made, setMade] = useState<{ link: string; expiresAt: string } | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -268,7 +271,9 @@ export function MakeInvite(props: { onMade: () => void }) {
           Make an invite link
         </Button>
       </form>
-      {made === undefined ? null : <LinkToCopy key={made.link} made={made} />}
+      {made === undefined || zone === undefined ? null : (
+        <LinkToCopy key={made.link} made={made} zone={zone} />
+      )}
       <ErrorLine error={error} />
     </SettingCard>
   );
@@ -277,6 +282,7 @@ export function MakeInvite(props: { onMade: () => void }) {
 export function MembersLists(props: {
   members: MemberView[];
   invites: InviteView[];
+  zone: string;
   onChange: () => void;
   onRemoved: (you: boolean) => void;
 }) {
@@ -306,7 +312,12 @@ export function MembersLists(props: {
         ) : (
           <ul className="mt-2.5">
             {props.invites.map((invite) => (
-              <InviteLine key={invite.id} invite={invite} onCancelled={props.onChange} />
+              <InviteLine
+                key={invite.id}
+                invite={invite}
+                zone={props.zone}
+                onCancelled={props.onChange}
+              />
             ))}
           </ul>
         )}
@@ -319,6 +330,7 @@ export function Members() {
   const navigate = useNavigate();
   const [view, setView] = useState<{ members: MemberView[]; invites: InviteView[] } | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   function load() {
     api.members
@@ -335,10 +347,11 @@ export function Members() {
   return (
     <>
       <TabHeading>Members</TabHeading>
-      {view === undefined ? null : (
+      {view === undefined || zone === undefined ? null : (
         <MembersLists
           members={view.members}
           invites={view.invites}
+          zone={zone}
           onChange={load}
           onRemoved={(you) => (you ? void navigate("/sign-in", { replace: true }) : load())}
         />

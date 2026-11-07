@@ -16,6 +16,8 @@ import {
 
 const text = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "");
 
+const ZONE = "America/New_York";
+
 const NO_BACKUP: BackupsView = {
   folder: "/backups",
   readable: true,
@@ -26,14 +28,13 @@ const NO_BACKUP: BackupsView = {
 
 describe("Settings, Backups and data: backups", () => {
   it("shows the folder in use, and says when there is no backup yet", () => {
-    const html = text(renderToString(<BackupLines backups={NO_BACKUP} />));
+    const html = text(renderToString(<BackupLines backups={NO_BACKUP} zone={ZONE} />));
 
     expect(html).toContain("Backups go to /backups.");
     expect(html).toContain("No backup yet.");
   });
 
   it("shows the last backup, the number of files, and their total size", () => {
-    // The time shows in this browser's time zone, so the test reads any hour.
     const html = text(
       renderToString(
         <BackupLines
@@ -44,19 +45,21 @@ describe("Settings, Backups and data: backups", () => {
             files: 10,
             bytes: 32_400_000,
           }}
+          zone={ZONE}
           now={new Date("2026-11-02T12:00:00.000Z")}
         />,
       ),
     );
 
     expect(html).toContain("Backups go to /data/backups.");
-    expect(html).toMatch(
-      /Last backup: Nov [12] at \d{1,2}:\d{2} [AP]M\. 10 files, 32\.4 MB in all\./,
-    );
+    // 3 AM in UTC is 10 PM the day before in New York.
+    expect(html).toContain("Last backup: Nov 1 at 10:00 PM. 10 files, 32.4 MB in all.");
   });
 
   it("says when the app cannot read the backup folder", () => {
-    const html = text(renderToString(<BackupLines backups={{ ...NO_BACKUP, readable: false }} />));
+    const html = text(
+      renderToString(<BackupLines backups={{ ...NO_BACKUP, readable: false }} zone={ZONE} />),
+    );
 
     expect(html).toContain("The app cannot read the backup folder.");
   });

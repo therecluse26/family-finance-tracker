@@ -463,6 +463,13 @@ describe("Settings → Banks: a new bank's first sync, with no reload", () => {
         zone,
       )?.word,
     ).toBe("Synced Nov 3, 9:42 AM");
+    // The last sync's time waits for the Household time zone; the first sync does not.
+    expect(syncState({ ...SYNCED, historyLoaded: true }, undefined, "ended", now, undefined)).toBe(
+      null,
+    );
+    expect(syncState(FIRST_SYNC, undefined, "polling", now, undefined)?.word).toBe(
+      "First sync running",
+    );
     for (const own of [
       { ...SYNCED, removed: true },
       { ...SYNCED, held: true },

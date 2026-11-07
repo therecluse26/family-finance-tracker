@@ -12,8 +12,10 @@ import {
   type StoredRecurringCharge,
   storeDecisions,
   storeOtherLink,
+  storeProposal,
 } from "../db/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
+import { acceptProposal, undoProposal } from "../proposals/index.ts";
 import { findRecurringCharges, typeSteadyIncome } from "../recurring/index.ts";
 import {
   budgetsForMonth,
@@ -638,6 +640,101 @@ describe("Budget drafts", () => {
         Superstores: `${dollars((bGs * 1_000_000) / 1_000_300)} formula`,
       });
     });
+
+    it("gives the newcomer no first Budget when its own share rounds to $0, and the holder keeps all of T", async () => {
+      // r = $300 ÷ $300.10: the newcomer's share, $0.10 ÷ $300.10 of T, is under 50 cents.
+      await draftThenSpend("Groceries", "Superstores", 0.1);
+      expect((bGs * 0.1) / 300.1).toBeLessThan(50);
+
+      expect(await runMonthStart(bank.database, december)).toBe("done");
+
+      expect(await shared("2026-12")).toEqual({ Groceries: `${dollars(bGs)} formula` });
+    });
+
+    // Spec 05, When the app drafts: an undone first Budget. Spec 08, Lifecycle: Undo.
+    it.each([
+      { undone: "the same month", setBy: "an edit" },
+      { undone: "a month later", setBy: "a later Proposal" },
+    ])(
+      "keeps a first Budget a Member undid $undone off on each later 1st, until $setBy sets one",
+      async ({ undone, setBy }) => {
+        await draftThenSpend("Groceries", "Superstores");
+        // A Budget change for Superstores, stored as a run would leave it, and accepted.
+        const runs = { count: 0 };
+        const proposeSuperstores = async (amount: number) => {
+          runs.count += 1;
+          const stored = await storeProposal(
+            bank.database,
+            {
+              kind: "Budget change",
+              source: "Budget tailoring",
+              runId: `run-${runs.count}`,
+              reason: "Superstores has steady Spending now.",
+              goalId: null,
+              goalAmount: null,
+              words: null,
+              createdAt: now,
+              budgets: [{ category: "Superstores", amount }],
+            },
+            2,
+          );
+          if (stored === "run full") throw new Error("The run is full.");
+          expect(
+            await acceptProposal(bank.database, { id: stored.id, memberId: MEMBER }, now),
+          ).toBe("accepted");
+          return stored.id;
+        };
+        // A Proposal gives Superstores its first Budget on Nov 30.
+        const first = await proposeSuperstores($(40));
+        expect(await shared("2026-11")).toEqual({
+          Groceries: `${dollars(bGs)} formula`,
+          Superstores: "40 Proposal",
+        });
+        if (undone === "a month later") {
+          expect(await runMonthStart(bank.database, december)).toBe("done");
+          now = new Date("2026-12-02T14:00:00.000Z");
+        }
+        expect(await undoProposal(bank.database, { id: first, memberId: MEMBER }, now)).toBe(
+          "undone",
+        );
+
+        // Two Month starts give it no Budget, and Groceries keeps all of T.
+        const january = new Date("2027-01-01T14:00:00.000Z");
+        if (undone === "the same month") {
+          expect(await runMonthStart(bank.database, december)).toBe("done");
+        }
+        expect(await shared("2026-12")).toEqual({ Groceries: `${dollars(bGs)} formula` });
+        // December's Superstores Spending would give it a first Budget in January.
+        await load([spend("newcomer-december", "2026-12-10", 100, "Superstores")]);
+        now = january;
+        expect(await runMonthStart(bank.database, january)).toBe("done");
+        expect(await shared("2027-01")).toEqual({ Groceries: `${dollars(bGs)} formula` });
+
+        // A Member sets one, and the normal rules apply from then on.
+        if (setBy === "an edit") {
+          expect(
+            await editBudget(
+              bank.database,
+              { category: "Superstores", amount: $(45), memberId: MEMBER },
+              now,
+            ),
+          ).toMatchObject({ amount: $(45), period: "monthly", pinned: null });
+        } else {
+          await proposeSuperstores($(45));
+        }
+        const set = setBy === "an edit" ? "45 Member edit" : "45 Proposal";
+        expect(await shared("2027-01")).toEqual({
+          Groceries: `${dollars(bGs)} formula`,
+          Superstores: set,
+        });
+        now = new Date("2027-02-01T14:00:00.000Z");
+        expect(await runMonthStart(bank.database, now)).toBe("done");
+        expect(await shared("2027-02")).toEqual({
+          Groceries: `${dollars(bGs)} formula`,
+          Superstores: set,
+        });
+      },
+    );
   });
 
   describe("a Household with bills, loans, and Recurring charges", () => {
@@ -1116,7 +1213,7 @@ describe("Budget drafts", () => {
 
     const { budgets, groups } = await budgetsForMonth(bank.database, "2026-11");
     // Groceries and Superstores: A_flex $750 × 1.10 is below B_GS, so T = $825 and r = 2/3.
-    // Clothing: $10 × 1.10. Restaurants: B = $272 is below A_flex $450 × 1.10. Entertainment:
+    // Clothing: $10 × 1.10. Restaurants: B = $296 is below A_flex $450 × 1.10. Entertainment:
     // A_flex $20 × 1.10 passes K = $20. Gifts and donations: $800 × 1.10. Miscellaneous: none in
     // the window.
     expect(budgets.map(({ category, amount, period }) => [category, amount / 100, period])).toEqual(
@@ -1127,7 +1224,7 @@ describe("Budget drafts", () => {
         ["Groceries", 550, "monthly"],
         ["Superstores", 275, "monthly"],
         ["Clothing", 11, "monthly"],
-        ["Restaurants", 272, "monthly"],
+        ["Restaurants", 296, "monthly"],
         ["Entertainment", 22, "monthly"],
         ["Gifts and donations", 880, "yearly"],
       ],
@@ -1143,7 +1240,7 @@ describe("Budget drafts", () => {
       ["Shopping", 836, 0],
       ["Transportation", 0, 0],
       ["Health and care", 0, 0],
-      ["Leisure", 294, 0],
+      ["Leisure", 318, 0],
       ["Other", 0, 880],
     ]);
   });

@@ -2,12 +2,11 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import type { DeviceView } from "../../../server/devices-views.ts";
-import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
-import { browserZone } from "../../browser-zone.ts";
 import { Button } from "../../components/Button.tsx";
 import { BackupCodes, ErrorLine, NewTotp } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import {
   addPasskey,
   deletePasskey,
@@ -38,6 +37,11 @@ import {
 
 const CURRENT_PASSWORD_LABEL = "Current password";
 const WRONG_PASSWORD = "Your current password is wrong.";
+
+// "Nov 4": the day a passkey was added, in `zone`, the Household time zone.
+export function addedOn(at: string, zone: string, now = new Date()): string {
+  return dateLabel(calendarDateIn(new Date(at), zone), calendarDateIn(now, zone));
+}
 
 // `wrong` is the words to show when the server answers 401, and `byCode` the words for a refusal
 // with one of its codes.
@@ -265,6 +269,7 @@ function ChangeBackupCodes() {
 function Passkeys() {
   const state = passkeyState();
   const [rows, setRows] = useState<PasskeyRow[] | undefined>();
+  const zone = useHouseholdZone();
   const [name, setName] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const action = useAction(WRONG_PASSWORD, {
@@ -319,7 +324,7 @@ function Passkeys() {
         A passkey signs you in on its own, with no password and no code. It works only at this app's
         address.
       </Lead>
-      {rows === undefined ? null : rows.length === 0 ? (
+      {rows === undefined || zone === undefined ? null : rows.length === 0 ? (
         <p className="mt-3">You have no passkeys.</p>
       ) : (
         <ul className="mt-2.5">
@@ -327,9 +332,7 @@ function Passkeys() {
             <li key={row.id} className={ROW}>
               <div className="min-w-0 flex-[1_1_220px]">
                 <p className="font-semibold">{row.name ?? "Passkey"}</p>
-                <p className="mt-0.5 text-small text-muted">
-                  Added {new Date(row.createdAt).toLocaleDateString()}
-                </p>
+                <p className="mt-0.5 text-small text-muted">Added {addedOn(row.createdAt, zone)}</p>
               </div>
               <Button
                 type="button"
@@ -442,7 +445,7 @@ export function DeviceRows(props: {
 function SignedInDevices() {
   const navigate = useNavigate();
   const [devices, setDevices] = useState<DeviceView[] | undefined>();
-  const [zone, setZone] = useState<string | undefined>();
+  const zone = useHouseholdZone();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
@@ -458,16 +461,7 @@ function SignedInDevices() {
       .catch(() => setError("The server did not answer."));
   }, [navigate]);
 
-  useEffect(() => {
-    load();
-    api.household
-      .$get()
-      .then(async (res) => {
-        if (!res.ok) return;
-        setZone(((await res.json()) as { facts: HouseholdFactsView | null }).facts?.timeZone);
-      })
-      .catch(() => {});
-  }, [load]);
+  useEffect(load, [load]);
 
   async function run(request: () => Promise<Response>, onOk: () => Promise<void>) {
     setBusy(true);
@@ -517,7 +511,7 @@ function SignedInDevices() {
   const others = devices?.filter((device) => !device.thisDevice).length ?? 0;
   return (
     <SettingCard id="signed-in-devices" title="Signed-in devices">
-      {devices === undefined ? (
+      {devices === undefined || zone === undefined ? (
         <div className={BUTTONS}>
           <Button type="button" variant="outlined" disabled={busy} onClick={signOutThisDevice}>
             Sign out
@@ -526,7 +520,7 @@ function SignedInDevices() {
       ) : (
         <DeviceRows
           devices={devices}
-          zone={zone ?? browserZone()}
+          zone={zone}
           now={new Date()}
           busy={busy}
           onSignOut={signOut}

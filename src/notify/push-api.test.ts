@@ -8,6 +8,13 @@ import { createLogger } from "../log.ts";
 import { createApp } from "../server/app.ts";
 import { loadSecurity } from "../server/security-mode.ts";
 import { type App, TestBrowser } from "../server/testing.ts";
+import {
+  type BrowserPush,
+  type DeviceSubscription,
+  deviceState,
+  turnOffDevice,
+  turnOnDevice,
+} from "../web/push-device.ts";
 import { pushSettings } from "./index.ts";
 import type { PushView } from "./push-view.ts";
 import { newSubscription } from "./testing.ts";
@@ -18,6 +25,29 @@ import { newSubscription } from "./testing.ts";
 // mode hides push. No test reaches a push service.
 
 const APP_URL = "http://nas.local:8080";
+
+// One browser's push subscription, as Settings, Alerts sees it, shared by every Member who signs
+// in on that browser. No push service is reached.
+function sharedBrowser() {
+  let subscription: DeviceSubscription | null = null;
+  const push: BrowserPush = {
+    current: async () => subscription,
+    subscribe: async () => {
+      const made = newSubscription();
+      const fake = {
+        endpoint: made.endpoint,
+        toJSON: () => made,
+        unsubscribe: async () => {
+          if (subscription === fake) subscription = null;
+          return true;
+        },
+      };
+      subscription = fake;
+      return fake;
+    },
+  };
+  return { push, endpoint: () => subscription?.endpoint };
+}
 
 let webRoot: string;
 
@@ -88,8 +118,18 @@ describe("Settings → Alerts: push on this device", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     test.close();
   });
+
+  // The page's requests go to the app as `tab()`, the browser's signed-in Member at that moment.
+  function pageSendsAs(tab: () => TestBrowser): void {
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), APP_URL);
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      return tab().send(init?.method ?? "GET", `${url.pathname}${url.search}`, body);
+    });
+  }
 
   describe("in HTTPS mode", () => {
     beforeEach(async () => {
@@ -153,6 +193,65 @@ describe("Settings → Alerts: push on this device", () => {
       for (const value of [phone.endpoint, laptop.endpoint, phone.keys.auth, laptop.keys.p256dh]) {
         expect(lines.join("")).not.toContain(value);
       }
+    });
+
+    it("tells a second Member on a shared browser that push is another Member's, and nothing they do ends it", async () => {
+      await finishWizard();
+      const aliceTab = await signedIn(alice);
+      const bobTab = await signedIn(bob);
+      let tab = aliceTab;
+      pageSendsAs(() => tab);
+      const browser = sharedBrowser();
+
+      expect(await deviceState(browser.push)).toBe("off");
+      expect(await turnOnDevice(browser.push)).toEqual({ state: "on" });
+      const endpoint = browser.endpoint();
+      const stored = await query("SELECT * FROM push_devices");
+      expect(await devices()).toEqual([{ memberId: alice.id, endpoint }]);
+
+      // Bob on the same browser: the page says the push is another Member's.
+      tab = bobTab;
+      expect(await deviceState(browser.push)).toBe("another Member");
+      // Turn off removes nothing, and the browser keeps Alice's subscription.
+      expect(await turnOffDevice(browser.push)).toEqual({ state: "another Member" });
+      // Turn on is refused, and the browser keeps Alice's subscription too.
+      expect(await turnOnDevice(browser.push)).toEqual({
+        state: "another Member",
+        error:
+          "Alerts are on for another Member in this browser. They turn them off first, in Settings, Alerts.",
+      });
+      expect(await query("SELECT * FROM push_devices")).toEqual(stored);
+      expect(browser.endpoint()).toBe(endpoint);
+
+      // Alice's own Turn off still works, and then the browser is Bob's to turn on.
+      tab = aliceTab;
+      expect(await deviceState(browser.push)).toBe("on");
+      expect(await turnOffDevice(browser.push)).toEqual({ state: "off" });
+      expect(await devices()).toEqual([]);
+      expect(browser.endpoint()).toBeUndefined();
+      tab = bobTab;
+      expect(await deviceState(browser.push)).toBe("off");
+      expect(await turnOnDevice(browser.push)).toEqual({ state: "on" });
+      expect(await devices()).toEqual([{ memberId: bob.id, endpoint: browser.endpoint() }]);
+    });
+
+    it("says whose push is on at an endpoint, and never names the other Member", async () => {
+      await finishWizard();
+      const aliceTab = await signedIn(alice);
+      const bobTab = await signedIn(bob);
+      const phone = newSubscription();
+      expect((await aliceTab.post("/api/push/devices", phone)).status).toBe(200);
+      const ownerFor = async (tab: TestBrowser, endpoint: string) => {
+        const res = await tab.post("/api/push/devices/owner", { endpoint });
+        expect(res.status).toBe(200);
+        return res.json();
+      };
+
+      expect(await ownerFor(aliceTab, phone.endpoint)).toEqual({ owner: "this Member" });
+      expect(await ownerFor(bobTab, phone.endpoint)).toEqual({ owner: "another Member" });
+      expect(await ownerFor(bobTab, newSubscription().endpoint)).toEqual({ owner: "no Member" });
+      expect((await bobTab.post("/api/push/devices/owner", {})).status).toBe(400);
+      expect(lines.join("")).not.toContain(phone.endpoint);
     });
 
     it("refuses a subscription at an unknown push service, or with malformed keys, and stores nothing", async () => {
@@ -239,16 +338,23 @@ describe("Settings → Alerts: push on this device", () => {
       expect((await stranger.post("/api/push/devices", other)).status).toBe(401);
       const endpoint = { endpoint: subscription.endpoint };
       expect((await stranger.send("DELETE", "/api/push/devices", endpoint)).status).toBe(401);
+      const owner = await stranger.post("/api/push/devices/owner", endpoint);
+      expect(owner.status).toBe(401);
+      expect(await owner.text()).not.toContain("Member");
 
       for (const origin of ["http://evil.example", undefined]) {
         expect((await tab.send("POST", "/api/push/devices", other, { origin })).status).toBe(403);
         expect((await tab.send("DELETE", "/api/push/devices", endpoint, { origin })).status).toBe(
           403,
         );
+        const owner = await tab.send("POST", "/api/push/devices/owner", endpoint, { origin });
+        expect(owner.status).toBe(403);
+        expect(await owner.text()).not.toContain("Member");
       }
       const form = { "content-type": "application/x-www-form-urlencoded" };
       expect((await tab.send("POST", "/api/push/devices", other, form)).status).toBe(415);
       expect((await tab.send("DELETE", "/api/push/devices", endpoint, form)).status).toBe(415);
+      expect((await tab.send("POST", "/api/push/devices/owner", endpoint, form)).status).toBe(415);
 
       expect(await devices()).toEqual([{ memberId: alice.id, endpoint: subscription.endpoint }]);
     });

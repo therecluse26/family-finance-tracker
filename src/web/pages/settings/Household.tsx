@@ -3,6 +3,7 @@ import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
+import { householdZoneSaved } from "../../household-zone.ts";
 import { SteadyIncome } from "./SteadyIncome.tsx";
 import {
   BOX,
@@ -56,7 +57,9 @@ export function HouseholdFactsForm(props: {
         json: { zipCode: zipCode.trim(), ages: people.map((p) => Number(p.age)), rentOrOwn },
       });
       if (!res.ok) return setError(await refusal(res));
-      props.onSaved(((await res.json()) as { facts: HouseholdFactsView }).facts);
+      const saved = ((await res.json()) as { facts: HouseholdFactsView }).facts;
+      householdZoneSaved(saved.timeZone);
+      props.onSaved(saved);
     } catch {
       setError("The server did not answer.");
     } finally {

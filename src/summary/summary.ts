@@ -495,9 +495,10 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
         })),
   ];
 
-  // Goals.
+  // Goals. A done Goal leaves the AI's context at once, though the Goals page shows it with the
+  // active ones for a month (spec 05, Rules).
   const goals = (await readGoalsWithProgress(database, now)).filter(
-    (goal) => goal.list === "active",
+    (goal) => goal.status === "active",
   );
   const goalPart: Line[] = [
     [""],

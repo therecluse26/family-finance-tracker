@@ -50,6 +50,8 @@ export type RecurringCharge = {
   status: Status;
 };
 
+const INTEREST_AND_FEES = "Interest and fees";
+
 // Finds every Recurring charge again, and stores them in place of the ones not marked ended. A
 // Recurring charge that keeps one of its Transactions keeps its ID.
 export async function findRecurringCharges(database: Database, now = new Date()): Promise<void> {
@@ -66,7 +68,10 @@ export async function findRecurringCharges(database: Database, now = new Date())
   }
 
   const merchants = new Map<string, { merchant: Merchant; txns: SeriesTxn[] }>();
-  for (const row of await listPostedSpending(database)) {
+  // Spending in Interest and fees never forms a Recurring charge (spec 06, Finding a series): card
+  // interest and fees send the Card interest or fee Alert, and loan interest is a part of a loan
+  // payment.
+  for (const row of await listPostedSpending(database, { exceptCategory: INTEREST_AND_FEES })) {
     if (row.merchantCleanName === null || row.spending >= 0) continue;
     const merchant = { id: row.merchantId, name: row.merchantCleanName };
     if (merchant.id === null && merchantKey(merchant.name) === "") continue;

@@ -23,20 +23,6 @@ const REASON = z.string().min(1).max(300).describe("Why, in one sentence");
 // biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it replaces.
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 
-// The Proposal writes waiting on each database, run one at a time. The AI SDK runs the tools of one
-// round together, and app.db takes one write transaction at a time: a second one would wait out
-// SQLite's busy timeout on the one connection the first needs to finish.
-const proposing = new WeakMap<Database, Promise<unknown>>();
-
-function oneAtATime<T>(database: Database, work: () => Promise<T>): Promise<T> {
-  const next = (proposing.get(database) ?? Promise.resolve()).then(work, work);
-  proposing.set(
-    database,
-    next.catch(() => {}),
-  );
-  return next;
-}
-
 export function proposalTools({
   database,
   ai,
@@ -62,12 +48,10 @@ export function proposalTools({
       const reason = await shown(input.reason);
       const budgets = [{ category: input.category, amount: Math.round(input.newAmount * 100) }];
       return answer(
-        await oneAtATime(database, () =>
-          propose(
-            database,
-            { kind: "Budget change", source: "Chat", runId, reason, budgets },
-            now(),
-          ),
+        await propose(
+          database,
+          { kind: "Budget change", source: "Chat", runId, reason, budgets },
+          now(),
         ),
       );
     },
@@ -88,9 +72,7 @@ export function proposalTools({
       const reason = await shown(input.reason);
       const words = await shown(input.words);
       return answer(
-        await oneAtATime(database, () =>
-          propose(database, { kind: "new Goal", source: "Chat", runId, reason, words }, now()),
-        ),
+        await propose(database, { kind: "new Goal", source: "Chat", runId, reason, words }, now()),
       );
     },
   });

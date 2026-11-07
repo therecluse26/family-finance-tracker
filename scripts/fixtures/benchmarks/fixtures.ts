@@ -12,14 +12,17 @@ const files = new Map<SourceKey, Uint8Array>();
 const write = (key: SourceKey, bytes: Uint8Array | string) =>
   files.set(key, typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes);
 
-// ---- CE tables. Four income columns; the last one's income after taxes is suppressed.
+// ---- CE tables, in the 2025 layouts. Five columns: the total, then four income columns. The
+// table by income gives each item's figures on "Mean", "Share", "SE", and "RSE" rows under its
+// label. The size tables give them on the label row, and suppress income after taxes ("b/"), as
+// BLS has since 2024. The last column's total Spending is suppressed, so the build leaves it out.
 
-const HEADER = [
-  ["Item", "All", "Less than", "$40,000", "$100,000", "$200,000"],
-  ["", "consumer units", "$40,000", "to $99,999", "to $199,999", "and more"],
+const HEADER = (total: string) => [
+  ["Item", total, "Less than", "$40,000", "$100,000", "$200,000"],
+  ["", "", "$40,000", "to $99,999", "to $199,999", "and more"],
 ];
 
-// Each CE row with its made-up mean in the "All consumer units" column. The other columns scale it.
+// Each CE row with its made-up mean in the total column. The other columns scale it.
 const ITEMS: [string, number][] = [
   ["Food", 9000],
   ["Food at home", 5600],
@@ -46,12 +49,13 @@ const ITEMS: [string, number][] = [
   ["Apparel and services", 1900],
   ["Transportation", 12000],
   ["Vehicle purchases (net outlay)", 4600],
-  ["Gasoline, other fuels, and motor oil", 2400],
+  ["Gasoline and other fuels", 2400],
+  ["Gasoline", 2200],
   ["Other vehicle expenses", 4000],
   ["Vehicle finance charges", 400],
   ["Maintenance and repairs", 1100],
-  ["Vehicle insurance", 1800],
   ["Vehicle rental, leases, licenses, and other charges", 700],
+  ["Vehicle insurance", 1800],
   ["Public and other transportation", 1000],
   ["Healthcare", 5800],
   ["Health insurance", 4000],
@@ -66,8 +70,6 @@ const ITEMS: [string, number][] = [
   ["Toys, hobbies, and playground equipment", 200],
   ["Other entertainment supplies, equipment, and services", 500],
   ["Personal care products and services", 900],
-  ["Personal care products", 500],
-  ["Personal care services", 400],
   ["Reading", 120],
   ["Education", 1400],
   ["Tobacco products and smoking supplies", 300],
@@ -81,52 +83,61 @@ const ITEMS: [string, number][] = [
 const SCALES = [1, 0.5, 0.9, 1.6, 2.8];
 const money = (value: number) => String(Math.round(value));
 
-function ceRows(title: string, scale: number): string[][] {
+function ceRows(title: string, total: string, layout: "by income" | "size", scale: number) {
   const figures = (all: number, missingLast = false) =>
     SCALES.map((s, i) => (missingLast && i === SCALES.length - 1 ? "b/" : money(all * s * scale)));
-  const item = (label: string, all: number) => [
-    [label],
-    ["Mean", ...figures(all)],
-    ["Share", ...SCALES.map(() => "1.00")],
-    ["SE", ...figures(all / 50)],
-    ["CV(%)", ...SCALES.map(() => "2.00")],
-  ];
+  const item = (label: string, all: number, missingLast = false): string[][] =>
+    layout === "size"
+      ? [[label, ...figures(all, missingLast)]]
+      : [
+          [label],
+          ["Mean", ...figures(all, missingLast)],
+          ["Share", ...SCALES.map(() => "1.0")],
+          ["SE", ...figures(all / 50)],
+          ["RSE", ...SCALES.map(() => "2.00")],
+        ];
   return [
     [title],
     [NOT_REAL],
-    ...HEADER,
-    ["Number of consumer units (in thousands)", ...figures(1000)],
+    ...HEADER(total),
+    ["Number of consumer units (in thousands) a/", ...figures(1000)],
     ["Consumer unit characteristics:"],
-    ["Income before taxes", ...figures(90000)],
-    ["Income after taxes 1/"],
-    ["Mean", ...figures(80000, true)],
-    ["SE", ...figures(800)],
-    ["Average annual expenditures"],
-    ["Mean", ...figures(75000)],
-    ["SE", ...figures(900)],
-    ["CV(%)", ...SCALES.map(() => "1.20")],
+    ...item("Income before taxes", 90000),
+    ...(layout === "size" ? [["Income after taxes", ...SCALES.map(() => "b/")]] : []),
+    ...item("Average annual expenditures", 75000, true),
     ...ITEMS.flatMap(([label, all]) => item(label, all)),
+    ["Sources of pretax income:"],
+    ...item("Income before taxes", 90000),
+    ...(layout === "size" ? [["Income after taxes", ...SCALES.map(() => "b/")]] : []),
+    [
+      "b Beginning with 2024 publication, estimates developed by TAXSIM models will no longer be published.",
+    ],
   ];
 }
 
-const TABLE =
-  "Annual expenditure means, shares, standard errors, and coefficients of variation, Consumer Expenditure Surveys";
-
 write(
   "ceByIncome",
-  makeXlsx([{ name: "Table", rows: ceRows(`Income before taxes: ${TABLE}, 2025`, 1) }]),
+  makeXlsx([
+    {
+      name: "Table 1203",
+      rows: ceRows(
+        "Table 1203. Income before taxes: Annual expenditure means, shares, standard errors, and relative standard errors, Consumer Expenditure Surveys, 2025",
+        "All consumer units",
+        "by income",
+        1,
+      ),
+    },
+  ]),
 );
-const SIZES = [
-  "One person",
-  "Two persons",
-  "Three persons",
-  "Four persons",
-  "Five persons or more",
-];
+const SIZES = ["one person", "two people", "three people", "four people", "five or more people"];
 SIZES.forEach((size, index) => {
   const key = `ceSize${index + 1}` as SourceKey;
-  const title = `Size of consumer unit, ${size}, by income before taxes: ${TABLE}, 2023-2024`;
-  write(key, makeXlsx([{ name: "Table", rows: ceRows(title, 0.6 + index * 0.2) }]));
+  const table = `Table ${["3404", "3424", "3434", "3444", "3454"][index]}`;
+  const title = `${table}. Consumer units of ${size} by income before taxes: Average annual expenditures and characteristics, Consumer Expenditure Surveys, 2023-2024`;
+  write(
+    key,
+    makeXlsx([{ name: table, rows: ceRows(title, `Total ${size}`, "size", 0.6 + index * 0.2) }]),
+  );
 });
 
 // ---- USDA food plans: a ReadMe sheet and a long table.
@@ -157,7 +168,9 @@ const AGE_GROUPS: [string, string, number][] = [
   ["Female", "71+ years", 250],
 ];
 
-function foodPlan(plan: string, area: string, scale: number): Uint8Array {
+// A food plan file. The US files price individuals by age group and USDA's reference family; the
+// Alaska and Hawaii files price only the reference family, as the real ones do.
+function foodPlan(plan: string, area: string, scale: number, individuals = true): Uint8Array {
   const rows = [
     [
       "geographic_area",
@@ -175,7 +188,7 @@ function foodPlan(plan: string, area: string, scale: number): Uint8Array {
     ["August", 1],
     ["September", 1.01],
   ] as const) {
-    for (const [group, age, cost] of AGE_GROUPS) {
+    for (const [group, age, cost] of individuals ? AGE_GROUPS : []) {
       const monthly = (cost * scale * rise).toFixed(1);
       const weekly = ((cost * scale * rise * 12) / 52).toFixed(1);
       rows.push([area, "Individual", group, age, "2026", month, plan, "Monthly", monthly]);
@@ -185,8 +198,8 @@ function foodPlan(plan: string, area: string, scale: number): Uint8Array {
     rows.push([
       area,
       "Family",
-      "Family of 4",
-      "6-8 and 9-11",
+      "Couple and children",
+      "20-50 years and children 6-8 and 9-11 years",
       "2026",
       month,
       plan,
@@ -202,17 +215,19 @@ function foodPlan(plan: string, area: string, scale: number): Uint8Array {
 
 write("moderate", foodPlan("Moderate-Cost", "U.S. average", 1.3));
 write("thriftyUs", foodPlan("Thrifty", "U.S. average", 1));
-write("thriftyAlaska", foodPlan("Thrifty", "Alaska", 1.3));
-write("thriftyHawaii", foodPlan("Thrifty", "Hawaii", 1.6));
+write("thriftyAlaska", foodPlan("Thrifty", "Alaska", 1.3, false));
+write("thriftyHawaii", foodPlan("Thrifty", "Hawaii", 1.6, false));
 
-// ---- CPI: BLS API v1 answers, months 2023-01 to 2026-09, newest first as BLS lists them.
+// ---- CPI: BLS API v1 answers, months 2023-01 to 2026-09, newest first as BLS lists them. BLS
+// published no value for October 2025: its answer gives "-" with a footnote, as the real one does.
 
 function cpi(series: string, start: number): string {
   const data = [];
   for (let year = 2026; year >= 2023; year--) {
     for (let month = 12; month >= 1; month--) {
       if (year === 2026 && month > 9) continue;
-      const value = (start + (year - 2023) * 12 + month).toFixed(3);
+      const unpublished = year === 2025 && month === 10;
+      const value = unpublished ? "-" : (start + (year - 2023) * 12 + month).toFixed(3);
       data.push({
         year: String(year),
         period: `M${String(month).padStart(2, "0")}`,
@@ -221,7 +236,9 @@ function cpi(series: string, start: number): string {
           timeZone: "UTC",
         }),
         value,
-        footnotes: [{}],
+        footnotes: unpublished
+          ? [{ code: "X", text: "Data unavailable due to the 2025 lapse in appropriations" }]
+          : [{}],
       });
     }
   }

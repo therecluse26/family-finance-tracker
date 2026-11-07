@@ -36,6 +36,7 @@ import {
   FIRST_MIGRATION,
   type FixtureMigration,
   MIDDLE_MIGRATION,
+  onTransaction,
   readEverySetting,
   readPlainSettings,
   readSettings,
@@ -406,7 +407,7 @@ describe("starting the app", () => {
     const spec = { journal_mode: "wal", foreign_keys: 1, synchronous: 2, busy_timeout: 5000 };
 
     expect(await readSettings(app.database)).toEqual(spec);
-    // A transaction holds one connection, so the driver opens another for this read.
+    // A read runs on a read connection, beside a write transaction.
     await app.database.transaction(async () => {
       expect(await readSettings(app.database)).toEqual(spec);
     });
@@ -430,14 +431,15 @@ describe("starting the app", () => {
     });
     expect(expected.values).toHaveProperty("temp_store_directory");
 
-    const compare = async () => {
-      const actual = await readEverySetting(app.database.$client);
+    const compare = async (client: Parameters<typeof readEverySetting>[0]) => {
+      const actual = await readEverySetting(client);
       expect(changedSettings(expected.values, actual.values)).toEqual(changes);
       expect(actual.unreadable).toEqual(unreadable);
     };
-    await compare();
-    // A transaction holds one connection, so the driver opens another for this read.
-    await app.database.transaction(compare);
+    // A read runs on a read connection.
+    await compare(app.database.$client);
+    // A transaction runs on the write connection.
+    await app.database.transaction((tx) => compare(onTransaction(tx)));
   });
 
   it("turns on WAL mode in app.db", async () => {

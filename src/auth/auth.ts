@@ -222,7 +222,7 @@ function buildBetterAuth(options: AuthOptions) {
     onAPIError: { onError: apiErrorsFor(options.logger ?? log) },
     plugins: [
       myLogin({ database, secrets }),
-      firstMember({ database, secrets }),
+      firstMember({ database, secrets, logger: options.logger ?? log }),
       invites({ database, secrets }),
       loginResets({ database, secrets }),
       // Before the sign-in limit, so that a passkey refused for plain-HTTP mode or a long name does

@@ -10,8 +10,8 @@ On a computer with Docker and Compose v2, this runs the app at `http://localhost
 
 ```sh
 mkdir family-finance-tracker && cd family-finance-tracker
-curl -fsSL -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/main/compose.yaml \
-  -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/main/.env.example
+curl -fsSL -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/v1.0.0/compose.yaml \
+  -O https://raw.githubusercontent.com/therecluse26/family-finance-tracker/v1.0.0/.env.example
 sed 's|^APP_URL=$|APP_URL=http://localhost:3000|' .env.example > .env
 docker compose run --rm app fft setup
 docker compose up -d
@@ -23,7 +23,7 @@ The [self-hosting guide](docs/self-hosting.md) covers the rest: HTTPS for phones
 
 ## Development
 
-The build tools need Node.js 22.22 or later and pnpm 12. The image runs Node.js 26.
+The build tools need Node.js 26 or later and pnpm 12. The image runs Node.js 26.
 
 | Command | What it does |
 |---|---|

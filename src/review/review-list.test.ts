@@ -14,6 +14,7 @@ import { type App, TestBrowser } from "../server/testing.ts";
 import {
   openReviewItem,
   openReviewItemBatch,
+  openReviewItemsOfKind,
   type ReviewChoice,
   type ReviewItem,
   type ReviewKind,
@@ -295,6 +296,55 @@ describe("the Review list", () => {
     const hidden = (await openItems()).map((open) => open.id);
     expect(hidden.slice(0, 2)).toEqual([later, onlyT1]);
     expect(hidden.at(-1)).toBe(loan);
+    unregisterLoan();
+  });
+
+  // Items one follow-up job opens share their time, so they run by their Transactions' date: the
+  // purchase date, else the posted date. The order is the same on every read.
+  it("runs items made at the same moment by their purchase date, else their posted date, after a later moment", async () => {
+    const loanItems: ReviewKind = { otherChoices: async () => [], answer: async () => {} };
+    const unregisterLoan = registerReviewKind("link to this loan", loanItems);
+    // t3 posted last but was bought first, so the posted date would run it first.
+    for (const [id, authorized, posted] of [
+      ["t1", "2026-11-01", "2026-11-02"],
+      ["t2", null, "2026-10-30"],
+      ["t3", "2026-10-25", "2026-11-03"],
+    ] as const) {
+      await test.database.$client.execute({
+        sql: "UPDATE transactions SET authorized_date = ?, posted_date = ? WHERE id = ?",
+        args: [authorized, posted, txns[id] ?? ""],
+      });
+    }
+    const about = (...ids: string[]) => ({
+      kind: KIND,
+      subject: { type: "transactions" as const, transactionIds: ids.map((id) => txns[id] ?? "") },
+      decided: "The AI guessed Restaurants, with medium confidence.",
+      bestAnswer: { value: "restaurants", label: "Yes, Restaurants" },
+    });
+    vi.setSystemTime(new Date("2026-11-03T13:00:00.000Z"));
+    const [earlier] = await openReviewItemBatch(test.database, [about("t1")]);
+    vi.setSystemTime(new Date("2026-11-03T14:00:00.000Z"));
+    const [bought25, loan, both, bought01] = await openReviewItemBatch(test.database, [
+      about("t3"),
+      {
+        kind: "link to this loan",
+        subject: { type: "loan", accountId: "loan-account" },
+        decided: "This payment may belong to the Car Loan.",
+        bestAnswer: { value: "link", label: "Yes, link it" },
+      },
+      // An item about two Transactions runs by the newer one.
+      about("t3", "t2"),
+      about("t1"),
+    ]);
+
+    const expected = [bought01, both, bought25, loan, earlier];
+    expect((await openItems()).map((item) => item.id)).toEqual(expected);
+    expect((await openItems()).map((item) => item.id)).toEqual(expected);
+    // Items of one kind are for callers that settle or revise them: newest made first, with no
+    // further order, so they skip each item's Transaction dates.
+    const ofKind = (await openReviewItemsOfKind(test.database, KIND)).map((item) => item.id);
+    expect([...ofKind].sort()).toEqual([bought01, both, bought25, earlier].sort());
+    expect(ofKind.at(-1)).toBe(earlier);
     unregisterLoan();
   });
 

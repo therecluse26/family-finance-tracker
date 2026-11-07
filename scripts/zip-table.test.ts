@@ -4,6 +4,7 @@ import {
   buildZipTable,
   countyTimeZones,
   currentCountyFile,
+  NOT_A_ZIP,
   parseDbf,
   readZipEntry,
 } from "./zip-table.ts";
@@ -129,6 +130,44 @@ describe("the ZIP table build", () => {
   });
 });
 
+describe("the .zip reader", () => {
+  const isDbf = (name: string) => name.endsWith(".dbf");
+
+  it("says a file that is not a .zip archive, such as an error page, may be one", () => {
+    const page = new TextEncoder().encode("<html><title>Access Denied</title></html>");
+
+    expect(() => readZipEntry(page, isDbf)).toThrow(NOT_A_ZIP);
+    expect(() => readZipEntry(new Uint8Array(0), isDbf)).toThrow(NOT_A_ZIP);
+  });
+
+  it("refuses a file that unpacks to more than the limit", () => {
+    const data = new Uint8Array(1000);
+    const archive = makeZip([{ name: "c.dbf", data }]);
+
+    expect(readZipEntry(archive, isDbf, 1000)).toEqual(data);
+    expect(() => readZipEntry(archive, isDbf, 999)).toThrow(
+      "c.dbf unpacks to more than 999 bytes, so it was not read.",
+    );
+  });
+
+  it("stops unpacking at the limit a file that claims less than it holds", () => {
+    // 64 MB of zeros packs to about 64 KB, but claims 1 KB.
+    const archive = makeZip([{ name: "c.dbf", data: new Uint8Array(64 * 1024 * 1024) }], 1024);
+
+    expect(() => readZipEntry(archive, isDbf, 1024 * 1024)).toThrow(
+      "c.dbf unpacks to more than 1048576 bytes, so it was not read.",
+    );
+  });
+
+  it("refuses a file that unpacks to another size than it claims", () => {
+    const archive = makeZip([{ name: "c.dbf", data: new Uint8Array(10) }], 11);
+
+    expect(() => readZipEntry(archive, isDbf)).toThrow(
+      "c.dbf in the .zip archive is broken: it unpacks to 10 bytes, not the 11 it claims.",
+    );
+  });
+});
+
 // A dBase III file with text fields only.
 function makeDbf(fields: [string, number][], records: string[][]): Uint8Array {
   const recordLength = 1 + fields.reduce((sum, [, length]) => sum + length, 0);
@@ -158,8 +197,9 @@ function makeDbf(fields: [string, number][], records: string[][]): Uint8Array {
   return bytes;
 }
 
-// A .zip archive whose files are deflated.
-function makeZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
+// A .zip archive whose files are deflated. Each file claims to unpack to `claims` bytes, by default
+// its true size.
+function makeZip(files: { name: string; data: Uint8Array }[], claims?: number): Uint8Array {
   const locals: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
   let offset = 0;
@@ -171,7 +211,7 @@ function makeZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
     lv.setUint32(0, 0x04034b50, true);
     lv.setUint16(8, 8, true);
     lv.setUint32(18, packed.length, true);
-    lv.setUint32(22, file.data.length, true);
+    lv.setUint32(22, claims ?? file.data.length, true);
     lv.setUint16(26, name.length, true);
     local.set(name, 30);
     local.set(packed, 30 + name.length);
@@ -180,7 +220,7 @@ function makeZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(10, 8, true);
     cv.setUint32(20, packed.length, true);
-    cv.setUint32(24, file.data.length, true);
+    cv.setUint32(24, claims ?? file.data.length, true);
     cv.setUint16(28, name.length, true);
     cv.setUint32(42, offset, true);
     central.set(name, 46);
