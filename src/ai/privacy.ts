@@ -607,13 +607,43 @@ function isTextOrNumber(value: unknown): value is string | number {
   return typeof value === "string" || typeof value === "number";
 }
 
-// Each text the AI model reads in the prompt, in order.
+// Each field name, text, and number in JSON data, in order.
+function jsonTexts(value: unknown): string[] {
+  if (isTextOrNumber(value)) return [String(value)];
+  if (value === null || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(jsonTexts);
+  return Object.entries(value).flatMap(([name, item]) => [name, ...jsonTexts(item)]);
+}
+
+// Each text the AI model reads in a tool result, in order.
+function outputTexts(output: ToolResultOutput): string[] {
+  switch (output.type) {
+    case "text":
+    case "error-text":
+      return [output.value];
+    case "json":
+    case "error-json":
+      return jsonTexts(output.value);
+    case "execution-denied":
+      return output.reason === undefined ? [] : [output.reason];
+    case "content":
+      return output.value.flatMap((part) => (part.type === "text" ? [part.text] : []));
+    default:
+      return [];
+  }
+}
+
+// Each text the AI model reads in the prompt, in order: the text parts, and each tool result's
+// texts, so a fact split across two tool results is read as the AI reads it.
 function promptTexts(messages: Prompt): string[] {
   return messages.flatMap((message): string[] =>
     message.role === "system"
       ? [message.content]
-      : message.content.flatMap((part) =>
-          "text" in part && typeof part.text === "string" ? [part.text] : [],
+      : (message.content as { type: string; text?: unknown; output?: unknown }[]).flatMap(
+          (part) => {
+            if (part.type === "tool-result") return outputTexts(part.output as ToolResultOutput);
+            return typeof part.text === "string" ? [part.text] : [];
+          },
         ),
   );
 }
@@ -1406,6 +1436,67 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     });
   }
 
+  // A call each of whose tool results passes alone, but which is refused whole, such as for a card
+  // number split across two tool results. Each tool result, in order, is held back when the call
+  // up to it, with the later ones left out, is refused. A refusal the tool results do not cause,
+  // such as a fact in the summary, still refuses the call, since the last check sends them all.
+  // This runs only after a refusal, so a call that passes costs one filter run.
+  function withHeldBackAcross(input: CallOptions): Prompt {
+    const places = input.prompt.flatMap((message, index) =>
+      message.role === "tool" || message.role === "assistant"
+        ? message.content.flatMap((part, at) =>
+            part.type === "tool-result" ? [{ index, at }] : [],
+          )
+        : [],
+    );
+    const isLater = (index: number, at: number, upTo: number) => {
+      const place = places.findIndex((each) => each.index === index && each.at === at);
+      return place > upTo;
+    };
+    let prompt = input.prompt;
+    // Whether the call, with the tool results after place `upTo` left out, is refused. At -1, it
+    // has no tool result.
+    const refuses = (upTo: number) => {
+      const upToHere = prompt.map((message, each): Prompt[number] =>
+        message.role === "tool" || message.role === "assistant"
+          ? ({
+              ...message,
+              content: message.content.filter(
+                (part, partAt) => part.type !== "tool-result" || !isLater(each, partAt, upTo),
+              ),
+            } as Prompt[number])
+          : message,
+      );
+      try {
+        filterParams({ ...input, prompt: upToHere });
+        return false;
+      } catch (error) {
+        if (!(error instanceof PrivacyRefusal)) throw error;
+        return true;
+      }
+    };
+    if (places.length === 0 || refuses(-1)) return prompt;
+    for (const [upTo, { index, at }] of places.entries()) {
+      if (refuses(upTo)) {
+        prompt = prompt.map((message, each): Prompt[number] => {
+          if (each !== index || (message.role !== "tool" && message.role !== "assistant")) {
+            return message;
+          }
+          const content = message.content.map((part, partAt) => {
+            if (partAt !== at || part.type !== "tool-result") return part;
+            log.warn("The privacy filter held back a tool result", {
+              tool: part.toolName,
+              rule: "The privacy filter found private data across tool results.",
+            });
+            return { ...part, output: { type: "error-text" as const, value: HELD_BACK } };
+          });
+          return { ...message, content } as Prompt[number];
+        });
+      }
+    }
+    return prompt;
+  }
+
   // Where a refused call fails, for the log: the first message the filter refuses on its own, by
   // its place and role, and its tools' names for tool results. Never a value.
   function refusedPlace(input: CallOptions): string {
@@ -1436,6 +1527,11 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     const held = { ...input, prompt: withHeldBack(input.prompt) };
     try {
       return filterParams(held);
+    } catch (error) {
+      if (!(error instanceof PrivacyRefusal)) throw error;
+    }
+    try {
+      return filterParams({ ...held, prompt: withHeldBackAcross(held) });
     } catch (error) {
       if (error instanceof PrivacyRefusal) {
         log.warn("The privacy filter refused an AI call", {
