@@ -16,7 +16,7 @@ const ZONE = "America/New_York";
 // 3:30 PM in New York on Nov 6, 2026.
 const NOW = new Date("2026-11-06T20:30:00.000Z");
 
-const IDLE: AiWorkView = { running: null, waits: null, waiting: 0, lastRun: null };
+const IDLE: AiWorkView = { running: null, waits: null, retryAt: null, waiting: 0, lastRun: null };
 
 describe("Settings → AI: the AI work status line", () => {
   it("says the step of a run that goes on, before anything else", () => {
@@ -44,6 +44,13 @@ describe("Settings → AI: the AI work status line", () => {
       });
     }
     expect(AI_WORK_WAIT_LINES["cost cap"]).toBe("AI work waits: AI cost cap reached");
+  });
+
+  it("names the time the AI tries again, in Household time, while a use the run calls waits for its retry", () => {
+    // 8:41 PM UTC is 3:41 PM in New York.
+    expect(
+      aiWorkLine({ ...IDLE, waits: "retry wait", retryAt: "2026-11-06T20:41:00.000Z" }, ZONE, NOW),
+    ).toEqual({ tone: "serious", text: "AI work waits: AI tries again at 3:41 PM" });
   });
 
   it("says the last run in Household time, and how many items the run decided and how many Categories the AI answered", () => {

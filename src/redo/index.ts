@@ -6,6 +6,7 @@ export {
   checkAiBack,
   monthsBefore,
   pressAiWork,
+  REDO_AI_USES,
   REDO_ATTEMPTS,
   REDO_STEPS,
   REDO_STOPPED,
@@ -35,4 +36,6 @@ export {
   type AiWorkView,
   type AiWorkWait,
   ALL_HISTORY_MONTHS,
+  retryWaitLine,
+  retryWaitRefusal,
 } from "./work-view.ts";

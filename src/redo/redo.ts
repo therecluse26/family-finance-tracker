@@ -11,6 +11,7 @@ import {
   markAiAway,
   markCategoriesForAi,
   readAiRedo,
+  readAiRetry,
   readHistoryWait,
   recordAiRedoRun,
 } from "../db/index.ts";
@@ -297,26 +298,54 @@ export class RedoNoAiWorkJob extends Job {
   }
 }
 
-// Why AI work waits now, or undefined when it may run. It makes no call.
-async function waitsFor(ai: HouseholdAi): Promise<AiWorkWait | undefined> {
+// The Quick-tier uses a redo calls: Merchant names, Money movement, and Categories.
+export const REDO_AI_USES = [
+  "merchant cleanup",
+  "unclear transfer",
+  "reimbursement linking",
+  "category fix",
+] as const;
+
+// The latest time a use the redo calls tries again after a failed call, while it is still to come.
+// Until then that use makes no call, so a run would stop at once with nothing decided.
+async function retryWaitUntil(database: Database, now: Date): Promise<Date | undefined> {
+  let latest: Date | undefined;
+  for (const use of REDO_AI_USES) {
+    const retry = await readAiRetry(database, use);
+    if (retry === undefined || retry.retryAt <= now) continue;
+    if (latest === undefined || retry.retryAt > latest) latest = retry.retryAt;
+  }
+  return latest;
+}
+
+type Wait = { wait: AiWorkWait; retryAt?: Date };
+
+// Why AI work waits now, or undefined when it may run: the Quick tier's pause first, then a retry
+// wait. It makes no call. A press never skips a retry wait: that wait is the backoff after a
+// failure, and the use's own retry runs the work at that time.
+async function waitsFor({ database, ai, now }: Services): Promise<Wait | undefined> {
   const pause = await ai.pauseFor("category fix");
   // A Quick-tier use never asks "send anyway?": that pause is Chat's and reading a Goal's.
-  return pause === "send anyway?" ? "cost cap" : pause;
+  if (pause !== undefined) return { wait: pause === "send anyway?" ? "cost cap" : pause };
+  const retryAt = await retryWaitUntil(database, now());
+  return retryAt === undefined ? undefined : { wait: "retry wait", retryAt };
 }
 
 // The status line of the AI's work (spec 08, AI work on your Transactions). It makes no AI call.
 export async function aiWorkView(): Promise<AiWorkView> {
-  const { database, ai } = running();
+  const services = running();
+  const { database } = services;
   const runningNow =
     busy || pressed !== undefined
       ? { kind: pressed ?? null, step: step ?? ("starting" as const) }
       : null;
-  const waits = await waitsFor(ai);
+  const waits = await waitsFor(services);
   const waiting = await countMarkedItems(database);
   const state = await readAiRedo(database);
   return {
     running: runningNow,
-    waits: waits ?? null,
+    waits: waits?.wait ?? null,
+    retryAt: waits?.retryAt?.toISOString() ?? null,
     waiting,
     lastRun:
       state.lastRun === null ? null : { ...state.lastRun, at: state.lastRun.at.toISOString() },
@@ -334,8 +363,11 @@ export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
   if (busy || pressed !== undefined) return { started: false, refusal: "running" };
   pressedNow(kind);
   let refusal: AiWorkRefusal | undefined;
+  let retryAt: Date | undefined;
   try {
-    refusal = await waitsFor(services.ai);
+    const waits = await waitsFor(services);
+    refusal = waits?.wait;
+    retryAt = waits?.retryAt;
     if (refusal === undefined && kind === "all history") {
       const today = calendarDateIn(services.now(), (await householdTimeZone(database)) ?? "UTC");
       const marked = await markCategoriesForAi(database, monthsBefore(today, ALL_HISTORY_MONTHS));
@@ -354,6 +386,9 @@ export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
   }
   if (refusal !== undefined) {
     pressedNow(undefined);
+    if (refusal === "retry wait") {
+      return { started: false, refusal, retryAt: (retryAt ?? services.now()).toISOString() };
+    }
     return { started: false, refusal };
   }
   log.info("A Member started AI work", { kind });

@@ -5,6 +5,7 @@ import {
   type AiWorkKind,
   type AiWorkView,
   type AiWorkWait,
+  retryWaitLine,
 } from "../../../redo/work-view.ts";
 import { useAiActivity } from "../../ai-activity.ts";
 import { api } from "../../api.ts";
@@ -26,6 +27,7 @@ const WAIT_TONE: Record<AiWorkWait, StatusTone> = {
   "cost cap": "serious",
   "waits for history": "accent",
   "no price": "critical",
+  "retry wait": "serious",
 };
 
 const items = (n: number) => `${n} ${n === 1 ? "item" : "items"}`;
@@ -45,6 +47,12 @@ export function aiWorkLine(
 ): { tone: StatusTone; text: string } {
   if (work.running !== null) {
     return { tone: "accent", text: `AI work is running: ${work.running.step}` };
+  }
+  if (work.waits === "retry wait" && work.retryAt !== null) {
+    return {
+      tone: WAIT_TONE["retry wait"],
+      text: retryWaitLine(timeLabel(new Date(work.retryAt), zone)),
+    };
   }
   if (work.waits !== null)
     return { tone: WAIT_TONE[work.waits], text: AI_WORK_WAIT_LINES[work.waits] };

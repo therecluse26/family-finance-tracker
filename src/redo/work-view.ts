@@ -27,19 +27,23 @@ export type AiWorkStep =
   | "Categories"
   | "Insight cards";
 
-// Why AI work waits now: the pause every Quick-tier use takes.
+// Why AI work waits now: the pause every Quick-tier use takes, or a retry wait, while a use the
+// run calls waits for its retry after a failed call.
 export type AiWorkWait =
   | "no AI provider"
   | "key rejected"
   | "cost cap"
   | "waits for history"
-  | "no price";
+  | "no price"
+  | "retry wait";
 
 export type AiWorkView = {
   // A run waiting or running, with a Member's kind, or null for a redo that AI's return started.
   running: { kind: AiWorkKind | null; step: AiWorkStep } | null;
   // Why AI work waits, or null when it may run.
   waits: AiWorkWait | null;
+  // With a retry wait, the time the AI tries again, as an ISO moment; otherwise null.
+  retryAt: string | null;
   // The marked items that wait for the AI.
   waiting: number;
   // The last redo that ended, its time as an ISO moment: the marked items it decided, and how many
@@ -62,8 +66,17 @@ export const AI_WORK_REFUSALS: Record<AiWorkRefusal, string> = {
   "cost cap": "The AI cost cap is reached. Raise the cap, or wait for the 1st.",
   "waits for history": "AI work waits for your history to load.",
   "no price": "The app has no price for the Quick model. Enter its prices, then save.",
+  // With no time known. A press names the time: retryWaitRefusal.
+  "retry wait": "The AI tries again soon. Press again after that.",
   "nothing waits": "Nothing waits for the AI.",
 };
+
+// A press refused during a retry wait, with the time in Household time, such as "2:41 PM".
+export const retryWaitRefusal = (time: string) =>
+  `AI tries again at ${time}. Press again after that.`;
+
+// The status line during a retry wait, with the time in Household time.
+export const retryWaitLine = (time: string) => `AI work waits: AI tries again at ${time}`;
 
 // The status line's words while AI work waits.
 export const AI_WORK_WAIT_LINES: Record<AiWorkWait, string> = {
@@ -72,12 +85,14 @@ export const AI_WORK_WAIT_LINES: Record<AiWorkWait, string> = {
   "cost cap": "AI work waits: AI cost cap reached",
   "waits for history": "AI work waits for history to load",
   "no price": "AI work waits: the Quick model has no price",
+  "retry wait": "AI work waits: AI tries again soon",
 };
 
 // What a press answers: the run started, with the status line, or why not.
 export type AiWorkPress =
   | { started: true; work: AiWorkView }
-  | { started: false; refusal: AiWorkRefusal };
+  | { started: false; refusal: Exclude<AiWorkRefusal, "retry wait"> }
+  | { started: false; refusal: "retry wait"; retryAt: string };
 
 // A background AI use: every use but Chat and reading a Goal, which a Member starts and watches.
 export type AiActivityUse = Exclude<ModelUse, "chat" | "reading a goal">;
