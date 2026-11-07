@@ -4,6 +4,7 @@ import {
   claimAiBack,
   claimFirstAiRunDone,
   clearAiAway,
+  clearAiRetry,
   countAiRedoFailure,
   countMarkedItems,
   type Database,
@@ -366,8 +367,14 @@ export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
   let retryAt: Date | undefined;
   try {
     const waits = await waitsFor(services);
-    refusal = waits?.wait;
-    retryAt = waits?.retryAt;
+    // A Member's press skips the retry wait (spec 08): it ends the retry times of the uses the run
+    // calls, so the run's calls go now. A pause, such as the AI cost cap, still refuses.
+    if (waits?.wait === "retry wait") {
+      for (const use of REDO_AI_USES) await clearAiRetry(database, use);
+    } else {
+      refusal = waits?.wait;
+      retryAt = waits?.retryAt;
+    }
     if (refusal === undefined && kind === "all history") {
       const today = calendarDateIn(services.now(), (await householdTimeZone(database)) ?? "UTC");
       const marked = await markCategoriesForAi(database, monthsBefore(today, ALL_HISTORY_MONTHS));

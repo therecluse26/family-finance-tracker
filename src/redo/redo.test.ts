@@ -894,9 +894,10 @@ describe("the first AI run and the redo of no-AI work", () => {
         expect(stub.calls).toHaveLength(calls);
       });
 
-      // A use the run calls waits for its retry after a failed call (spec 08, Failures): a run
-      // would stop at once with nothing decided, so the press waits too, and never skips the wait.
-      it("refuses a press while a use the run calls waits for its retry, and starts one at the retry time", async () => {
+      // A use the run calls waits for its retry after a failed call (spec 08, Failures). The status
+      // line shows the wait, and a Member's press skips it: the press ends those retry times and
+      // starts the run now. A pause still refuses.
+      it("shows a retry wait, and a press ends the retry times of the uses the run calls and starts the run", async () => {
         await atTheCap();
         pausedUntil = undefined;
         const at = (ms: number) => new Date(NOW().getTime() + ms);
@@ -905,37 +906,26 @@ describe("the first AI run and the redo of no-AI work", () => {
         await storeAiFailure(bank.database, "reimbursement linking", 2, at(5 * 60_000));
         // Not a use the run calls.
         await storeAiFailure(bank.database, "alert advice", 1, at(30 * 60_000));
-        const calls = stub.calls.length;
 
         // The latest retry time of the uses the run calls.
-        const latest = at(5 * 60_000).toISOString();
-        for (const kind of ["finish", "all history"] as const) {
-          expect(await pressAiWork(kind)).toEqual({
-            started: false,
-            refusal: "retry wait",
-            retryAt: latest,
-          });
-        }
         expect(await view()).toMatchObject({
           running: null,
           waits: "retry wait",
-          retryAt: latest,
+          retryAt: at(5 * 60_000).toISOString(),
           waiting: marked,
         });
-        // A pause wins over a retry wait.
+        // A pause wins over a retry wait, and the refused press ends no retry time.
         pausedUntil = "2026-12-01";
         expect(await pressAiWork("finish")).toEqual({ started: false, refusal: "cost cap" });
-        expect(await view()).toMatchObject({ waits: "cost cap", retryAt: null });
+        expect(await readAiRetry(bank.database, "merchant cleanup")).toBeDefined();
         pausedUntil = undefined;
         expect(works).toEqual([]);
-        expect(stub.calls).toHaveLength(calls);
 
-        // At the retry time, the press starts the run.
-        await storeAiFailure(bank.database, "merchant cleanup", 1, at(0));
-        await storeAiFailure(bank.database, "reimbursement linking", 2, at(0));
-        expect(await view()).toMatchObject({ waits: null, retryAt: null });
         expect(await pressAiWork("finish")).toMatchObject({ started: true });
         expect(works).toEqual(["finish"]);
+        expect(await readAiRetry(bank.database, "merchant cleanup")).toBeUndefined();
+        expect(await readAiRetry(bank.database, "reimbursement linking")).toBeUndefined();
+        expect(await readAiRetry(bank.database, "alert advice")).toBeDefined();
       });
 
       // Named here, not read from the redo, so a use left out of the redo's list fails a case.
@@ -945,19 +935,16 @@ describe("the first AI run and the redo of no-AI work", () => {
         "reimbursement linking",
         "category fix",
       ] as const)(
-        "refuses a run before the retry time of %s, and starts one after it",
+        "a press during the retry wait of %s ends it and starts the run",
         async (use) => {
           await atTheCap();
           pausedUntil = undefined;
           await storeAiFailure(bank.database, use, 1, new Date(NOW().getTime() + 60_000));
-          expect(await pressAiWork("finish")).toMatchObject({
-            started: false,
-            refusal: "retry wait",
-          });
+          expect(await view()).toMatchObject({ waits: "retry wait" });
 
-          await storeAiFailure(bank.database, use, 1, new Date(NOW().getTime() - 1));
           expect(await pressAiWork("finish")).toMatchObject({ started: true });
           expect(works).toEqual(["finish"]);
+          expect(await readAiRetry(bank.database, use)).toBeUndefined();
         },
       );
 

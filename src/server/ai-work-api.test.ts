@@ -217,7 +217,7 @@ describe("the AI work routes", () => {
     expect(stub.calls).toHaveLength(calls);
   });
 
-  it("refuses a press while a use the run calls waits for its retry, with the time in Household time, and shows it on the status line", async () => {
+  it("shows a retry wait on the status line, and a press skips it and starts the run", async () => {
     await finishWizard();
     await connectAi();
     // ZIP 10001: America/New_York, on Eastern Standard Time on Nov 6, 2026.
@@ -242,15 +242,10 @@ describe("the AI work routes", () => {
       waits: "retry wait",
       retryAt: "2026-11-06T15:05:00.000Z",
     });
-    for (const path of PRESSES) {
-      const refused = await tab.post(path);
-      expect([refused.status, await refused.json()]).toEqual([
-        409,
-        { error: "AI tries again at 10:05 AM. Press again after that." },
-      ]);
-    }
-    expect(works).toEqual([]);
     expect(stub.calls).toHaveLength(calls);
+    const pressed = await tab.post(PRESSES[0]);
+    expect(pressed.status).toBe(202);
+    expect(works).toEqual(["finish"]);
   });
 
   it("starts one run, refuses a press while it runs, and shows the last run once it ends", async () => {
