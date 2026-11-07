@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { wholeDollars } from "../../../format.ts";
 import {
   MANUAL_LOAN_KINDS,
@@ -6,20 +6,10 @@ import {
   type ManualLoanView,
 } from "../../../server/money-movement-views.ts";
 import { accountEdits } from "../../account-edits.ts";
-import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
-import {
-  BUTTONS,
-  DETAILS,
-  INPUT,
-  LABEL,
-  Lead,
-  SettingCard,
-  SUBHEADING,
-  SUMMARY,
-} from "./settings-ui.tsx";
+import { ADD_PANEL, BUTTONS, DETAILS, INPUT, LABEL, RowMarker, SUMMARY } from "./settings-ui.tsx";
 import { centsOf } from "./UnconnectedAccounts.tsx";
 
 // Settings, Banks: Manual loans (spec 02, Manual loans). Any Member adds a loan that no Bank-data
@@ -53,6 +43,8 @@ export function ManualLoanForm(props: {
   // The lender to fill in on a new loan, such as from a Review list item.
   lender?: string;
   onSaved: (loan: ManualLoanView) => void;
+  // More buttons after the save button, such as Cancel.
+  children?: ReactNode;
 }) {
   const { loan } = props;
   const [lender, setLender] = useState(loan?.lender ?? props.lender ?? "");
@@ -216,72 +208,68 @@ export function ManualLoanForm(props: {
         <Button type="submit" disabled={busy || refused}>
           {loan === null ? "Add the loan" : "Save the loan"}
         </Button>
+        {props.children}
       </div>
       <ErrorLine error={error} />
     </form>
   );
 }
 
-export function ManualLoanList(props: {
+// The Manual loans, one row each, that opens to edit it.
+export function ManualLoanRows(props: {
   loans: ManualLoanView[];
-  lender?: string;
   onSaved: (loan: ManualLoanView) => void;
 }) {
   return (
-    <SettingCard id="manual-loans" title="Manual loans">
-      <Lead>
-        A personal, car, student, or buy now pay later loan, or a mortgage, that no bank connection
-        syncs. The app works out each payment's interest from the balance and the APR. Credit cards
-        and lines of credit can't be added: their balances move with purchases the app cannot see.
-      </Lead>
-      {props.loans.length === 0 ? <p className="mt-3">No Manual loans yet.</p> : null}
+    <>
       {props.loans.map((loan) => (
         <details key={loan.id} className={DETAILS}>
           <summary className={SUMMARY}>
-            {loan.lender}, {KIND_LABEL[loan.kind]}: {wholeDollars(loan.balance)} owed,{" "}
-            {LOAN_TYPE_LABEL[loan.loanType]}
+            <RowMarker />
+            <span className="min-w-0 flex-[1_1_180px]">
+              {loan.lender}
+              <span className="text-muted">
+                {" "}
+                · Manual loan, {KIND_LABEL[loan.kind]}, {LOAN_TYPE_LABEL[loan.loanType]}
+              </span>
+            </span>
+            <span className="ml-auto tabular-nums">{wholeDollars(loan.balance)} owed</span>
           </summary>
           <ManualLoanForm loan={loan} onSaved={props.onSaved} />
         </details>
       ))}
-      <h4 className={SUBHEADING}>Add a Manual loan</h4>
-      <ManualLoanForm loan={null} lender={props.lender} onSaved={props.onSaved} />
-    </SettingCard>
+    </>
+  );
+}
+
+// "Add a Manual loan", opened in place by its button, or by a link that fills in the lender.
+export function AddManualLoan(props: {
+  id: string;
+  lender?: string;
+  onSaved: (loan: ManualLoanView) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section id={props.id} aria-labelledby={`${props.id}-title`} className={ADD_PANEL}>
+      <h4 id={`${props.id}-title`} className="font-semibold">
+        Add a Manual loan
+      </h4>
+      <p className="mt-1.5 text-small text-muted">
+        A personal, car, student, or buy now pay later loan, or a mortgage, that no bank connection
+        syncs. The app works out each payment's interest from the balance and the APR. Credit cards
+        and lines of credit can't be added: their balances move with purchases the app cannot see.
+      </p>
+      <ManualLoanForm loan={null} lender={props.lender} onSaved={props.onSaved}>
+        <Button type="button" variant="outlined" onClick={props.onCancel}>
+          Cancel
+        </Button>
+      </ManualLoanForm>
+    </section>
   );
 }
 
 // The lender a link fills in, from ?lender= in the address.
-function lenderInAddress(): string | undefined {
+export function lenderInAddress(): string | undefined {
   if (typeof window === "undefined") return undefined;
   return new URLSearchParams(window.location.search).get("lender") ?? undefined;
-}
-
-export function ManualLoans() {
-  const [loans, setLoans] = useState<ManualLoanView[] | undefined>();
-  const [error, setError] = useState<string | undefined>();
-  const [lender] = useState(lenderInAddress);
-
-  async function load() {
-    try {
-      const res = await api["manual-loans"].$get();
-      if (!res.ok) return setError(await refusal(res));
-      setLoans(((await res.json()) as { loans: ManualLoanView[] }).loans);
-    } catch {
-      setError("The server did not answer.");
-    }
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
-  useEffect(() => {
-    void load();
-  }, []);
-
-  return (
-    <>
-      <ErrorLine error={error} />
-      {loans === undefined ? null : (
-        <ManualLoanList loans={loans} lender={lender} onSaved={() => void load()} />
-      )}
-    </>
-  );
 }

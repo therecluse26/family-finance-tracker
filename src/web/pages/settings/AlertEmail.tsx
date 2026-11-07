@@ -206,7 +206,7 @@ export function SmtpForm(props: {
       </div>
       <div className={BUTTONS}>
         <Button type="submit" disabled={busy}>
-          Save the email server
+          Save
         </Button>
         {props.children}
       </div>

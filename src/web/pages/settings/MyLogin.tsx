@@ -204,7 +204,7 @@ function ChangeTotp() {
           <CurrentPassword value={currentPassword} onChange={setCurrentPassword} />
           <div className={BUTTONS}>
             <Button type="submit" variant="outlined" disabled={action.busy}>
-              Set up a new TOTP
+              Move to a new phone
             </Button>
           </div>
           <p className="mt-2 text-small text-muted">

@@ -1,21 +1,11 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { UNCONNECTED_KINDS, type UnconnectedKind } from "../../../bank/unconnected-kinds.ts";
-import { calendarDateIn, dateLabel, wholeDollars } from "../../../format.ts";
+import { dateLabel, wholeDollars } from "../../../format.ts";
 import type { UnconnectedAccountView } from "../../../server/bank-views.ts";
 import { accountEdits } from "../../account-edits.ts";
-import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
-import {
-  BUTTONS,
-  DETAILS,
-  INPUT,
-  LABEL,
-  Lead,
-  SettingCard,
-  SUBHEADING,
-  SUMMARY,
-} from "./settings-ui.tsx";
+import { ADD_PANEL, BUTTONS, DETAILS, INPUT, LABEL, RowMarker, SUMMARY } from "./settings-ui.tsx";
 
 // Settings, Banks: Unconnected accounts (spec 02, Unconnected accounts). Any Member adds one and
 // edits it, and may type its true balance at any time. Its balance is an estimate from the
@@ -71,6 +61,8 @@ export function BalanceLine(props: { account: UnconnectedAccountView; today: str
 export function UnconnectedAccountForm(props: {
   account: UnconnectedAccountView | null;
   onSaved: (account: UnconnectedAccountView) => void;
+  // More buttons after the save button, such as Cancel.
+  children?: ReactNode;
 }) {
   const { account } = props;
   const [name, setName] = useState(account?.name ?? "");
@@ -167,67 +159,62 @@ export function UnconnectedAccountForm(props: {
         <Button type="submit" disabled={busy}>
           {account === null ? "Add the account" : "Save the account"}
         </Button>
+        {props.children}
       </div>
       <ErrorLine error={error} />
     </form>
   );
 }
 
-export function UnconnectedAccountList(props: {
+// The Unconnected accounts, one row each, that opens to edit it.
+export function UnconnectedAccountRows(props: {
   accounts: UnconnectedAccountView[];
   today: string;
   onSaved: (account: UnconnectedAccountView) => void;
 }) {
   return (
-    <SettingCard id="unconnected-accounts" title="Unconnected accounts">
-      <Lead>
-        An account the app cannot connect to. Its balance is an estimate from the Transfers and
-        Saving the app links to it, and leaves out interest and market growth. Type its true balance
-        at any time. A loan is added as a Manual loan, not here.
-      </Lead>
-      {props.accounts.length === 0 ? <p className="mt-3">No Unconnected accounts yet.</p> : null}
+    <>
       {props.accounts.map((account) => (
         <details key={account.id} className={DETAILS}>
           <summary className={SUMMARY}>
-            {account.name}
-            {account.mask === null ? "" : ` ··${account.mask}`}:{" "}
-            <BalanceLine account={account} today={props.today} />
+            <RowMarker />
+            <span className="min-w-0 flex-[1_1_180px]">
+              {account.name}
+              {account.mask === null ? "" : ` ··${account.mask}`}
+              <span className="text-muted"> · Unconnected account</span>
+            </span>
+            <span className="ml-auto tabular-nums">
+              <BalanceLine account={account} today={props.today} />
+            </span>
           </summary>
           <UnconnectedAccountForm account={account} onSaved={props.onSaved} />
         </details>
       ))}
-      <h4 className={SUBHEADING}>Add an Unconnected account</h4>
-      <UnconnectedAccountForm account={null} onSaved={props.onSaved} />
-    </SettingCard>
+    </>
   );
 }
 
-export function UnconnectedAccounts() {
-  const [accounts, setAccounts] = useState<UnconnectedAccountView[] | undefined>();
-  const [error, setError] = useState<string | undefined>();
-  const today = calendarDateIn(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
-
-  async function load() {
-    try {
-      const res = await api["unconnected-accounts"].$get();
-      if (!res.ok) return setError(await refusal(res));
-      setAccounts(((await res.json()) as { accounts: UnconnectedAccountView[] }).accounts);
-    } catch {
-      setError("The server did not answer.");
-    }
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: load once, when the page opens.
-  useEffect(() => {
-    void load();
-  }, []);
-
+// "Add an Unconnected account", opened in place by its button.
+export function AddUnconnectedAccount(props: {
+  id: string;
+  onSaved: (account: UnconnectedAccountView) => void;
+  onCancel: () => void;
+}) {
   return (
-    <>
-      <ErrorLine error={error} />
-      {accounts === undefined ? null : (
-        <UnconnectedAccountList accounts={accounts} today={today} onSaved={() => void load()} />
-      )}
-    </>
+    <section id={props.id} aria-labelledby={`${props.id}-title`} className={ADD_PANEL}>
+      <h4 id={`${props.id}-title`} className="font-semibold">
+        Add an Unconnected account
+      </h4>
+      <p className="mt-1.5 text-small text-muted">
+        An account the app cannot connect to. Its balance is an estimate from the Transfers and
+        Saving the app links to it, and leaves out interest and market growth. Type its true balance
+        at any time. A loan is added as a Manual loan, not here.
+      </p>
+      <UnconnectedAccountForm account={null} onSaved={props.onSaved}>
+        <Button type="button" variant="outlined" onClick={props.onCancel}>
+          Cancel
+        </Button>
+      </UnconnectedAccountForm>
+    </section>
   );
 }

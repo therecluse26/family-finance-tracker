@@ -27,9 +27,25 @@ export const TEXT_LINK = "text-accent underline hover:text-accent-dark";
 // A row inside a card, such as one passkey or one Member, with a line above it.
 export const ROW =
   "flex flex-wrap items-center gap-x-3.5 gap-y-2 border-t border-line-soft py-3 first:border-t-0";
-// A row that opens to show its form, such as one Unconnected account, and its summary line.
-export const DETAILS = "border-t border-line-soft py-2.5 first-of-type:mt-2.5";
-export const SUMMARY = "cursor-pointer marker:text-muted";
+// A row that opens to show its form, such as one Unconnected account, and its summary line: the
+// name at the left and the amount at the right, after a ▸ that turns when the row opens. Put
+// <RowMarker /> first in the summary.
+export const DETAILS = "group border-t border-line-soft py-2.5 first:border-t-0";
+export const SUMMARY =
+  "flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-0.5 [&::-webkit-details-marker]:hidden";
+
+// The ▸ before a row's summary, turned down while the row is open.
+export function RowMarker() {
+  return (
+    <span aria-hidden="true" className="inline-block text-muted group-open:rotate-90">
+      ▸
+    </span>
+  );
+}
+
+// A form that opens in place under its "+" button, such as "Add a Manual loan": a grey panel with
+// its heading. The button names the panel with aria-controls.
+export const ADD_PANEL = "mt-4 rounded-control border border-line bg-page p-4";
 // A heading inside a card, under a line, such as "Models" or "Add a Manual loan".
 export const SUBHEADING = "mt-5 border-t border-line pt-4 font-semibold";
 // A radio or checkbox with its words beside it.

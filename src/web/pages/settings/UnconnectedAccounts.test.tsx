@@ -2,10 +2,11 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { UnconnectedAccountView } from "../../../server/bank-views.ts";
 import {
+  AddUnconnectedAccount,
   BalanceLine,
   centsOf,
   UnconnectedAccountForm,
-  UnconnectedAccountList,
+  UnconnectedAccountRows,
 } from "./UnconnectedAccounts.tsx";
 
 // Settings → Banks: the Unconnected accounts, as the browser paints them.
@@ -64,14 +65,19 @@ describe("the Unconnected account form", () => {
   });
 
   it("says a loan is added as a Manual loan, and lists each account with its balance", () => {
-    const html = text(
+    const add = text(
+      renderToString(<AddUnconnectedAccount id="add" onSaved={() => {}} onCancel={() => {}} />),
+    );
+    const rows = text(
       renderToString(
-        <UnconnectedAccountList accounts={[SAVINGS]} today="2026-11-03" onSaved={() => {}} />,
+        <UnconnectedAccountRows accounts={[SAVINGS]} today="2026-11-03" onSaved={() => {}} />,
       ),
     );
 
-    expect(html).toContain("A loan is added as a Manual loan, not here.");
-    expect(html).toContain("Credit union savings ··1234: $12,500, as typed on Oct 5");
+    expect(add).toContain("A loan is added as a Manual loan, not here.");
+    expect(add).toContain("Add the accountCancel");
+    expect(rows).toContain("Credit union savings ··1234 · Unconnected account");
+    expect(rows).toContain("$12,500, as typed on Oct 5");
   });
 
   it("reads a typed balance in whole cents", () => {
