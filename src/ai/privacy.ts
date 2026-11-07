@@ -1433,13 +1433,14 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
   // The whole request, filtered, with each refused tool result held back. A refusal anywhere else
   // refuses the call, and is logged by its place and rule.
   function params(input: CallOptions): CallOptions {
+    const held = { ...input, prompt: withHeldBack(input.prompt) };
     try {
-      return filterParams({ ...input, prompt: withHeldBack(input.prompt) });
+      return filterParams(held);
     } catch (error) {
       if (error instanceof PrivacyRefusal) {
         log.warn("The privacy filter refused an AI call", {
           rule: error.message,
-          place: refusedPlace(input),
+          place: refusedPlace(held),
         });
       }
       throw error;
