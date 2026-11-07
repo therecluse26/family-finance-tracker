@@ -1,13 +1,16 @@
 import type { Context } from "hono";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
+import { watchSessionEnds } from "../auth/index.ts";
 import { log } from "../log.ts";
 import type { AiActivityFeed, AiActivityView } from "../redo/work-view.ts";
 import type { ServerEnv } from "./env.ts";
 
 // GET /api/ai/activity/stream: the live AI status's feed (spec 08, Live AI status), as server-sent
 // events. It sends the background AI work as it is now at once, then each change, and a comment
-// line about every 25 seconds so a proxy keeps the stream open. It ends when the browser leaves or
-// the app stops. It reads names and counts only, and makes no AI call.
+// line about every 25 seconds so a proxy keeps the stream open. It ends when the browser leaves,
+// when the app stops, or when its session ends: at once when this process ends the session, and at
+// the next comment line when the session expired. It reads names and counts only, and makes no AI
+// call.
 
 // Spec 08, Live AI status: at most 4 feeds open for each session.
 export const MAX_STREAMS_PER_SESSION = 4;
@@ -54,11 +57,13 @@ function fromAnotherSite(c: Context<ServerEnv>): boolean {
 }
 
 // Sends the latest view, and only the latest: a browser that reads slowly gets the newest view
-// once the one before has gone, never a queue. The same view twice in a row goes once.
+// once the one before has gone, never a queue. The same view twice in a row goes once. While the
+// session is being checked, it holds what it would send, so a session that ended gets nothing more.
 function latestSender(stream: SSEStreamingApi) {
   let sent: string | undefined;
   let waiting: string | undefined;
   let sending = false;
+  let held = false;
   const pump = async () => {
     sending = true;
     try {
@@ -76,13 +81,69 @@ function latestSender(stream: SSEStreamingApi) {
   return {
     send(view: AiActivityView) {
       waiting = JSON.stringify(view);
-      if (!sending) void pump().catch(() => {});
+      if (!sending && !held) void pump().catch(() => {});
     },
     // The comment line, when nothing else is on its way.
     heartbeat() {
-      if (!sending) void stream.write(": still here\n\n").catch(() => {});
+      if (!sending && !held) void stream.write(": still here\n\n").catch(() => {});
+    },
+    hold() {
+      held = true;
+    },
+    // The session is still open: what waited goes now.
+    release() {
+      held = false;
+      if (!sending && waiting !== undefined) void pump().catch(() => {});
     },
   };
+}
+
+// Whether the session is still open, read without renewing it. A failed read counts as ended.
+async function sessionOpen(c: Context<ServerEnv>): Promise<boolean> {
+  try {
+    const devices = await c.var.devices.devices(c.var.member.id, c.var.sessionId);
+    return devices.some((device) => device.thisDevice);
+  } catch (error) {
+    log.warn("The live AI status stream could not check its session", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    return false;
+  }
+}
+
+// Checks the session on each call, one check at a time, and calls `ended` once it has ended. A call
+// during a check runs one more check after it, so a session that ends mid-check is never missed.
+// Until a check passes, the sender sends nothing.
+function sessionChecker(
+  c: Context<ServerEnv>,
+  sender: ReturnType<typeof latestSender>,
+  ended: () => void,
+) {
+  let checking = false;
+  let again = false;
+  let done = false;
+  const check = async (): Promise<void> => {
+    if (done) return;
+    if (checking) {
+      again = true;
+      return;
+    }
+    checking = true;
+    sender.hold();
+    let open: boolean;
+    do {
+      again = false;
+      open = await sessionOpen(c);
+    } while (open && again);
+    checking = false;
+    if (open) {
+      sender.release();
+      return;
+    }
+    done = true;
+    ended();
+  };
+  return check;
 }
 
 export function aiActivityStream(c: Context<ServerEnv>) {
@@ -98,6 +159,7 @@ export function aiActivityStream(c: Context<ServerEnv>) {
       const { signal } = c.req.raw;
       let left: (() => void) | undefined;
       let stopWatching: (() => void) | undefined;
+      let stopSessionWatch: (() => void) | undefined;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       try {
         await new Promise<void>((ended) => {
@@ -108,8 +170,14 @@ export function aiActivityStream(c: Context<ServerEnv>) {
           signal.addEventListener("abort", left, { once: true });
           if (stream.aborted || signal.aborted) return ended();
           stopWatching = feed.watch(sender.send, ended);
+          // A session this process ends ends its streams at once; an expired one at the next
+          // comment line, which goes only while the session is open.
+          const check = sessionChecker(c, sender, ended);
+          stopSessionWatch = watchSessionEnds(() => void check());
           sender.send(feed.now());
-          heartbeat = setInterval(sender.heartbeat, HEARTBEAT_MS);
+          heartbeat = setInterval(() => {
+            void check().then(sender.heartbeat);
+          }, HEARTBEAT_MS);
         });
       } catch (error) {
         // Never the error itself (K8).
@@ -118,6 +186,7 @@ export function aiActivityStream(c: Context<ServerEnv>) {
         });
       } finally {
         stopWatching?.();
+        stopSessionWatch?.();
         if (left !== undefined) signal.removeEventListener("abort", left);
         if (heartbeat !== undefined) clearInterval(heartbeat);
         givePlace(sessionId);

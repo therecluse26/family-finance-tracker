@@ -77,13 +77,16 @@ describe("the live AI status's record", () => {
     expect(aiActivityWatchers()).toBe(0);
   });
 
-  it("drops a watcher that throws, and still tells the others", () => {
+  it("drops a watcher that throws, ends its stream once, and still tells the others", () => {
     const seen: string[] = [];
+    let ended = 0;
     aiActivity.watch(
       () => {
         throw new Error("This stream broke.");
       },
-      () => {},
+      () => {
+        ended += 1;
+      },
     );
     aiActivity.watch(
       (view) => seen.push(view.uses.map((each) => each.use).join()),
@@ -93,6 +96,7 @@ describe("the live AI status's record", () => {
     end();
 
     expect(seen).toEqual(["monthly review", ""]);
+    expect(ended).toBe(1);
     expect(aiActivityWatchers()).toBe(1);
   });
 

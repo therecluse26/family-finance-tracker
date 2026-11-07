@@ -23,7 +23,18 @@ function view(): AiActivityView {
   };
 }
 
-// A watcher that throws is dropped, so one broken stream never stops the others or the work.
+// Ends a watcher: it gets no more views, and its stream ends.
+function end(watcher: Watcher): void {
+  watchers.delete(watcher);
+  try {
+    watcher.ended();
+  } catch {
+    // The watcher is gone already.
+  }
+}
+
+// A watcher that throws is ended, so one broken stream never stops the others or the work, and
+// never stays open with no views.
 function tell(): void {
   if (watchers.size === 0) return;
   const now = view();
@@ -31,7 +42,7 @@ function tell(): void {
     try {
       watcher.changed(now);
     } catch {
-      watchers.delete(watcher);
+      end(watcher);
     }
   }
 }
@@ -83,14 +94,6 @@ export const aiActivity: AiActivityFeed = {
   },
   // The app stops: every watcher ends, so no open stream holds up the server's close.
   stop() {
-    const open = [...watchers];
-    watchers.clear();
-    for (const watcher of open) {
-      try {
-        watcher.ended();
-      } catch {
-        // The watcher is gone already.
-      }
-    }
+    for (const watcher of [...watchers]) end(watcher);
   },
 };

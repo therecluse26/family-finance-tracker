@@ -17,4 +17,5 @@ export {
   WRONG_INVITE_TOKENS_ALLOWED,
 } from "./invites.ts";
 export { LOGIN_RESET_LIFETIME_MS } from "./login-resets.ts";
+export { sessionEndWatchers, watchSessionEnds } from "./session-ends.ts";
 export { FAILED_SIGN_IN_WINDOW_MS, FAILED_SIGN_INS_ALLOWED } from "./sign-in-limit.ts";

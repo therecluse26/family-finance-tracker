@@ -13,6 +13,8 @@ import {
   startAiActivity,
 } from "../ai/index.ts";
 import { newAiKey, StubModels } from "../ai/testing.ts";
+import { SESSION_SECONDS, sessionEndWatchers } from "../auth/index.ts";
+import { tellSessionsEnded } from "../auth/session-ends.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { claimHistoryWaitEnd, markSetupStep } from "../db/index.ts";
 import { createLogger } from "../log.ts";
@@ -416,8 +418,11 @@ describe("the live AI status's feed", () => {
     const reader = await open(tab);
     expect(await reader.next()).toEqual(IDLE);
 
+    // Each comment line goes once a check finds the session still open.
     vi.advanceTimersByTime(HEARTBEAT_MS);
+    await settle();
     vi.advanceTimersByTime(HEARTBEAT_MS);
+    await settle();
     const end = startAiActivity("budget tailoring");
     expect(await reader.next()).toEqual({
       run: null,
@@ -553,5 +558,129 @@ describe("the live AI status's feed", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(aiActivityWatchers()).toBe(0);
     expect(openAiActivityStreams()).toBe(0);
+  });
+  describe("when its session ends", () => {
+    // Each TOTP code works once, so each sign-in of the same Member takes its own 30-second step.
+    async function signedInOnItsOwnStep(member: TestMember = alice): Promise<TestBrowser> {
+      vi.setSystemTime(Date.now() + 30_000);
+      return signedIn(member);
+    }
+
+    beforeEach(async () => {
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+      await finishWizard();
+    });
+
+    // The stream ends with no further event, even for work that starts right after the session
+    // ended, and gives back its watcher and place.
+    async function endsWithNoMoreData(reader: EventReader, left: number): Promise<void> {
+      const end = startAiActivity("alert advice");
+      expect(await reader.next()).toBeUndefined();
+      end();
+      await settle();
+      expect(aiActivityWatchers()).toBe(left);
+      expect(openAiActivityStreams()).toBe(left);
+      expect(sessionEndWatchers()).toBe(left);
+    }
+
+    it("ends the other devices' streams on Sign out everywhere else, and keeps this device's", async () => {
+      const here = await signedInOnItsOwnStep();
+      const there = await signedInOnItsOwnStep();
+      const mine = await open(here);
+      const theirs = await open(there);
+      expect(await mine.next()).toEqual(IDLE);
+      expect(await theirs.next()).toEqual(IDLE);
+
+      expect((await here.post("/api/my-login/sign-out-other-devices", {})).status).toBe(200);
+
+      await endsWithNoMoreData(theirs, 1);
+      expect(await mine.next()).toEqual({ run: null, uses: [{ use: "alert advice", calls: 1 }] });
+      expect((await there.get("/api/ai/work")).status).toBe(401);
+    });
+
+    it("ends that device's stream on its Sign out in Signed-in devices", async () => {
+      const here = await signedInOnItsOwnStep();
+      const there = await signedInOnItsOwnStep();
+      const theirs = await open(there);
+      expect(await theirs.next()).toEqual(IDLE);
+      const { devices } = (await (await here.get("/api/my-login/devices")).json()) as {
+        devices: { id: string; thisDevice: boolean }[];
+      };
+      const other = devices.find((device) => !device.thisDevice);
+
+      expect((await here.post(`/api/my-login/devices/${other?.id}/sign-out`, {})).status).toBe(200);
+
+      await endsWithNoMoreData(theirs, 0);
+    });
+
+    it("ends the stream on its own Sign out, and keeps another Member's", async () => {
+      const tab = await signedIn();
+      const other = await signedIn(bob);
+      const mine = await open(tab);
+      const bobs = await open(other);
+      expect(await mine.next()).toEqual(IDLE);
+      expect(await bobs.next()).toEqual(IDLE);
+
+      expect((await tab.post("/api/auth/sign-out", {})).status).toBe(200);
+
+      await endsWithNoMoreData(mine, 1);
+      expect(await bobs.next()).toEqual({ run: null, uses: [{ use: "alert advice", calls: 1 }] });
+    });
+
+    it.each([
+      ["a Login reset", "reset-login"],
+      ["the Member's removal", "remove"],
+    ])("ends the Member's streams at %s", async (_name, action) => {
+      const tab = await signedIn();
+      const other = await signedIn(bob);
+      const bobs = await open(other);
+      expect(await bobs.next()).toEqual(IDLE);
+
+      expect((await tab.post(`/api/members/${bob.id}/${action}`, {})).status).toBe(200);
+
+      await endsWithNoMoreData(bobs, 0);
+    });
+
+    it("holds work that starts during a session check, and sends it once the session is still open", async () => {
+      const reader = await open(await signedIn());
+      expect(await reader.next()).toEqual(IDLE);
+
+      tellSessionsEnded();
+      const end = startAiActivity("alert advice");
+
+      expect(await reader.next()).toEqual({ run: null, uses: [{ use: "alert advice", calls: 1 }] });
+      end();
+      expect(await reader.next()).toEqual(IDLE);
+    });
+
+    it("checks once more when the session ends during a check, and ends the stream", async () => {
+      const reader = await open(await signedIn());
+      expect(await reader.next()).toEqual(IDLE);
+
+      tellSessionsEnded();
+      vi.setSystemTime(Date.now() + SESSION_SECONDS * 1000);
+      tellSessionsEnded();
+
+      await endsWithNoMoreData(reader, 0);
+    });
+
+    it("ends the stream at the first comment line after the session expires, and writes no comment line then", async () => {
+      vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"], now: Date.now() });
+      const tab = await signedIn();
+      const reader = await open(tab);
+      expect(await reader.next()).toEqual(IDLE);
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      await settle();
+
+      vi.setSystemTime(Date.now() + SESSION_SECONDS * 1000);
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+
+      expect(await reader.next()).toBeUndefined();
+      expect(reader.comments).toEqual([": still here"]);
+      await settle();
+      expect(aiActivityWatchers()).toBe(0);
+      expect(openAiActivityStreams()).toBe(0);
+      expect(sessionEndWatchers()).toBe(0);
+    });
   });
 });
