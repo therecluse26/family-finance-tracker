@@ -525,7 +525,7 @@ const SAVE_REFUSALS = {
   "token needed": { status: 400, error: "Enter the gateway token." },
   changed: {
     status: 409,
-    error: "The AI settings changed while the app checked them. Check and save again.",
+    error: "The AI settings changed while the app checked them. Save again.",
   },
 } as const;
 
@@ -1247,7 +1247,7 @@ export const api = new Hono<ServerEnv>()
     }
     return setupAnswer(c, await c.var.setup.finish(c.var.member.id));
   })
-  // "Check my master key" in Settings, Backups and data (spec 09).
+  // "Check my Master key" in Settings, Backups and data (spec 09).
   .get("/master-key/check", async (c) => c.json({ lastCheck: await c.var.masterKey.lastCheck() }))
   .post("/master-key/check", async (c) => {
     const pasted = await pastedKey(c);

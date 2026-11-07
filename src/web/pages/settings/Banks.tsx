@@ -234,8 +234,10 @@ const ADD_LOAN = "add-manual-loan";
 
 // The Unconnected accounts and Manual loans in one card, as the Settings → Banks board draws them:
 // a row for each, and a "+" button for each kind that opens its add form in place. The buttons are
-// small, so both fit on one line on a phone. A link that
-// fills in a lender opens "Add a Manual loan" at once. A list that has not loaded yet shows no row.
+// small, so both fit on one line on a phone. A list that has not loaded yet shows no row. A link
+// that fills in a lender, as the Review list's untracked loan item does, goes to #manual-loans: it
+// opens "Add a Manual loan" at once with the focus on Lender, and scrolls the form into view once
+// the rows above it have loaded, so they do not push it out of view.
 export function NotSyncedList(props: {
   accounts: UnconnectedAccountView[] | undefined;
   loans: ManualLoanView[] | undefined;
@@ -247,7 +249,10 @@ export function NotSyncedList(props: {
   const [adding, setAdding] = useState({ account: false, loan: props.lender !== undefined });
   // Where the focus goes after the next render: a form's first field once it opens, or its button
   // once it closes.
-  const focusNext = useRef<string | undefined>(undefined);
+  const focusNext = useRef<string | undefined>(props.lender === undefined ? undefined : ADD_LOAN);
+  // Set until the form a link opened has scrolled into view.
+  const linked = useRef(props.lender !== undefined);
+  const loaded = accounts !== undefined && loans !== undefined;
 
   useEffect(() => {
     const id = focusNext.current;
@@ -256,6 +261,12 @@ export function NotSyncedList(props: {
     const target = document.getElementById(id);
     (target?.querySelector<HTMLElement>("input, select, textarea") ?? target)?.focus();
   });
+
+  useEffect(() => {
+    if (!linked.current || !loaded) return;
+    linked.current = false;
+    document.getElementById(ADD_LOAN)?.scrollIntoView({ block: "start" });
+  }, [loaded]);
 
   function toggle(kind: "account" | "loan") {
     const id = kind === "account" ? ADD_ACCOUNT : ADD_LOAN;
@@ -323,14 +334,17 @@ export function NotSyncedList(props: {
           onCancel={() => close("account")}
         />
       ) : null}
-      {adding.loan ? (
-        <AddManualLoan
-          id={ADD_LOAN}
-          lender={props.lender}
-          onSaved={added("loan")}
-          onCancel={() => close("loan")}
-        />
-      ) : null}
+      {/* The Manual loans part: the Review list's link names it. */}
+      <div id="manual-loans">
+        {adding.loan ? (
+          <AddManualLoan
+            id={ADD_LOAN}
+            lender={props.lender}
+            onSaved={added("loan")}
+            onCancel={() => close("loan")}
+          />
+        ) : null}
+      </div>
     </SettingCard>
   );
 }

@@ -142,6 +142,18 @@ describe("Settings → Banks: Unconnected accounts and Manual loans", () => {
     expect(html).not.toContain("Add an Unconnected account");
   });
 
+  it("has the #manual-loans part the Review list's untracked loan link names, open or closed", () => {
+    // The link the server builds (src/money-movement/untracked-loans.ts, manualLoanFormPath).
+    const id = "manual-loans";
+
+    for (const html of [notSynced({}), notSynced({ lender: "Riverbank Lending" })]) {
+      expect(html.match(new RegExp(`id="${id}"`, "g"))).toHaveLength(1);
+    }
+    // The form the link opens is inside that part.
+    const open = notSynced({ lender: "Riverbank Lending" });
+    expect(open.slice(open.indexOf(`id="${id}"`))).toContain('id="add-manual-loan"');
+  });
+
   it("puts Sync now at the top of the tab, outside a card", () => {
     const html = renderToString(<SyncNow />);
 

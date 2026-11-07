@@ -11,7 +11,7 @@ import { WRONG_MASTER_KEY_WINDOW_MS, WRONG_MASTER_KEYS_ALLOWED } from "./master-
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
-// The wizard's step 3 and "Check my master key", through the app's HTTP interface (spec 09, The
+// The wizard's step 3 and "Check my Master key", through the app's HTTP interface (spec 09, The
 // Master key; spec 12, The first-run wizard). Step 3 shows the key until "I saved it", and asks for
 // no paste-back. Each test gets a new app.db and Master key.
 
@@ -208,7 +208,7 @@ describe("the Master key", () => {
     });
   });
 
-  describe("Check my master key", () => {
+  describe("Check my Master key", () => {
     beforeEach(async () => {
       await markSetupStep(test.database, "master key", "done");
     });

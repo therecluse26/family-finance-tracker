@@ -87,6 +87,29 @@ describe("the page", () => {
     );
     expect(html).not.toMatch(/class="[^"]*\bfixed\b/);
   });
+
+  it("keeps the input in view on a short phone screen: the thread list gives up its room", () => {
+    const classesOf = (html: string, pattern: RegExp) => (pattern.exec(html)?.[1] ?? "").split(" ");
+    const list = classesOf(
+      render(<ThreadList threads={[]} open={undefined} today="2026-11-06" zone="UTC" />),
+      /<nav aria-label="Chat threads" class="([^"]*)"/,
+    );
+    const pane = render(<NewThread status="ready" ask={null} onStarted={() => {}} />);
+
+    // The list is at most 160 px tall, and shrinks below that, scrolling inside itself.
+    expect(list).toEqual(
+      expect.arrayContaining(["max-h-40", "min-h-0", "shrink", "overflow-y-auto"]),
+    );
+    expect(list).not.toContain("shrink-0");
+    // The pane is never shorter than its header and input below 768 px; the messages scroll and
+    // do not count toward that.
+    expect(classesOf(pane, /<section aria-label="New thread" class="([^"]*)"/)).toEqual(
+      expect.arrayContaining(["min-h-min", "md:min-h-0", "flex-1"]),
+    );
+    expect(classesOf(pane, /class="([^"]*)" data-slot="chat-scroll"/)).toEqual(
+      expect.arrayContaining(["overflow-y-auto", "[contain:size]"]),
+    );
+  });
 });
 
 describe("Ask about this", () => {

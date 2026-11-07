@@ -41,7 +41,8 @@ export type RowState = { typed?: string; error?: string; busy?: boolean };
 
 export type BudgetActions = {
   type(budget: MonthBudgetView, typed: string): void;
-  save(budget: MonthBudgetView, typed: string): void;
+  // `keyboard` when the keyboard pressed "Save", so the focus goes back to the amount box after.
+  save(budget: MonthBudgetView, typed: string, how?: { keyboard: boolean }): void;
   followTheBill(budget: MonthBudgetView): void;
   acceptAll(): void;
 };
@@ -49,6 +50,20 @@ export type BudgetActions = {
 // A form field's ID from a Category, such as "budget-phone-and-internet".
 const fieldId = (category: string) =>
   `budget-${category.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
+// After "Save" from the keyboard, the focus goes back to the row's amount box when the save left
+// it nowhere or on "Save", which is disabled while it saves and hidden once the save is done.
+export function focusAfterSave(
+  doc: Pick<Document, "activeElement" | "body" | "getElementById">,
+  category: string,
+): void {
+  const box = doc.getElementById(fieldId(category));
+  const active = doc.activeElement;
+  if (box === null) return;
+  if (active === null || active === doc.body || box.closest("form")?.contains(active) === true) {
+    box.focus();
+  }
+}
 
 // A Budget's status, with the amount where it is not on track (spec 07, Status): "▲ $8 over",
 // "◆ on pace for $435", or "✓ On track". On pace with no projection keeps its word.
@@ -99,7 +114,8 @@ function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: 
         disabled={state.busy === true}
         className={showSave ? undefined : "invisible"}
         data-slot="budget-save"
-        onClick={() => actions.save(budget, typed)}
+        // A click from the keyboard, Enter or Space, has no pointer and a detail of 0.
+        onClick={(e) => actions.save(budget, typed, { keyboard: e.detail === 0 })}
       >
         Save
       </Button>
@@ -292,12 +308,14 @@ function GroupHeading(props: { title: string; group: BudgetsView["groups"][numbe
   );
 }
 
-// A Category group with no Budget, folded to one line: its name and its Spending, "no Budget".
-// Its name is a button that opens its rows in place; the rows have no Budget box to edit. As on
+// A Category group with no monthly Budget, folded to one line: its name and its Spending, then
+// "no Budget", or "no monthly Budget" when it has a yearly one. Its name is a button that opens its rows in place; the rows have no Budget box to edit. As on
 // the board, folded groups that follow each other share one box. The page holds which are open.
 function FoldedGroup(props: {
   title: string;
   rows: BudgetRow[];
+  // Whether the group has a yearly Budget, whose rows are under Yearly Budgets.
+  yearly: boolean;
   monthGone: number | undefined;
   states: Readonly<Record<string, RowState>>;
   actions: BudgetActions;
@@ -340,7 +358,7 @@ function FoldedGroup(props: {
           </button>
         </h2>
         <span className="text-small text-muted tabular-nums" data-slot="folded-total">
-          {wholeDollars(spending)} spent, no Budget
+          {wholeDollars(spending)} spent, {props.yearly ? "no monthly Budget" : "no Budget"}
         </span>
       </div>
       <ul hidden={!open} id={`${id}-rows`}>
@@ -358,8 +376,9 @@ function FoldedGroup(props: {
   );
 }
 
-// The Category groups in list order, with each run of groups that have no Budget at all folded
-// into one box.
+// The Category groups in list order, with each run of groups that have no monthly Budget folded
+// into one box. A group whose only Budget is yearly folds too: its yearly rows are under Yearly
+// Budgets.
 type GroupPart =
   | { kind: "open"; group: BudgetRows["groups"][number] }
   | { kind: "folded"; groups: BudgetRows["groups"] };
@@ -435,6 +454,7 @@ export function BudgetsReport(props: {
                   key={group.categoryGroup}
                   title={group.categoryGroup}
                   rows={group.rows}
+                  yearly={(groupOf(group.categoryGroup)?.yearly ?? 0) > 0}
                   monthGone={props.monthGone}
                   states={states}
                   actions={actions}
@@ -535,9 +555,15 @@ export function Budgets() {
   }
 
   // Each change reads the page again: an edit or "Follow the bill" changes the status too.
-  async function change(category: string, send: () => Promise<ChangeOutcome>) {
+  // After "Save" from the keyboard, the focus goes back to the row's amount box.
+  async function change(
+    category: string,
+    send: () => Promise<ChangeOutcome>,
+    how?: { keyboard: boolean },
+  ) {
     setState(category, { busy: true, error: undefined });
     const outcome = await send();
+    if (how?.keyboard === true) focusAfterSave(document, category);
     if (outcome.changed) {
       setStates((all) => ({ ...all, [category]: {} }));
       return load();
@@ -547,7 +573,8 @@ export function Budgets() {
 
   const actions: BudgetActions = {
     type: (budget, typed) => setState(budget.category, { typed }),
-    save: (budget, typed) => void change(budget.category, () => editBudget(budget.category, typed)),
+    save: (budget, typed, how) =>
+      void change(budget.category, () => editBudget(budget.category, typed), how),
     followTheBill: (budget) => void change(budget.category, () => followTheBill(budget.category)),
     async acceptAll() {
       setAccept({ busy: true });

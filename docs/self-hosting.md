@@ -122,7 +122,7 @@ AI, email Alerts, and invites for the rest of the Household are optional extras.
 ### 6. Protect the data
 
 - Encrypt the disk that holds the folder ([Encrypt the host's disk](#encrypt-the-hosts-disk)). `data/` and `backups/` hold readable history.
-- Test the saved Master key now: Settings, Backups and data, "Check my master key".
+- Test the saved Master key now: Settings, Backups and data, "Check my Master key".
 
 ## HTTPS: three ways
 
@@ -388,7 +388,7 @@ The Master key is 64 hexadecimal characters. It encrypts the Plaid secret and to
 - The app reads it from `secrets/master.key` (`FFT_MASTER_KEY_FILE`, default `/run/secrets/master.key`). If that file is missing, it reads `FFT_MASTER_KEY`.
 - **Prefer the file to `FFT_MASTER_KEY`.** Platform dashboards and crash reports can show an environment variable.
 - Keep the file readable only by the app's user (mode `0600`).
-- **Save it in a password manager**, off the server. The wizard shows it once, in step 3. Test the saved copy now and then with "Check my master key" in Settings, Backups and data.
+- **Save it in a password manager**, off the server. The wizard shows it once, in step 3. Test the saved copy now and then with "Check my Master key" in Settings, Backups and data.
 - v1 has no command to change the Master key.
 
 ### A lost Master key

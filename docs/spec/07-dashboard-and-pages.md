@@ -272,7 +272,7 @@ Settings has one section per area. Each owner file holds the rules.
 | Categories | Category rules, with Delete | [04](04-categorization.md) |
 | Alerts | Weekly cap, my channels, the weekly summary email, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
 | AI | AI provider, key, models, prices, AI cost cap, base URL, and the AI usage page | [08](08-ai.md#ai-settings-page) |
-| Backups and data | "Back up now", last backup, "Check my master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |
+| Backups and data | "Back up now", last backup, "Check my Master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |
 | About | Version, "Source code" link, "Data sources" page, "Update available", the update-check switch | [12](12-install-and-first-run.md) |
 
 ## Shared visual rules

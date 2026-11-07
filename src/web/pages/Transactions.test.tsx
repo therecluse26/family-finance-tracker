@@ -27,7 +27,9 @@ import {
 } from "./TransactionDetail.tsx";
 import {
   accountLabels,
+  datesKeyDown,
   datesLine,
+  datesToggled,
   TransactionFilterForm,
   TransactionRows,
 } from "./Transactions.tsx";
@@ -256,6 +258,85 @@ describe("the Transactions page", () => {
     for (const name of ["from", "to", "month"]) expect(dates).toContain(`name="${name}"`);
     expect(text(dates)).toBe("Dates Dates: Oct 2026 From To Month Show Clear the filters");
     expect(text(form({}))).toContain("Dates: Any dates");
+    // The control closes on Escape and on a click outside it.
+    expect(dates).toMatch(/<details[^>]*>/);
+    const details = elementsOf(
+      TransactionFilterForm({
+        draft: {},
+        accounts: ACCOUNTS,
+        onDraft: vi.fn(),
+        onShow: vi.fn(),
+        onClear: vi.fn(),
+        today: TODAY,
+      }),
+    ).find((each) => each.type === "details");
+    expect(details?.props.onKeyDown).toBe(datesKeyDown);
+    expect(typeof details?.props.onToggle).toBe("function");
+  });
+
+  it("closes the open Dates panel on Escape, with the focus back on its summary", () => {
+    const focused: string[] = [];
+    const panel = (open: boolean) => ({
+      open,
+      querySelector: (selector: string) =>
+        selector === "summary" ? { focus: () => void focused.push("summary") } : null,
+    });
+    const press = (key: string, details: ReturnType<typeof panel>) => {
+      const preventDefault = vi.fn();
+      datesKeyDown({ key, currentTarget: details, preventDefault } as unknown as Parameters<
+        typeof datesKeyDown
+      >[0]);
+      return preventDefault;
+    };
+
+    const open = panel(true);
+    expect(press("Escape", open)).toHaveBeenCalledOnce();
+    expect(open.open).toBe(false);
+    expect(focused).toEqual(["summary"]);
+    // Another key, or Escape on a closed panel, does nothing, so Escape still works elsewhere.
+    const other = panel(true);
+    expect(press("Enter", other)).not.toHaveBeenCalled();
+    expect(other.open).toBe(true);
+    expect(press("Escape", panel(false))).not.toHaveBeenCalled();
+    expect(focused).toEqual(["summary"]);
+  });
+
+  it("closes the open Dates panel on a click outside it, and not on one inside it", () => {
+    const listeners = new Set<(event: Event) => void>();
+    const doc = {
+      addEventListener: (_: string, listener: (event: Event) => void) => listeners.add(listener),
+      removeEventListener: (_: string, listener: (event: Event) => void) =>
+        listeners.delete(listener),
+    };
+    const inside = { name: "From" };
+    const details = {
+      open: true,
+      isConnected: true,
+      contains: (node: unknown) => node === inside,
+    };
+    const toggled = () =>
+      datesToggled(details as unknown as HTMLDetailsElement, doc as unknown as Document);
+    const click = (target: unknown) => {
+      for (const listener of [...listeners]) listener({ target } as unknown as Event);
+    };
+
+    toggled();
+    expect(listeners.size).toBe(1);
+    click(inside);
+    expect(details.open).toBe(true);
+    click({ name: "the list" });
+    expect(details.open).toBe(false);
+    // Closing it takes its listener off the page.
+    toggled();
+    expect(listeners.size).toBe(0);
+    // Opening it twice keeps one listener, and a panel gone from the page drops its own.
+    details.open = true;
+    toggled();
+    toggled();
+    expect(listeners.size).toBe(1);
+    details.isConnected = false;
+    click({ name: "the list" });
+    expect(listeners.size).toBe(0);
   });
 
   it("names the dates the Dates control holds", () => {

@@ -24,8 +24,9 @@ export function tabRowScroll(
 
 // Settings: one section per area (spec 07, Settings overview), as a row of tabs under the heading.
 // Below 900 px, where the Shell shows the phone tab bar, the tabs stay one row that scrolls sideways
-// with no scrollbar, and the current tab scrolls into view. From 900 px they wrap, as before, so a
-// mouse never needs to scroll them. The tabs keep their order, so Tab moves through them as before.
+// under a thin scrollbar, so a mouse can scroll it too, and the current tab scrolls into view. From
+// 900 px they wrap, as before. The tabs keep their order, so Tab moves through them as before. Each
+// tab's focus ring is drawn inside it, so the scrolling row never clips it.
 export function Settings() {
   const { pathname } = useLocation();
   const row = useRef<HTMLUListElement>(null);
@@ -49,13 +50,13 @@ export function Settings() {
             inside a row that scrolls. */}
         <ul
           ref={row}
-          className="relative flex overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] [scrollbar-width:none] min-[900px]:flex-wrap min-[900px]:overflow-x-visible"
+          className="relative flex overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] [scrollbar-width:thin] min-[900px]:flex-wrap min-[900px]:overflow-x-visible"
         >
           {SETTINGS_SECTIONS.map((section) => (
             <li key={section.path} className="shrink-0">
               <NavLink
                 to={section.path}
-                className="block whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm text-ink-soft hover:text-ink aria-[current=page]:border-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
+                className="block whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm text-ink-soft hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent aria-[current=page]:border-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
               >
                 {section.label}
               </NavLink>

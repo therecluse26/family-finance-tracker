@@ -18,6 +18,7 @@ import {
   type BudgetActions,
   BudgetRowItem,
   BudgetsReport,
+  focusAfterSave,
   monthSpentLine,
   type RowState,
 } from "./Budgets.tsx";
@@ -130,8 +131,9 @@ const boxValue = (html: string, category: string) =>
 
 // The controls in a tree, with what each does: each button by its words, and the "Follow the bill"
 // switch. The row components have no state of their own, so each is called for its tree.
+// Each button's click takes the click's `detail`: 1 for a pointer, 0 for the keyboard.
 function controlsOf(element: ReactNode) {
-  const buttons = new Map<string, () => void>();
+  const buttons = new Map<string, (detail?: number) => void>();
   const switches: { checked: boolean; disabled: boolean; change: () => void }[] = [];
   const words = (node: ReactNode): string =>
     typeof node === "string"
@@ -148,14 +150,15 @@ function controlsOf(element: ReactNode) {
       return walk((node.type as (p: unknown) => ReactNode)(node.props));
     const props = node.props as {
       children?: ReactNode;
-      onClick?: () => void;
+      onClick?: (event: { detail: number }) => void;
       onChange?: () => void;
       role?: string;
       checked?: boolean;
       disabled?: boolean;
     };
-    if (node.type === "button" && props.onClick !== undefined) {
-      buttons.set(words(props.children), props.onClick);
+    const { onClick } = props;
+    if (node.type === "button" && onClick !== undefined) {
+      buttons.set(words(props.children), (detail = 1) => onClick({ detail }));
     }
     if (props.role === "switch" && props.onChange !== undefined) {
       switches.push({
@@ -289,7 +292,8 @@ describe("the Budgets page", () => {
           "s",
         ).exec(html)?.[1] ?? "",
       );
-    expect(folded("Other")).toBe("Other $50 spent, no Budget");
+    // Other's only Budget is yearly, so it has no monthly one; Transportation has none at all.
+    expect(folded("Other")).toBe("Other $50 spent, no monthly Budget");
     expect(folded("Transportation")).toBe("Transportation $0 spent, no Budget");
     expect(
       monthSpentLine({
@@ -604,6 +608,44 @@ describe("the Budgets page", () => {
     // While it saves, and after a refusal, it stays in view.
     expect(save({ typed: "320", busy: true }).split(" ")).not.toContain("invisible");
     expect(save({ error: "That did not work." }).split(" ")).not.toContain("invisible");
+  });
+
+  it('says when "Save" came from the keyboard, and then puts the focus back on the amount box', () => {
+    const how: unknown[] = [];
+    const actions: BudgetActions = { ...noActions, save: (_, __, each) => how.push(each) };
+    const save = controlsOf(
+      BudgetRowItem({
+        row: { category: "Restaurants", spending: 21_000, budget: restaurants },
+        state: { typed: "320" },
+        actions,
+      }),
+    ).buttons.get("Save");
+    save?.(1);
+    save?.(0);
+    expect(how).toEqual([{ keyboard: false }, { keyboard: true }]);
+
+    // The focus goes back to the box when the save left it nowhere, or on the row's "Save".
+    const focused: string[] = [];
+    const saveButton = { name: "Save" };
+    const box = {
+      focus: () => void focused.push("box"),
+      closest: () => ({ contains: (node: unknown) => node === saveButton }),
+    };
+    const body = { name: "body" };
+    const doc = (activeElement: unknown) =>
+      ({
+        activeElement,
+        body,
+        getElementById: (id: string) => (id === "budget-restaurants" ? box : null),
+      }) as unknown as Parameters<typeof focusAfterSave>[0];
+    focusAfterSave(doc(body), "Restaurants");
+    focusAfterSave(doc(null), "Restaurants");
+    focusAfterSave(doc(saveButton), "Restaurants");
+    expect(focused).toEqual(["box", "box", "box"]);
+    // Focus a Member moved elsewhere while it saved stays there, and a row gone takes none.
+    focusAfterSave(doc({ name: "another row's box" }), "Restaurants");
+    focusAfterSave(doc(body), "Groceries");
+    expect(focused).toEqual(["box", "box", "box"]);
   });
 
   it("lists each Category once: in its Category group, or in the yearly section", () => {

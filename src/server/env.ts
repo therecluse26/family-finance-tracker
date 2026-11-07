@@ -57,7 +57,7 @@ export type ServerEnv = {
     removing: ConnectionRemoving;
     // Repair and Add accounts in update mode, for the routes under /api/connections/.
     repairing: ConnectionRepairing;
-    // The wizard's step 3 and "Check my master key".
+    // The wizard's step 3 and "Check my Master key".
     masterKey: MasterKeyRoutes;
     // The wizard's steps 5 and 6, and the dashboard's "Finish setup" list.
     setup: SetupRoutes;

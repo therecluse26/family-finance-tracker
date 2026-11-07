@@ -147,7 +147,7 @@ This protects a leaked backup or a copied `app.db` without the Master key. It do
   - With a Master key that cannot decrypt the stored data key, the app logs the reason and exits. It changes nothing.
   - Only `fft restore` accepts the loss of the old Master key ([Backup, restore, and data export](11-backup-restore-export.md#without-the-master-key)).
 - **Shown once.** The wizard's Master key step shows the key, with a Copy button, until the Member presses "I saved it". The app does not ask for the key back. After that, the app never shows the Master key again.
-- **"Check my master key"** in settings: any Member pastes the saved key, and the app says whether it matches.
+- **"Check my Master key"** in settings: any Member pastes the saved key, and the app says whether it matches.
   - The check ignores spaces, line breaks, and letter case.
   - Settings show when someone last checked.
 - The Household keeps a copy in a password manager, off the server. A backup never holds the Master key.

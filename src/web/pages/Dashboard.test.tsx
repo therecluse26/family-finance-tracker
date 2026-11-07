@@ -890,6 +890,22 @@ describe('"A usual month"', () => {
     expect(html).not.toContain('data-slot="group-budgets"');
   });
 
+  it('says "no monthly Budget" for a group whose only Budget is yearly', () => {
+    const budgets = {
+      ...USUAL_BUDGETS,
+      groups: USUAL_BUDGETS.groups.map((each) =>
+        each.categoryGroup === "Transportation"
+          ? group("Transportation", 0, null, null, 120_000)
+          : each,
+      ),
+    };
+    const html = render(data({ budgets }));
+
+    expect(listItems(html, "Category groups")).toContain(
+      "Transportation $0, no monthly Budget No Spending since Sep 2026",
+    );
+  });
+
   it("words the pace line below usual and about usual", () => {
     const month = dashboardMonth(NOW, ZONE);
     expect(usualMonthLine(month, 290_000, 300_000)).toEqual({
@@ -961,24 +977,49 @@ describe('"A usual month"', () => {
     );
   });
 
-  it("folds each group to a row with its status at the right in a box under 480 px", () => {
+  it("folds each group to a row with its status at the right on a phone, in a box under 480 px", () => {
     const html = render(data({ budgets: USUAL_BUDGETS }));
     const shopping = /<li class="([^"]*)"[^>]*data-group="Shopping"[^>]*>(.*?)<\/li>/s.exec(html);
     const classes = (shopping?.[1] ?? "").split(" ");
 
-    // A row with a rule above it; from 480 px, a box of its own.
+    // A row with a rule above it; from 480 px, and at every box width from a 900 px screen, a box
+    // of its own.
     expect(classes).toEqual(
-      expect.arrayContaining(["border-t", "@min-[480px]:border", "@min-[480px]:rounded-[10px]"]),
+      expect.arrayContaining([
+        "border-t",
+        "@min-[480px]:border",
+        "@min-[480px]:rounded-[10px]",
+        "min-[900px]:border",
+        "min-[900px]:rounded-[10px]",
+      ]),
     );
     // The button holds the name, "$spent of $Budget" and the status, as before.
     expect(text(/<button[^>]*>(.*?)<\/button>/s.exec(shopping?.[2] ?? "")?.[1] ?? "")).toBe(
       "Shopping $800 of $700 ▲ 1 over",
     );
-    // The chart is clipped away under 480 px, never removed, so its library can measure it.
+    // The chart is clipped away only on a phone in a box under 480 px, never removed, so its
+    // library can measure it. No class hides it by the box's width alone, so the narrow right
+    // column from 900 px keeps its 13 bars (spec 07, section 5).
     expect(slotHtml(shopping?.[2] ?? "", "group-chart-area")).toContain('data-slot="group-chart"');
-    expect(html).toMatch(/class="[^"]*@max-\[479px\]:h-0[^"]*"[^>]*data-slot="group-chart-area"/);
+    const area = (/class="([^"]*)"[^>]*data-slot="group-chart-area"/.exec(html)?.[1] ?? "").split(
+      " ",
+    );
+    expect(area).toEqual(
+      expect.arrayContaining([
+        "max-[900px]:@max-[480px]:invisible",
+        "max-[900px]:@max-[480px]:h-0",
+        "max-[900px]:@max-[480px]:p-0",
+      ]),
+    );
+    expect(
+      area.filter(
+        (name) => /^@max-|^max-/.test(name) && !name.startsWith("max-[900px]:@max-[480px]:"),
+      ),
+    ).toEqual([]);
     // The key to the charts goes with them.
-    expect(html).toMatch(/class="@max-\[479px\]:hidden"[^>]*data-slot="chart-key-bars"/);
+    expect(html).toMatch(
+      /class="max-\[900px\]:@max-\[480px\]:hidden"[^>]*data-slot="chart-key-bars"/,
+    );
   });
 
   it("opens a group's Budgets worst first, each row opening its Transactions, with Close", () => {
@@ -1716,9 +1757,9 @@ describe("the dashboard's layout", () => {
     // No screen width alone moves them.
     expect(styleOf("tiles", 1920).get("grid-template-columns")).toBe(columns(2));
 
-    // The Category groups: compact rows in one column in a box under 480 px (a phone, and the
-    // right column from 900 px to about 1,150 px), as on the approved phone board; three boxes
-    // with charts in a wide box.
+    // The Category groups: one column in a box under 480 px (compact rows on a phone, as on the
+    // approved phone board; boxes with charts in the right column from 900 px to about 1,150 px);
+    // three boxes with charts in a wide box.
     expect(styleOf("groups", 900, BOX_AT[900]).get("grid-template-columns")).toBe(columns(1));
     expect(styleOf("groups", 375, BOX_AT[375]).get("grid-template-columns")).toBe(columns(1));
     expect(styleOf("groups", 1050, BOX_AT[1050]).get("grid-template-columns")).toBe(columns(1));

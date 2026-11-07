@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { CATEGORIES } from "../../categories/list.ts";
 import { calendarDateIn, dateLabel, dollarsAndCents, monthLabel } from "../../format.ts";
@@ -79,6 +79,41 @@ export function rowLine(
 export const accountLabels = (accounts: readonly AccountView[]) =>
   new Map(accounts.map((account) => [account.id, accountLabel(account)]));
 
+// The open "Dates" panel closes on a click or tap outside it. Each open panel has one listener on
+// the page, which goes when the panel closes or leaves the page.
+const outsideClicks = new WeakMap<HTMLDetailsElement, (event: Event) => void>();
+
+export function datesToggled(
+  details: HTMLDetailsElement,
+  doc: Pick<Document, "addEventListener" | "removeEventListener"> = document,
+) {
+  const before = outsideClicks.get(details);
+  if (before !== undefined) {
+    doc.removeEventListener("pointerdown", before);
+    outsideClicks.delete(details);
+  }
+  if (!details.open) return;
+  const close = (event: Event) => {
+    if (!details.isConnected) {
+      doc.removeEventListener("pointerdown", close);
+      outsideClicks.delete(details);
+    } else if (!details.contains(event.target as Node | null)) {
+      details.open = false;
+    }
+  };
+  outsideClicks.set(details, close);
+  doc.addEventListener("pointerdown", close);
+}
+
+// Escape closes the open "Dates" panel and puts the focus back on its summary, the "Dates" button.
+export function datesKeyDown(event: KeyboardEvent<HTMLDetailsElement>) {
+  const details = event.currentTarget;
+  if (event.key !== "Escape" || !details.open) return;
+  event.preventDefault();
+  details.open = false;
+  details.querySelector("summary")?.focus();
+}
+
 // The filter fields, as a Member edits them before pressing Show.
 export function TransactionFilterForm(props: {
   draft: TransactionFilters;
@@ -158,12 +193,17 @@ export function TransactionFilterForm(props: {
       {field("merchant", "Merchant", "text")}
       {/* The date fields fold into one "Dates" control, as on the board, so every filter fits in
           one row at 1,280 px. It opens in place; its panel is never wider than the control, so it
-          never runs off the page. The fields and what they send are the same. */}
+          never runs off the page. It closes on Escape and on a click outside it. The fields and
+          what they send are the same. */}
       <div className="col-span-2 sm:w-44" data-slot="dates">
         <span aria-hidden="true" className={FILTER_LABEL}>
           Dates
         </span>
-        <details className="relative mt-1">
+        <details
+          className="relative mt-1"
+          onKeyDown={datesKeyDown}
+          onToggle={(e) => datesToggled(e.currentTarget)}
+        >
           <summary className="flex h-[38px] cursor-pointer list-none items-center justify-between gap-2 rounded-control border border-field bg-white px-2.5 text-sm text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
             <span className="truncate">
               <span className="sr-only">Dates: </span>

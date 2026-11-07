@@ -18,7 +18,7 @@ export type MasterKeyRoutes = {
   shown(): Promise<string | undefined>;
   // The wizard's "I saved it": marks step 3 done, so the key is never shown again.
   confirmSaved(): Promise<void>;
-  // "Check my master key" in Settings.
+  // "Check my Master key" in Settings.
   check(memberId: string, pasted: string): Promise<MasterKeyCheckResult>;
   lastCheck(): Promise<LastMasterKeyCheckView | null>;
 };
