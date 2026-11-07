@@ -3,14 +3,18 @@ import { calendarDateIn, dateLabel, type StatusTone, timeLabel } from "../../../
 import {
   AI_WORK_WAIT_LINES,
   type AiWorkKind,
+  type AiWorkRun,
   type AiWorkView,
   type AiWorkWait,
+  progressPercent,
+  progressWords,
   retryWaitLine,
 } from "../../../redo/work-view.ts";
 import { useAiActivity } from "../../ai-activity.ts";
 import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
+import { Meter } from "../../components/Meter.tsx";
 import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
 import { ADD_PANEL, BUTTONS, HINT, Lead, SettingCard } from "./settings-ui.tsx";
@@ -71,6 +75,29 @@ export function AiWorkLine(props: { work: AiWorkView; zone: string; now: Date })
     <p className="mt-3 font-semibold" role="status" data-slot="ai-work">
       <StatusText tone={line.tone}>{line.text}</StatusText>
     </p>
+  );
+}
+
+// The progress bar under the status line while a run works (spec 08, AI work on your
+// Transactions, Progress bar): the share of items decided, and its words, such as "1,240 of 2,654
+// items · Step 2 of 3: Categories · about 4 min left". Nothing before the run counts its items.
+export function AiWorkProgress(props: { run: AiWorkRun }) {
+  const { progress } = props.run;
+  if (progress === undefined) return null;
+  const percent = progressPercent(progress);
+  return (
+    <div className="mt-2" data-slot="ai-work-progress">
+      <div
+        role="progressbar"
+        aria-label="AI work"
+        aria-valuenow={percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <Meter share={percent / 100} />
+      </div>
+      <p className={HINT}>{progressWords(progress, props.run.step)}</p>
+    </div>
   );
 }
 
@@ -136,12 +163,16 @@ export function AiWorkCard(props: { ai?: unknown; usage?: unknown }) {
   }, []);
 
   // The line also follows the live AI status (spec 08, Live AI status): it loads again when a run
-  // starts, changes its step, or ends, and not on a timer.
-  const run = JSON.stringify(useAiActivity()?.run ?? null);
+  // starts, changes its step, or ends, and not on a timer. The progress bar follows the live
+  // status's progress between those loads.
+  const live = useAiActivity();
+  const run = JSON.stringify(live?.run == null ? null : [live.run.kind, live.run.step]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `ai`, `usage` and `run` only say when to load again.
   useEffect(load, [load, props.ai, props.usage, run]);
 
   const running = work?.running != null;
+  // The live status's run once the feed has answered, else the line's own.
+  const progressRun = running ? (live === undefined ? work.running : live.run) : null;
 
   async function press(kind: AiWorkKind) {
     setBusy(true);
@@ -171,6 +202,7 @@ export function AiWorkCard(props: { ai?: unknown; usage?: unknown }) {
       {work === undefined || zone === undefined ? null : (
         <>
           <AiWorkLine work={work} zone={zone} now={new Date()} />
+          {progressRun == null ? null : <AiWorkProgress run={progressRun} />}
           {work.waiting === 0 || running ? null : (
             <p className={HINT}>{items(work.waiting)} wait for the AI.</p>
           )}

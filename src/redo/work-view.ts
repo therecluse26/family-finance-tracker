@@ -37,9 +37,77 @@ export type AiWorkWait =
   | "no price"
   | "retry wait";
 
+// How far a running redo has come (spec 08, AI work on your Transactions, Progress bar). Counts
+// only.
+export type AiWorkProgress = {
+  // The marked items when the run checked that it is due and that AI may run.
+  before: number;
+  // The items it has decided since.
+  done: number;
+  // The step's place in the run's steps, from 1, or null before its first step.
+  place: number | null;
+  // How many steps the run has: its registered redo steps, and Insight cards in the first AI run.
+  steps: number;
+  // The time left, in whole minutes rounded up, with 0 for less than a minute. Null until the run
+  // has worked ESTIMATE_AFTER_MS and decided an item.
+  minutesLeft: number | null;
+};
+
+// A run waiting or running: a Member's kind, or null for a redo that AI's return started, its
+// step, and, once it has counted its items, its progress.
+export type AiWorkRun = { kind: AiWorkKind | null; step: AiWorkStep; progress?: AiWorkProgress };
+
+// A run gives a time left only after it has worked this long.
+export const ESTIMATE_AFTER_MS = 30_000;
+
+// The progress of a run that started working at `startedAt`, with `before` items marked then and
+// `done` decided since. The time left is the items left at the rate so far.
+export function workProgress(run: {
+  before: number;
+  done: number;
+  place: number | null;
+  steps: number;
+  startedAt: Date;
+  now: Date;
+}): AiWorkProgress {
+  const done = Math.min(Math.max(run.done, 0), run.before);
+  const worked = run.now.getTime() - run.startedAt.getTime();
+  let minutesLeft: number | null = null;
+  if (done > 0 && worked >= ESTIMATE_AFTER_MS) {
+    const msLeft = ((run.before - done) * worked) / done;
+    minutesLeft = msLeft < 60_000 ? 0 : Math.ceil(msLeft / 60_000);
+  }
+  return { before: run.before, done, place: run.place, steps: run.steps, minutesLeft };
+}
+
+// The share of items decided, as a whole percent rounded down, so it says 100 only once every item
+// is decided. A run with no marked item at the start is full.
+export function progressPercent(progress: AiWorkProgress): number {
+  if (progress.before <= 0) return 100;
+  return Math.min(100, Math.floor((progress.done * 100) / progress.before));
+}
+
+const count = (n: number) => n.toLocaleString("en-US");
+
+// The bar's words, such as "1,240 of 2,654 items · Step 2 of 3: Categories · about 4 min left".
+// Each part shows only once it is known.
+export function progressWords(progress: AiWorkProgress, step: AiWorkStep): string {
+  const parts: string[] = [];
+  if (progress.before > 0) parts.push(`${count(progress.done)} of ${count(progress.before)} items`);
+  if (progress.place !== null) parts.push(`Step ${progress.place} of ${progress.steps}: ${step}`);
+  if (progress.minutesLeft !== null) {
+    parts.push(
+      progress.minutesLeft === 0
+        ? "less than a minute left"
+        : `about ${progress.minutesLeft} min left`,
+    );
+  }
+  return parts.join(" · ");
+}
+
 export type AiWorkView = {
-  // A run waiting or running, with a Member's kind, or null for a redo that AI's return started.
-  running: { kind: AiWorkKind | null; step: AiWorkStep } | null;
+  // A run waiting or running, or null.
+  running: AiWorkRun | null;
   // Why AI work waits, or null when it may run.
   waits: AiWorkWait | null;
   // With a retry wait, the time the AI tries again, as an ISO moment; otherwise null.
@@ -102,7 +170,7 @@ export type AiActivityUse = Exclude<ModelUse, "chat" | "reading a goal">;
 // progress, in the order their calls started, with how many calls each has. Only names and
 // counts: never a Transaction, a Merchant name, an amount, a prompt, or a Member name.
 export type AiActivityView = {
-  run: { kind: AiWorkKind | null; step: AiWorkStep } | null;
+  run: AiWorkRun | null;
   uses: { use: AiActivityUse; calls: number }[];
 };
 

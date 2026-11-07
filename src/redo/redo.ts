@@ -28,10 +28,12 @@ import {
   type AiWorkKind,
   type AiWorkPress,
   type AiWorkRefusal,
+  type AiWorkRun,
   type AiWorkStep,
   type AiWorkView,
   type AiWorkWait,
   ALL_HISTORY_MONTHS,
+  workProgress,
 } from "./work-view.ts";
 
 // The first AI run and the redo of no-AI work (spec 08, Runs that reuse these uses; Redo of no-AI
@@ -98,7 +100,13 @@ type Services = {
   startJob: () => Promise<unknown>;
   // Starts the job of a Member's run.
   startWork: (kind: AiWorkKind) => Promise<unknown>;
+  // How often a working redo counts its decided items for its progress.
+  progressMs: number;
 };
+
+// A working redo counts its decided items this often, so the live AI status sends its progress at
+// most once a second (spec 08, AI work on your Transactions, Progress bar).
+export const PROGRESS_MS = 1_000;
 
 let services: Services | undefined;
 
@@ -125,16 +133,64 @@ let step: AiWorkStep | undefined;
 let pressed: AiWorkKind | undefined;
 // True once the running redo has found that it is due and that AI may run.
 let working = false;
+// The working redo's count for its progress: the marked items when it started working, the items
+// it has decided since, when it started, and its steps in order.
+let tally:
+  | { before: number; done: number; startedAt: Date; steps: readonly AiWorkStep[] }
+  | undefined;
+// The timer that counts the working redo's decided items.
+let ticker: ReturnType<typeof setInterval> | undefined;
+
+// The run as the status line and the live AI status show it, with its progress once it counts.
+// `left` is the marked items now, when the caller has read them.
+function runNow(left?: number): AiWorkRun | null {
+  if (pressed === undefined && !busy) return null;
+  const run: AiWorkRun = { kind: pressed ?? null, step: step ?? "starting" };
+  if (tally === undefined) return run;
+  const place = tally.steps.indexOf(run.step);
+  run.progress = workProgress({
+    before: tally.before,
+    done: left === undefined ? tally.done : tally.before - left,
+    place: place === -1 ? null : place + 1,
+    steps: tally.steps.length,
+    startedAt: tally.startedAt,
+    now: services?.now() ?? new Date(),
+  });
+  return run;
+}
 
 // The live AI status's run (spec 08, Live AI status): a Member's press from the press on, and a
 // redo the app starts once it is due with AI on. Each change of `busy`, `step`, `pressed`, and
 // `working` calls it.
 function showRun(): void {
-  showRunActivity(
-    pressed !== undefined || (busy && working)
-      ? { kind: pressed ?? null, step: step ?? "starting" }
-      : null,
-  );
+  showRunActivity(pressed !== undefined || (busy && working) ? runNow() : null);
+}
+
+// Counts the working redo's decided items, one count at a time, and shows its progress. A count
+// that ends after its redo has ended shows nothing.
+let counting = false;
+async function countProgress(database: Database): Promise<void> {
+  const counted = tally;
+  if (counting || counted === undefined) return;
+  counting = true;
+  try {
+    const left = await countMarkedItems(database);
+    if (tally !== counted) return;
+    counted.done = Math.max(0, counted.before - left);
+    showRun();
+  } catch (error) {
+    log.warn("The redo of no-AI work could not count its progress", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  } finally {
+    counting = false;
+  }
+}
+
+function stopCounting(): void {
+  if (ticker !== undefined) clearInterval(ticker);
+  ticker = undefined;
+  tally = undefined;
 }
 
 function pressedNow(kind: AiWorkKind | undefined): void {
@@ -156,6 +212,7 @@ export async function runRedo(kind?: AiWorkKind): Promise<RedoOutcome> {
     busy = false;
     step = undefined;
     working = false;
+    stopCounting();
     showRun();
   }
 }
@@ -172,7 +229,7 @@ export function monthsBefore(date: string, months: number): string {
 }
 
 async function redo(
-  { database, ai, now }: Services,
+  { database, ai, now, progressMs }: Services,
   kind: AiWorkKind | undefined,
 ): Promise<RedoOutcome> {
   const state = await readAiRedo(database);
@@ -193,6 +250,12 @@ async function redo(
   // Each item whose mark goes away during the run is one the run decided: by the AI, or by an
   // earlier cascade step such as Merchant history.
   const before = await countMarkedItems(database);
+  const runSteps: AiWorkStep[] = REDO_STEPS.filter((name) => steps.has(name));
+  if (firstRun) runSteps.push("Insight cards");
+  tally = { before, done: 0, startedAt: now(), steps: runSteps };
+  ticker = setInterval(() => void countProgress(database), progressMs);
+  ticker.unref?.();
+  showRun();
   const decidedItems = async () => Math.max(0, before - (await countMarkedItems(database)));
   let aiCategories = 0;
   const record = async (outcome: "finished" | "stopped") =>
@@ -338,15 +401,11 @@ async function waitsFor({ database, ai, now }: Services): Promise<Wait | undefin
 export async function aiWorkView(): Promise<AiWorkView> {
   const services = running();
   const { database } = services;
-  const runningNow =
-    busy || pressed !== undefined
-      ? { kind: pressed ?? null, step: step ?? ("starting" as const) }
-      : null;
   const waits = await waitsFor(services);
   const waiting = await countMarkedItems(database);
   const state = await readAiRedo(database);
   return {
-    running: runningNow,
+    running: runNow(waiting),
     waits: waits?.wait ?? null,
     retryAt: waits?.retryAt?.toISOString() ?? null,
     waiting,
@@ -455,6 +514,7 @@ export function startRedo(options: {
   now?: () => Date;
   startJob?: () => Promise<unknown>;
   startWork?: (kind: AiWorkKind) => Promise<unknown>;
+  progressMs?: number;
 }): { afterAiChange(): Promise<void>; stop(): void } {
   if (services !== undefined) throw new Error("The redo of no-AI work is already running.");
   const started: Services = {
@@ -465,6 +525,7 @@ export function startRedo(options: {
     startWork:
       options.startWork ??
       ((kind) => startJob(RedoNoAiWorkJob, [kind], { maxAttempts: REDO_ATTEMPTS })),
+    progressMs: options.progressMs ?? PROGRESS_MS,
   };
   services = started;
   const stopStep = registerFirstRunStep("ai first run", async () => {

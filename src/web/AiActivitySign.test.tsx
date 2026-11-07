@@ -28,6 +28,13 @@ describe("the live AI status's sign", () => {
     );
   });
 
+  it("keeps a run's percent whole beside the words, so only the words shorten", () => {
+    const html = paint("AI working: Categories · 47%");
+    expect(html).toContain(
+      '<span class="min-w-0 truncate"><span class="text-accent"><span aria-hidden="true">● </span>AI working: Categories</span></span><span class="shrink-0 whitespace-pre text-accent"> · 47%</span>',
+    );
+  });
+
   it("leaves the live region empty when no background AI works", () => {
     expect(paint(undefined)).toBe(
       '<div data-slot="ai-activity" class="min-w-0"><span aria-live="polite" class="sr-only"></span></div>',
