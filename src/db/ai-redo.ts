@@ -1,6 +1,18 @@
-import { and, asc, eq, exists, inArray, isNotNull, isNull, type SQL, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { aiRedo, transactionParts, transactions } from "./schema.ts";
+import { aiRedo, reviewItems, transactionParts, transactions } from "./schema.ts";
 
 // The first AI run and the redo of no-AI work in app.db (spec 08, Runs that reuse these uses;
 // Redo of no-AI work). The redo module decides; these functions store and read. Each claim is one
@@ -13,12 +25,23 @@ const IDS_PER_QUERY = 500;
 
 export type AiAwayReason = "pause" | "outage";
 
+// The last redo that ended: when, how many marked items it decided, how many Transactions'
+// Categories the AI answered, and whether it finished or stopped (spec 08, AI work on your
+// Transactions).
+export type AiRedoRun = {
+  at: Date;
+  items: number;
+  aiCategories: number;
+  outcome: "finished" | "stopped";
+};
+
 export type AiRedoState = {
   awayAt: Date | null;
   awayReason: AiAwayReason | null;
   dueAt: Date | null;
   failures: number;
   firstRunDoneAt: Date | null;
+  lastRun: AiRedoRun | null;
 };
 
 export async function readAiRedo(database: Database): Promise<AiRedoState> {
@@ -29,10 +52,101 @@ export async function readAiRedo(database: Database): Promise<AiRedoState> {
       dueAt: aiRedo.dueAt,
       failures: aiRedo.failures,
       firstRunDoneAt: aiRedo.firstRunDoneAt,
+      lastRunAt: aiRedo.lastRunAt,
+      lastRunItems: aiRedo.lastRunItems,
+      lastRunAiCategories: aiRedo.lastRunAiCategories,
+      lastRunOutcome: aiRedo.lastRunOutcome,
     })
     .from(aiRedo)
     .where(eq(aiRedo.id, AI_REDO_ROW));
-  return row ?? { awayAt: null, awayReason: null, dueAt: null, failures: 0, firstRunDoneAt: null };
+  if (row === undefined) {
+    return {
+      awayAt: null,
+      awayReason: null,
+      dueAt: null,
+      failures: 0,
+      firstRunDoneAt: null,
+      lastRun: null,
+    };
+  }
+  const { lastRunAt, lastRunItems, lastRunAiCategories, lastRunOutcome, ...state } = row;
+  return {
+    ...state,
+    lastRun:
+      lastRunAt === null || lastRunOutcome === null
+        ? null
+        : {
+            at: lastRunAt,
+            items: lastRunItems,
+            aiCategories: lastRunAiCategories,
+            outcome: lastRunOutcome,
+          },
+  };
+}
+
+// Records the redo that just ended, in place of the one before.
+export async function recordAiRedoRun(database: Database, run: AiRedoRun): Promise<void> {
+  const last = {
+    lastRunAt: run.at,
+    lastRunItems: run.items,
+    lastRunAiCategories: run.aiCategories,
+    lastRunOutcome: run.outcome,
+  };
+  await database
+    .insert(aiRedo)
+    .values({ id: AI_REDO_ROW, ...last })
+    .onConflictDoUpdate({ target: aiRedo.id, set: last });
+}
+
+// The marked items that wait for the AI: each shown Transaction with a marked Merchant name, each
+// shown Transaction with a marked Category, and each open marked Review list item. One read.
+export async function countMarkedItems(database: Database): Promise<number> {
+  const result = await database.get<{ n: number }>(sql`SELECT
+      (SELECT count(*) FROM ${transactions}
+        WHERE ${transactions.merchantNeedsAi} = 1 AND ${transactions.hiddenReason} IS NULL)
+    + (SELECT count(DISTINCT ${transactionParts.transactionId}) FROM ${transactionParts}
+        JOIN ${transactions} ON ${transactions.id} = ${transactionParts.transactionId}
+        WHERE ${transactionParts.categoryNeedsAi} = 1 AND ${transactions.hiddenReason} IS NULL)
+    + (SELECT count(*) FROM ${reviewItems}
+        WHERE ${reviewItems.needsAi} = 1 AND ${reviewItems.closedAt} IS NULL) AS n`);
+  return Number(result?.n ?? 0);
+}
+
+// "Run AI on all history" (spec 08, AI work on your Transactions): marks the Category of each part
+// the cascade covers, Spending and a Refund with no link, on the shown Transactions posted on or
+// after `since`, a calendar date, when the provider, Merchant history, the AI, or a best guess
+// chose it. A hand-set Category, a Category rule, a Category Money movement names, and a part of a
+// tracked loan payment stay unmarked. The redo then asks the AI about each marked part that is not
+// a best guess at step 5, past steps 3 and 4. One statement. Returns how many parts it marked.
+export async function markCategoriesForAi(database: Database, since: string): Promise<number> {
+  const marked = await database
+    .update(transactionParts)
+    .set({ categoryNeedsAi: true })
+    .where(
+      and(
+        inArray(transactionParts.categorySource, [
+          "provider",
+          "Merchant history",
+          "AI",
+          "best guess",
+        ]),
+        or(
+          eq(transactionParts.type, "Spending"),
+          and(eq(transactionParts.type, "Refund"), eq(transactionParts.linked, false)),
+        ),
+        // A part of a tracked loan payment keeps its Category: only a hand edit changes it.
+        eq(transactionParts.keepsCategory, false),
+        inArray(
+          transactionParts.transactionId,
+          database
+            .select({ id: transactions.id })
+            .from(transactions)
+            .where(and(gte(transactions.postedDate, since), isNull(transactions.hiddenReason))),
+        ),
+      ),
+    )
+    .returning({ transactionId: transactionParts.transactionId });
+  return marked.length;
 }
 
 // A background AI use found AI away at `at`. The first time since AI came back sets awayAt; the

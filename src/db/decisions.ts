@@ -623,7 +623,7 @@ export type CategoryRecord = {
   handSet: Record<string, unknown>;
   parts: Pick<
     StoredPart,
-    "part" | "type" | "category" | "keepsCategory" | "linked" | "categorySource"
+    "part" | "type" | "category" | "keepsCategory" | "linked" | "categorySource" | "categoryNeedsAi"
   >[];
 };
 
@@ -651,6 +651,7 @@ export async function readCategoryRecords(
           keepsCategory: transactionParts.keepsCategory,
           linked: transactionParts.linked,
           categorySource: transactionParts.categorySource,
+          categoryNeedsAi: transactionParts.categoryNeedsAi,
         },
       })
       .from(transactions)

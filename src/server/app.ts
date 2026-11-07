@@ -17,6 +17,7 @@ import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
 import type { PushSettings } from "../notify/push-view.ts";
+import type { AiWork } from "../redo/work-view.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { weeklySummarySettings } from "../weekly-summary/index.ts";
 import { aboutRoutes } from "./about.ts";
@@ -197,6 +198,8 @@ export function createApp(
     chat?: Chat;
     // Adding a Goal and editing its words, with the AI's reading. Without it, no Goal is added.
     goalWriting?: GoalWriting;
+    // AI work on your Transactions, under /api/ai/work. Without it, those routes answer 404.
+    aiWork?: AiWork;
     // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
     devRoutes?: Hono<ServerEnv>;
   } = {},
@@ -292,6 +295,7 @@ export function createApp(
         c.set("dataExport", dataExport);
         c.set("members", members);
         c.set("devices", devices);
+        c.set("aiWork", services.aiWork);
         await next();
       })
       .use("/api/*", masterKeyFirst)

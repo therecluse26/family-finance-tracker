@@ -1893,6 +1893,13 @@ export const aiRedo = sqliteTable(
     failures: integer("failures").notNull().default(0),
     // When the first AI run finished, with its Insight card run.
     firstRunDoneAt: moment("first_run_done_at"),
+    // The last redo that ended (spec 08, AI work on your Transactions): when it ended, how many
+    // marked items it decided, how many Transactions' Categories the AI answered, and whether it
+    // finished or stopped.
+    lastRunAt: moment("last_run_at"),
+    lastRunItems: integer("last_run_items").notNull().default(0),
+    lastRunAiCategories: integer("last_run_ai_categories").notNull().default(0),
+    lastRunOutcome: text("last_run_outcome", { enum: ["finished", "stopped"] }),
   },
   (table) => [check("ai_redo_one_row", sql`${table.id} = 1`)],
 );

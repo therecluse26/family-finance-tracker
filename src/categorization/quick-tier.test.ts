@@ -466,6 +466,7 @@ describe("the Quick tier in the categorization step", () => {
       expect(await categorize(bank.database, [id], "follow-up job")).toEqual({
         left: [id],
         again: undefined,
+        answered: 0,
       });
       expect(stub.calls.length).toBe(calls);
       expect(await partOf("again")).toMatchObject({ category: null, source: null });
