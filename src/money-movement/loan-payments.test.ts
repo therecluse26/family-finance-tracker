@@ -3,7 +3,7 @@ import { fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { runFollowUp } from "../follow-up/index.ts";
-import { answerReviewItem, openReviewItems } from "../review/index.ts";
+import { answerReviewItem, openReviewItems, reviewListItems } from "../review/index.ts";
 import {
   addManualLoan,
   editManualLoan,
@@ -304,6 +304,34 @@ describe("Manual loan payments", () => {
     );
     expect(refused.rows.map((row) => row.refused_by)).toEqual(["AI"]);
     expect(await items(POSSIBLE_PAYMENT_KIND)).toHaveLength(1);
+  });
+
+  it("lists the payments one run asks about newest first, by their date", async () => {
+    await sync([payment("aug", 50_000, "2026-08-01")]);
+    await add();
+    const unclear = (id: string, postedDate: string, authorizedDate: string | null = null) =>
+      payment(id, 50_000, postedDate, {
+        accountId: SAVINGS,
+        description: "LAKESIDE CREDIT UNION LOAN",
+        merchantName: "Lakeside Credit Union",
+        authorizedDate,
+      });
+    // Not in date order. The last one posts latest but shows its purchase date, the oldest.
+    await sync([
+      unclear("sep", "2026-09-15"),
+      unclear("oct", "2026-10-15"),
+      unclear("bought-aug", "2026-10-20", "2026-08-20"),
+    ]);
+
+    const listed = (await reviewListItems(bank.database)).filter(
+      (item) => item.kind === POSSIBLE_PAYMENT_KIND,
+    );
+    expect(listed.map((item) => item.subject)).toEqual([
+      { type: "transactions", transactionIds: [await idOf("oct")] },
+      { type: "transactions", transactionIds: [await idOf("sep")] },
+      { type: "transactions", transactionIds: [await idOf("bought-aug")] },
+    ]);
+    expect(new Set(listed.map((item) => item.createdAt.getTime())).size).toBe(1);
   });
 
   it("asks about a loan with no payment linked for 2 months after the last one, once for each gap", async () => {

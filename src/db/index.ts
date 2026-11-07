@@ -567,6 +567,7 @@ export {
   listOpenReviewItems,
   listOpenReviewItemsOfKind,
   listReviewItemSubjects,
+  listReviewListItems,
   type NewReviewItem,
   readReviewItem,
   reviseOpenReviewItems,

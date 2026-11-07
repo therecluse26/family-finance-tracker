@@ -1131,13 +1131,17 @@ function filtered(database: Queries, filter: TransactionFilter): SQL[] {
   return where;
 }
 
+// The date each listed row shows: the purchase date, else the posted date. The list runs newest
+// first by it, then by ID (spec 07, Transactions page).
+const shownDate = sql<string>`coalesce(${transactions.authorizedDate}, ${transactions.postedDate})`;
+
 // The Transactions that are not hidden, newest first, that pass the filter.
 export async function listTransactions(database: Database, filter: TransactionFilter = {}) {
   return database
     .select(LISTED)
     .from(transactions)
     .where(and(...filtered(database, filter)))
-    .orderBy(desc(transactions.postedDate), asc(transactions.id));
+    .orderBy(desc(shownDate), asc(transactions.id));
 }
 
 // One page of listTransactions, and the ID to read the next page after, or null on the last page.
@@ -1149,15 +1153,16 @@ export async function listTransactionPage(
 ) {
   const where = filtered(database, filter);
   if (page.after !== undefined) {
+    // The page goes on after the anchor in the list's own order: its shown date, then its ID.
     const [anchor] = await database
-      .select({ id: transactions.id, postedDate: transactions.postedDate })
+      .select({ id: transactions.id, shownDate })
       .from(transactions)
       .where(eq(transactions.id, page.after));
     if (anchor === undefined) return undefined;
     where.push(
       or(
-        lt(transactions.postedDate, anchor.postedDate),
-        and(eq(transactions.postedDate, anchor.postedDate), gt(transactions.id, anchor.id)),
+        lt(shownDate, anchor.shownDate),
+        and(eq(shownDate, anchor.shownDate), gt(transactions.id, anchor.id)),
       ) as SQL,
     );
   }
@@ -1165,7 +1170,7 @@ export async function listTransactionPage(
     .select(LISTED)
     .from(transactions)
     .where(and(...where))
-    .orderBy(desc(transactions.postedDate), asc(transactions.id))
+    .orderBy(desc(shownDate), asc(transactions.id))
     .limit(page.limit + 1);
   const shown = rows.slice(0, page.limit);
   return {

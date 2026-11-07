@@ -8,6 +8,7 @@ import {
   listOpenReviewItems,
   listOpenReviewItemsOfKind,
   listReviewItemSubjects,
+  listReviewListItems,
   type Queries,
   readReviewItem,
   reviseOpenReviewItems,
@@ -140,9 +141,15 @@ export async function openReviewItemBatch(
   return database.transaction((tx) => addReviewItems(tx, stored, new Date()));
 }
 
-// Every open item, newest first.
+// Every open item, newest made first, in no further order. The Review list page reads
+// reviewListItems.
 export async function openReviewItems(database: Database): Promise<ReviewItem[]> {
   return (await listOpenReviewItems(database)).map(itemOf);
+}
+
+// Every open item in the Review list page's order (spec 07, Review list page).
+export async function reviewListItems(database: Database): Promise<ReviewItem[]> {
+  return (await listReviewListItems(database)).map(itemOf);
 }
 
 // Every open item of one kind, newest first.

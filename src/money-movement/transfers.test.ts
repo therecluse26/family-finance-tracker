@@ -4,7 +4,7 @@ import { type FakePage, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { runFollowUp } from "../follow-up/index.ts";
-import { answerReviewItem, openReviewItems } from "../review/index.ts";
+import { answerReviewItem, openReviewItems, reviewListItems } from "../review/index.ts";
 import { addDays } from "./business-days.ts";
 import {
   addBusinessDays,
@@ -487,6 +487,61 @@ describe("Transfer pairing", () => {
       });
       expect(await links()).toEqual([]);
       expect(await typeOf("maple-out")).toBe("Spending");
+    });
+
+    // Three Unclear pairs from one sync, not in date order.
+    const threePairs = [
+      txn("maple-oct-out", CHECKING, -12_345, "2026-10-05"),
+      txn("birch-oct-in", CARD, 12_345, "2026-10-06"),
+      txn("maple-late-out", CHECKING, -23_456, "2026-10-20"),
+      txn("birch-late-in", CARD, 23_456, "2026-10-21"),
+      txn("maple-sep-out", CHECKING, -34_567, "2026-09-10"),
+      txn("birch-sep-in", CARD, 34_567, "2026-09-11"),
+    ];
+    const listedPairs = async () => {
+      const providerIds = new Map<string, string>();
+      for (const record of threePairs) providerIds.set(await idOf(record.id), record.id);
+      return (await reviewListItems(bank.database))
+        .filter((item) => item.kind === UNCLEAR_PAIR_KIND && item.subject.type === "transactions")
+        .map((item) =>
+          item.subject.type === "transactions"
+            ? item.subject.transactionIds.map((id) => providerIds.get(id)).join(" → ")
+            : "",
+        );
+    };
+    const NEWEST_FIRST = [
+      "maple-late-out → birch-late-in",
+      "maple-oct-out → birch-oct-in",
+      "maple-sep-out → birch-sep-in",
+    ];
+
+    it("lists the pairs one run offers newest first, by their Transactions' date", async () => {
+      await sync({ added: threePairs });
+
+      expect(await links()).toEqual([]);
+      expect(await listedPairs()).toEqual(NEWEST_FIRST);
+      const made = await bank.database.$client.execute({
+        sql: "SELECT DISTINCT created_at FROM review_items WHERE kind = ?",
+        args: [UNCLEAR_PAIR_KIND],
+      });
+      expect(made.rows).toHaveLength(1);
+    });
+
+    // K5: a run that fails while it opens its items opens none, and the retry opens them all.
+    it("opens none of a run's pair items when the write fails, and all of them on the retry", async () => {
+      await bank.database.$client.execute(
+        `CREATE TRIGGER fail_pair_items BEFORE INSERT ON review_items
+         WHEN NEW.subject_ids LIKE '%' || (SELECT id FROM transactions
+           WHERE provider_transaction_id = 'birch-late-in') || '%'
+         BEGIN SELECT RAISE(ABORT, 'The Review list write failed.'); END`,
+      );
+      await expect(sync({ added: threePairs })).rejects.toThrow();
+      expect(await pairItems()).toEqual([]);
+
+      await bank.database.$client.execute("DROP TRIGGER fail_pair_items");
+      await runFollowUp(NOW);
+      expect(await links()).toEqual([]);
+      expect(await listedPairs()).toEqual(NEWEST_FIRST);
     });
 
     it("never offers the pair again after Not this", async () => {

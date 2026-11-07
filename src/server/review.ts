@@ -2,8 +2,8 @@ import { type Database, listAccounts, readShownTransactions } from "../db/index.
 import {
   answerReviewItem,
   countReviewItems,
-  openReviewItems,
   otherReviewChoices,
+  reviewListItems,
 } from "../review/index.ts";
 import type { ReviewItemView, ReviewRoutes, ReviewTransactionView } from "./review-views.ts";
 
@@ -12,7 +12,7 @@ import type { ReviewItemView, ReviewRoutes, ReviewTransactionView } from "./revi
 export function reviewRoutes(database: Database): ReviewRoutes {
   return {
     async open() {
-      const items = await openReviewItems(database);
+      const items = await reviewListItems(database);
       const shown = new Map(
         (
           await readShownTransactions(

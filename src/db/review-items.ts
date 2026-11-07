@@ -1,6 +1,6 @@
-import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Database, Queries } from "./client.ts";
-import { reviewItems } from "./schema.ts";
+import { reviewItems, transactions } from "./schema.ts";
 
 // Review list items in app.db (spec 07, Review list page). The review module decides; these
 // functions store and read.
@@ -55,7 +55,33 @@ export async function listReviewItemSubjects(
     .where(eq(reviewItems.kind, kind));
 }
 
-// Every open item, newest first.
+// The newest date an item's shown Transactions show: the purchase date, else the posted date. Null
+// for a loan item, or when none of its Transactions shows. Each item reads its own few Transactions
+// by ID.
+const subjectDate = sql<string | null>`(
+  SELECT max(coalesce(${transactions.authorizedDate}, ${transactions.postedDate}))
+  FROM json_each(${reviewItems.subjectIds}) AS subject
+  JOIN ${transactions} ON ${transactions.id} = subject.value
+  WHERE ${reviewItems.subjectType} = 'transactions' AND ${transactions.hiddenReason} IS NULL
+)`;
+
+// Every open item in the Review list page's order: newest first, and items made at the same moment
+// by their Transaction's date, newest first, then by ID (spec 07, Review list page). A loan item
+// comes after them.
+export async function listReviewListItems(database: Database): Promise<StoredReviewItem[]> {
+  return database
+    .select()
+    .from(reviewItems)
+    .where(isNull(reviewItems.closedAt))
+    .orderBy(
+      desc(reviewItems.createdAt),
+      sql`${subjectDate} DESC NULLS LAST`,
+      desc(reviewItems.id),
+    );
+}
+
+// Every open item, newest made first, for callers that settle or revise items and need no page
+// order, so they skip each item's Transaction dates.
 export async function listOpenReviewItems(database: Database): Promise<StoredReviewItem[]> {
   return database
     .select()
