@@ -97,7 +97,9 @@ Each Spending Transaction takes the first answer it gets, in this order:
 - **Step 4.** The last 3 Transactions are the 3 most recent Spending Transactions with that Merchant, before this one. A Category from step 6 does not count. With fewer than 3, the step gives no answer.
 - **Step 5.** The AI gets the provider's category as a hint. It answers with one of the 30 Categories and a confidence: high, medium, or low.
   - The answer always applies.
-  - Below "high", the AI counts as unsure. The Transaction also goes on the Review list.
+  - Below "high", the AI counts as unsure.
+  - At "low", the Transaction also goes on the Review list.
+  - At "medium", the Category counts as decided. It stays off the Review list, and the Transactions page shows an "AI unsure" tag on it ([Dashboard and pages](07-dashboard-and-pages.md#transactions-page)).
   - Step 5 starts with the Web lookup's cache ([Web lookup](#web-lookup)). A Category kept for the Merchant decides at once, with no AI call and no search.
 - **Step 6.** The best guess is the Category the provider's code maps to, even when lossy or at low confidence. With no provider category, it is the Merchant's most recent Category. With neither, it is Miscellaneous. The Transaction also goes on the Review list.
 - The cascade runs after matching ([Money movement](03-money-movement.md#order-of-decisions)). It works through Transactions oldest first, so Merchant history builds in date order.
@@ -131,7 +133,7 @@ A Member often looks up an unknown Merchant on the web to learn what it sells. T
   - a line with no clean Merchant name;
   - a Merchant name in which the privacy filter finds a Member's name or a protected number.
 - **The lookup** asks the AI provider's own web search, with the clean Merchant name alone ([AI](08-ai.md#merchant-web-lookup)). It answers with one Category, a confidence, and a one-line description of the business.
-- **Outcome.** The lookup's answer takes the place of the AI's, with the source "Web lookup". At "high", it decides. Below "high", it still applies, and the Transaction goes on the Review list, as an unsure AI answer does.
+- **Outcome.** The lookup's answer takes the place of the AI's, with the source "Web lookup". At "high", it decides. Below "high", it still applies, as an unsure AI answer does: at "low" the Transaction goes on the Review list, and at "medium" it counts as decided, with the "AI unsure" tag.
 - **Cache.** The app keeps one answer for each Merchant, by the same identity as everywhere else: its Category, confidence, description, the time of the lookup, and whether the lookup found the business. A kept answer decides each later Transaction of that Merchant at step 5. A lookup that found nothing is kept too, and the app looks that Merchant up again only after 90 days. The cache holds facts about Merchants, not about a Connection, so removing a Connection keeps it.
 - **Corrections.** A Member's correction of a Web lookup's Category wins and makes a Category rule, as with every other source.
 - **The Transaction's page** shows "Category chosen by: Web lookup" and the description of the business.
@@ -198,7 +200,7 @@ A Member often looks up an unknown Merchant on the web to learn what it sells. T
   - a Category, at step 5 of the cascade;
   - a Merchant name that the cleanup rules cannot fix;
   - a Category from a Web lookup, when it was unsure of a Merchant it does not know ([Web lookup](#web-lookup)).
-- The app always applies the AI's Category. Below "high" confidence, the Transaction also goes on the Review list.
+- The app always applies the AI's Category. At "low" confidence, the Transaction also goes on the Review list. At "medium", the Category counts as decided and shows the "AI unsure" tag.
 - The app uses the AI's Merchant name as the clean name.
 - Without AI, the cascade stops at step 6, and the rule-cleaned name stays. The app marks these items. When AI is available again, the app sends each marked item to the AI once ([Money movement](03-money-movement.md#ai-decisions-and-the-no-ai-path)).
 - Prompts, batches, models, and cost are in [AI](08-ai.md).
@@ -209,10 +211,18 @@ The Review list is optional. Each Category below already counts, so nothing wait
 
 | Item | Why it is there | What a Member's answer does |
 |---|---|---|
-| A Category the AI or a Web lookup chose with confidence below "high" | The AI was unsure | Accepting makes a Category rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this Transaction". |
+| A Category the AI or a Web lookup chose with confidence "low" | The AI was unsure | Accepting makes a Category rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this Transaction". |
 | A best guess made without AI | No AI was available | Same as above |
 
-- When a later AI answer has high confidence, its item leaves the Review list.
+- **One card per Merchant.** Each kind above has one open item per Merchant, by [Identity](#identity), that holds all of the Merchant's Transactions of that kind.
+  - The card reads like "Marathon · 14 Transactions · The AI chose Gas, but it was unsure."
+  - Its best answer is the Category chosen most often among its Transactions. A tie goes to the newest Transaction's Category.
+  - "Yes, Gas" and "Not this" answer for every Transaction on the card: each becomes hand-set, and the answer makes one Category rule for the Merchant. On a card with more than one Transaction, "Not this" offers the Category list without "only this Transaction".
+  - Under the card, a folded list shows each Transaction: its date, amount, Account, and Category. Each row has "Change", which sets that Transaction's Category alone, as "only this Transaction" does. The changed Transaction leaves the card at once.
+  - A new Transaction of that kind for a Merchant with an open card joins the card. A Transaction leaves its card when its Category is no longer of that kind, such as when a later answer is "medium" or "high", a Category rule answers, or a Member sets it by hand. The card closes when no Transaction is left.
+  - A Transaction with no Merchant that may have a rule, such as a paper check or a bare `VENMO PAYMENT`, keeps an item of its own.
+  - The Review list's count counts cards, not Transactions.
+- **Items from before cards.** The first Categorization run after the update groups the open items: the earlier items of one Merchant close as "grouped by Merchant", and one card holds their Transactions. Open items about a "medium" answer close as decided. Running it again changes nothing.
 
 ## Sources
 

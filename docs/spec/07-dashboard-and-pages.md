@@ -177,6 +177,7 @@ Using this page is never required.
 
 - **Filters:** Account, Category, Merchant, date range, and type (Spending, Income, Transfer, Saving, Refund, Reimbursement).
 - **Each row:** the date, the Merchant, the amount, the Account, the Category or type, and a "pending" mark when pending. Newest first, by the date each row shows.
+- A Category the AI or a Web lookup chose below "high" shows an "AI unsure" tag, in the row and on the detail view. At "medium" it counts as decided and is not on the Review list ([Categorization](04-categorization.md#the-categorization-cascade)).
 - **The detail view** shows:
   - how the Category was chosen: "hand-set", "Category rule", "Plaid" (the Bank-data provider's category), "Merchant history", "AI", or "AI, unsure". A no-AI guess shows "best guess";
   - the evidence for any link (Transfer, Refund, Reimbursement, or loan payment): the matched Transaction and each signal that matched ([Money movement](03-money-movement.md)), with **Undo**.
@@ -196,6 +197,8 @@ Using this page is never required.
   - "Not this", which opens the other choices for that kind, such as the Category list.
 - Accepting a Category guess makes a Category rule ([Categorization](04-categorization.md)). Every answer counts as hand-set.
 - An item closes when a Member answers it, or when a later event settles it. Otherwise it stays.
+- **Category cards.** A Category item holds all of one Merchant's Transactions of its kind, such as "Marathon · 14 Transactions · The AI chose Gas, but it was unsure." Its answer covers every Transaction on the card. A folded list under the card shows each Transaction's date, amount, Account, and Category, with "Change" to set that Transaction alone; a changed row leaves the card ([Categorization](04-categorization.md#review-list-items)).
+- The menu's count and the page's count count items, so a card counts once.
 - Newest first. Items made at the same moment, such as by one follow-up job, run by their Transaction's date, newest first. With no items, the page says "Nothing to check."
 
 ### Recurring charges page
