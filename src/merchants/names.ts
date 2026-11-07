@@ -2,7 +2,8 @@ import { paymentAppLine } from "./payment-apps.ts";
 
 // Merchant names (spec 04, Names). The provider's Merchant name wins. Otherwise fixed rules clean
 // the bank's original description: they remove store numbers, payment-processor prefixes, cities,
-// and dates. A name the rules cannot fix keeps the rule-cleaned text and is marked for AI cleanup,
+// dates, and card and Account numbers with the words that introduce them, such as "ACCT ENDING". A
+// card payment line gets the name "<bank> card payment". A name the rules cannot fix keeps the rule-cleaned text and is marked for AI cleanup,
 // which runs later in the categorization step. When a rule cannot decide, it marks the name for AI
 // cleanup rather than guess. The rules run when a Transaction arrives, in the sync, before
 // matching, because Refund links need the Merchant.
@@ -35,6 +36,72 @@ const LEAD_INS = [
   "PAYMENT",
 ];
 const LEAD_IN = new RegExp(`^(?:${LEAD_INS.join("|").replace(/ /g, "\\s+")})(?:\\s+|$)`, "i");
+
+// Account-number lead-ins: the words that introduce a card or Account number, such as "ENDING IN",
+// "ACCT ENDING", "CARD ENDING IN", "ACCOUNT #", "ACCT NO.", "LAST 4", or a mask such as "XXXX".
+// Each goes with the number it introduced, wherever it stands. Between its words, and before the
+// number, any short run of characters that are not letters or digits is a gap, so "ENDING-IN",
+// "ACCT_ENDING", and "ENDING IN: X-4821" match too. A word inside a longer word, as in
+// "NEVERENDING", is no lead-in.
+const GAP = String.raw`[^\p{L}\p{N}]{1,3}`;
+const ACCOUNT_WORD = `(?:acct|accnt|account|acc|a/c|card|crd)`;
+const ENDING = `(?:ending|ends)(?:${GAP}(?:in|with))?`;
+const LAST_FOUR = `last${GAP}(?:4|four)(?:${GAP}digits)?`;
+const NUMBER_LABEL = `(?:no|nbr|num|number)`;
+const MASK = `(?:[x*•]+)`;
+const WORD_START = String.raw`(?<![\p{L}\p{N}])`;
+const WORD_END = String.raw`(?!\p{L})`;
+const SEP = String.raw`[^\p{L}\p{N}]{0,4}`;
+const ACCOUNT_LEAD_IN = new RegExp(
+  [
+    // "ACCT ENDING", "CARD NO.", "ENDING IN", or "LAST 4", then any number.
+    String.raw`(?:${ACCOUNT_WORD}${GAP}(?:${ENDING}|${LAST_FOUR}|${NUMBER_LABEL})|${ENDING}|${LAST_FOUR})(?:${SEP}${MASK})?${SEP}(?=\d)`,
+    // "CARD" or "ACCT" alone, then a masked number or 4 digits. "GIFT CARD 25" keeps its words.
+    String.raw`${ACCOUNT_WORD}${WORD_END}(?:${SEP}${MASK}${SEP}(?=\d)|${SEP}(?=\d{4}))`,
+    // A mask alone, such as "XXXX 4821" or "•• 4821", or one "X" before 4 digits.
+    String.raw`(?:x{2,}|[*•]+)(?:${SEP}${MASK})?${SEP}(?=\d)`,
+    String.raw`x(?:${SEP}${MASK})?${SEP}(?=\d{4})`,
+  ]
+    .map((form) => WORD_START + form)
+    .join("|"),
+  "giu",
+);
+// A lead-in that ends the line with no number after it, as when the bank cut the line short:
+// "CHASE CARD ENDING IN". It goes too, and the rules mark the name for AI cleanup, since they cannot
+// be sure. A lone "ENDING" stays, as in "BLUEBIRD BOOKS ENDING".
+const CUT_LEAD_IN = new RegExp(
+  WORD_START +
+    `(?:${ACCOUNT_WORD}${GAP}(?:${ENDING}|${LAST_FOUR}|${NUMBER_LABEL})|(?:ending|ends)${GAP}in|${LAST_FOUR})` +
+    String.raw`[^\p{L}\p{N}]*$`,
+  "iu",
+);
+
+// Every Unicode digit becomes 0 to 9, so a full-width or other script's number is a number to the
+// rules. Unicode gives each script's digits as a run of ten, from 0 to 9, so a digit's value is
+// its place in its run. A full-width letter or symbol becomes its plain form, every dash becomes
+// "-", and format characters, such as a zero-width space, go.
+const IS_DIGIT = /^\p{Nd}$/u;
+const digitValues = new Map<string, string>();
+
+function asciiDigit(char: string): string {
+  let value = digitValues.get(char);
+  if (value === undefined) {
+    const code = char.codePointAt(0) ?? 0;
+    let zero = code;
+    while (IS_DIGIT.test(String.fromCodePoint(zero - 1))) zero--;
+    value = String((code - zero) % 10);
+    digitValues.set(char, value);
+  }
+  return value;
+}
+
+function plainForms(text: string): string {
+  return text
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\uFF01-\uFF5E]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/[^\0-\x7F]/gu, (char) => (IS_DIGIT.test(char) ? asciiDigit(char) : char))
+    .replace(/\p{Pd}/gu, "-");
+}
 
 // Payment-processor prefixes, such as "SQ *" (Square) and "TST*" (Toast). Each ends in "*".
 const PROCESSORS = [
@@ -129,11 +196,15 @@ function titleCase(text: string): string {
 // set when a rule could not decide, such as a last word that may be a state code with nothing
 // before it that marks a place.
 export function cleanDescription(description: string): { name: string; unsure: boolean } {
-  let text = description.replace(/\s+/g, " ").trim();
+  let text = plainForms(description).replace(/\s+/g, " ").trim();
   for (let before = ""; before !== text; ) {
     before = text;
     text = text.replace(LEAD_IN, "").replace(PROCESSOR, "").trim();
   }
+  // An account-number lead-in goes, and the number after it goes with the other numbers below.
+  text = text.replace(ACCOUNT_LEAD_IN, " ");
+  const cut = CUT_LEAD_IN.test(text);
+  if (cut) text = text.replace(CUT_LEAD_IN, "");
   text = text.replace(PHONE, ` ${PHONE_MARK} `);
   for (const date of DATES) text = text.replace(date, " ");
   text = text.replace(REFERENCE, " ").replace(STORE_WORDS, " # ").replace(/\*/g, " ");
@@ -153,8 +224,48 @@ export function cleanDescription(description: string): { name: string; unsure: b
   // A last word that may be a state code, with nothing that marks a place: it may be a city and
   // state, or part of the name, as in BEST BUY CO. The rules do not guess.
   const last = parts.at(-1);
-  const unsure = parts.length > 1 && last !== undefined && isState(last);
+  const unsure = cut || (parts.length > 1 && last !== undefined && isState(last));
   return { name: titleCase(parts.join(" ")), unsure };
+}
+
+// Plaid's category for a card payment, on either side.
+const CARD_PAYMENT = "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT";
+
+// The words of a card payment line that name the payment, not the bank.
+const PAYMENT_WORDS = new Set(
+  (
+    "payment payments epayment pmt pymt pymnt paymt pmnt pay paid autopay autopmt auto epay e-pay " +
+    "e-payment e-pmt online mobile web internet phone tel thank thanks you thankyou card crd " +
+    "bill billpay received recd rcvd ach to from id ppd ccd acct account ending in ref conf " +
+    "transfer xfer electronic elec recurring"
+  ).split(" "),
+);
+// "CREDIT" names the payment only before "CARD", so "CREDIT ONE BANK" keeps it.
+const CREDIT_CARD = /^credit$/i;
+const CARD_WORD = /^(?:card|crd|cd)$/i;
+
+// The bank a card payment line names: the rule-cleaned line, with no payment words, up to an ACH
+// field such as "DES:", which names the payment and the payer. Empty when it names no bank.
+function cardPaymentBank(description: string): string {
+  const [before = ""] = plainForms(description).split(/\s(?:DES|INDN|CO ID):/i);
+  const kept: string[] = [];
+  const parts = words(cleanDescription(before).name);
+  parts.forEach((word, index) => {
+    if (PAYMENT_WORDS.has(word.toLowerCase())) return;
+    if (CREDIT_CARD.test(word) && CARD_WORD.test(parts[index + 1] ?? "")) return;
+    const pieces = word.split(/[-/:]/).filter((piece) => !PAYMENT_WORDS.has(piece.toLowerCase()));
+    const rest = pieces.join("-").replace(/^[-,:#.]+|[-,:#.]+$/g, "");
+    if (rest !== "") kept.push(rest);
+  });
+  return kept.length <= 4 ? kept.join(" ") : "";
+}
+
+// A card payment line, which Plaid files under its credit card payment code, is named
+// "<bank> card payment", such as "Chase card payment", or "Card payment" when it names no bank
+// (spec 04, Names). The card's last 4 never stays in the name.
+function cardPaymentName(description: string): string {
+  const bank = cardPaymentBank(description);
+  return bank === "" ? "Card payment" : `${bank} card payment`;
 }
 
 // A name counts as fixed when it has 1 to 4 words and no word is only digits or symbols.
@@ -167,7 +278,7 @@ export function isFixedName(name: string): boolean {
 // a payment-app line that names a person, that person is the Merchant, with no Merchant ID, so two
 // people never share the app's ID. In one that names no one, such as `VENMO PAYMENT`, the payment
 // app is the Merchant (spec 04, Identity). A line that names another Merchant is an ordinary
-// purchase.
+// purchase. A card payment line with no provider Merchant name is "<bank> card payment".
 export function cleanMerchant(txn: {
   description: string;
   merchantName: string | null;
@@ -184,6 +295,10 @@ export function cleanMerchant(txn: {
   if (providerName !== "") return { merchant: { id, name: providerName }, needsAi: false };
   if (line?.party === "no one" && line.app !== null) {
     return { merchant: { id, name: line.app }, needsAi: false };
+  }
+
+  if (txn.category?.name === CARD_PAYMENT) {
+    return { merchant: { id, name: cardPaymentName(txn.description) }, needsAi: false };
   }
 
   const description = txn.description.replace(/\s+/g, " ").trim();

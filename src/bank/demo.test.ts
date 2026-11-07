@@ -208,6 +208,30 @@ describe("seeding the demo Household", () => {
     expect(await count("SELECT count(*) AS n FROM daily_balances")).toBe(6);
   });
 
+  // Spec 04, Names: the sync names each card payment line by its bank, with no last 4, and leaves
+  // no clean name ending in a lead-in such as "ACCT ENDING".
+  it("names the card payments by their bank through the sync", async () => {
+    await seedDemoHousehold(bank.database, bank.fake, now);
+    const names = async (sql: string) =>
+      (await bank.database.$client.execute(sql)).rows.map((row) => String(row.name));
+
+    expect(
+      await names(
+        `SELECT DISTINCT merchant_clean_name AS name FROM transactions
+         WHERE provider_category = 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' ORDER BY name`,
+      ),
+    ).toEqual([
+      "Capital One card payment",
+      "Card payment",
+      "Chase card payment",
+      "Synchrony Bank card payment",
+    ]);
+    const all = await names(
+      "SELECT DISTINCT merchant_clean_name AS name FROM transactions WHERE merchant_clean_name IS NOT NULL",
+    );
+    expect(all.filter((name) => /\b(?:ending|in|acct|account)$/i.test(name))).toEqual([]);
+  });
+
   it("adds nothing when it runs again", async () => {
     await seedDemoHousehold(bank.database, bank.fake, now);
     await seedDemoHousehold(bank.database, bank.fake, now);

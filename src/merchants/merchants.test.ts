@@ -175,6 +175,166 @@ describe("Merchant names", () => {
   });
 });
 
+// Account-number lead-ins (spec 04, Names): the words that introduce a card or Account number go
+// with the number.
+describe("account-number lead-ins", () => {
+  it.each([
+    // The fake bank's lines, with no card payment code.
+    ["PAYMENT TO CHASE CARD ENDING IN 7731", "Chase"],
+    ["SUMMIT AUTO LOAN PMT ACCT ENDING 1234", "Summit Auto Loan Pmt"],
+    // Forms the rules never name one by one.
+    ["NORTHWIND UTILITIES ACCT ENDING 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES CARD ENDING IN 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ENDING IN X4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCOUNT # 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCT NO. 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES A/C NO 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ENDS WITH 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES CARD LAST 4 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ENDING IN: XXXX-4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES XXXX 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCT ENDING 48 21", "Northwind Utilities"],
+    ["northwind utilities acct_ending_4821", "northwind utilities"],
+    ["ENDING IN 4821 NORTHWIND UTILITIES", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES CARD ENDING IN 4821 PORTLAND OR", "Northwind Utilities"],
+    // Other dashes, a zero-width space, and other scripts' digits.
+    ["NORTHWIND UTILITIES ACCT ENDING – 4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCT—ENDING‑4821", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCT ENDING ４８２１", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCT ENDING ٤٨٢١", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ACCT ENDING \u{1D7D2}\u{1D7D6}\u{1D7D0}\u{1D7CF}", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES ENDING IN Ｘ４８２１", "Northwind Utilities"],
+    ["NORTHWIND UTILITIES CARD 48​21", "Northwind Utilities"],
+    // A name that holds one of the lead-in words keeps every word.
+    ["ENDING BOOKS", "Ending Books"],
+    ["NEVERENDING STORY CAFE", "Neverending Story Cafe"],
+    ["BLUEBIRD BOOKS ENDING", "Bluebird Books Ending"],
+    ["CARD CORNER", "Card Corner"],
+    ["AMAZON ACCOUNT", "Amazon Account"],
+    ["GIFT CARD 25", "Gift Card"],
+    ["XBOX 4821", "Xbox"],
+    ["FOXXY NAILS 4821", "Foxxy Nails"],
+  ])("cleans %j to %j", (description, name) => {
+    expect(fromBank(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
+  });
+
+  it("drops a lead-in the bank cut short, and marks the name for AI cleanup", () => {
+    expect(fromBank("CHASE CARD ENDING IN")).toEqual({
+      merchant: { id: null, name: "Chase" },
+      needsAi: true,
+    });
+    expect(fromBank("NORTHWIND UTILITIES ACCT NUMBER")).toEqual({
+      merchant: { id: null, name: "Northwind Utilities" },
+      needsAi: true,
+    });
+    for (const description of ["ENDING IN", "ACCT ENDING 4821", "CARD ENDING IN 4821"]) {
+      expect(fromBank(description), description).toEqual({ merchant: null, needsAi: true });
+    }
+  });
+
+  it("leaves no lead-in word at the end of any clean name", () => {
+    let seed = 20261106;
+    const pick = <T>(list: readonly T[]): T => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return list[seed % list.length] as T;
+    };
+    const names = ["BLUEBIRD BOOKS", "NORTHWIND", "SYNCHRONY BANK PAYMENT", "PAYMENT TO CHASE"];
+    const leadIns = ["ENDING IN", "ACCT ENDING", "CARD ENDING IN", "ACCOUNT #", "ACCT NO.", "X"];
+    const gaps = [" ", " - ", ": ", "–", " · ", ""];
+    const numbers = ["4821", "X4821", "XXXX4821", "４８２１", "*4821"];
+    for (let n = 0; n < 1000; n += 1) {
+      const description = `${pick(names)} ${pick(leadIns)}${pick(gaps)}${pick(numbers)}`;
+      const name = fromBank(description).merchant?.name ?? "";
+      expect(name, description).not.toMatch(/\b(?:ending|in|acct|account|no|x)\W*$/i);
+      expect(name, description).not.toMatch(/\d|４/);
+    }
+  });
+});
+
+// Card payment lines (spec 04, Names): "<bank> card payment", or "Card payment".
+describe("card payment lines", () => {
+  const cardPayment = (description: string) =>
+    cleanMerchant({
+      description,
+      merchantName: null,
+      merchantId: null,
+      category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+    });
+
+  it.each([
+    // The fake bank's lines.
+    ["PAYMENT TO CHASE CARD ENDING IN 7731", "Chase card payment"],
+    ["SYNCHRONY BANK PAYMENT ACCT ENDING 5520", "Synchrony Bank card payment"],
+    ["CAPITAL ONE MOBILE PMT", "Capital One card payment"],
+    ["CAPITAL ONE MOBILE PYMT", "Capital One card payment"],
+    ["Payment Thank You-Mobile", "Card payment"],
+    ["PAYMENT - THANK YOU", "Card payment"],
+    ["THANK YOU-MOBILE", "Card payment"],
+    // Other banks' forms.
+    ["CHASE ONLINE PAYMENT 2026 THANK YOU", "Chase card payment"],
+    ["DISCOVER E-PAYMENT 4821", "Discover card payment"],
+    ["AMEX EPAYMENT ACH PMT 4821", "Amex card payment"],
+    ["CITI AUTOPAY 4821 WEB ID: 0042", "Citi card payment"],
+    ["CREDIT ONE BANK PAYMENT", "Credit One Bank card payment"],
+    ["CHASE CREDIT CRD AUTOPAY", "Chase card payment"],
+    ["PAYMENT TO CHASE CARD ENDING IN ７７３１", "Chase card payment"],
+    // An ACH line names the payer after "DES:". That person never reaches the name.
+    [
+      "CHASE CREDIT CRD DES:AUTOPAY ID:XXXXX12345 INDN:DANA OKAFOR CO ID:XXXXX PPD",
+      "Chase card payment",
+    ],
+  ])("names %j %j", (description, name) => {
+    expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
+  });
+
+  it("keeps the provider's Merchant ID, and the provider's Merchant name wins", () => {
+    expect(
+      cleanMerchant({
+        description: "PAYMENT TO CHASE CARD ENDING IN 7731",
+        merchantName: null,
+        merchantId: "m-chase",
+        category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+      }).merchant,
+    ).toEqual({ id: "m-chase", name: "Chase card payment" });
+    expect(
+      cleanMerchant({
+        description: "PAYMENT TO CHASE CARD ENDING IN 7731",
+        merchantName: "Chase",
+        merchantId: "m-chase",
+        category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+      }).merchant,
+    ).toEqual({ id: "m-chase", name: "Chase" });
+  });
+});
+
+// The hard Merchant lines (K7), through the real cleanup rules.
+describe("the hard Merchant lines", () => {
+  it.each([
+    // No provider Merchant name: the payment app is the Merchant.
+    ["VENMO PAYMENT 1234567890 WEB ID", { merchant: { id: null, name: "Venmo" }, needsAi: false }],
+    ["ZELLE PAYMENT TO 5551234", { merchant: { id: null, name: "Zelle" }, needsAi: false }],
+    ["PAYPAL *INST XFER", { merchant: { id: null, name: "PayPal" }, needsAi: false }],
+    ["CASH APP*SENT", { merchant: { id: null, name: "Cash App" }, needsAi: false }],
+    ["VENMO CASHOUT", { merchant: { id: null, name: "Venmo" }, needsAi: false }],
+    // A person or a shop.
+    ["VENMO *MORGAN LEE", { merchant: { id: null, name: "Morgan Lee" }, needsAi: false }],
+    ["ZELLE PAYMENT TO JOHN SMITH", { merchant: { id: null, name: "John Smith" }, needsAi: false }],
+    ["PAYPAL *ETSY SHOP", { merchant: { id: null, name: "Etsy Shop" }, needsAi: false }],
+    ["CASH APP*JOHN SMITH", { merchant: { id: null, name: "John Smith" }, needsAi: false }],
+    // Store numbers, lead-ins, and digit runs.
+    [
+      "PURCHASE 1005 BLUEBIRD BOOKS",
+      { merchant: { id: null, name: "Bluebird Books" }, needsAi: false },
+    ],
+    ["BEST BUY CO", { merchant: { id: null, name: "Best Buy Co" }, needsAi: true }],
+    ["XXXX4821", { merchant: null, needsAi: true }],
+    ["REF#12345678", { merchant: null, needsAi: true }],
+    ["(800) 555-1212", { merchant: null, needsAi: true }],
+  ])("cleans %j", (description, cleanup) => {
+    expect(fromBank(description)).toEqual(cleanup);
+  });
+});
+
 // Payment-app lines (spec 03, Payment apps): the person a line names is the Merchant; with no
 // person, the payment app is.
 describe("payment-app lines", () => {
