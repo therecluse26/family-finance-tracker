@@ -102,7 +102,7 @@ export function aiTool<Shape extends z.ZodRawShape>(tool: {
 }
 
 // Spec 08, Limits on each call: the most reply tokens each use may take.
-const QUICK_BATCH_TOKENS = 4_000;
+const QUICK_BATCH_TOKENS = 6_000;
 const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
   "category fix": QUICK_BATCH_TOKENS,
   "merchant cleanup": QUICK_BATCH_TOKENS,
@@ -129,6 +129,9 @@ const QUICK_BATCH_USES: ReadonlySet<ModelUse> = new Set([
   "unclear transfer",
   "reimbursement linking",
 ]);
+
+// Whether the use runs in Quick batches, whose replies the call path keeps row by row.
+export const isQuickBatchUse = (use: ModelUse): boolean => QUICK_BATCH_USES.has(use);
 
 // Anthropic's 5-minute cache, and no other.
 const CACHE_MARK = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } as const;
@@ -472,16 +475,62 @@ function eachRowOnce(answers: readonly { row: number }[], rows: number): boolean
   return seen.size === rows && answers.every(({ row }) => row >= 1 && row <= rows);
 }
 
+// Each Quick batch's reply schema, with the schema of one row's answer and the batch's row count,
+// so the call path can check a reply row by row.
+const BATCH_REPLIES = new WeakMap<object, { answer: z.ZodObject; rows: number }>();
+
 // The reply schema of a Quick batch: one answer per row, each row of the batch once. `answer` is
-// the schema of one row's answer, an object without `row`.
+// the schema of one row's answer, an object without `row`. The AI provider gets this schema whole.
 export function batchReply<Shape extends z.ZodRawShape>(answer: z.ZodObject<Shape>, rows: number) {
-  return z.object({
+  const one = answer.extend({ row: z.number().int() });
+  const reply = z.object({
     answers: z
-      .array(answer.extend({ row: z.number().int() }))
+      .array(one)
       .length(rows)
       .refine(
         (answers) => eachRowOnce(answers as readonly { row: number }[], rows),
         "Each row of the batch is answered once.",
       ),
   });
+  BATCH_REPLIES.set(reply, { answer: one, rows });
+  return reply;
+}
+
+// The rows of a Quick batch use's call with a batchReply schema, or undefined for any other call.
+export function quickBatchOf(
+  call: AiCall<unknown>,
+): { answer: z.ZodObject; rows: number } | undefined {
+  if (!QUICK_BATCH_USES.has(call.use) || call.output === undefined) return undefined;
+  return BATCH_REPLIES.get(call.output);
+}
+
+// Spec 08, Limits on each call: the good rows of a Quick batch's reply that failed its schema as a
+// whole. A row whose answer is missing, repeated, outside the batch, or fails its schema has no
+// answer. Undefined when no row has one, or the reply is not JSON.
+export function goodRows(
+  batch: { answer: z.ZodObject; rows: number },
+  text: string,
+): { answers: { row: number }[] } | undefined {
+  let reply: unknown;
+  try {
+    reply = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const list = typeof reply === "object" && reply !== null ? Reflect.get(reply, "answers") : null;
+  if (!Array.isArray(list)) return undefined;
+  const times = new Map<unknown, number>();
+  for (const each of list) {
+    const row = typeof each === "object" && each !== null ? Reflect.get(each, "row") : undefined;
+    times.set(row, (times.get(row) ?? 0) + 1);
+  }
+  const answers: { row: number }[] = [];
+  for (const each of list) {
+    const parsed = batch.answer.safeParse(each);
+    if (!parsed.success) continue;
+    const { row } = parsed.data as { row: number };
+    if (row >= 1 && row <= batch.rows && times.get(row) === 1)
+      answers.push(parsed.data as { row: number });
+  }
+  return answers.length === 0 ? undefined : { answers };
 }

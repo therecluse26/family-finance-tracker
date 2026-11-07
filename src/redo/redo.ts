@@ -415,6 +415,20 @@ export async function checkAiBack(): Promise<boolean> {
   return true;
 }
 
+// The AI retry of a use the redo calls came due (spec 08, Failures): a redo that stopped because
+// AI went away starts again now, so the retry time the status line shows is true. A follow-up job
+// handles only a sync's Transactions, so its call alone may never bring AI back. Only the retry
+// starts it, never a sync, and the retries' own cap ends it: after the last retry, the use has no
+// retry time, and the redo waits for AI's return (K4). True when it started the redo.
+export async function retryRedo(): Promise<boolean> {
+  const { database, now, startJob } = running();
+  if ((await readAiRedo(database)).lastRun?.outcome !== "stopped") return false;
+  if (!(await claimAiBack(database, now(), "outage"))) return false;
+  log.info("The redo of no-AI work starts again at its AI retry");
+  await startJob();
+  return true;
+}
+
 // The AI back job. A scheduled task starts it once a day, shortly after midnight, Household time. It
 // makes no AI call, and writes only when a pause has ended.
 export class AiBackJob extends Job {

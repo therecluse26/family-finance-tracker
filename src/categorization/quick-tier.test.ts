@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AiGates, aiCost, aiSettings, householdAi, RETRY_DELAYS_MS } from "../ai/index.ts";
+import {
+  type AiGates,
+  type AiReply,
+  aiCost,
+  aiSettings,
+  type HouseholdAi,
+  householdAi,
+  RETRY_DELAYS_MS,
+} from "../ai/index.ts";
 import { newAiKey, type StubMessage, StubModels } from "../ai/testing.ts";
 import { fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../bank/index.ts";
@@ -8,6 +16,7 @@ import { CATEGORIES } from "../categories/index.ts";
 import {
   deleteRemovedConnection,
   markConnectionRemoved,
+  readAiRedo,
   readAiRetry,
   storeCategoryRule,
 } from "../db/index.ts";
@@ -23,7 +32,7 @@ import {
   provenance,
   startCategorization,
 } from "./index.ts";
-import { CATEGORY_FIX_TASK, MERCHANT_CLEANUP_TASK } from "./quick-tier.ts";
+import { CATEGORY_FIX_TASK, fixCategories, MERCHANT_CLEANUP_TASK } from "./quick-tier.ts";
 
 // Cascade step 5 and AI cleanup of Merchant names on the Quick tier (spec 04, The categorization
 // cascade, Names, AI decisions, Review list items; spec 08, Every AI use, Limits on each call,
@@ -332,7 +341,7 @@ describe("the Quick tier in the categorization step", () => {
       expect(await itemsOf(AI_UNSURE_KIND)).toEqual([]);
     });
 
-    it("refuses a Category outside the list as a bad reply, which goes down the retry path, then the no-AI path", async () => {
+    it("refuses a Category outside the list as a bad reply, which goes again in halves, then down the retry path, then the no-AI path", async () => {
       await connectAi();
       vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-01T14:00:00.000Z") });
       answerCategory = () => ({ category: "Snacks", confidence: "high" });
@@ -344,7 +353,8 @@ describe("the Quick tier in the categorization step", () => {
       expect(stopped).toEqual({ stoppedAt: "categorization", again: expect.any(Date) });
       expect(await readAiRetry(bank.database, "category fix")).toMatchObject({ failures: 1 });
       expect(await partOf("r0")).toMatchObject({ category: null, source: null });
-      expect(callsOf("category fix")).toHaveLength(1);
+      // The batch goes again as two halves, and the third bad reply in a row is an AI error.
+      expect(callsOf("category fix").map((call) => call.rows.length)).toEqual([100, 50, 50]);
 
       // Each retry is one call; the step stops again until the last retry fails.
       for (const delay of RETRY_DELAYS_MS) {
@@ -367,6 +377,77 @@ describe("the Quick tier in the categorization step", () => {
       });
       expect(await partOf("r149")).toMatchObject({ source: "best guess", needsAi: 1 });
       expect(await itemsOf(BEST_GUESS_KIND)).toHaveLength(150);
+    });
+
+    it("keeps 99 answers when one row of 100 fails its schema, and the row left keeps its best guess and mark", async () => {
+      await connectAi();
+      answerCategory = (row) =>
+        row.description === "CARD PURCHASE R37"
+          ? { category: "Snacks", confidence: "high" }
+          : { category: "Pets", confidence: "high" };
+      const added = Array.from({ length: 100 }, (_, index) => buy(`r${index}`, "2026-10-06"));
+
+      expect(await sync({ added })).toBeUndefined();
+
+      // The bad row goes once more alone, then keeps its no-AI result.
+      expect(callsOf("category fix").map((call) => call.rows.length)).toEqual([100, 1]);
+      expect(await partOf("r36")).toMatchObject({ category: "Pets", source: "AI", needsAi: 0 });
+      expect(await partOf("r38")).toMatchObject({ category: "Pets", source: "AI", needsAi: 0 });
+      expect(await partOf("r37")).toMatchObject({ source: "best guess", needsAi: 1 });
+      expect(await readAiRetry(bank.database, "category fix")).toBeUndefined();
+    });
+
+    it("goes on to the next batch after a bad reply, which is not an outage", async () => {
+      await connectAi();
+      // The first call and the second half of its batch answer badly; the rest answer well.
+      let call = 0;
+      const replyTo = stub.replyTo;
+      stub.replyTo = (messages) => {
+        const reply = replyTo?.(messages) ?? "O";
+        call += 1;
+        return call === 1 || call === 3 ? "Here are your answers!" : reply;
+      };
+      const added = Array.from({ length: 150 }, (_, index) =>
+        buy(`r${String(index).padStart(3, "0")}`, "2026-10-06"),
+      );
+
+      expect(await sync({ added })).toBeUndefined();
+
+      expect(callsOf("category fix").map((each) => each.rows.length)).toEqual([100, 50, 50, 50]);
+      // The rows of the bad half keep their best guesses and marks.
+      const [, good, bad, next] = callsOf("category fix").map((each) =>
+        each.rows.map((row) => String(row.description).replace("CARD PURCHASE ", "").toLowerCase()),
+      );
+      for (const id of [good?.[0], next?.[0]]) {
+        expect(await partOf(String(id))).toMatchObject({ source: "AI", needsAi: 0 });
+      }
+      expect(await partOf(String(bad?.[0]))).toMatchObject({ source: "best guess", needsAi: 1 });
+      expect(await partOf(String(bad?.[49]))).toMatchObject({ source: "best guess", needsAi: 1 });
+      expect(await readAiRetry(bank.database, "category fix")).toBeUndefined();
+      expect(await readAiRedo(bank.database)).toMatchObject({ awayAt: null });
+    });
+
+    it("lets the later batches go after a bad reply, and stops them after a failed call with no retry left", async () => {
+      const row = {
+        merchant: null,
+        description: "CARD PURCHASE",
+        amount: -25,
+        date: "2026-10-06",
+        account: null,
+        providerCategory: null,
+        mcc: null,
+      };
+      const answering = (reply: AiReply<{ answers: never[] }>) =>
+        ({ generate: async () => reply }) as unknown as HouseholdAi;
+
+      expect(
+        await fixCategories(answering({ ready: false, failed: "bad reply", badReply: true }), [
+          row,
+        ]),
+      ).toEqual({ noAi: "bad reply" });
+      expect(await fixCategories(answering({ ready: false, failed: "bad reply" }), [row])).toEqual({
+        noAi: "off",
+      });
     });
 
     it("reads the AI's answers in step 4, so the fourth of a new Merchant takes its history, in one call", async () => {

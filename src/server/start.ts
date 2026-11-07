@@ -54,7 +54,14 @@ import {
 } from "../notify/index.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
-import { type AiWork, aiWork, requestRedo, startRedo } from "../redo/index.ts";
+import {
+  type AiWork,
+  aiWork,
+  REDO_AI_USES,
+  requestRedo,
+  retryRedo,
+  startRedo,
+} from "../redo/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { householdSummary } from "../summary/index.ts";
 import {
@@ -244,6 +251,16 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
       database,
       runners: {
         ...Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
+        // A use the redo calls also starts the redo again, when AI went away during it.
+        ...Object.fromEntries(
+          REDO_AI_USES.map((use) => [
+            use,
+            async () => {
+              await askForFollowUp();
+              await retryRedo();
+            },
+          ]),
+        ),
         // Budget tailoring retries in its own job, which runs each waiting run.
         "budget tailoring": requestTailoringJob,
         // The Insight cards retry in the Insight card check job, as a run the 6 AM check started

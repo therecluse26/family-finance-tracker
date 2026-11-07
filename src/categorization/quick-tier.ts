@@ -3,6 +3,7 @@ import {
   type AiReply,
   type BatchItem,
   batchReply,
+  generateBatch,
   type HouseholdAi,
   PrivacyRefusal,
   QUICK_BATCH_SIZE,
@@ -26,12 +27,16 @@ import { log } from "../log.ts";
 // filter's final check reads it. Each amount and date is a typed value, which the filter keeps as
 // the app built it.
 
-// What a use's batch got back: an answer per row, in row order; or a retry time, so the rows wait
-// for the AI retry; or no answer, so the rows take the no-AI path. With `off`, AI is not available,
-// such as with no AI provider, at the AI cost cap, or after the last retry, and the use's later
-// batches take the no-AI path too, so no new retry cycle starts. With `refused`, the privacy filter
-// refused this batch alone.
-export type QuickAnswer<T> = { answers: T[] } | { retryAt: Date } | { noAi: "off" | "refused" };
+// What a use's batch got back: the answers of its good rows, in row order, where a row with no
+// answer takes the no-AI path; or a retry time, so the rows wait for the AI retry; or no answer, so
+// the rows take the no-AI path. With `off`, AI is not available, such as with no AI provider, at
+// the AI cost cap, or after the last retry, and the use's later batches take the no-AI path too, so
+// no new retry cycle starts. With `refused`, the privacy filter refused this batch alone, and with
+// `bad reply` the AI's replies to it failed their schema: the later batches still go.
+export type QuickAnswer<T> =
+  | { answers: T[] }
+  | { retryAt: Date }
+  | { noAi: "off" | "refused" | "bad reply" };
 
 // The AI's confidence in a Category. Below high, the AI counts as unsure.
 export type AiConfidence = "high" | "medium" | "low";
@@ -100,7 +105,7 @@ async function ask<T extends { row: number }>(
     return { answers: [...reply.output.answers].sort((a, b) => a.row - b.row) };
   }
   if ("retryAt" in reply) return { retryAt: reply.retryAt };
-  return { noAi: "off" };
+  return { noAi: "badReply" in reply ? "bad reply" : "off" };
 }
 
 const fixRow = (row: CategoryFixRow): BatchItem => ({
@@ -117,18 +122,18 @@ const fixRow = (row: CategoryFixRow): BatchItem => ({
 export async function fixCategories(
   ai: HouseholdAi,
   rows: readonly CategoryFixRow[],
-): Promise<QuickAnswer<{ category: Category; confidence: AiConfidence }>> {
+): Promise<QuickAnswer<{ row: number; category: Category; confidence: AiConfidence }>> {
   if (rows.length === 0 || rows.length > QUICK_BATCH_SIZE) {
     throw new RangeError("A Category fix batch holds 1 to 100 Transactions.");
   }
   return ask(
     () =>
-      ai.generate({
+      generateBatch(ai, rows, (asked) => ({
         use: "category fix",
         task: CATEGORY_FIX_TASK,
-        batch: rows.map(fixRow),
-        output: batchReply(CATEGORY_ANSWER, rows.length),
-      }),
+        batch: asked.map(fixRow),
+        output: batchReply(CATEGORY_ANSWER, asked.length),
+      })),
     "category fix",
   );
 }
@@ -160,12 +165,12 @@ export async function cleanMarkedNames(
     const descriptions = asked.slice(start, start + QUICK_BATCH_SIZE);
     const answer = await ask(
       () =>
-        ai.generate({
+        generateBatch(ai, descriptions, (asked) => ({
           use: "merchant cleanup",
           task: MERCHANT_CLEANUP_TASK,
-          batch: descriptions.map((description) => ({ description })),
-          output: batchReply(NAME_ANSWER, descriptions.length),
-        }),
+          batch: asked.map((description) => ({ description })),
+          output: batchReply(NAME_ANSWER, asked.length),
+        })),
       "merchant cleanup",
     );
     if ("retryAt" in answer) {

@@ -634,6 +634,45 @@ describe("the Quick tier's link decisions", () => {
       expect(await answerRows()).toHaveLength(40);
     });
 
+    it("asks again about a money the reply left out, with the same Spending, and links its pick", async () => {
+      pick = (rows, money) => ({
+        spendingRow:
+          rows.find(
+            (row) =>
+              row.kind === "Spending" &&
+              row.amount === (money.amount === "30.00" ? "25.00" : "60.00"),
+          )?.row ?? null,
+        confidence: "high",
+      });
+      // The first reply leaves out the answer about the $30.
+      const replyTo = stub.replyTo;
+      stub.replyTo = (messages) => {
+        const reply = replyTo?.(messages) ?? "O";
+        if (asked.picks.length !== 1 || !reply.includes("spendingRow")) return reply;
+        const rows = asked.picks[0] ?? [];
+        const left = rows.find((row) => row.kind === "money in" && row.amount === "30.00")?.row;
+        const { answers } = JSON.parse(reply) as { answers: { row: number }[] };
+        return JSON.stringify({ answers: answers.filter(({ row }) => row !== left) });
+      };
+      await sync({
+        added: [
+          dinner("dinner", -6_000, "2026-09-28"),
+          dinner("lunch", -2_500, "2026-09-30"),
+          moneyIn("friend", 2_000, "2026-10-02", "VENMO *MORGAN LEE"),
+          moneyIn("pal", 3_000, "2026-10-02", "VENMO *JORDAN BLAKE"),
+        ],
+      });
+
+      // The second call holds only the money left out, then the same Spending rows.
+      expect(asked.picks.map((rows) => rows.map((row) => `${row.kind} ${row.amount}`))).toEqual([
+        expect.arrayContaining(["money in 20.00", "money in 30.00"]),
+        ["money in 30.00", "Spending 25.00", "Spending 60.00"],
+      ]);
+      expect(
+        (await spendingLinks()).map(({ money, spending }) => `${money} ${spending}`).sort(),
+      ).toEqual(["friend dinner", "pal lunch"]);
+    });
+
     it("links a pick only from the money's own 60 days", async () => {
       // Late money pays back only the September dinner, and early money only the August one.
       pick = (rows, money) => ({

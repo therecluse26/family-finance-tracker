@@ -254,7 +254,11 @@ export async function chooseCategories(
     if (waiting.length === 0) return;
     const asked = waiting;
     waiting = [];
-    let answer: QuickAnswer<{ category: Category; confidence: "high" | "medium" | "low" }> = {
+    let answer: QuickAnswer<{
+      row: number;
+      category: Category;
+      confidence: "high" | "medium" | "low";
+    }> = {
       noAi: "off",
     };
     if (aiOn && typeof ai === "object") {
@@ -287,8 +291,12 @@ export async function chooseCategories(
     }
     if ("noAi" in answer && answer.noAi === "off") aiOn = false;
     const loaded = await loadHistory();
+    // A row the AI gave no good answer takes the no-AI path.
+    const byRow = new Map(
+      "answers" in answer ? answer.answers.map((each) => [each.row, each]) : [],
+    );
     for (const [index, { record, txn, parts, chosen, historyWaits, direct }] of asked.entries()) {
-      const reply = "answers" in answer ? answer.answers[index] : undefined;
+      const reply = byRow.get(index + 1);
       const fromAi: Choice | undefined =
         reply === undefined
           ? undefined

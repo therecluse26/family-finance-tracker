@@ -11,8 +11,8 @@ import {
   streamModel,
 } from "./call.ts";
 import { type AiPause, AiPausedError } from "./outbound.ts";
-import { memberLabel, privacyFilter } from "./privacy.ts";
-import { type AiCall, filterBatch, plainData } from "./prompt.ts";
+import { memberLabel, PrivacyRefusal, privacyFilter } from "./privacy.ts";
+import { type AiCall, filterBatch, isQuickBatchUse, plainData } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
 import { type AiOptions, aiCalls, markKeyRejected, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
@@ -25,11 +25,19 @@ import { plainVoice } from "./voice.ts";
 //   follow-up job, the step leaves those Transactions unhandled and stops the job.
 // - failed: an AI error with no retry left. A background use takes its no-AI path. Chat and
 //   reading a Goal never retry by themselves: the screen shows the error with "Try again".
+// - badReply: a Quick batch's reply that failed its schema, or was cut off (spec 08, Failures). It
+//   is not an outage: its rows take the no-AI path, and the use's later batches go on. Only the
+//   BAD_REPLIES_IN_A_ROW-th bad reply in a row of one use is an AI error, with its retries.
 export type AiReply<OUTPUT = undefined> =
   | { ready: true; text: string; output: OUTPUT }
   | { ready: false; pause: AiPause }
   | { ready: false; retryAt: Date }
-  | { ready: false; failed: AiFailure };
+  | { ready: false; failed: AiFailure }
+  | { ready: false; failed: "bad reply"; badReply: true };
+
+// The bad reply in a row of one Quick batch use that counts as an AI error, so a model that always
+// answers badly stops after its retries (K4).
+export const BAD_REPLIES_IN_A_ROW = 3;
 
 // The one way other modules call the AI. Every call goes out through the privacy filter (spec 08,
 // Privacy filter), then the cost gate, and its cost counts (src/ai/call.ts). AI text comes back
@@ -82,6 +90,8 @@ export function householdAi(options: AiOptions): HouseholdAi {
   const calls = aiCalls(options);
   const retries = aiRetries(database, noticesOf(options), logger);
   const filter = async () => privacyFilter(await readPrivacyFacts(database));
+  // Each Quick batch use's bad replies in a row. A reply that works ends the row.
+  const badReplies = new Map<AiCall["use"], number>();
 
   // Spec 08, Failures: a rejected key pauses AI until a Member fixes it, with one System notice.
   const keyRejected = (generation: number) => markKeyRejected(options, generation);
@@ -99,7 +109,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
         }
       } else if ("pause" in reply) {
         if (reply.pause !== "waits for history") await markAiAway(database, "pause", new Date());
-      } else {
+      } else if (!("badReply" in reply)) {
         await markAiAway(database, "outage", new Date());
       }
     } catch (error) {
@@ -136,21 +146,32 @@ export function householdAi(options: AiOptions): HouseholdAi {
     try {
       const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
       const reply = await callModel(found.model, sent);
+      badReplies.delete(use);
       if (background) await retries.worked(use);
       return { ready: true, ...reply };
     } catch (error) {
       // The gate closed between modelFor and the call, such as at the AI cost cap.
       if (error instanceof AiPausedError) return { ready: false, pause: error.pause };
       if (!(error instanceof AiCallError)) throw error;
-      const { failure, status } = error;
-      // Never the prompt or the reply: only the use and what failed.
-      logger.warn("An AI call failed", { use, failure, status: status ?? null });
+      const { failure, status, finishReason } = error;
+      // Never the prompt or the reply: only the use, what failed, and why the reply ended.
+      logger.warn("An AI call failed", {
+        use,
+        failure,
+        status: status ?? null,
+        ...(finishReason === undefined ? {} : { finishReason }),
+      });
       if (failure === "key rejected") {
         if (background) await retries.ended(use);
         await keyRejected(found.generation);
         return { ready: false, pause: "key rejected" };
       }
       if (!background) return { ready: false, failed: failure };
+      if (failure === "bad reply" && isQuickBatchUse(use)) {
+        const inARow = (badReplies.get(use) ?? 0) + 1;
+        badReplies.set(use, inARow);
+        if (inARow < BAD_REPLIES_IN_A_ROW) return { ready: false, failed: failure, badReply: true };
+      }
       const retryAt = await retries.failed(use, new Date());
       return retryAt === undefined ? { ready: false, failed: failure } : { ready: false, retryAt };
     } finally {
@@ -204,4 +225,48 @@ export function householdAi(options: AiOptions): HouseholdAi {
       ),
     toolResult: async (data) => (await filter()).json(plainData(data)),
   };
+}
+
+// One Quick batch, kept row by row (spec 08, Limits on each call). `callFor` makes the call for
+// some of the items, in their order, and its rows answer by their place among them; `inBatch`
+// turns such an answer into one for the same row among all `items`. The rows with no answer go
+// once more, in batches of half the size: all of them after a bad reply, such as one cut off at
+// its limit. Returns each answer with its row among `items`, or why the batch has none, as
+// generate does. A second call that does not work, or that the privacy filter refuses, ends the
+// tries, and its rows have no answer.
+export async function generateBatch<ITEM, ANSWER extends { row: number }>(
+  ai: HouseholdAi,
+  items: readonly ITEM[],
+  callFor: (items: readonly ITEM[]) => AiCall<{ answers: ANSWER[] }>,
+  inBatch: (answer: ANSWER, asked: readonly ITEM[]) => ANSWER = (answer) => answer,
+): Promise<AiReply<{ answers: ANSWER[] }>> {
+  const first = await ai.generate(callFor(items));
+  if (!first.ready && !("badReply" in first)) return first;
+  const answers = first.ready ? [...first.output.answers] : [];
+  const answered = new Set(answers.map(({ row }) => row));
+  const left = items.flatMap((_, index) => (answered.has(index + 1) ? [] : [index + 1]));
+  const size = Math.ceil(items.length / 2);
+  let last: AiReply<{ answers: ANSWER[] }> = first;
+  for (let start = 0; start < left.length; start += size) {
+    const rows = left.slice(start, start + size);
+    const asked = rows.map((row) => items[row - 1] as ITEM);
+    try {
+      last = await ai.generate(callFor(asked));
+    } catch (error) {
+      if (!(error instanceof PrivacyRefusal)) throw error;
+      break;
+    }
+    if (!last.ready) {
+      if ("badReply" in last) continue;
+      break;
+    }
+    for (const answer of last.output.answers) {
+      const row = rows[answer.row - 1];
+      if (row !== undefined) answers.push({ ...inBatch(answer, asked), row });
+    }
+  }
+  if (answers.length > 0) {
+    return { ready: true, text: first.ready ? first.text : "", output: { answers } };
+  }
+  return last;
 }
