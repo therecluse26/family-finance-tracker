@@ -167,6 +167,10 @@ Four tiles in a row (two by two on a phone):
 
 The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with its open count), and Settings. A "More" section holds Budgets, Goals, Accounts, Alert list, Recurring charges, and Top Merchants.
 
+- **Live AI status:** while background AI works, a small sign shows in the main menu, such as "● AI working: Categories", in the accent color. It links to Settings, AI. With no work, it is not there. Its words, when it shows, and its feed are in [AI](08-ai.md#live-ai-status).
+  - From 900 px wide, it sits in the menu column, under the app's name.
+  - At phone width, it is a thin line at the top of the bar at the foot of the screen, over the tabs. The shell has no header bar at phone width, and the line never covers the page. The open menu shows it under the app's name.
+
 ### Transactions page
 
 Using this page is never required.
