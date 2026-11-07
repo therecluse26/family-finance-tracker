@@ -1,6 +1,7 @@
 import { type Context, Hono, type MiddlewareHandler } from "hono";
 import * as z from "zod";
 import { AI_PROVIDERS, baseUrlProblem, MAX_COST_CAP_CENTS, onGateway } from "../ai/ai-view.ts";
+import { AI_REQUEST_LOG_KEEP_DAYS } from "../ai/request-log-view.ts";
 import type {
   CoveringConnection,
   LinkRefusal,
@@ -617,6 +618,17 @@ const channelsBody = z.object({ push: z.boolean(), email: z.boolean() }).strict(
 
 // A Member's own weekly summary email switch: on or off, for the signed-in Member only.
 const weeklySummaryBody = z.object({ on: z.boolean() }).strict();
+
+// The AI request log's switch and kept days (spec 08, AI request log).
+const aiRequestLogBody = z
+  .object({
+    on: z.boolean(),
+    keepDays: z.union(AI_REQUEST_LOG_KEEP_DAYS.map((days) => z.literal(days))),
+  })
+  .strict();
+
+// A kept call's ID, and the cursor of the log page's next page: the last ID of the page before.
+const AI_REQUEST_LOG_ID = /^[1-9]\d{0,14}$/;
 
 // A browser's push subscription (spec 06, Recipients and channels). Its keys are base64url: the
 // browser's P-256 public key, 65 bytes, and its auth secret, 16 bytes.
@@ -1651,6 +1663,38 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Enter the AI cost cap in dollars, from $0 to $10,000." }, 400);
     }
     return c.json({ usage: await c.var.ai.setCostCap(body.data.capCents) }, 200);
+  })
+  // The AI request log (spec 08, AI request log): its switch and kept days, and a page of kept
+  // calls, newest first, older than the call `before` when given. Any Member may read and change it.
+  .get("/ai-request-log", async (c) => {
+    const before = c.req.query("before");
+    if (before !== undefined && !AI_REQUEST_LOG_ID.test(before)) {
+      return c.json({ error: "Ask for the page before a kept call's ID." }, 400);
+    }
+    const page = await c.var.aiRequestLog.page(
+      before === undefined ? {} : { before: Number(before) },
+    );
+    return c.json({ log: page });
+  })
+  // One kept call's request and reply.
+  .get("/ai-request-log/:id", async (c) => {
+    const id = c.req.param("id");
+    const entry = AI_REQUEST_LOG_ID.test(id)
+      ? await c.var.aiRequestLog.entry(Number(id))
+      : undefined;
+    if (entry === undefined) return c.json({ error: "No kept AI request has this ID." }, 404);
+    return c.json({ entry });
+  })
+  // Off deletes every kept text. Fewer kept days deletes the text older than them at once.
+  .put("/ai-request-log/settings", async (c) => {
+    const body = aiRequestLogBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json(
+        { error: "Turn the AI request log on or off, and keep 7, 30, or 90 days." },
+        400,
+      );
+    }
+    return c.json({ settings: await c.var.aiRequestLog.set(body.data) }, 200);
   })
   // Settings, Alerts: the Household's SMTP server. The password is never in an answer.
   .get("/smtp/settings", async (c) => c.json({ smtp: await c.var.smtp.view() }))

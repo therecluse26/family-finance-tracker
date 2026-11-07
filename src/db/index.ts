@@ -14,6 +14,23 @@ export {
   readAiRedo,
 } from "./ai-redo.ts";
 export {
+  type AiRequestFailure,
+  type AiRequestLogEntry,
+  type AiRequestLogKeepDays,
+  type AiRequestLogListed,
+  type AiRequestLogSettingsRow,
+  addAiRequestLogEntry,
+  clearAiRequestLogCleanupFailures,
+  countAiRequestLogCleanupFailure,
+  DEFAULT_AI_REQUEST_LOG,
+  deleteAiRequestLogBefore,
+  listAiRequestLog,
+  type NewAiRequestLogEntry,
+  readAiRequestLogEntry,
+  readAiRequestLogSettings,
+  storeAiRequestLogSettings,
+} from "./ai-request-log.ts";
+export {
   clearAiRetry,
   listDueAiRetries,
   markAiRetryAsked,

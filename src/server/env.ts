@@ -1,4 +1,5 @@
 import type { AiSettings } from "../ai/ai-view.ts";
+import type { AiRequestLogRoutes } from "../ai/request-log-view.ts";
 import type {
   BankConnecting,
   ConnectionRemoving,
@@ -107,6 +108,8 @@ export type ServerEnv = {
     chat: ChatRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
+    // The AI request log's switch, kept days, and kept text (spec 08, AI request log).
+    aiRequestLog: AiRequestLogRoutes;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.
     smtp: SmtpSettings;
     // Each Member's own channels for Alerts and System notices.

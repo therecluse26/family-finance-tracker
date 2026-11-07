@@ -2,7 +2,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { type Context, type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
-import type { AiSettings } from "../ai/index.ts";
+import { type AiRequestLogRoutes, type AiSettings, aiRequestLogRoutes } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
 import {
   bankConnecting,
@@ -191,6 +191,8 @@ export function createApp(
   services: {
     plaid?: PlaidSettings;
     ai?: AiSettings;
+    // The AI request log's routes: app.db's own, unless a test gives its own.
+    aiRequestLog?: AiRequestLogRoutes;
     smtp?: SmtpSettings;
     push?: PushSettings;
     // Chat's answers. Without it, Chat says AI is not set up.
@@ -220,6 +222,7 @@ export function createApp(
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);
   const weeklySummary = weeklySummarySettings(database);
+  const aiRequestLog = services.aiRequestLog ?? aiRequestLogRoutes({ database });
   const topMerchants = topMerchantRoutes(database);
   const aiBox = aiBoxRoutes(database, services.ai);
   const proposals = proposalRoutes(database);
@@ -281,6 +284,7 @@ export function createApp(
         c.set("comingUp", comingUp);
         c.set("channels", channels);
         c.set("weeklySummary", weeklySummary);
+        c.set("aiRequestLog", aiRequestLog);
         c.set("topMerchants", topMerchants);
         c.set("aiBox", aiBox);
         c.set("proposals", proposals);
@@ -307,6 +311,8 @@ export function createApp(
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .use("/api/weekly-summary", jsonOnly)
+      // So does the AI request log's switch.
+      .use("/api/ai-request-log/settings", jsonOnly)
       .route("/api", api)
       .route("/api/dev", services.devRoutes ?? new Hono<ServerEnv>())
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))

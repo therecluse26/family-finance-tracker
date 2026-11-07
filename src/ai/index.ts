@@ -42,6 +42,17 @@ export {
 } from "./prompt.ts";
 export type { AiConnection, AiModelMaker } from "./providers.ts";
 export {
+  AI_REQUEST_LOG_CLEANUP_CAP,
+  AI_REQUEST_LOG_CLEANUP_STOPPED,
+  AI_REQUEST_LOG_PAGE,
+  AiRequestLogCleanupJob,
+  type AiRequestLogOptions,
+  aiRequestLogRoutes,
+  cleanUpAiRequestLog,
+  startAiRequestLogCleanup,
+} from "./request-log.ts";
+export type { AiRequestLogPage, AiRequestLogRoutes } from "./request-log-view.ts";
+export {
   AiRetryJob,
   type AiRetryRunner,
   FOLLOW_UP_AI_USES,

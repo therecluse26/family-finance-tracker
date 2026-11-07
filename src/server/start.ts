@@ -4,6 +4,7 @@ import {
   aiSettings,
   FOLLOW_UP_AI_USES,
   householdAi,
+  startAiRequestLogCleanup,
   startAiRetries,
 } from "../ai/index.ts";
 import {
@@ -278,8 +279,10 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
     const weeklySummary = startWeeklySummary({ database });
+    const stopRequestLogCleanup = startAiRequestLogCleanup({ database });
     const stopModules = () => {
       backups?.stop();
+      stopRequestLogCleanup();
       weeklySummary.stop();
       monthlyReview.stop();
       updateCheck.stop();

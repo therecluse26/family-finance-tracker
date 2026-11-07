@@ -17,6 +17,7 @@ import { Setup } from "./pages/Setup.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { About } from "./pages/settings/About.tsx";
 import { Ai } from "./pages/settings/Ai.tsx";
+import { AiRequestLog, AiRequestLogEntry } from "./pages/settings/AiRequestLog.tsx";
 import { AiUsage } from "./pages/settings/AiUsage.tsx";
 import { Alerts } from "./pages/settings/Alerts.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
@@ -111,6 +112,9 @@ export const routes: RouteObject[] = [
           ...settingsSections,
           // The AI usage page, linked from Settings → AI.
           { path: "ai/usage", Component: AiUsage },
+          // The AI request log and one kept call, linked from the AI usage page.
+          { path: "ai/usage/log", Component: AiRequestLog },
+          { path: "ai/usage/log/:id", Component: AiRequestLogEntry },
           // The Data sources page, linked from Settings → About.
           { path: "about/data-sources", Component: DataSources },
         ],

@@ -1,7 +1,7 @@
 // The job list. Sidequest imports each job class from it by class name, so every job class is
 // exported here under its own name. The server build is one file, so src/server/main.ts
 // re-exports this list and names the server file as the job list.
-import { AiRetryJob } from "../ai/index.ts";
+import { AiRequestLogCleanupJob, AiRetryJob } from "../ai/index.ts";
 import { BACKUP_SCHEDULE, BackupJob } from "../backups/index.ts";
 import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
@@ -23,6 +23,7 @@ export { RedoNoAiWorkJob } from "../redo/index.ts";
 export { TickJob } from "./sidequest.ts";
 export {
   AiBackJob,
+  AiRequestLogCleanupJob,
   AiRetryJob,
   BackupJob,
   BudgetTailoringJob,
@@ -63,6 +64,15 @@ export const scheduledTasks: readonly ScheduledTask[] = [
   // 1st, and starts the Redo no-AI work job then (spec 08, Redo of no-AI work). A change of the AI
   // settings checks at once. With AI not away, its job makes no AI call and no write.
   { name: "ai back", schedule: daily("00:25"), job: AiBackJob, quiet: true },
+  // Deletes AI request text older than the kept days at 12:30 AM, Household time (spec 08, AI
+  // request log). A failed run tries again the next day, up to its cap. Its job logs only when it
+  // deletes something or fails.
+  {
+    name: "ai request log cleanup",
+    schedule: daily("00:30"),
+    job: AiRequestLogCleanupJob,
+    quiet: true,
+  },
   // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no
   // request.
   { name: "update check", schedule: daily("05:00"), job: UpdateCheckJob },
