@@ -149,17 +149,25 @@ type Waiting = {
 // step 4 needs that answer joins the same batch, so a Merchant whose answers differ never sends a
 // batch for each Transaction; once the answers come, step 4 is checked again for it, and wins over
 // the AI's answer when it gives one. With `redo`, a best guess made without AI counts as not
-// chosen, so the AI decides it (spec 08, Redo of no-AI work); a hand-set Category is never one.
-// Returns what the Review list holds for each Transaction the run decided, and the Transactions it
-// left.
+// chosen, so the AI decides it (spec 08, Redo of no-AI work); a hand-set Category is never one. So
+// does a Category the AI chose that "Run AI on all history" marked (spec 08, AI work on your
+// Transactions). A best guess never takes the place of the AI's Category: with no answer from the
+// AI, that part keeps its Category and its mark, for AI's next return. Returns what the Review list
+// holds for each Transaction the run decided, and the Transactions it left.
 export async function chooseCategories(
   database: Database,
   ids: readonly string[],
   ai: AiStep = undefined,
   options: { redo?: boolean } = {},
 ): Promise<CategoryRun & { reviews: Map<string, ReviewState> }> {
-  const unchosen = (part: { categorySource: string | null }) =>
-    part.categorySource === null || (options.redo === true && part.categorySource === "best guess");
+  const unchosen = (part: RecordPart) =>
+    part.categorySource === null ||
+    (options.redo === true &&
+      (part.categorySource === "best guess" ||
+        (part.categorySource === "AI" && part.categoryNeedsAi)));
+  // A best guess never replaces a Category the AI chose.
+  const keepsAi = (before: CategorySource | null | undefined, choice: Choice) =>
+    before === "AI" && choice.source === "best guess";
   // Merchant history loads when a step first needs it. Until then, each Category chosen here waits
   // in `unloaded`, since the batch is stored only at its end.
   let history: MerchantHistory | undefined;
@@ -281,7 +289,9 @@ export async function chooseCategories(
           : answered === undefined
             ? bestGuess(txn, loaded)
             : { category: answered.category, source: "AI", confidence: answered.confidence };
-      for (const part of parts) choose(record, part, choice, chosen);
+      for (const part of parts) {
+        if (!keepsAi(chosen.get(part)?.source, choice)) choose(record, part, choice, chosen);
+      }
       joinHistory(record, txn, chosen);
       reviews.set(record.id, reviewState(record, chosen));
     }
@@ -328,7 +338,7 @@ export async function chooseCategories(
       );
       if (choice === "waits") historyWaits = true;
       if (choice === "ai" || choice === "waits") asking.push(part.part);
-      else picked.push([part.part, choice]);
+      else if (!keepsAi(part.categorySource, choice)) picked.push([part.part, choice]);
     }
     if (asking.length > 0 && ai === "follow-up job") return "later";
     for (const [part, choice] of picked) choose(record, part, choice, chosen);

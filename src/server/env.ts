@@ -8,6 +8,7 @@ import type { PlaidSettings } from "../bank/plaid-view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { PictureRoutes } from "../pictures/picture-view.ts";
+import type { AiWork } from "../redo/work-view.ts";
 import type { WeeklySummarySettings } from "../weekly-summary/view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AiBoxRoutes } from "./ai-box-views.ts";
@@ -107,6 +108,9 @@ export type ServerEnv = {
     chat: ChatRoutes;
     // The Household's AI provider, for the routes under /api/ai/.
     ai: AiSettings;
+    // AI work on your Transactions, for the routes under /api/ai/work. Undefined when the app
+    // runs no redo of no-AI work, as in a test.
+    aiWork: AiWork | undefined;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.
     smtp: SmtpSettings;
     // Each Member's own channels for Alerts and System notices.

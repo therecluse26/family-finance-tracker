@@ -1,7 +1,11 @@
 // The redo of no-AI work's interface. Other modules import from here.
 export {
   AiBackJob,
+  aiWork,
+  aiWorkView,
   checkAiBack,
+  monthsBefore,
+  pressAiWork,
   REDO_ATTEMPTS,
   REDO_STEPS,
   REDO_STOPPED,
@@ -16,3 +20,16 @@ export {
   runRedoJob,
   startRedo,
 } from "./redo.ts";
+export {
+  AI_WORK_KINDS,
+  AI_WORK_REFUSALS,
+  AI_WORK_WAIT_LINES,
+  type AiWork,
+  type AiWorkKind,
+  type AiWorkPress,
+  type AiWorkRefusal,
+  type AiWorkStep,
+  type AiWorkView,
+  type AiWorkWait,
+  ALL_HISTORY_MONTHS,
+} from "./work-view.ts";

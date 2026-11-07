@@ -15,6 +15,7 @@ import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movem
 import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
+import { AI_WORK_REFUSALS, type AiWorkKind } from "../redo/work-view.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -554,6 +555,18 @@ const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   }
   await next();
 };
+
+// A press of "Finish AI work now" or "Run AI on all history", with an empty JSON body. A refusal
+// starts no run and makes no AI call.
+async function pressAiWork(c: Context<ServerEnv>, kind: AiWorkKind) {
+  if (c.var.aiWork === undefined) return c.json({ error: "Not found" }, 404);
+  if (!emptyBody.safeParse(await jsonBody(c)).success) {
+    return c.json({ error: "Send an empty body." }, 400);
+  }
+  const pressed = await c.var.aiWork.press(kind);
+  if (!pressed.started) return c.json({ error: AI_WORK_REFUSALS[pressed.refusal] }, 409);
+  return c.json({ work: pressed.work }, 202);
+}
 
 // The Member signed in, as Chat stores them on a message: their ID and name, never their email.
 const chatMember = (c: Context<ServerEnv>) => ({ id: c.var.member.id, name: c.var.member.name });
@@ -1652,6 +1665,15 @@ export const api = new Hono<ServerEnv>()
     }
     return c.json({ usage: await c.var.ai.setCostCap(body.data.capCents) }, 200);
   })
+  // AI work on your Transactions (spec 08): the status line, "Finish AI work now", and "Run AI on
+  // all history". Reading the line and a refused press make no AI call. A press answers 202: its
+  // run goes on in a job, and the page reads the line again.
+  .get("/ai/work", async (c) => {
+    if (c.var.aiWork === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ work: await c.var.aiWork.view() }, 200);
+  })
+  .post("/ai/work/finish", (c) => pressAiWork(c, "finish"))
+  .post("/ai/work/all-history", (c) => pressAiWork(c, "all history"))
   // Settings, Alerts: the Household's SMTP server. The password is never in an answer.
   .get("/smtp/settings", async (c) => c.json({ smtp: await c.var.smtp.view() }))
   .post("/smtp/settings", async (c) => {

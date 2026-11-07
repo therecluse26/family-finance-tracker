@@ -53,7 +53,7 @@ import {
 } from "../notify/index.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import { startRecurringCharges } from "../recurring/index.ts";
-import { requestRedo, startRedo } from "../redo/index.ts";
+import { type AiWork, aiWork, requestRedo, startRedo } from "../redo/index.ts";
 import { checkDataKey, type MasterKey, type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { householdSummary } from "../summary/index.ts";
 import {
@@ -100,6 +100,7 @@ export type RouteServices = {
   push: PushSettings;
   chat: Chat;
   goalWriting: GoalWriting;
+  aiWork: AiWork;
 };
 
 // The app's running services, with nothing listening yet. The open database stays open until
@@ -340,6 +341,8 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
           chat: chat({ database, ai, summary: householdSummary({ database, ai }) }),
           // Each Goal's reading asks for its Budget tailoring Goal run at once.
           goalWriting: goalWriting({ database, ai, requestGoalRun: requestGoalTailoring }),
+          // "Finish AI work now", "Run AI on all history", and the status line of the AI's work.
+          aiWork,
         },
         close: async (waitFor = []) => {
           try {

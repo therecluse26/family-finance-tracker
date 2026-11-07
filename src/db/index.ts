@@ -2,16 +2,20 @@
 export { type AlertNoteRow, listAlertNoteRows, storeAlertNoteDone } from "./ai-box.ts";
 export {
   type AiAwayReason,
+  type AiRedoRun,
   type AiRedoState,
   claimAiBack,
   claimFirstAiRunDone,
   clearAiAway,
   countAiRedoFailure,
+  countMarkedItems,
   endAiRedo,
   listBestGuessIds,
   listMarkedNameIds,
   markAiAway,
+  markAiCategoriesSince,
   readAiRedo,
+  recordAiRedoRun,
 } from "./ai-redo.ts";
 export {
   clearAiRetry,

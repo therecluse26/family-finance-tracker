@@ -5,16 +5,32 @@ import {
   claimFirstAiRunDone,
   clearAiAway,
   countAiRedoFailure,
+  countMarkedItems,
   type Database,
   endAiRedo,
   markAiAway,
+  markAiCategoriesSince,
   readAiRedo,
   readHistoryWait,
+  recordAiRedoRun,
 } from "../db/index.ts";
+import { calendarDateIn } from "../format.ts";
+import { householdTimeZone } from "../household/index.ts";
 import { writeInsightCards } from "../insights/index.ts";
-import { Job, startJobUnlessWaiting } from "../jobs/index.ts";
+import { Job, type JobArgument, startJob, startJobUnlessWaiting } from "../jobs/index.ts";
 import { log } from "../log.ts";
 import { endCondition, raiseNotice } from "../notify/index.ts";
+import {
+  AI_WORK_KINDS,
+  type AiWork,
+  type AiWorkKind,
+  type AiWorkPress,
+  type AiWorkRefusal,
+  type AiWorkStep,
+  type AiWorkView,
+  type AiWorkWait,
+  ALL_HISTORY_MONTHS,
+} from "./work-view.ts";
 
 // The first AI run and the redo of no-AI work (spec 08, Runs that reuse these uses; Redo of no-AI
 // work; spec 03, AI decisions and the no-AI path).
@@ -34,6 +50,11 @@ import { endCondition, raiseNotice } from "../notify/index.ts";
 // - The redo's calls count against the AI cost cap, through the one AI call path. It runs no Alert
 //   step and writes no Monthly review, so sent Alerts and written Monthly reviews stay as they
 //   were, and no Alert gets advice later.
+// - A Member starts it at once from Settings, AI (spec 08, AI work on your Transactions): "Finish
+//   AI work now" runs it even when AI has not come back, and "Run AI on all history" first marks
+//   each Category the AI or a best guess chose in the last 18 months. Each press is one Redo no-AI
+//   work job, with the job's attempts and System notice. One run goes at a time: a press while one
+//   waits or runs is refused, and a redo that AI's return starts gives way to a Member's run.
 
 // The steps of a redo, in this order: clean names first, since the Categories read them; Money
 // movement next, since a new decision clears a Transaction's Categories.
@@ -66,6 +87,8 @@ type Services = {
   ai: HouseholdAi;
   now: () => Date;
   startJob: () => Promise<unknown>;
+  // Starts the job of a Member's run.
+  startWork: (kind: AiWorkKind) => Promise<unknown>;
 };
 
 let services: Services | undefined;
@@ -86,23 +109,46 @@ export type RedoOutcome = "not due" | "busy" | "AI away" | "done";
 
 // Set before the first await, so a redo started beside a running one does nothing (K18).
 let busy = false;
+// The step the running redo is on, for the status line.
+let step: AiWorkStep | undefined;
+// A Member's run, from the press until its job ends. Set before the press's first await, so
+// presses sent together start one run (K18).
+let pressed: AiWorkKind | undefined;
 
-// Runs the redo once, when AI has come back or the first AI run is due. Any error throws.
-export async function runRedo(): Promise<RedoOutcome> {
-  if (busy) return "busy";
+// Runs the redo once, when AI has come back or the first AI run is due. With `kind`, it is a
+// Member's run, which runs at once. A redo that AI's return starts gives way to a Member's run
+// that waits for its job. Any error throws.
+export async function runRedo(kind?: AiWorkKind): Promise<RedoOutcome> {
+  if (busy || (kind === undefined && pressed !== undefined)) return "busy";
   busy = true;
+  step = "starting";
   try {
-    return await redo(running());
+    return await redo(running(), kind);
   } finally {
     busy = false;
+    step = undefined;
   }
 }
 
-async function redo({ database, ai, now }: Services): Promise<RedoOutcome> {
+// The calendar date `months` months before `date`, both YYYY-MM-DD. A day past the month's end
+// becomes its last day.
+export function monthsBefore(date: string, months: number): string {
+  const [year = 0, month = 1, day = 1] = date.split("-").map(Number);
+  const index = year * 12 + (month - 1) - months;
+  const shown = { year: Math.floor(index / 12), month: (index % 12) + 1 };
+  const last = new Date(Date.UTC(shown.year, shown.month, 0)).getUTCDate();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${shown.year}-${pad(shown.month)}-${pad(Math.min(day, last))}`;
+}
+
+async function redo(
+  { database, ai, now }: Services,
+  kind: AiWorkKind | undefined,
+): Promise<RedoOutcome> {
   const state = await readAiRedo(database);
   const firstRun =
     state.firstRunDoneAt === null && (await readHistoryWait(database)).endedAt !== null;
-  if (state.dueAt === null && !firstRun) return "not due";
+  if (kind === undefined && state.dueAt === null && !firstRun) return "not due";
   // The Quick tier's uses all share one gate.
   const pause = await ai.pauseFor("category fix");
   if (pause !== undefined) {
@@ -112,31 +158,54 @@ async function redo({ database, ai, now }: Services): Promise<RedoOutcome> {
     return "AI away";
   }
   await clearAiAway(database);
-  const decided = new Set<string>();
-  let aiOn = true;
-  for (const name of REDO_STEPS) {
-    const step = steps.get(name);
-    if (step === undefined) continue;
-    for (const id of await step({ decided: [...decided], ai: aiOn })) decided.add(id);
-    // A call of this step found AI away: the later steps make no call.
-    if (aiOn && (await readAiRedo(database)).awayAt !== null) aiOn = false;
+  if (kind === "all history") {
+    step = "marking history";
+    const today = calendarDateIn(now(), (await householdTimeZone(database)) ?? "UTC");
+    const marked = await markAiCategoriesSince(database, monthsBefore(today, ALL_HISTORY_MONTHS));
+    log.info("Run AI on all history marked the Categories it looks at again", { marked });
   }
-  await endAiRedo(database, state.dueAt);
-  if (!aiOn) {
-    log.info("AI went away during the redo of no-AI work", { firstRun });
-    return "AI away";
-  }
-  if (firstRun) {
-    // A Writer call that found AI away leaves the first AI run to AI's return, which runs it again.
-    const cards = await writeInsightCards({ database, ai, now });
-    if (cards !== "written" && (await readAiRedo(database)).awayAt !== null) {
-      log.info("The first AI run's Insight card run waits for AI");
+  // Each item whose mark goes away during the run is one the run decided: by the AI, or by an
+  // earlier cascade step such as Merchant history.
+  const before = await countMarkedItems(database);
+  const decidedItems = async () => Math.max(0, before - (await countMarkedItems(database)));
+  const record = async (outcome: "finished" | "stopped") =>
+    recordAiRedoRun(database, { at: now(), items: await decidedItems(), outcome });
+  try {
+    const decided = new Set<string>();
+    let aiOn = true;
+    for (const name of REDO_STEPS) {
+      const work = steps.get(name);
+      if (work === undefined) continue;
+      step = name;
+      for (const id of await work({ decided: [...decided], ai: aiOn })) decided.add(id);
+      // A call of this step found AI away: the later steps make no call.
+      if (aiOn && (await readAiRedo(database)).awayAt !== null) aiOn = false;
+    }
+    await endAiRedo(database, state.dueAt);
+    if (!aiOn) {
+      log.info("AI went away during the redo of no-AI work", { firstRun, kind });
+      await record("stopped");
       return "AI away";
     }
-    if (await claimFirstAiRunDone(database, now())) log.info("The first AI run finished");
+    if (firstRun) {
+      step = "Insight cards";
+      // A Writer call that found AI away leaves the first AI run to AI's return, which runs it
+      // again.
+      const cards = await writeInsightCards({ database, ai, now });
+      if (cards !== "written" && (await readAiRedo(database)).awayAt !== null) {
+        log.info("The first AI run's Insight card run waits for AI");
+        await record("stopped");
+        return "AI away";
+      }
+      if (await claimFirstAiRunDone(database, now())) log.info("The first AI run finished");
+    }
+    log.info("The redo of no-AI work finished", { firstRun, kind, decidedAgain: decided.size });
+    await record("finished");
+    return "done";
+  } catch (error) {
+    await record("stopped");
+    throw error;
   }
-  log.info("The redo of no-AI work finished", { firstRun, decidedAgain: decided.size });
-  return "done";
 }
 
 // A Redo no-AI work job gets this many attempts. The last one that fails ends the redo, with one
@@ -148,32 +217,98 @@ export const REDO_STOPPED_TEXT =
   "Some work the app did without AI could not go through the AI. It tries again the next time AI comes back after a pause or an outage.";
 
 // The Redo no-AI work job's work. A redo that fails throws, and Sidequest runs it again, until it
-// has failed REDO_ATTEMPTS times in a row.
-export async function runRedoJob(): Promise<void> {
+// has failed REDO_ATTEMPTS times in a row. With `kind`, it is a Member's run, which ends its press
+// at its end: when it finishes, waits for AI, or stops after its last attempt.
+export async function runRedoJob(kind?: AiWorkKind): Promise<void> {
   const { database } = running();
   let outcome: RedoOutcome;
   try {
-    outcome = await runRedo();
+    outcome = await runRedo(kind);
   } catch (error) {
     const failures = await countAiRedoFailure(database);
     if (failures < REDO_ATTEMPTS) throw error;
     log.error("The redo of no-AI work stopped after its last attempt", {
       failures,
+      kind,
       errorName: error instanceof Error ? error.name : typeof error,
     });
+    if (kind !== undefined) pressed = undefined;
     await endAiRedo(database, (await readAiRedo(database)).dueAt);
     await raiseNotice({ kind: "condition", condition: REDO_STOPPED, text: REDO_STOPPED_TEXT });
     return;
   }
+  if (kind !== undefined) pressed = undefined;
   if (outcome === "done") await endCondition(REDO_STOPPED);
 }
 
-// The Redo no-AI work job (spec 10, Job list). Only AI's return starts it.
+const kindOf = (value: JobArgument | undefined): AiWorkKind | undefined =>
+  AI_WORK_KINDS.find((kind) => kind === value);
+
+// The Redo no-AI work job (spec 10, Job list). AI's return starts it with no argument, and a
+// Member's press with the run's kind.
 export class RedoNoAiWorkJob extends Job {
-  override async run(): Promise<void> {
-    await runRedoJob();
+  override async run(kind?: JobArgument): Promise<void> {
+    await runRedoJob(kindOf(kind));
   }
 }
+
+// Why AI work waits now, or undefined when it may run. It makes no call.
+async function waitsFor(ai: HouseholdAi): Promise<AiWorkWait | undefined> {
+  const pause = await ai.pauseFor("category fix");
+  // A Quick-tier use never asks "send anyway?": that pause is Chat's and reading a Goal's.
+  return pause === "send anyway?" ? "cost cap" : pause;
+}
+
+// The status line of the AI's work (spec 08, AI work on your Transactions). It makes no AI call.
+export async function aiWorkView(): Promise<AiWorkView> {
+  const { database, ai } = running();
+  const runningNow =
+    busy || pressed !== undefined
+      ? { kind: pressed ?? null, step: step ?? ("starting" as const) }
+      : null;
+  const waits = await waitsFor(ai);
+  const waiting = await countMarkedItems(database);
+  const state = await readAiRedo(database);
+  return {
+    running: runningNow,
+    waits: waits ?? null,
+    waiting,
+    lastRun:
+      state.lastRun === null ? null : { ...state.lastRun, at: state.lastRun.at.toISOString() },
+  };
+}
+
+// A press of "Finish AI work now" or "Run AI on all history": starts the run's job, or says why
+// not. A refused press makes no AI call and gives its place back.
+export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
+  const services = running();
+  // The place is taken here, before the first await (K18).
+  if (busy || pressed !== undefined) return { started: false, refusal: "running" };
+  pressed = kind;
+  let refusal: AiWorkRefusal | undefined;
+  try {
+    refusal = await waitsFor(services.ai);
+    if (refusal === undefined && kind === "finish") {
+      const { firstRunDoneAt } = await readAiRedo(services.database);
+      const firstRun =
+        firstRunDoneAt === null && (await readHistoryWait(services.database)).endedAt !== null;
+      if (!firstRun && (await countMarkedItems(services.database)) === 0) refusal = "nothing waits";
+    }
+    if (refusal === undefined) await services.startWork(kind);
+  } catch (error) {
+    pressed = undefined;
+    throw error;
+  }
+  if (refusal !== undefined) {
+    pressed = undefined;
+    return { started: false, refusal };
+  }
+  log.info("A Member started AI work", { kind });
+  return { started: true, work: await aiWorkView() };
+}
+
+// Settings, AI's routes for the AI's work.
+export const aiWork: AiWork = { view: aiWorkView, press: pressAiWork };
 
 // Starts a Redo no-AI work job, unless one already waits.
 export function requestRedo(): Promise<boolean> {
@@ -208,6 +343,7 @@ export function startRedo(options: {
   ai: HouseholdAi;
   now?: () => Date;
   startJob?: () => Promise<unknown>;
+  startWork?: (kind: AiWorkKind) => Promise<unknown>;
 }): { afterAiChange(): Promise<void>; stop(): void } {
   if (services !== undefined) throw new Error("The redo of no-AI work is already running.");
   const started: Services = {
@@ -215,6 +351,9 @@ export function startRedo(options: {
     ai: options.ai,
     now: options.now ?? (() => new Date()),
     startJob: options.startJob ?? requestRedo,
+    startWork:
+      options.startWork ??
+      ((kind) => startJob(RedoNoAiWorkJob, [kind], { maxAttempts: REDO_ATTEMPTS })),
   };
   services = started;
   const stopStep = registerFirstRunStep("ai first run", async () => {
@@ -232,7 +371,10 @@ export function startRedo(options: {
     },
     stop() {
       stopStep();
-      if (services === started) services = undefined;
+      if (services === started) {
+        services = undefined;
+        pressed = undefined;
+      }
     },
   };
 }

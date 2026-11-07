@@ -33,7 +33,12 @@ import {
 } from "../money-movement/index.ts";
 import { answerReviewItem, openReviewItems } from "../review/index.ts";
 import {
+  type AiWorkKind,
+  type AiWorkView,
+  aiWorkView,
   checkAiBack,
+  monthsBefore,
+  pressAiWork,
   REDO_ATTEMPTS,
   REDO_STOPPED,
   registerRedoStep,
@@ -110,6 +115,8 @@ describe("the first AI run and the redo of no-AI work", () => {
   let pausedUntil: string | undefined;
   // Redo no-AI work jobs started, and AI's returns after an outage.
   let started: number;
+  // The kinds of the Member's runs whose jobs started.
+  let works: AiWorkKind[];
   let backs: number;
   let pairAnswer: () => { answer: "yes" | "no"; confidence: Confidence };
   let loanAnswer: () => { answer: "yes" | "no"; confidence: Confidence };
@@ -166,6 +173,7 @@ describe("the first AI run and the redo of no-AI work", () => {
     historyLoaded = true;
     pausedUntil = undefined;
     started = 0;
+    works = [];
     backs = 0;
     pairAnswer = () => ({ answer: "yes", confidence: "high" });
     loanAnswer = () => ({ answer: "yes", confidence: "high" });
@@ -222,6 +230,9 @@ describe("the first AI run and the redo of no-AI work", () => {
       now: NOW,
       startJob: async () => {
         started += 1;
+      },
+      startWork: async (kind) => {
+        works.push(kind);
       },
     });
     stops = [
@@ -803,6 +814,259 @@ describe("the first AI run and the redo of no-AI work", () => {
         (await listOpenNotices(bank.database)).filter((each) => each.condition === REDO_STOPPED),
       ).toEqual([]);
       expect((await readAiRedo(bank.database)).failures).toBe(0);
+    });
+
+    // Settings, AI's two buttons (spec 08, AI work on your Transactions). A press starts the run's
+    // job: here `works` records it, and the test runs the job's work itself.
+    describe("AI work on your Transactions", () => {
+      const view = () => aiWorkView();
+      const fixCategory = (category: string) => {
+        const replyTo = stub.replyTo;
+        stub.replyTo = (messages) => {
+          const reply = replyTo?.(messages) ?? "O";
+          return useOf(textsOf(messages)) === "category fix"
+            ? reply.replaceAll('"Pets"', `"${category}"`)
+            : reply;
+        };
+      };
+
+      it("finishes the marked work at once, before AI comes back, and keeps a Member's answers out", async () => {
+        await atTheCap();
+        const marked = (await view()).waiting;
+        expect(marked).toBeGreaterThan(0);
+        // At the cap, the press is refused with its reason, makes no call, and starts no job.
+        expect(await pressAiWork("finish")).toEqual({ started: false, refusal: "cost cap" });
+        expect(await view()).toMatchObject({ running: null, waits: "cost cap", lastRun: null });
+
+        // A Member raises the cap. AI has not come back: no redo is due.
+        pausedUntil = undefined;
+        expect(await runRedo()).toBe("not due");
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        expect(works).toEqual(["finish"]);
+        expect((await view()).running).toEqual({ kind: "finish", step: "starting" });
+        // One run at a time: a second press is refused, and a redo that AI's return starts gives
+        // way to the Member's run.
+        expect(await pressAiWork("all history")).toEqual({ started: false, refusal: "running" });
+        expect(await runRedo()).toBe("busy");
+        expect(asked).toEqual([]);
+
+        const steps: AiWorkView["running"][] = [];
+        stub.beforeAnswer = async () => {
+          steps.push((await view()).running);
+        };
+        await runRedoJob("finish");
+
+        expect(steps).toContainEqual({ kind: "finish", step: "Money movement" });
+        expect(steps).toContainEqual({ kind: "finish", step: "Categories" });
+        expect(fixedRows().sort()).toEqual(["CARD PURCHASE GUESS-1", "CARD PURCHASE GUESS-2"]);
+        expect(asked.map((call) => call.use).sort()).toEqual(["category fix", "pairs", "picks"]);
+        expect(await partOf("hand")).toMatchObject({ category: "Groceries", source: "hand-set" });
+        const after = await view();
+        expect(after).toMatchObject({ running: null, waits: null, waiting: 0 });
+        expect(after.lastRun).toEqual({
+          at: NOW().toISOString(),
+          items: marked,
+          outcome: "finished",
+        });
+        expect(await itemsOf(BEST_GUESS_KIND)).toEqual([]);
+
+        // Nothing is left: the next press is refused and makes no call.
+        const calls = stub.calls.length;
+        expect(await pressAiWork("finish")).toEqual({ started: false, refusal: "nothing waits" });
+        expect(works).toEqual(["finish"]);
+        expect(stub.calls).toHaveLength(calls);
+      });
+
+      it("refuses a press while AI waits, with no call, and gives the place back", async () => {
+        const calls = stub.calls.length;
+        historyLoaded = false;
+        expect(await pressAiWork("all history")).toEqual({
+          started: false,
+          refusal: "waits for history",
+        });
+        historyLoaded = true;
+        pausedUntil = "2026-12-01";
+        expect(await pressAiWork("all history")).toEqual({ started: false, refusal: "cost cap" });
+        pausedUntil = undefined;
+        await aiSettings(options).remove();
+        expect(await pressAiWork("all history")).toEqual({
+          started: false,
+          refusal: "no AI provider",
+        });
+        expect((await view()).waits).toBe("no AI provider");
+        expect(works).toEqual([]);
+        expect(asked).toEqual([]);
+        expect(stub.calls).toHaveLength(calls);
+
+        await connectAi();
+        expect(await pressAiWork("all history")).toMatchObject({ started: true });
+        expect(works).toEqual(["all history"]);
+      });
+
+      it("starts one run for presses sent together", async () => {
+        const pressed = await Promise.all([
+          pressAiWork("all history"),
+          pressAiWork("finish"),
+          pressAiWork("all history"),
+        ]);
+
+        expect(pressed.filter((each) => each.started)).toHaveLength(1);
+        expect(pressed.filter((each) => !each.started)).toEqual([
+          { started: false, refusal: "running" },
+          { started: false, refusal: "running" },
+        ]);
+        expect(works).toEqual(["all history"]);
+        await runRedoJob("all history");
+        expect(await pressAiWork("all history")).toMatchObject({ started: true });
+        expect(works).toEqual(["all history", "all history"]);
+      });
+
+      it("asks the AI again about each Category it or a best guess chose in the last 18 months, and only those", async () => {
+        const cutoff = monthsBefore("2026-11-20", 18);
+        expect(cutoff).toBe("2025-05-20");
+        const shared = (id: string, postedDate: string) =>
+          txn(id, CARD, -1_800, postedDate, {
+            description: `SHARED SHOP ${id.toUpperCase()}`,
+            merchantName: "Shared Shop",
+          });
+        await sync([
+          buy("recent", "2026-10-10"),
+          buy("edge", cutoff),
+          buy("old", "2025-05-19"),
+          buy("gone", "2026-10-11"),
+          shared("ruled-1", "2026-10-12"),
+          shared("ruled-2", "2026-10-13"),
+        ]);
+        pausedUntil = "2026-12-01";
+        await sync([buy("guess", "2026-10-14")]);
+        pausedUntil = undefined;
+        // A Member's correction makes a Category rule, and the rule sets the other Transaction.
+        await correctCategory(
+          bank.database,
+          await idOf("ruled-1"),
+          "Groceries",
+          { onlyThisTransaction: false, memberId: MEMBER },
+          NOW(),
+        );
+        await runFollowUp(NOW);
+        expect(await partOf("ruled-2")).toMatchObject({
+          category: "Groceries",
+          source: "Category rule",
+        });
+        await bank.database.$client.execute({
+          sql: "UPDATE transactions SET hidden_reason = 'removed by provider' WHERE id = ?",
+          args: [await idOf("gone")],
+        });
+        for (const id of ["recent", "edge", "old", "gone"]) {
+          expect(await partOf(id)).toMatchObject({ category: "Pets", source: "AI", needsAi: 0 });
+        }
+        expect(await partOf("guess")).toMatchObject({ source: "best guess", needsAi: 1 });
+        asked = [];
+        fixCategory("Hobbies");
+
+        expect(await pressAiWork("all history")).toMatchObject({ started: true });
+        await runRedoJob("all history");
+
+        expect(fixedRows().sort()).toEqual([
+          "CARD PURCHASE EDGE",
+          "CARD PURCHASE GUESS",
+          "CARD PURCHASE RECENT",
+          "CARD PURCHASE UNSURE",
+        ]);
+        for (const id of ["recent", "edge", "guess", "unsure"]) {
+          expect(await partOf(id)).toEqual({ category: "Hobbies", source: "AI", needsAi: 0 });
+        }
+        // Older than 18 months, hidden, set by hand, or set by a Category rule: never marked.
+        expect(await partOf("old")).toEqual({ category: "Pets", source: "AI", needsAi: 0 });
+        expect(await partOf("gone")).toEqual({ category: "Pets", source: "AI", needsAi: 0 });
+        expect(await partOf("ruled-1")).toMatchObject({ category: "Groceries", needsAi: 0 });
+        expect(await partOf("ruled-2")).toMatchObject({ category: "Groceries", needsAi: 0 });
+        expect(await view()).toMatchObject({
+          waiting: 0,
+          lastRun: { items: 4, outcome: "finished" },
+        });
+        expect(callsOf("insight cards")).toEqual([]);
+      });
+
+      it("keeps the AI's Categories and their marks when AI goes away during the run, never a best guess", async () => {
+        // 101 Categories the AI chose: two batches, so the last one is decided after AI went away.
+        const bought = Array.from({ length: 101 }, (_, n) =>
+          buy(`b${String(n).padStart(3, "0")}`, "2026-08-01"),
+        );
+        await sync(bought);
+        // A name the rules cannot clean, from a sync at the cap.
+        pausedUntil = "2026-12-01";
+        await sync([
+          txn("odd", CARD, -900, "2026-07-01", { description: "QX ZRT LMN OPQ RST UVW" }),
+        ]);
+        pausedUntil = undefined;
+        expect(await listMarkedNameIds(bank.database)).toEqual([await idOf("odd")]);
+        asked = [];
+        fixCategory("Hobbies");
+        // The cap is reached during the run's first call, the name's cleanup.
+        stub.beforeAnswer = async () => {
+          pausedUntil = "2026-12-01";
+        };
+
+        expect(await pressAiWork("all history")).toMatchObject({ started: true });
+        await runRedoJob("all history");
+
+        expect(callsOf("merchant cleanup")).toHaveLength(1);
+        expect(callsOf("category fix")).toEqual([]);
+        for (const txn of [bought[0], bought[99], bought[100]]) {
+          expect(await partOf(txn?.id ?? "")).toEqual({
+            category: "Pets",
+            source: "AI",
+            needsAi: 1,
+          });
+        }
+        expect(
+          await count(
+            `SELECT count(*) AS n FROM transaction_parts
+             WHERE category_source = 'best guess' AND category_needs_ai = 1`,
+          ),
+        ).toBe(1);
+        expect(await itemsOf(BEST_GUESS_KIND)).toHaveLength(1);
+        expect((await view()).lastRun).toMatchObject({ items: 1, outcome: "stopped" });
+        expect(await pressAiWork("finish")).toEqual({ started: false, refusal: "cost cap" });
+
+        // AI's next return redoes them.
+        stub.beforeAnswer = async () => {};
+        pausedUntil = undefined;
+        expect(await checkAiBack()).toBe(true);
+        await runRedoJob();
+        expect(await partOf(bought[100]?.id ?? "")).toEqual({
+          category: "Hobbies",
+          source: "AI",
+          needsAi: 0,
+        });
+        expect(await view()).toMatchObject({ waiting: 0, lastRun: { outcome: "finished" } });
+      });
+
+      it("stops a Member's run after its last attempt with one System notice, and takes a new press", async () => {
+        stopCategorization();
+        let attempts = 0;
+        stopCategorization = registerRedoStep("Categories", async () => {
+          attempts += 1;
+          throw new Error("The step always fails.");
+        });
+        expect(await pressAiWork("all history")).toMatchObject({ started: true });
+
+        for (let attempt = 1; attempt < REDO_ATTEMPTS; attempt += 1) {
+          await expect(runRedoJob("all history")).rejects.toThrow("The step always fails.");
+          // Between attempts the run still holds its place.
+          expect(await pressAiWork("finish")).toEqual({ started: false, refusal: "running" });
+        }
+        await runRedoJob("all history");
+
+        expect(attempts).toBe(REDO_ATTEMPTS);
+        expect(
+          (await listOpenNotices(bank.database)).filter((each) => each.condition === REDO_STOPPED),
+        ).toHaveLength(1);
+        expect(await view()).toMatchObject({ running: null, lastRun: { outcome: "stopped" } });
+        expect(await pressAiWork("all history")).toMatchObject({ started: true });
+        expect(works).toEqual(["all history", "all history"]);
+      });
     });
   });
 
