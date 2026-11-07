@@ -6,6 +6,7 @@ import type { Category } from "../categories/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { setTransactionType, startMoneyMovement } from "../money-movement/index.ts";
 import { answerReviewItem, openReviewItems } from "../review/index.ts";
+import { categoryChoiceValue } from "./category-choice.ts";
 import {
   BEST_GUESS_KIND,
   categoryRules,
@@ -399,15 +400,21 @@ describe("Category rules", () => {
       });
 
       const a = await itemAbout("a");
-      expect(await answerReviewItem(bank.database, a?.id ?? "", "Hobbies", MEMBER)).toBe(
-        "answered",
-      );
+      // The values the Review list page's Category search box sends.
+      expect(
+        await answerReviewItem(
+          bank.database,
+          a?.id ?? "",
+          categoryChoiceValue("Hobbies", false),
+          MEMBER,
+        ),
+      ).toBe("answered");
       const c = await itemAbout("c");
       expect(
         await answerReviewItem(
           bank.database,
           c?.id ?? "",
-          "only this Transaction: Groceries",
+          categoryChoiceValue("Groceries", true),
           MEMBER,
         ),
       ).toBe("answered");

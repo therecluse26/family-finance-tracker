@@ -17,6 +17,7 @@ import { askForFollowUp, followUpAgain } from "../follow-up/index.ts";
 import { log } from "../log.ts";
 import { isPaymentApp, type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
 import { merchantOf } from "./cascade.ts";
+import { categoryChoiceValue, readCategoryChoice } from "./category-choice.ts";
 
 // Category rules (spec 04, Category rules, Re-runs). A Member's correction makes a rule for the
 // Transaction's Merchant, and the changed Transaction itself counts as hand-set. The rule covers
@@ -238,9 +239,6 @@ export async function deleteCategoryRule(database: Database, id: string): Promis
   return true;
 }
 
-// The Review list's "only this Transaction" choices: a Category that changes only that Transaction.
-const ONLY_THIS = "only this Transaction: ";
-
 // The choices behind "Not this" on a Category item (spec 04, Review list items): each Category,
 // which makes a rule, and, when the Transaction's Merchant may have one, each Category for only
 // this Transaction.
@@ -250,18 +248,11 @@ export function categoryChoices(merchant: Merchant | null): { value: string; lab
     ...names.map((name) => ({ value: name, label: name })),
     ...(makesRule(merchant)
       ? names.map((name) => ({
-          value: `${ONLY_THIS}${name}`,
+          value: categoryChoiceValue(name, true),
           label: `${name}, only this Transaction`,
         }))
       : []),
   ];
 }
 
-// A Category item's answer: the Category, and whether it is for only this Transaction.
-export function readCategoryChoice(
-  value: string,
-): { category: Category; onlyThisTransaction: boolean } | undefined {
-  const only = value.startsWith(ONLY_THIS);
-  const name = only ? value.slice(ONLY_THIS.length) : value;
-  return isCategory(name) ? { category: name, onlyThisTransaction: only } : undefined;
-}
+export { readCategoryChoice };
