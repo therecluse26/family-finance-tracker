@@ -91,6 +91,13 @@ export function TopMerchantList(props: { merchants: readonly TopMerchantView[] }
   );
 }
 
+// What the ranking counts, as src/server/top-merchants.ts counts it: Spending parts, less the
+// Refunds and Reimbursements that go back to the same Merchant. Transfers and Saving are never
+// read. A payment to a lender that the app counts as Spending, such as an untracked Purchase loan
+// payment (spec 03, Untracked loans), stays in, so the line does not say lenders are left out.
+export const TOP_MERCHANTS_RULE =
+  "Spending only, net of Refunds and Reimbursements. Transfers and Saving are left out.";
+
 export const topMerchantRequests = {
   view: (period: TopMerchantPeriod) => {
     const query = { period };
@@ -129,6 +136,9 @@ export function TopMerchants() {
       <PageHeading title="Top Merchants">
         <PeriodSwitch period={period} onChange={setPeriod} />
       </PageHeading>
+      <p className="text-muted" data-slot="top-merchants-rule">
+        {TOP_MERCHANTS_RULE}
+      </p>
       <ErrorLine error={error} />
       {merchants === undefined ? null : <TopMerchantList merchants={merchants} />}
     </Page>

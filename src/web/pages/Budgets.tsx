@@ -7,6 +7,7 @@ import { browserZone } from "../browser-zone.ts";
 import {
   acceptAll,
   type BudgetRow,
+  type BudgetRows,
   type BudgetStatusShown,
   budgetRequests,
   budgetRows,
@@ -61,11 +62,15 @@ export function budgetStatus(budget: MonthBudgetView): BudgetStatusShown {
   return STATUS_SHOWN[budget.status];
 }
 
-// The Budget's box, always open: Enter or "Save" sends it. A yearly Budget is per year.
+// The Budget's box, always open: Enter or "Save" sends it. A yearly Budget is per year. As on the
+// board, the boxes stand alone at rest: "Save" shows once the box holds a new amount (or while it
+// saves, or after a refusal), and keeps its place while hidden so nothing moves as it appears.
 function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: BudgetActions }) {
   const { budget, state, actions } = props;
   const typed = state.typed ?? typedBudget(budget.amount);
   const id = fieldId(budget.category);
+  const showSave =
+    typed !== typedBudget(budget.amount) || state.busy === true || state.error !== undefined;
   return (
     <form
       className="flex items-center gap-2 sm:justify-end"
@@ -92,6 +97,8 @@ function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: 
         variant="outlined"
         size="small"
         disabled={state.busy === true}
+        className={showSave ? undefined : "invisible"}
+        data-slot="budget-save"
         onClick={() => actions.save(budget, typed)}
       >
         Save
@@ -285,6 +292,89 @@ function GroupHeading(props: { title: string; group: BudgetsView["groups"][numbe
   );
 }
 
+// A Category group with no Budget, folded to one line: its name and its Spending, "no Budget".
+// Its name is a button that opens its rows in place; the rows have no Budget box to edit. As on
+// the board, folded groups that follow each other share one box. The page holds which are open.
+function FoldedGroup(props: {
+  title: string;
+  rows: BudgetRow[];
+  monthGone: number | undefined;
+  states: Readonly<Record<string, RowState>>;
+  actions: BudgetActions;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { open } = props;
+  const id = `${fieldId(props.title)}-group`;
+  const spending = props.rows.reduce((sum, row) => sum + row.spending, 0);
+  return (
+    <section
+      aria-labelledby={id}
+      className="border-t border-line-soft first:border-t-0"
+      data-slot="folded-group"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 py-1.5">
+        <h2 className="min-w-0 flex-1 text-heading font-bold" id={id}>
+          <button
+            type="button"
+            aria-controls={`${id}-rows`}
+            aria-expanded={open}
+            className="flex w-full items-center gap-2 rounded-control py-1.5 text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            onClick={props.onToggle}
+          >
+            <svg
+              aria-hidden="true"
+              className={`size-3.5 shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`}
+              viewBox="0 0 16 16"
+            >
+              <path
+                d="M6 3l5 5-5 5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+              />
+            </svg>
+            {props.title}
+          </button>
+        </h2>
+        <span className="text-small text-muted tabular-nums" data-slot="folded-total">
+          {wholeDollars(spending)} spent, no Budget
+        </span>
+      </div>
+      <ul hidden={!open} id={`${id}-rows`}>
+        {props.rows.map((row) => (
+          <BudgetRowItem
+            key={row.category}
+            row={row}
+            state={props.states[row.category] ?? {}}
+            actions={props.actions}
+            {...(props.monthGone === undefined ? {} : { monthGone: props.monthGone })}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// The Category groups in list order, with each run of groups that have no Budget at all folded
+// into one box.
+type GroupPart =
+  | { kind: "open"; group: BudgetRows["groups"][number] }
+  | { kind: "folded"; groups: BudgetRows["groups"] };
+
+function groupParts(groups: BudgetRows["groups"]): GroupPart[] {
+  const parts: GroupPart[] = [];
+  for (const group of groups) {
+    const last = parts.at(-1);
+    if (group.rows.some((row) => row.budget !== undefined)) parts.push({ kind: "open", group });
+    else if (last?.kind === "folded") last.groups.push(group);
+    else parts.push({ kind: "folded", groups: [group] });
+  }
+  return parts;
+}
+
 export function BudgetsReport(props: {
   view: BudgetsView;
   states: Readonly<Record<string, RowState>>;
@@ -292,6 +382,9 @@ export function BudgetsReport(props: {
   actions: BudgetActions;
   // The share of the month gone, for the "today" ticks. None draws no tick.
   monthGone?: number;
+  // The folded Category groups a Member opened, and the switch for each.
+  openGroups?: readonly string[];
+  toggleGroup?: (categoryGroup: string) => void;
 }) {
   const { view, states, actions } = props;
   if (!view.drafted) {
@@ -329,26 +422,51 @@ export function BudgetsReport(props: {
           )}
         </section>
       )}
-      {groups.map((group) => (
-        <Card
-          key={group.categoryGroup}
-          padding="list"
-          aria-labelledby={`${fieldId(group.categoryGroup)}-group`}
-        >
-          <GroupHeading title={group.categoryGroup} group={groupOf(group.categoryGroup)} />
-          <ul>
-            {group.rows.map((row) => (
-              <BudgetRowItem
-                key={row.category}
-                row={row}
-                state={stateOf(row.category)}
-                actions={actions}
-                {...(props.monthGone === undefined ? {} : { monthGone: props.monthGone })}
-              />
-            ))}
-          </ul>
-        </Card>
-      ))}
+      {groupParts(groups).map((part) => {
+        if (part.kind === "folded") {
+          return (
+            <Card
+              as="div"
+              key={part.groups.map((group) => group.categoryGroup).join("+")}
+              padding="list"
+            >
+              {part.groups.map((group) => (
+                <FoldedGroup
+                  key={group.categoryGroup}
+                  title={group.categoryGroup}
+                  rows={group.rows}
+                  monthGone={props.monthGone}
+                  states={states}
+                  actions={actions}
+                  open={props.openGroups?.includes(group.categoryGroup) === true}
+                  onToggle={() => props.toggleGroup?.(group.categoryGroup)}
+                />
+              ))}
+            </Card>
+          );
+        }
+        const { group } = part;
+        return (
+          <Card
+            key={group.categoryGroup}
+            padding="list"
+            aria-labelledby={`${fieldId(group.categoryGroup)}-group`}
+          >
+            <GroupHeading title={group.categoryGroup} group={groupOf(group.categoryGroup)} />
+            <ul>
+              {group.rows.map((row) => (
+                <BudgetRowItem
+                  key={row.category}
+                  row={row}
+                  state={stateOf(row.category)}
+                  actions={actions}
+                  {...(props.monthGone === undefined ? {} : { monthGone: props.monthGone })}
+                />
+              ))}
+            </ul>
+          </Card>
+        );
+      })}
       {yearly.length === 0 ? null : (
         <Card padding="list" aria-labelledby={`${fieldId("Yearly Budgets")}-group`}>
           <GroupHeading title="Yearly Budgets" group={undefined} />
@@ -387,6 +505,7 @@ export function Budgets() {
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [accept, setAccept] = useState<RowState>({});
   const [error, setError] = useState<string | undefined>();
+  const [openGroups, setOpenGroups] = useState<readonly string[]>([]);
   // Counts the page's reads, so the accepted Proposals read again with it.
   const [reads, setReads] = useState(0);
 
@@ -463,6 +582,12 @@ export function Budgets() {
           states={states}
           accept={accept}
           actions={actions}
+          openGroups={openGroups}
+          toggleGroup={(name) =>
+            setOpenGroups((all) =>
+              all.includes(name) ? all.filter((each) => each !== name) : [...all, name],
+            )
+          }
           {...(monthGone === undefined ? {} : { monthGone })}
         />
       )}

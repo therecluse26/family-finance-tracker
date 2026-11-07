@@ -25,7 +25,12 @@ import {
   formOf,
   TransactionDetailBody,
 } from "./TransactionDetail.tsx";
-import { accountLabels, TransactionFilterForm, TransactionRows } from "./Transactions.tsx";
+import {
+  accountLabels,
+  datesLine,
+  TransactionFilterForm,
+  TransactionRows,
+} from "./Transactions.tsx";
 
 // The Transactions page and its detail view (spec 07, Transactions page): the filters and each
 // edit, against the API.
@@ -188,7 +193,14 @@ describe("the Transactions page", () => {
     const onShow = vi.fn();
     const onClear = vi.fn();
     const draft = { merchant: "Corner Bistro" };
-    const form = TransactionFilterForm({ draft, accounts: ACCOUNTS, onDraft, onShow, onClear });
+    const form = TransactionFilterForm({
+      draft,
+      accounts: ACCOUNTS,
+      onDraft,
+      onShow,
+      onClear,
+      today: TODAY,
+    });
     const { buttons, fields } = controlsOf(form);
 
     expect([...fields.keys()]).toEqual([
@@ -221,6 +233,40 @@ describe("the Transactions page", () => {
     const html = inRouter(form);
     expect(html).toContain('value="Corner Bistro"');
     expect(text(html)).toContain("Everyday Checking ··1234");
+  });
+
+  it("puts the filters in one row from 640 px, with the dates folded into one Dates control", () => {
+    const form = (draft: Parameters<typeof TransactionFilterForm>[0]["draft"]) =>
+      inRouter(
+        TransactionFilterForm({
+          draft,
+          accounts: ACCOUNTS,
+          onDraft: vi.fn(),
+          onShow: vi.fn(),
+          onClear: vi.fn(),
+          today: TODAY,
+        }),
+      );
+    const html = form({ month: "2026-10" });
+    // Two to a line on a phone; one wrapping row from 640 px, as on the board.
+    expect(html).toMatch(/<form class="grid grid-cols-2 [^"]*sm:flex sm:flex-wrap sm:items-end"/);
+    // The From, To and Month fields sit inside the folded control, which names what is set.
+    const dates = html.slice(html.indexOf('data-slot="dates">') + 'data-slot="dates">'.length);
+    expect(dates).toMatch(/<details[^>]*><summary/);
+    for (const name of ["from", "to", "month"]) expect(dates).toContain(`name="${name}"`);
+    expect(text(dates)).toBe("Dates Dates: Oct 2026 From To Month Show Clear the filters");
+    expect(text(form({}))).toContain("Dates: Any dates");
+  });
+
+  it("names the dates the Dates control holds", () => {
+    expect(datesLine({}, TODAY)).toBe("Any dates");
+    expect(datesLine({ month: "2026-10" }, TODAY)).toBe("Oct 2026");
+    expect(datesLine({ from: "2026-10-01", to: "2026-10-31" }, TODAY)).toBe("Oct 1 – Oct 31");
+    expect(datesLine({ from: "2025-12-20" }, TODAY)).toBe("Dec 20, 2025 – …");
+    expect(datesLine({ to: "2026-10-31" }, TODAY)).toBe("… – Oct 31");
+    expect(datesLine({ month: "2026-09", from: "2026-09-05" }, TODAY)).toBe("Sep 2026, Sep 5 – …");
+    // A value the browser has not finished shows as typed.
+    expect(datesLine({ month: "2026-1" }, TODAY)).toBe("2026-1");
   });
 
   it("asks the API for one page with the filters, then the next page", async () => {
