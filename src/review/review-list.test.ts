@@ -186,6 +186,8 @@ describe("the Review list", () => {
             description: "FAKE t1",
             merchantName: null,
             accountName: "Everyday Checking",
+            // Matching has not decided it, so it has no parts and no Category yet.
+            categories: [],
           },
         ],
         loanName: null,

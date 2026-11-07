@@ -37,7 +37,14 @@ import {
 import { daysBefore } from "./Account.tsx";
 import { browserZone } from "./Accounts.tsx";
 import { centsOf } from "./settings/UnconnectedAccounts.tsx";
-import { accountLabels, merchantOf, readPage, rowLine } from "./Transactions.tsx";
+import {
+  accountLabels,
+  ChosenByAiMark,
+  chosenUnsure,
+  merchantOf,
+  readPage,
+  rowLine,
+} from "./Transactions.tsx";
 
 // One Transaction's detail view (spec 07, Transactions page): its parts, how each Category was
 // chosen (spec 04, Provenance), and the evidence for each link with Undo (spec 03, Evidence). Every
@@ -293,7 +300,9 @@ function linkTitle(link: OtherLinkView, moneyIn: boolean, accounts: ReadonlyMap<
   return moneyIn ? `${link.kind} for:` : `Reduced by this ${link.kind}:`;
 }
 
-function CategoryOptions() {
+// The Category list for a <select>, by group, after "Pick a Category". The Review list's rows use
+// it too.
+export function CategoryOptions() {
   return (
     <>
       <option value="">Pick a Category</option>
@@ -322,6 +331,12 @@ function PartLine(props: { part: ShownPartView }) {
       {chosenBy === undefined ? null : (
         <span className="text-muted"> · Category chosen by: {chosenBy}</span>
       )}
+      {chosenUnsure([part]) ? (
+        <>
+          {" "}
+          <ChosenByAiMark unsure />
+        </>
+      ) : null}
       {part.amount === 0 && !part.linked ? (
         <span className="text-muted">
           {" "}

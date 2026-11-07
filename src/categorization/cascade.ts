@@ -1,6 +1,11 @@
 import { mapPlaidCategory, plaidConfidence } from "../bank/index.ts";
 import { type Category, isCategory } from "../categories/index.ts";
-import type { CategoryConfidence, CategorySource, MerchantHistoryRow } from "../db/index.ts";
+import type {
+  CategoryConfidence,
+  CategoryRecord,
+  CategorySource,
+  MerchantHistoryRow,
+} from "../db/index.ts";
 import { type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
 
 // The categorization cascade (spec 04, The categorization cascade). Each Spending Transaction
@@ -212,6 +217,14 @@ export function provenance(choice: Pick<Choice, "source" | "confidence">): strin
     default:
       return choice.source;
   }
+}
+
+// The parts the cascade covers: Spending, and a Refund with no link, which goes through the cascade
+// as if it were Spending. A linked Refund takes its Spending's Category from the link, and so does
+// a Reimbursement, so the cascade leaves them alone.
+export function coveredByCascade(part: CategoryRecord["parts"][number]): boolean {
+  if (part.type === "Spending") return true;
+  return part.type === "Refund" && !part.linked;
 }
 
 // The Transaction's Merchant: the provider's Merchant ID with its clean name. A Transaction with

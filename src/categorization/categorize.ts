@@ -1,5 +1,5 @@
 import { type HouseholdAi, QUICK_BATCH_SIZE } from "../ai/index.ts";
-import { type Category, isCategory } from "../categories/index.ts";
+import { isCategory } from "../categories/index.ts";
 import {
   type CategoryConfidence,
   type CategoryRecord,
@@ -11,24 +11,19 @@ import {
   type PartCategory,
   readCategoryFixFacts,
   readCategoryRecords,
+  setHandSetCategory,
   storePartCategories,
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
 import { registerDecidedAgain } from "../money-movement/index.ts";
 import { registerRedoStep } from "../redo/index.ts";
-import {
-  openReviewItemBatch,
-  openReviewItemsOfKind,
-  type ReviewItem,
-  type ReviewKind,
-  registerReviewKind,
-  settleReviewItems,
-} from "../review/index.ts";
+import { type ReviewItem, type ReviewKind, registerReviewKind } from "../review/index.ts";
 import {
   bestGuess,
   type CascadeInput,
   type Choice,
+  coveredByCascade,
   fromProviderOrHistory,
   handSetOrRule,
   MerchantHistory,
@@ -42,6 +37,12 @@ import {
   fixCategories,
   type QuickAnswer,
 } from "./quick-tier.ts";
+import {
+  AI_UNSURE_KIND,
+  BEST_GUESS_KIND,
+  stillOnCard,
+  updateCategoryCards,
+} from "./review-cards.ts";
 import {
   applyCorrection,
   categoryChoices,
@@ -64,10 +65,7 @@ import {
 // AI provider, it first cleans the Merchant names the fixed rules could not fix, so the cascade
 // reads the clean names, and asks the AI at step 5 in batches of up to 100 Transactions.
 
-// The Review list kinds (spec 04, Review list items): a best guess made without AI, and a Category
-// the AI chose with confidence below high.
-export const BEST_GUESS_KIND = "best guess made without AI";
-export const AI_UNSURE_KIND = "Category the AI was unsure of";
+export { AI_UNSURE_KIND, BEST_GUESS_KIND };
 
 const BATCH = 500;
 
@@ -84,25 +82,12 @@ export type AiStep = HouseholdAi | "follow-up job" | undefined;
 // for the follow-up job.
 export type CategoryRun = { left: string[]; again: Date | undefined };
 
-// What the Review list holds for a Transaction: its best guess made without AI, and the Category
-// the AI was unsure of. `unsure` is undefined when the AI chose a part's Category in an earlier
-// run, so this run does not know how sure it was.
-type ReviewState = { guess: Category | null; unsure: Category | null | undefined };
-
 // A part's Category, the step that chose it, and that step's confidence when this run chose it.
 type Chosen = {
   category: string | null;
   source: CategorySource | null;
   confidence?: CategoryConfidence;
 };
-
-// The parts the cascade covers: Spending, and a Refund with no link, which goes through the cascade
-// as if it were Spending. A linked Refund takes its Spending's Category from the link, and so does
-// a Reimbursement, so the cascade leaves them alone.
-function coveredByCascade(part: RecordPart): boolean {
-  if (part.type === "Spending") return true;
-  return part.type === "Refund" && !part.linked;
-}
 
 // Steps 3 to 6 for one Transaction: a Category, "ai" when step 5 asks the AI, or "waits" when step
 // 4 needs an earlier Transaction's AI answer first.
@@ -128,23 +113,6 @@ async function choosePart(
   if (named !== undefined)
     return { category: named, source: "money movement", confidence: "certain" };
   return rest();
-}
-
-function reviewState(record: CategoryRecord, chosen: ReadonlyMap<number, Chosen>): ReviewState {
-  const covered = record.parts.flatMap((part) => {
-    const choice = coveredByCascade(part) ? chosen.get(part.part) : undefined;
-    return choice === undefined ? [] : [choice];
-  });
-  const asCategory = (choice: Chosen | undefined) =>
-    choice?.category != null && isCategory(choice.category) ? choice.category : null;
-  const guess = asCategory(covered.find((choice) => choice.source === "best guess"));
-  // A Web lookup's answer counts as the AI's: below high, the AI was unsure.
-  const ai = covered.filter((choice) => choice.source === "AI" || choice.source === "Web lookup");
-  const unsure = ai.find(
-    (choice) => choice.confidence !== undefined && choice.confidence !== "high",
-  );
-  if (unsure !== undefined) return { guess, unsure: asCategory(unsure) };
-  return { guess, unsure: ai.some((choice) => choice.confidence === undefined) ? undefined : null };
 }
 
 // One Transaction waiting for the AI's answer, with the parts that answer decides.
@@ -173,14 +141,14 @@ type Waiting = {
 // - A part the AI decides past steps 3 and 4 keeps its Category and its mark when the AI gives no
 //   answer, for AI's next return: a best guess never takes the place of a Category the AI or
 //   another step chose.
-// Returns what the Review list holds for each Transaction the run decided, the Transactions it
-// left, and how many Transactions' Categories the AI answered.
+// Returns the Transactions the run decided, the Transactions it left, and how many Transactions'
+// Categories the AI answered.
 export async function chooseCategories(
   database: Database,
   ids: readonly string[],
   ai: AiStep = undefined,
   options: { redo?: boolean; allHistory?: boolean } = {},
-): Promise<CategoryRun & { reviews: Map<string, ReviewState>; answered: number }> {
+): Promise<CategoryRun & { decided: string[]; answered: number }> {
   const unchosen = (part: RecordPart) =>
     part.categorySource === null ||
     (options.redo === true && (part.categorySource === "best guess" || part.categoryNeedsAi));
@@ -210,7 +178,7 @@ export async function chooseCategories(
     else history.set(entry);
   };
 
-  const reviews = new Map<string, ReviewState>();
+  const decided: string[] = [];
   const left: string[] = [];
   let again: Date | undefined;
   let stopped = false;
@@ -393,7 +361,7 @@ export async function chooseCategories(
       }
       if (tookAnswer) answered += 1;
       joinHistory(record, txn, chosen);
-      reviews.set(record.id, reviewState(record, chosen));
+      decided.push(record.id);
     }
   }
 
@@ -401,7 +369,7 @@ export async function chooseCategories(
   // is left for the follow-up job.
   async function decide(record: CategoryRecord): Promise<"done" | "later"> {
     if (record.hidden) {
-      reviews.set(record.id, { guess: null, unsure: null });
+      decided.push(record.id);
       return "done";
     }
     const txn: CascadeInput = { ...record, merchant: merchantOf(record) };
@@ -450,7 +418,7 @@ export async function chooseCategories(
     for (const [part, choice] of picked) choose(record, part, choice, chosen);
     joinHistory(record, txn, chosen, asking);
     if (asking.length === 0) {
-      reviews.set(record.id, reviewState(record, chosen));
+      decided.push(record.id);
       return "done";
     }
     waiting.push({ record, txn, parts: asking, chosen, historyWaits, direct: straight });
@@ -480,7 +448,7 @@ export async function chooseCategories(
   }
   // Merchants past the run's cap of lookups wait for the redo, which this makes due.
   if (lookups?.waitsPastCap === true && typeof ai === "object") await ai.lookupsWait();
-  return { reviews, left, again, answered };
+  return { decided, left, again, answered };
 }
 
 // Whether each line may be looked up: the Web lookup is on, the skip rules pass it, and the privacy
@@ -526,60 +494,6 @@ async function lookUp(
   }
 }
 
-const transactionIdsOf = (item: ReviewItem) =>
-  item.subject.type === "transactions" ? item.subject.transactionIds : [];
-
-// Keeps the Review list in step: a best guess made without AI has one open item, and so does a
-// Category the AI chose below high. A Transaction whose Category is no longer one has none, such
-// as when a later AI answer is high. Reads each kind's open items once, and writes each kind in one
-// batch, so a large re-run reads the open items once.
-async function updateReviewList(
-  database: Database,
-  reviews: ReadonlyMap<string, ReviewState>,
-): Promise<void> {
-  if (reviews.size === 0) return;
-  const kinds = [
-    {
-      kind: BEST_GUESS_KIND,
-      of: (state: ReviewState) => state.guess,
-      decided: (category: string) => `No AI was available, so the app guessed ${category}.`,
-      logged: "Best guesses made without AI went on the Review list",
-    },
-    {
-      kind: AI_UNSURE_KIND,
-      of: (state: ReviewState) => state.unsure,
-      decided: (category: string) => `The AI chose ${category}, but it was unsure.`,
-      logged: "Categories the AI was unsure of went on the Review list",
-    },
-  ];
-  for (const { kind, of, decided, logged } of kinds) {
-    const open = new Set((await openReviewItemsOfKind(database, kind)).flatMap(transactionIdsOf));
-    const settled: string[] = [];
-    const opening: { id: string; category: string }[] = [];
-    for (const [id, state] of reviews) {
-      const category = of(state);
-      if (category === undefined) continue;
-      if (category !== null && !open.has(id)) opening.push({ id, category });
-      else if (category === null && open.has(id)) settled.push(id);
-    }
-    await settleReviewItems(
-      database,
-      { kind, subjectIds: settled },
-      "its Category was chosen again",
-    );
-    await openReviewItemBatch(
-      database,
-      opening.map(({ id, category }) => ({
-        kind,
-        subject: { type: "transactions", transactionIds: [id] },
-        decided: decided(category),
-        bestAnswer: { value: category, label: `Yes, ${category}` },
-      })),
-    );
-    if (opening.length > 0) log.info(logged, { opened: opening.length });
-  }
-}
-
 // Runs the cascade, then keeps the Review list in step. Returns the Transactions it left.
 export async function categorize(
   database: Database,
@@ -587,8 +501,8 @@ export async function categorize(
   ai: AiStep = undefined,
   options: { redo?: boolean; allHistory?: boolean } = {},
 ): Promise<CategoryRun & { answered: number }> {
-  const { reviews, left, again, answered } = await chooseCategories(database, ids, ai, options);
-  await updateReviewList(database, reviews);
+  const { decided, left, again, answered } = await chooseCategories(database, ids, ai, options);
+  await updateCategoryCards(database, decided);
   return { left, again, answered };
 }
 
@@ -610,16 +524,24 @@ async function categorizeWithAi(
   return { left: [...run.left, ...waiting], again };
 }
 
-// Each answer counts as hand-set: the Category becomes the Transaction's hand-set Category.
-// Accepting the guess makes a Category rule with it (spec 04, Review list items). Picking another
-// Category is a correction, and makes a rule unless the Member picks "only this Transaction". The
-// follow-up job then runs the cascade again, so Categorization never runs beside a sync.
+const transactionIdsOf = (item: ReviewItem) =>
+  item.subject.type === "transactions" ? item.subject.transactionIds : [];
+
+// Each answer counts as hand-set: the Category becomes the hand-set Category of every Transaction
+// still on the card. Accepting the guess makes one Category rule with it for the card's Merchant (spec
+// 04, Review list items). Picking another Category is a correction, and makes a rule unless the
+// Member picks "only this Transaction", which a card of one Transaction offers. The follow-up job
+// then runs the cascade again, so Categorization never runs beside a sync.
 function categoryReviewKind(database: Database): ReviewKind {
   return {
-    // "Not this" offers the Category list, and the same list for only this Transaction.
+    // "Not this" offers the Category list, and, on a card of one Transaction, the same list for
+    // only this Transaction. A card's rows set one Transaction alone instead.
     async otherChoices(item) {
-      const [record] = await readCategoryRecords(database, transactionIdsOf(item));
-      return categoryChoices(record === undefined ? null : merchantOf(record));
+      const ids = transactionIdsOf(item);
+      const [record] = await readCategoryRecords(database, ids.slice(0, 1));
+      const choices = categoryChoices(record === undefined ? null : merchantOf(record));
+      if (ids.length === 1) return choices;
+      return choices.filter((each) => readCategoryChoice(each.value)?.onlyThisTransaction !== true);
     },
     async answer(item, choice, answering) {
       const answer = readCategoryChoice(choice.value);
@@ -627,14 +549,28 @@ function categoryReviewKind(database: Database): ReviewKind {
         throw new Error("A Category item is about a Transaction, and its answer is a Category.");
       }
       const at = new Date();
-      for (const record of await readCategoryRecords(answering.database, transactionIdsOf(item))) {
-        await applyCorrection(
-          answering.database,
-          { id: record.id, merchant: merchantOf(record), takesCategory: takesCategory(record) },
-          answer.category,
-          { onlyThisTransaction: answer.onlyThisTransaction, memberId: answering.memberId, at },
-        );
+      // Only the Transactions still on the card, read inside the answer's transaction: one a
+      // Member changed on its row, or one that left since the card's last update, keeps what it
+      // has, in either order.
+      const records = await readCategoryRecords(answering.database, transactionIdsOf(item));
+      const onCard = stillOnCard(item.kind, records);
+      // One rule for the card's Merchant, made with a Transaction that has the provider's Merchant
+      // ID when one does. The others are hand-set only, in one statement for each 500. Each is
+      // Spending or a Refund the cascade covers, so its type stays.
+      const maker = onCard.find((record) => record.merchantId !== null) ?? onCard[0];
+      if (maker === undefined) {
+        log.info("A Category card's answer found none of its Transactions still on it");
+        return;
       }
+      const others = onCard.filter((record) => record !== maker).map((record) => record.id);
+      await setHandSetCategory(answering.database, others, answer.category);
+      await followUpAgain(answering.database, others);
+      await applyCorrection(
+        answering.database,
+        { id: maker.id, merchant: merchantOf(maker), takesCategory: takesCategory(maker) },
+        answer.category,
+        { onlyThisTransaction: answer.onlyThisTransaction, memberId: answering.memberId, at },
+      );
     },
     afterAnswer: () => askForFollowUp(),
   };

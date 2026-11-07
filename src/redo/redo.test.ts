@@ -1319,13 +1319,13 @@ describe("the first AI run and the redo of no-AI work", () => {
         expect(await partOf("guess")).toMatchObject({ source: "best guess", needsAi: 1 });
         expect(await partOf("cafe-5")).toMatchObject({ source: "best guess", needsAi: 1 });
         asked = [];
-        // The AI answers below high: as at step 5, each answer goes on the Review list.
+        // The AI answers low: as at step 5, each answer goes on the Review list.
         fixCategory("Hobbies");
         const replyTo = stub.replyTo;
         stub.replyTo = (messages) => {
           const reply = replyTo?.(messages) ?? "O";
           return useOf(textsOf(messages)) === "category fix"
-            ? reply.replaceAll('"high"', '"medium"')
+            ? reply.replaceAll('"high"', '"low"')
             : reply;
         };
 

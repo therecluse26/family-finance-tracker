@@ -745,6 +745,23 @@ export async function setHandSetFields(
     .where(eq(transactions.id, transactionId));
 }
 
+// Gives several Transactions one hand-set Category and ends any split by hand, in one statement for
+// each 500, as setHandSetFields does for one.
+export async function setHandSetCategory(
+  database: Queries,
+  transactionIds: readonly string[],
+  category: string,
+): Promise<void> {
+  for (let start = 0; start < transactionIds.length; start += 500) {
+    await database
+      .update(transactions)
+      .set({
+        handSet: sql`json_set(json_remove(${transactions.handSet}, '$.split'), '$.category', ${category})`,
+      })
+      .where(inArray(transactions.id, transactionIds.slice(start, start + 500)));
+  }
+}
+
 // A Member closes any Account by hand. An Account already Closed keeps its date. One Closed because
 // its provider stopped returning it becomes closed by the Member, so it opens again only when a
 // Member reopens it, not when the provider returns it. Any other reason stays. Returns false when

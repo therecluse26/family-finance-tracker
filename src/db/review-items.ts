@@ -201,3 +201,52 @@ export async function reviseOpenReviewItems(
     }
   });
 }
+
+export type ReviewItemRegroup = {
+  // Open items to close with no answer, each with the event that settled it.
+  close: readonly { id: string; reason: string }[];
+  // Open items that keep their ID and take these Transactions, words and best answer.
+  revise: readonly {
+    id: string;
+    subjectIds: string[];
+    decided: string;
+    bestAnswer: Choice;
+  }[];
+  open: readonly NewReviewItem[];
+};
+
+// Closes, revises and opens items in one write transaction, such as when Categorization groups a
+// Merchant's items into one card. An item already closed stays as it was. Returns the new items'
+// IDs in order.
+export async function regroupOpenReviewItems(
+  database: Database,
+  regroup: ReviewItemRegroup,
+  at: Date,
+): Promise<string[]> {
+  const { close, revise, open } = regroup;
+  if (close.length === 0 && revise.length === 0 && open.length === 0) return [];
+  return database.transaction(async (tx) => {
+    const reasons = new Map<string, string[]>();
+    for (const { id, reason } of close) reasons.set(reason, [...(reasons.get(reason) ?? []), id]);
+    for (const [reason, ids] of reasons) {
+      for (let start = 0; start < ids.length; start += 500) {
+        await tx
+          .update(reviewItems)
+          .set({ closedAt: at, closedReason: reason, answer: null, answeredBy: null })
+          .where(
+            and(
+              inArray(reviewItems.id, ids.slice(start, start + 500)),
+              isNull(reviewItems.closedAt),
+            ),
+          );
+      }
+    }
+    for (const { id, subjectIds, decided, bestAnswer } of revise) {
+      await tx
+        .update(reviewItems)
+        .set({ subjectIds, decided, bestAnswer })
+        .where(and(eq(reviewItems.id, id), isNull(reviewItems.closedAt)));
+    }
+    return addReviewItems(tx, open, at);
+  });
+}

@@ -24,7 +24,7 @@ import { followUpAgain, runFollowUp } from "../follow-up/index.ts";
 import { K7_LINES } from "../large-history/index.ts";
 import { merchantKey } from "../merchants/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
-import { openReviewItems } from "../review/index.ts";
+import { openReviewItems, type ReviewItem } from "../review/index.ts";
 import {
   AI_UNSURE_KIND,
   BEST_GUESS_KIND,
@@ -162,6 +162,8 @@ describe("the Quick tier in the categorization step", () => {
   };
   const itemsOf = async (kind: string) =>
     (await openReviewItems(bank.database)).filter((item) => item.kind === kind);
+  const transactionIdsOf = (item: ReviewItem) =>
+    item.subject.type === "transactions" ? item.subject.transactionIds : [];
   const sync = async (...pages: Parameters<TestBank["fake"]["addPages"]>[1][]) => {
     bank.fake.addPages(BANK, ...pages);
     await syncConnection(connectionId, NOW);
@@ -248,7 +250,7 @@ describe("the Quick tier in the categorization step", () => {
       answerName = (row) => String(row.description).replace(" AUSTIN TX", "");
       answerCategory = (row) => ({
         category: Number(String(row.date).slice(-2)) % 2 === 0 ? "Restaurants" : "Pets",
-        confidence: "medium",
+        confidence: "low",
       });
       const added = Array.from({ length: 2_500 }, (_, index) =>
         buy(`big-${index}`, `2026-10-${String((index % 28) + 1).padStart(2, "0")}`, {
@@ -270,7 +272,11 @@ describe("the Quick tier in the categorization step", () => {
         100, 100, 100, 100,
       ]);
       expect(callsOf("category fix").flatMap((call) => call.rows)).toHaveLength(1_200);
-      expect(await itemsOf(AI_UNSURE_KIND)).toHaveLength(1_200);
+      // One card for each Merchant, with each of its 3 unsure Transactions.
+      const cards = await itemsOf(AI_UNSURE_KIND);
+      expect(cards).toHaveLength(400);
+      expect(cards.flatMap(transactionIdsOf)).toHaveLength(1_200);
+      expect(cards.every((card) => transactionIdsOf(card).length === 3)).toBe(true);
       expect(took).toBeLessThan(5_000);
     }, 30_000);
 
@@ -316,14 +322,30 @@ describe("the Quick tier in the categorization step", () => {
       expect(JSON.stringify(call?.texts)).not.toMatch(new RegExp(ids.join("|")));
     });
 
-    it("puts a below-high answer on the Review list as AI, unsure, and a later high answer takes it off", async () => {
+    it("counts a medium answer as decided, off the Review list, and shows it as AI, unsure", async () => {
       await connectAi();
       answerCategory = () => ({ category: "Pets", confidence: "medium" });
+      await sync({ added: [buy("medium", "2026-10-05")] });
+
+      expect(await partOf("medium")).toEqual({
+        category: "Pets",
+        source: "AI",
+        confidence: "medium",
+        needsAi: 0,
+      });
+      expect(provenance({ source: "AI", confidence: "medium" })).toBe("AI, unsure");
+      expect(await itemsOf(AI_UNSURE_KIND)).toEqual([]);
+      expect(await itemsOf(BEST_GUESS_KIND)).toEqual([]);
+    });
+
+    it("puts a low answer on the Review list as AI, unsure, and a later high answer takes it off", async () => {
+      await connectAi();
+      answerCategory = () => ({ category: "Pets", confidence: "low" });
       await sync({ added: [buy("unsure", "2026-10-05")] });
 
       const part = await partOf("unsure");
-      expect(part).toEqual({ category: "Pets", source: "AI", confidence: "medium", needsAi: 0 });
-      expect(provenance({ source: "AI", confidence: "medium" })).toBe("AI, unsure");
+      expect(part).toEqual({ category: "Pets", source: "AI", confidence: "low", needsAi: 0 });
+      expect(provenance({ source: "AI", confidence: "low" })).toBe("AI, unsure");
       expect(provenance({ source: "AI", confidence: "high" })).toBe("AI");
       expect(await itemsOf(AI_UNSURE_KIND)).toMatchObject([
         {

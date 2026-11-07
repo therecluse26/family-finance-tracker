@@ -144,6 +144,7 @@ export {
   type SyncState,
   saveSyncState,
   setAccountExcluded,
+  setHandSetCategory,
   setHandSetFields,
   storeSyncPage,
   type TransactionFilter,
@@ -608,7 +609,9 @@ export {
   listReviewItemSubjects,
   listReviewListItems,
   type NewReviewItem,
+  type ReviewItemRegroup,
   readReviewItem,
+  regroupOpenReviewItems,
   reviseOpenReviewItems,
   type StoredReviewItem,
 } from "./review-items.ts";
