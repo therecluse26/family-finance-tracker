@@ -5,7 +5,7 @@ import { newTestBank, type TestBank } from "../bank/testing.ts";
 import type * as Db from "../db/index.ts";
 import { listLoanPayouts } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
-import { answerReviewItem, openReviewItems } from "../review/index.ts";
+import { answerReviewItem, openReviewItems, reviewListItems } from "../review/index.ts";
 import { addDays } from "./business-days.ts";
 import {
   addManualLoan,
@@ -166,6 +166,39 @@ describe("untracked loan payments", () => {
     await sync([paid("nov", "LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT", { merchantName: "Upstart" })]);
     expect((await decisionOf("nov"))?.parts.map((part) => part.type)).toEqual(["Transfer"]);
     expect(await untrackedItems()).toEqual([]);
+  });
+
+  it("lists the items one run opens newest first, by their payouts' date", async () => {
+    const payout = (id: string, merchantName: string, postedDate: string) =>
+      fakeTxn({
+        id,
+        accountId: CHECKING,
+        amount: 1_000_000,
+        postedDate,
+        merchantName,
+        category: code("LOAN_DISBURSEMENTS_OTHER"),
+      });
+    const lenders = [
+      ["upstart", "Upstart", "2026-08-03"],
+      ["sofi", "SoFi", "2026-09-20"],
+      ["lendingclub", "LendingClub", "2026-06-10"],
+    ] as const;
+    await sync(
+      lenders.flatMap(([id, lender, postedDate]) => [
+        payout(`${id}-payout`, lender, postedDate),
+        paid(`${id}-oct`, "LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT", { merchantName: lender }),
+      ]),
+    );
+
+    const listed = (await reviewListItems(bank.database)).filter(
+      (item) => item.kind === "untracked loan",
+    );
+    expect(listed.map((item) => item.subject)).toEqual([
+      { type: "transactions", transactionIds: [await idOf("sofi-payout")] },
+      { type: "transactions", transactionIds: [await idOf("upstart-payout")] },
+      { type: "transactions", transactionIds: [await idOf("lendingclub-payout")] },
+    ]);
+    expect(new Set(listed.map((item) => item.createdAt.getTime())).size).toBe(1);
   });
 
   it("settles the item once a Manual loan for the lender links the payout", async () => {

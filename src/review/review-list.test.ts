@@ -286,6 +286,15 @@ describe("the Review list", () => {
     expect((await openItems()).map((open) => open.id)).toEqual(order);
     // The same order on every read.
     expect((await openItems()).map((open) => open.id)).toEqual(order);
+
+    // A Transaction the item no longer shows does not count: with t3 hidden, the item about t2 and
+    // t3 runs by t2's date, after t1.
+    await query(
+      "UPDATE transactions SET hidden_reason = 'posted' WHERE provider_transaction_id = 't3'",
+    );
+    const hidden = (await openItems()).map((open) => open.id);
+    expect(hidden.slice(0, 2)).toEqual([later, onlyT1]);
+    expect(hidden.at(-1)).toBe(loan);
     unregisterLoan();
   });
 

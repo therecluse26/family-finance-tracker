@@ -22,6 +22,7 @@ import {
   everAskedAbout,
   lastAskedAbout,
   openReviewItem,
+  openReviewItemBatch,
   openReviewItemsOfKind,
   type ReviewChoice,
   type ReviewItem,
@@ -365,21 +366,23 @@ async function askAboutPayments(database: Database, asks: readonly Ask[]): Promi
       marked.map((item) => ({ id: item.id, bestAnswer: item.bestAnswer, needsAi: false })),
     );
   }
-  let opened = 0;
+  const items = [];
   for (const { payment, loan, needsAi } of asks) {
     if (asked.has(payment.id)) continue;
     asked.add(payment.id);
-    await openReviewItem(database, {
+    items.push({
       kind: POSSIBLE_PAYMENT_KIND,
-      subject: { type: "transactions", transactionIds: [payment.id] },
+      subject: { type: "transactions" as const, transactionIds: [payment.id] },
       decided: loan.closed
         ? `This may be a payment to ${loan.lender}, whose loan is Closed. It counts by the normal rules.`
         : `This may be a payment on the ${loan.lender} loan. It counts by the normal rules.`,
       bestAnswer: linkChoice(loan.id),
       needsAi,
     });
-    opened += 1;
   }
+  // One moment for the run's items, so the Review list runs them by their payments' date (spec 07,
+  // Review list page).
+  const opened = (await openReviewItemBatch(database, items)).length;
   if (opened > 0) log.info("Possible Manual loan payments went on the Review list", { opened });
 }
 

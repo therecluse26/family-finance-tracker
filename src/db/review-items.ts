@@ -65,9 +65,10 @@ const subjectDate = sql<string | null>`(
   WHERE ${reviewItems.subjectType} = 'transactions' AND ${transactions.hiddenReason} IS NULL
 )`;
 
-// Every open item, newest first. Items made at the same moment run by their Transaction's date,
-// newest first, then by ID (spec 07, Review list page). A loan item comes after them.
-export async function listOpenReviewItems(database: Database): Promise<StoredReviewItem[]> {
+// Every open item in the Review list page's order: newest first, and items made at the same moment
+// by their Transaction's date, newest first, then by ID (spec 07, Review list page). A loan item
+// comes after them.
+export async function listReviewListItems(database: Database): Promise<StoredReviewItem[]> {
   return database
     .select()
     .from(reviewItems)
@@ -77,6 +78,16 @@ export async function listOpenReviewItems(database: Database): Promise<StoredRev
       sql`${subjectDate} DESC NULLS LAST`,
       desc(reviewItems.id),
     );
+}
+
+// Every open item, newest made first, for callers that settle or revise items and need no page
+// order, so they skip each item's Transaction dates.
+export async function listOpenReviewItems(database: Database): Promise<StoredReviewItem[]> {
+  return database
+    .select()
+    .from(reviewItems)
+    .where(isNull(reviewItems.closedAt))
+    .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
 }
 
 // Every open item of one kind, newest first.
