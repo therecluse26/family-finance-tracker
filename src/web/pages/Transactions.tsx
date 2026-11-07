@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { CATEGORIES } from "../../categories/list.ts";
-import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
+import { calendarDateIn, dateLabel, dollarsAndCents, monthLabel } from "../../format.ts";
 import type { AccountView, TransactionListView } from "../../server/bank-views.ts";
 import type { CategoryChosenBy, TransactionRowView } from "../../server/money-movement-views.ts";
 import { api } from "../api.ts";
@@ -30,6 +30,30 @@ import { accountLabel, browserZone } from "./Accounts.tsx";
 const FILTER_FIELD =
   "mt-1 block h-[38px] w-full rounded-control border border-field bg-white px-2.5 text-sm text-ink";
 const FILTER_LABEL = "block text-small font-semibold text-muted";
+// Each filter's width in the one row the filters take from 640 px, as on the board; the Merchant
+// field takes what is left. On a phone they sit two to a line.
+const FILTER_WIDTH = {
+  account: "sm:w-36",
+  category: "sm:w-36",
+  type: "sm:w-32",
+  merchant: "sm:min-w-32 sm:flex-1",
+} as const;
+
+// What the folded "Dates" control shows: the month, the range, or "Any dates". A value the
+// browser has not finished (a month field some browsers draw as plain text) shows as typed.
+export function datesLine(draft: TransactionFilters, today: string): string {
+  const day = (date: string) => (/^\d{4}-\d{2}-\d{2}$/.test(date) ? dateLabel(date, today) : date);
+  const parts: string[] = [];
+  if (draft.month !== undefined) {
+    parts.push(/^\d{4}-\d{2}$/.test(draft.month) ? monthLabel(`${draft.month}-01`) : draft.month);
+  }
+  if (draft.from !== undefined || draft.to !== undefined) {
+    parts.push(
+      `${draft.from === undefined ? "…" : day(draft.from)} – ${draft.to === undefined ? "…" : day(draft.to)}`,
+    );
+  }
+  return parts.length === 0 ? "Any dates" : parts.join(", ");
+}
 
 // The Merchant's clean name, else the provider's name, else the bank's line.
 export const merchantOf = (txn: TransactionRowView) =>
@@ -62,6 +86,8 @@ export function TransactionFilterForm(props: {
   onDraft: (draft: TransactionFilters) => void;
   onShow: () => void;
   onClear: () => void;
+  // Today in the browser's zone, for the dates the "Dates" control shows.
+  today: string;
 }) {
   const { draft, onDraft } = props;
   const set = (name: keyof TransactionFilters) => (value: string) =>
@@ -72,7 +98,7 @@ export function TransactionFilterForm(props: {
     any: string,
     options: readonly { value: string; label: string }[],
   ) => (
-    <label className={FILTER_LABEL}>
+    <label className={`${FILTER_LABEL} ${FILTER_WIDTH[name]}`}>
       {label}
       <select
         name={name}
@@ -90,7 +116,7 @@ export function TransactionFilterForm(props: {
     </label>
   );
   const field = (name: "merchant" | "from" | "to" | "month", label: string, type: string) => (
-    <label className={FILTER_LABEL}>
+    <label className={`${FILTER_LABEL} ${name === "merchant" ? FILTER_WIDTH.merchant : ""}`}>
       {label}
       <input
         name={name}
@@ -107,7 +133,7 @@ export function TransactionFilterForm(props: {
   }
   return (
     <form
-      className="grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-4"
+      className="grid grid-cols-2 gap-x-2 gap-y-3 sm:flex sm:flex-wrap sm:items-end"
       onSubmit={submit}
       aria-label="Filters"
     >
@@ -130,10 +156,38 @@ export function TransactionFilterForm(props: {
         TRANSACTION_TYPES.map((type) => ({ value: type, label: type })),
       )}
       {field("merchant", "Merchant", "text")}
-      {field("from", "From", "date")}
-      {field("to", "To", "date")}
-      {field("month", "Month", "month")}
-      <div className="col-span-2 flex flex-wrap items-end gap-2 sm:col-span-1">
+      {/* The date fields fold into one "Dates" control, as on the board, so every filter fits in
+          one row at 1,280 px. It opens in place; its panel is never wider than the control, so it
+          never runs off the page. The fields and what they send are the same. */}
+      <div className="col-span-2 sm:w-44" data-slot="dates">
+        <span aria-hidden="true" className={FILTER_LABEL}>
+          Dates
+        </span>
+        <details className="relative mt-1">
+          <summary className="flex h-[38px] cursor-pointer list-none items-center justify-between gap-2 rounded-control border border-field bg-white px-2.5 text-sm text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+            <span className="truncate">
+              <span className="sr-only">Dates: </span>
+              {datesLine(draft, props.today)}
+            </span>
+            <svg aria-hidden="true" className="size-3 shrink-0 text-muted" viewBox="0 0 12 12">
+              <path
+                d="M2 4l4 4 4-4"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.8"
+              />
+            </svg>
+          </summary>
+          <div className="mt-1 grid gap-2 rounded-control border border-line bg-white p-2 sm:absolute sm:inset-x-0 sm:top-full sm:z-20 sm:shadow-md">
+            {field("from", "From", "date")}
+            {field("to", "To", "date")}
+            {field("month", "Month", "month")}
+          </div>
+        </details>
+      </div>
+      <div className="col-span-2 flex flex-wrap items-end gap-2">
         <button type="submit" className={buttonClass("primary")}>
           Show
         </button>
@@ -358,6 +412,7 @@ export function Transactions() {
         onDraft={setDraft}
         onShow={() => setParams(new URLSearchParams(filterQuery(draft)))}
         onClear={() => setParams(new URLSearchParams())}
+        today={today}
       />
       <ErrorLine error={error} />
       {rows === undefined ? null : (

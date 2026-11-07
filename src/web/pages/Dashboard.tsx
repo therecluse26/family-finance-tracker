@@ -496,13 +496,15 @@ function NumberTileItem(props: { tile: NumberTile }) {
 
 // Four tiles in a row, two by two on a phone (spec 07, 4. Number tiles), each in its own box, as in
 // prototype variant H. The space they share, not the screen, sets the columns: from 900 px the
-// right column can be narrower than a phone.
+// right column can be narrower than a phone. Four in a row need a 760 px box, so each tile keeps
+// its label and direction on one line; in the 1,280 px dashboard's right column they sit two by
+// two, as on the approved dashboard board.
 export function NumberTilesBox(props: { tiles: NumberTilesView }) {
   return (
     <section aria-label="Number tiles" className="@container" data-slot="number-tiles">
       <ul
         aria-label="Number tiles"
-        className="grid grid-cols-2 gap-3 @min-[480px]:grid-cols-4"
+        className="grid grid-cols-2 gap-3 @min-[760px]:grid-cols-4"
         data-slot="tiles"
       >
         {numberTiles(props.tiles).map((tile) => (
@@ -560,6 +562,18 @@ function GroupChart(props: { bars: GroupBar[] }) {
   );
 }
 
+// A group with no Spending in any of its 13 months and no Budget line has nothing to draw: its
+// chart would be an empty frame. It says so instead.
+function emptyChartLine(bars: GroupBar[]): string | undefined {
+  if (bars.some((bar) => bar.spending !== 0 || bar.budget != null)) return undefined;
+  const first = bars[0];
+  return first === undefined ? "No Spending yet" : `No Spending since ${first.label}`;
+}
+
+// A group: in a box under 480 px, as on a phone, a compact row (its name and "$spent of $Budget",
+// its status at the right), as on the approved phone dashboard board; from 480 px, a box with its
+// chart. The chart stays drawn under 480 px, clipped to no height, so its chart library always
+// has a width to measure.
 function GroupBox(props: {
   group: UsualGroup;
   view: BudgetsView;
@@ -572,25 +586,29 @@ function GroupBox(props: {
   const status = groupStatus(box);
   const spent = box?.spending ?? 0;
   const budget = box?.monthly ?? 0;
+  const bars = groupBars(group, month);
+  const empty = emptyChartLine(bars);
   return (
     <li
-      className={`min-w-0 rounded-[10px] border ${props.open ? "border-accent" : "border-line-soft"}`}
+      className={`min-w-0 border-t border-line-soft @min-[480px]:rounded-[10px] @min-[480px]:border ${props.open ? "@max-[479px]:bg-selected @min-[480px]:border-accent" : ""}`}
       data-group={group.categoryGroup}
     >
       <button
         type="button"
         aria-expanded={props.open}
-        className="block w-full rounded-t-[10px] px-3 pt-3 text-left hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="flex w-full items-baseline justify-between gap-x-3 px-1.5 py-2 text-left hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent @min-[480px]:block @min-[480px]:rounded-t-[10px] @min-[480px]:px-3 @min-[480px]:pt-3 @min-[480px]:pb-0"
         onClick={props.onOpen}
       >
-        <span className="block text-sm font-semibold">{group.categoryGroup}</span>
-        <span className="mt-0.5 block text-small text-muted tabular-nums" data-slot="group-line">
-          {budget === 0
-            ? `${wholeDollars(spent)}, no Budget`
-            : `${wholeDollars(spent)} of ${wholeDollars(budget)}`}
+        <span className="block min-w-0">
+          <span className="block text-sm font-semibold">{group.categoryGroup}</span>
+          <span className="mt-0.5 block text-small text-muted tabular-nums" data-slot="group-line">
+            {budget === 0
+              ? `${wholeDollars(spent)}, no Budget`
+              : `${wholeDollars(spent)} of ${wholeDollars(budget)}`}
+          </span>
         </span>
         {status === undefined ? null : (
-          <span className="mt-0.5 block text-small">
+          <span className="block shrink-0 text-right text-small @min-[480px]:mt-0.5 @min-[480px]:text-left">
             <Status {...status} />
           </span>
         )}
@@ -598,8 +616,18 @@ function GroupBox(props: {
       {/* The chart opens the group too; the button above is the way in for a keyboard. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the button above does the same. */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the button above takes the keyboard. */}
-      <div className="cursor-pointer px-3 pb-3" onClick={props.onOpen}>
-        <GroupChart bars={groupBars(group, month)} />
+      <div
+        className="cursor-pointer px-3 pb-3 @max-[479px]:invisible @max-[479px]:h-0 @max-[479px]:overflow-hidden @max-[479px]:p-0"
+        data-slot="group-chart-area"
+        onClick={props.onOpen}
+      >
+        {empty === undefined ? (
+          <GroupChart bars={bars} />
+        ) : (
+          <p className="mt-1.5 flex h-10 items-end text-small text-muted" data-slot="group-empty">
+            {empty}
+          </p>
+        )}
       </div>
     </li>
   );
@@ -700,7 +728,7 @@ export function UsualMonthBox(props: {
       )}
       <ul
         aria-label="Category groups"
-        className="mt-3.5 grid grid-cols-1 gap-2.5 @min-[300px]:grid-cols-2 @min-[480px]:grid-cols-3"
+        className="mt-3 grid grid-cols-1 @min-[480px]:mt-3.5 @min-[480px]:grid-cols-3 @min-[480px]:gap-2.5"
         data-slot="groups"
       >
         {usual.groups.map((group) => (
@@ -715,10 +743,11 @@ export function UsualMonthBox(props: {
         ))}
       </ul>
       {/* The charts are hidden from screen readers, and each group's words say what they show, so
-          the key to the charts is hidden too. It names the dashed line only once a chart draws one. */}
+          the key to the charts is hidden too. It names the dashed line only once a chart draws one,
+          and goes with the charts in a box under 480 px. */}
       {usual.groups.length === 0 ? null : (
         <p className="mt-2.5 text-small text-muted" data-slot="chart-key">
-          <span aria-hidden="true">
+          <span aria-hidden="true" className="@max-[479px]:hidden" data-slot="chart-key-bars">
             Grey bars: the last 12 months. Blue: {month.name} so far.
             {budgetLine ? " Dashed line: the Budget." : ""}
           </span>{" "}
@@ -763,12 +792,22 @@ export function UsualMonthBox(props: {
 const DUE_HEAD = "border-b border-line px-1.5 py-2 font-semibold first:pl-0 last:pr-0";
 const DUE_CELL = "border-b border-line-soft px-1.5 py-[9px] tabular-nums first:pl-0 last:pr-0";
 
+// Below 900 px, as on the approved phone dashboard board, the box shows its first rows and a
+// button under the box's link that shows the rest in place: the rows hold paydays and payments
+// due that the Recurring charges page does not list.
+const PHONE_DUE_ROWS = 3;
+
 export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }) {
   const { view, month } = props;
+  const [all, setAll] = useState(false);
+  const listId = useId();
+  const tableId = useId();
   const lowest = lowestLine(view, month.today);
-  const rows = view.rows.map((each) => ({
+  const rows = view.rows.map((each, index) => ({
     key: `${each.kind}-${each.date}-${each.what}`,
     kind: each.kind,
+    // A row past the first few, hidden below 900 px until "All N items".
+    folded: !all && index >= PHONE_DUE_ROWS ? "max-[899px]:hidden" : "",
     ...comingUpRow(each, month.today),
   }));
   return (
@@ -796,6 +835,7 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
         {/* In a box under 360 px, as at 900 px or on a phone, each row takes two lines: the date
             and what, then the amount and the checking balance after it. From 360 px, a table. */}
         <ul
+          id={listId}
           aria-label="Due rows"
           className="mt-2.5 text-sm @min-[360px]:hidden"
           data-slot="due-lines"
@@ -803,7 +843,7 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
           {rows.map((row) => (
             <li
               key={row.key}
-              className={`border-t border-line-soft py-[7px] ${row.payday ? "font-semibold" : ""}`}
+              className={`border-t border-line-soft py-[7px] ${row.payday ? "font-semibold" : ""} ${row.folded}`}
               data-row={row.kind}
             >
               <span className="flex gap-2">
@@ -823,7 +863,11 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
             </li>
           ))}
         </ul>
-        <table className="mt-3 hidden w-full text-sm @min-[360px]:table" data-slot="due-rows">
+        <table
+          id={tableId}
+          className="mt-3 hidden w-full text-sm @min-[360px]:table"
+          data-slot="due-rows"
+        >
           <thead>
             <tr className="text-left text-xs text-muted">
               <th className={DUE_HEAD}>Date</th>
@@ -836,7 +880,7 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
             {rows.map((row) => (
               <tr
                 key={row.key}
-                className={row.payday ? "font-semibold" : undefined}
+                className={`${row.payday ? "font-semibold" : ""} ${row.folded}`.trim() || undefined}
                 data-row={row.kind}
               >
                 <td className={DUE_CELL}>{row.date}</td>
@@ -852,6 +896,18 @@ export function ComingUpBox(props: { view: ComingUpView; month: DashboardMonth }
           </tbody>
         </table>
       </Link>
+      {rows.length <= PHONE_DUE_ROWS ? null : (
+        <button
+          type="button"
+          aria-controls={`${listId} ${tableId}`}
+          aria-expanded={all}
+          className={`mt-2 text-small ${TEXT_LINK} min-[900px]:hidden`}
+          data-slot="due-all"
+          onClick={() => setAll(!all)}
+        >
+          {all ? "Fewer items" : `All ${rows.length} items`}
+        </button>
+      )}
     </section>
   );
 }

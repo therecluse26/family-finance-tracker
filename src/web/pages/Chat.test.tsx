@@ -14,7 +14,7 @@ import {
   problemOf,
   WAITS_FOR_HISTORY,
 } from "../chat.ts";
-import { AttachedNote, Composer, NewThread, ThreadList, ThreadMessages } from "./Chat.tsx";
+import { AttachedNote, Chat, Composer, NewThread, ThreadList, ThreadMessages } from "./Chat.tsx";
 
 // The Chat page's parts as the browser first paints them (spec 07, Chat page). The requests go
 // through the app in src/server/chat-api.test.ts.
@@ -62,6 +62,31 @@ const thread = (fields: Partial<ChatThreadView> = {}): ChatThreadView => ({
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("the page", () => {
+  it("fills the screen above the phone's tab bar with no fixed overlay, under one hidden <h1>", () => {
+    const html = render(<Chat />);
+    const main = /<main class="([^"]*)"[^>]*data-slot="chat-page"/.exec(html)?.[1]?.split(" ");
+
+    // One heading, drawn before anything loads, for screen readers and the focus a menu choice
+    // moves; as on the board, the open thread's title heads the pane.
+    expect([...html.matchAll(/<h1[^>]*>(.*?)<\/h1>/g)].map((match) => match[0])).toEqual([
+      '<h1 class="sr-only">Chat</h1>',
+    ]);
+    // The page takes back the shell's padding and is the screen's height, less the 59 px tab bar
+    // below 900 px; nothing in it is fixed.
+    expect(main).toEqual(
+      expect.arrayContaining([
+        "h-dvh",
+        "-mb-24",
+        "pb-[calc(59px+env(safe-area-inset-bottom))]",
+        "min-[900px]:-mb-12",
+        "min-[900px]:pb-0",
+      ]),
+    );
+    expect(html).not.toMatch(/class="[^"]*\bfixed\b/);
+  });
 });
 
 describe("Ask about this", () => {

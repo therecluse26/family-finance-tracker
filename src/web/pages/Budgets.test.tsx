@@ -115,7 +115,7 @@ type Row = { category: string; words: string };
 function sectionsOf(html: string): Record<string, Row[]> {
   const sections: Record<string, Row[]> = {};
   for (const [, heading = "", list = ""] of html.matchAll(
-    /<h2[^>]*>(.*?)<\/h2>(?:(?!<\/section>).)*?<ul>(.*?)<\/ul><\/section>/gs,
+    /<h2[^>]*>(.*?)<\/h2>(?:(?!<\/section>).)*?<ul[^>]*>(.*?)<\/ul><\/section>/gs,
   )) {
     sections[text(heading)] = [
       ...list.matchAll(/<li[^>]*data-category="([^"]*)"[^>]*>(.*?)<\/li>/gs),
@@ -261,6 +261,8 @@ describe("the Budgets page", () => {
     });
     const html = report({
       ...VIEW,
+      // Shopping has a monthly Budget, so it shows open.
+      budgets: [...VIEW.budgets, budget("Clothing", "Shopping", { amount: 65_000 })],
       groups: [
         group("Bills", {
           monthly: 261_000,
@@ -279,9 +281,16 @@ describe("the Budgets page", () => {
     expect(heading("Bills")).toBe("$2,585 of $2,610 ▲ 1 over");
     expect(heading("Leisure")).toBe("$210 of $300 ◆ 1 on pace to go over");
     expect(heading("Shopping")).toBe("$133 of $650 ✓ on track");
-    // A group with no monthly Budget has neither.
-    expect(heading("Other")).toBe("");
-    expect(heading("Pets")).toBe("");
+    // A group with no monthly Budget has neither: it folds to its name and its Spending.
+    const folded = (name: string) =>
+      text(
+        new RegExp(
+          `<section aria-labelledby="budget-${name.toLowerCase()}-group"[^>]*>(.*?)<ul`,
+          "s",
+        ).exec(html)?.[1] ?? "",
+      );
+    expect(folded("Other")).toBe("Other $50 spent, no Budget");
+    expect(folded("Transportation")).toBe("Transportation $0 spent, no Budget");
     expect(
       monthSpentLine({
         ...VIEW,
@@ -517,6 +526,84 @@ describe("the Budgets page", () => {
     const accepted = report({ ...VIEW, draftAccepted: true });
     expect(text(accepted)).toContain("The draft is accepted.");
     expect(accepted).not.toContain("Accept all");
+  });
+
+  it("folds each Category group with no Budget to one line that opens in place, runs of them in one box", () => {
+    const html = report(VIEW);
+    const folded = [
+      ...html.matchAll(/<section aria-labelledby="([^"]+)-group"[^>]*data-slot="folded-group"/g),
+    ];
+
+    // Bills and Leisure have Budgets and stay open; the four groups with none fold. Shopping,
+    // Transportation and Health and care follow each other, so they share a box.
+    expect(folded.map((match) => match[1])).toEqual([
+      "budget-shopping",
+      "budget-transportation",
+      "budget-health-and-care",
+      "budget-other",
+    ]);
+    const boxes = html
+      .split(/<(?:div|section) class="rounded-card /)
+      .slice(1)
+      .map((box) => [...box.matchAll(/data-slot="folded-group"/g)].length);
+    // Bills, the run of three, Leisure, Other, Yearly Budgets.
+    expect(boxes).toEqual([0, 3, 0, 1, 0]);
+    // Each name is a button inside its heading, closed until a Member opens it; its rows are
+    // hidden until then.
+    const shopping = /data-slot="folded-group">(.*?)<\/section>/s.exec(html)?.[1] ?? "";
+    expect(shopping).toMatch(
+      /<h2[^>]*><button type="button" aria-controls="budget-shopping-group-rows" aria-expanded="false"/,
+    );
+    expect(shopping).toContain('<ul hidden="" id="budget-shopping-group-rows">');
+
+    const open = renderToString(
+      <BudgetsReport
+        view={VIEW}
+        states={{}}
+        accept={{}}
+        actions={noActions}
+        openGroups={["Shopping"]}
+      />,
+    );
+    expect(open).toContain('aria-controls="budget-shopping-group-rows" aria-expanded="true"');
+    expect(open).toContain('<ul id="budget-shopping-group-rows">');
+    expect(open).toContain('<ul hidden="" id="budget-transportation-group-rows">');
+  });
+
+  it("opens and closes a folded group through the page's switch", () => {
+    const toggled: string[] = [];
+    controlsOf(
+      BudgetsReport({
+        view: VIEW,
+        states: {},
+        accept: {},
+        actions: noActions,
+        toggleGroup: (name) => toggled.push(name),
+      }),
+    ).buttons.get("Transportation")?.();
+
+    expect(toggled).toEqual(["Transportation"]);
+  });
+
+  it('shows "Save" once a Budget box holds a new amount, and keeps its place until then', () => {
+    const save = (state: RowState) =>
+      /<button[^>]*class="([^"]*)"[^>]*data-slot="budget-save"/.exec(
+        renderToString(
+          <BudgetRowItem
+            row={{ category: "Restaurants", spending: 21_000, budget: restaurants }}
+            state={state}
+            actions={noActions}
+          />,
+        ),
+      )?.[1] ?? "";
+
+    expect(save({}).split(" ")).toContain("invisible");
+    // The same amount typed again is no change.
+    expect(save({ typed: "300" }).split(" ")).toContain("invisible");
+    expect(save({ typed: "320" }).split(" ")).not.toContain("invisible");
+    // While it saves, and after a refusal, it stays in view.
+    expect(save({ typed: "320", busy: true }).split(" ")).not.toContain("invisible");
+    expect(save({ error: "That did not work." }).split(" ")).not.toContain("invisible");
   });
 
   it("lists each Category once: in its Category group, or in the yearly section", () => {

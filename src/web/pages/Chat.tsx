@@ -29,7 +29,6 @@ import {
 } from "../chat.ts";
 import { Button, buttonClass } from "../components/Button.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
-import { Page, PageHeading } from "../components/Page.tsx";
 import { ProposalCard } from "../components/Proposal.tsx";
 import { AiMark } from "../components/Status.tsx";
 
@@ -46,6 +45,19 @@ const SEND =
 // The side padding of the thread's header, messages and input.
 const GUTTER = "px-4 min-[900px]:px-7";
 const EVERY_MEMBER = "Every Member sees every thread.";
+
+// The page fills the screen, as on the board: it takes back the shell's padding around the page,
+// so the threads and the open thread run from the top of the screen to its foot. Below 900 px it
+// stops above the shell's 59 px tab bar (and the phone's safe area under it); the shell's bottom
+// padding is taken back with it, so the page itself never scrolls. Inside, the thread list and
+// the messages scroll on their own, and the input stays at the foot.
+const CHAT_PAGE =
+  "-mx-4 -mt-4 -mb-24 flex h-dvh min-w-0 flex-col pb-[calc(59px+env(safe-area-inset-bottom))] min-[900px]:-mx-5 min-[900px]:-mt-7 min-[900px]:-mb-12 min-[900px]:pb-0";
+// The open thread, or a new one: its header, its messages, and the input.
+const THREAD_PANE = "flex min-h-0 min-w-0 flex-1 flex-col wrap-anywhere";
+// The messages scroll inside the pane, so the input stays in view.
+const SCROLLER = "min-h-0 flex-1 overflow-y-auto";
+const MESSAGES = `w-full max-w-[816px] py-6 ${GUTTER}`;
 
 // What the page shows after "Send": the new thread answers its first message once it opens.
 type OpenState = { answer: true; sendAnyway: boolean };
@@ -366,6 +378,16 @@ function OpenThread(props: {
     props.onFirstAnswer();
   }, []);
 
+  // The messages scroll inside the pane: the newest shows when the thread opens and when a
+  // message joins it.
+  const scroller = useRef<HTMLDivElement>(null);
+  const shown = thread.messages.length + chat.messages.length;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: when the count of messages changes.
+  useEffect(() => {
+    const box = scroller.current;
+    if (box !== null) box.scrollTop = box.scrollHeight;
+  }, [shown]);
+
   function send(sendAnyway: boolean) {
     const text = draft;
     if (text.trim() === "") return;
@@ -394,11 +416,7 @@ function OpenThread(props: {
       : undefined;
 
   return (
-    <section
-      aria-label={thread.title}
-      className="flex min-w-0 flex-1 flex-col wrap-anywhere"
-      data-slot="chat-thread"
-    >
+    <section aria-label={thread.title} className={THREAD_PANE} data-slot="chat-thread">
       <ThreadHeader title={thread.title}>
         <Button
           type="button"
@@ -410,33 +428,35 @@ function OpenThread(props: {
           Delete thread
         </Button>
       </ThreadHeader>
-      <div className={`w-full max-w-[816px] flex-1 py-6 max-md:empty:hidden ${GUTTER}`}>
-        <ErrorLine error={error} />
-        {thread.note === null ? null : <AttachedNote note={thread.note} />}
-        <ThreadMessages
-          thread={thread}
-          live={live}
-          onChanged={() => void props.onChanged()}
-          onAsk={props.onAsk}
-        />
-        {problem !== undefined ? (
-          <Problem
-            problem={problem}
-            busy={busy}
-            // A message the route refused is back in the input: it goes again from there.
-            onTryAgain={problem.notStored ? send : answerAgain}
+      <div ref={scroller} className={SCROLLER} data-slot="chat-scroll">
+        <div className={MESSAGES}>
+          <ErrorLine error={error} />
+          {thread.note === null ? null : <AttachedNote note={thread.note} />}
+          <ThreadMessages
+            thread={thread}
+            live={live}
+            onChanged={() => void props.onChanged()}
+            onAsk={props.onAsk}
           />
-        ) : unanswered && props.answerFirst === undefined ? (
-          <Problem
-            problem={{
-              error: "This message has no answer yet.",
-              sendAnyway: props.status === "send anyway?",
-              notStored: false,
-            }}
-            busy={busy}
-            onTryAgain={answerAgain}
-          />
-        ) : null}
+          {problem !== undefined ? (
+            <Problem
+              problem={problem}
+              busy={busy}
+              // A message the route refused is back in the input: it goes again from there.
+              onTryAgain={problem.notStored ? send : answerAgain}
+            />
+          ) : unanswered && props.answerFirst === undefined ? (
+            <Problem
+              problem={{
+                error: "This message has no answer yet.",
+                sendAnyway: props.status === "send anyway?",
+                notStored: false,
+              }}
+              busy={busy}
+              onTryAgain={answerAgain}
+            />
+          ) : null}
+        </div>
       </div>
       <Composer status={props.status} draft={draft} onDraft={setDraft} busy={busy} onSend={send} />
     </section>
@@ -497,26 +517,24 @@ export function NewThread(props: {
   }
 
   return (
-    <section
-      aria-label="New thread"
-      className="flex min-w-0 flex-1 flex-col wrap-anywhere"
-      data-slot="chat-new"
-    >
+    <section aria-label="New thread" className={THREAD_PANE} data-slot="chat-new">
       <ThreadHeader title="New thread" />
-      <div className={`w-full max-w-[816px] flex-1 py-6 max-md:empty:hidden ${GUTTER}`}>
-        {props.ask === null ? null : (
-          <div
-            className={`rounded-[10px] border border-line ${FAINT} px-3.5 py-3 text-sm wrap-anywhere`}
-            data-slot="chat-note"
-          >
-            <p className="font-semibold">
-              {props.ask.kind}: {props.ask.title}
-            </p>
-          </div>
-        )}
-        {problem === undefined ? null : (
-          <Problem problem={problem} busy={busy} onTryAgain={(anyway) => void send(anyway)} />
-        )}
+      <div className={SCROLLER} data-slot="chat-scroll">
+        <div className={MESSAGES}>
+          {props.ask === null ? null : (
+            <div
+              className={`rounded-[10px] border border-line ${FAINT} px-3.5 py-3 text-sm wrap-anywhere`}
+              data-slot="chat-note"
+            >
+              <p className="font-semibold">
+                {props.ask.kind}: {props.ask.title}
+              </p>
+            </div>
+          )}
+          {problem === undefined ? null : (
+            <Problem problem={problem} busy={busy} onTryAgain={(anyway) => void send(anyway)} />
+          )}
+        </div>
       </div>
       <Composer
         status={props.status}
@@ -530,7 +548,8 @@ export function NewThread(props: {
 }
 
 // The threads, newest first, each with the day of its last message. On a phone the list sits over
-// the open thread; from 768 px it is a column at the left.
+// the open thread, at most 160 px tall, and scrolls; from 768 px it is a column at the left, the
+// pane's full height, and scrolls on its own.
 export function ThreadList(props: {
   threads: ChatThreadItemView[];
   open: string | undefined;
@@ -540,7 +559,7 @@ export function ThreadList(props: {
   return (
     <nav
       aria-label="Chat threads"
-      className={`min-w-0 border-b border-line ${FAINT} px-3 py-4 md:w-[260px] md:shrink-0 md:border-r md:border-b-0 md:py-5`}
+      className={`max-h-40 min-w-0 shrink-0 overflow-y-auto border-b border-line ${FAINT} px-3 py-4 md:max-h-none md:w-[260px] md:border-r md:border-b-0 md:py-5`}
     >
       <Link to="/chat" className={`${buttonClass("primary")} w-full`}>
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14">
@@ -602,11 +621,20 @@ export function Chat() {
   const ask = (about: AskAbout) => navigate("/chat", { state: about });
   const zone = browserZone();
   return (
-    <Page width="wide">
-      <PageHeading title="Chat" />
-      <ErrorLine error={error} />
+    <main className={CHAT_PAGE} data-slot="chat-page">
+      {/* The page's one heading, for screen readers and the focus a menu choice moves: as on the
+          board, the open thread's title heads the pane. */}
+      <h1 className="sr-only">Chat</h1>
+      {error === undefined ? null : (
+        <div className={`bg-white py-3 ${GUTTER}`}>
+          <ErrorLine error={error} />
+        </div>
+      )}
       {list === undefined ? null : (
-        <div className="flex min-w-0 flex-col overflow-hidden rounded-card border border-line bg-white md:min-h-[620px] md:flex-row">
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col bg-white md:flex-row"
+          data-slot="chat-pane"
+        >
           <ThreadList
             threads={list.threads}
             open={id}
@@ -638,6 +666,6 @@ export function Chat() {
           )}
         </div>
       )}
-    </Page>
+    </main>
   );
 }
