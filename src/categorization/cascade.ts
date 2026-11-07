@@ -205,6 +205,8 @@ export function provenance(choice: Pick<Choice, "source" | "confidence">): strin
       return "Plaid";
     case "AI":
       return choice.confidence === "high" ? "AI" : "AI, unsure";
+    case "Web lookup":
+      return choice.confidence === "high" ? "Web lookup" : "Web lookup, unsure";
     case "money movement":
       return "Money movement";
     default:

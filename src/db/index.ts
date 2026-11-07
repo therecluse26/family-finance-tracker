@@ -13,6 +13,7 @@ export {
   listBestGuessIds,
   listMarkedNameIds,
   markAiAway,
+  markAiRedoDue,
   markCategoriesForAi,
   readAiRedo,
   recordAiRedoRun,
@@ -458,6 +459,18 @@ export {
   readFirstMemberId,
   removeMember,
 } from "./members.ts";
+export {
+  countMerchantLookups,
+  giveBackMerchantLookup,
+  type KeptMerchantLookup,
+  readMerchantLookups,
+  readWebLookupSwitch,
+  readWebSearchRefused,
+  reserveMerchantLookup,
+  storeMerchantLookup,
+  storeWebLookupSwitch,
+  storeWebSearchRefused,
+} from "./merchant-lookups.ts";
 export {
   applyMigrations,
   checkMigrations,

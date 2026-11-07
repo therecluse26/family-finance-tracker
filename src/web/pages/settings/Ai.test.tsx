@@ -13,14 +13,18 @@ import {
   dataUseLine,
   enteredPrices,
   KeyTestLine,
+  MODEL_NO_WEB_SEARCH,
+  NO_WEB_SEARCH,
   priceOfText,
   saveCostCap,
+  saveWebLookup,
   spentShare,
   statusLine,
   testTheKey,
   todayHere,
+  WebLookupCard,
 } from "./Ai.tsx";
-import { AiUsageReport } from "./AiUsage.tsx";
+import { AiUsageReport, lookupLine } from "./AiUsage.tsx";
 
 // Settings → AI, as the browser paints it once the AI settings have loaded.
 
@@ -33,6 +37,7 @@ const OPENAI: AiView = {
   writerModel: "gpt-6.1-terra",
   prices: { quick: { source: "table" }, writer: { source: "table" } },
   status: { state: "on" },
+  webLookup: { on: true, unavailable: null },
 };
 
 // A month at $3.12 of $10.00, with one Chat call and one check on save.
@@ -41,6 +46,7 @@ const USAGE: AiUsageView = {
   totalNanos: 3_120_000_000,
   capCents: 1000,
   pausedUntil: null,
+  lookups: { count: 12, cap: 200 },
   byUse: [
     { use: "chat", calls: 1, costNanos: 3_119_979_000 },
     { use: "check on save", calls: 2, costNanos: 21_000 },
@@ -383,5 +389,87 @@ describe("Settings → AI: Test the key", () => {
 
     server(409, { error, ai: null });
     expect(await testTheKey()).toEqual({ error, ai: null });
+  });
+});
+
+describe("Settings → AI: Web lookup", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const switchOf = (html: string) => html.match(/<input[^>]*role="switch"[^>]*>/)?.[0] ?? "";
+
+  it("shows the switch on, off, and off with why when the AI provider or the Quick model has no web search", () => {
+    const on = renderToString(<WebLookupCard ai={OPENAI} onSaved={() => {}} />);
+    const off = renderToString(
+      <WebLookupCard
+        ai={{ ...OPENAI, webLookup: { on: false, unavailable: null } }}
+        onSaved={() => {}}
+      />,
+    );
+    const none = renderToString(
+      <WebLookupCard
+        ai={{
+          ...OPENAI,
+          provider: "openai-compatible",
+          webLookup: { on: true, unavailable: "no web search" },
+        }}
+        onSaved={() => {}}
+      />,
+    );
+
+    expect(text(on)).toContain("Look up unknown Merchants");
+    expect(text(on)).toContain(
+      "Only the Merchant&#x27;s clean name is sent. At most 200 new lookups a month",
+    );
+    expect(switchOf(on)).toContain('checked=""');
+    expect(switchOf(off)).toContain('aria-checked="false"');
+    expect(switchOf(none)).toContain('aria-checked="false"');
+    expect(switchOf(none)).toContain('disabled=""');
+    expect(text(none)).toContain(NO_WEB_SEARCH);
+
+    const refused = renderToString(
+      <WebLookupCard
+        ai={{ ...OPENAI, webLookup: { on: true, unavailable: "model has no web search" } }}
+        onSaved={() => {}}
+      />,
+    );
+    expect(switchOf(refused)).toContain('aria-checked="false"');
+    expect(switchOf(refused)).toContain('disabled=""');
+    expect(text(refused)).toContain(MODEL_NO_WEB_SEARCH);
+    expect(text(refused)).not.toContain(NO_WEB_SEARCH);
+  });
+
+  it("turns the switch with one PUT, and shows the server's refusal", async () => {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    const answer = { ai: { ...OPENAI, webLookup: { on: false, unavailable: null } } };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      sent.push({ method: init.method ?? "GET", path: String(input), body: init.body });
+      return new Response(
+        JSON.stringify(sent.length === 1 ? answer : { error: "Set up an AI provider first." }),
+        {
+          status: sent.length === 1 ? 200 : 409,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+
+    expect(await saveWebLookup(false)).toEqual(answer);
+    expect(await saveWebLookup(true)).toEqual({ error: "Set up an AI provider first." });
+    expect(sent).toEqual([
+      { method: "PUT", path: "/api/ai/web-lookup", body: '{"on":false}' },
+      { method: "PUT", path: "/api/ai/web-lookup", body: '{"on":true}' },
+    ]);
+  });
+
+  it("counts the month's web lookups on the AI usage page, and says when none are left", () => {
+    const html = renderToString(
+      <AiUsageReport usage={USAGE} zone="America/New_York" today="2026-11-20" />,
+    );
+
+    expect(text(html)).toContain("12 of 200 web lookups");
+    expect(lookupLine({ count: 200, cap: 200 })).toBe(
+      "200 of 200 web lookups. No web lookups until the 1st",
+    );
   });
 });

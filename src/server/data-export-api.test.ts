@@ -263,6 +263,12 @@ describe("Download my data", () => {
         VALUES ('alert-1', 'Large purchase', ?, '{}', 'Alert text', 'sent')`,
       [at],
     );
+    await insert(
+      `INSERT INTO merchant_lookups (merchant_key, outcome, category, confidence, description, looked_up_at)
+        VALUES ('name:bluebird books', 'found', 'Books and education', 'high', 'A bookshop.', ?)`,
+      [at],
+    );
+    await insert("INSERT INTO merchant_lookup_months (month, lookups) VALUES ('2026-11', 1)", []);
     await addGoal(test.database, {
       words: "=SUM(1,2) less on eating out",
       authorId: alice.id,
@@ -526,8 +532,16 @@ describe("Download my data", () => {
     expect(tables.chat_messages).toEqual([expect.objectContaining({ text: "A Chat question" })]);
     expect(tables.proposals).toEqual([expect.objectContaining({ reason: "Proposal reason" })]);
     expect(tables.alerts).toEqual([expect.objectContaining({ text: "Alert text" })]);
+    expect(tables.merchant_lookups).toEqual([
+      expect.objectContaining({ merchant_key: "name:bluebird books", description: "A bookshop." }),
+    ]);
     expect(tables.ai_settings).toEqual([
-      { provider: "openai-compatible", quick_model: "quick-model", writer_model: "writer-model" },
+      {
+        provider: "openai-compatible",
+        quick_model: "quick-model",
+        web_lookup: true,
+        writer_model: "writer-model",
+      },
     ]);
     for (const name of [
       "sessions",
@@ -537,6 +551,7 @@ describe("Download my data", () => {
       "data_keys",
       "vapid_keys",
       "push_devices",
+      "merchant_lookup_months",
     ]) {
       expect(tables[name], name).toBeUndefined();
     }

@@ -115,7 +115,7 @@ export async function countMarkedItems(database: Database): Promise<number> {
 // "Run AI on all history" (spec 08, AI work on your Transactions): marks the Category of each part
 // the cascade covers, Spending and a Refund with no link, on the shown Transactions posted on or
 // after `since`, a calendar date, when the provider, Merchant history, the AI, or a best guess
-// chose it. A hand-set Category, a Category rule, a Category Money movement names, and a part of a
+// chose it, or a Web lookup did. A hand-set Category, a Category rule, a Category Money movement names, and a part of a
 // tracked loan payment stay unmarked. The redo then asks the AI about each marked part that is not
 // a best guess at step 5, past steps 3 and 4. One statement. Returns how many parts it marked.
 export async function markCategoriesForAi(database: Database, since: string): Promise<number> {
@@ -128,6 +128,7 @@ export async function markCategoriesForAi(database: Database, since: string): Pr
           "provider",
           "Merchant history",
           "AI",
+          "Web lookup",
           "best guess",
         ]),
         or(
@@ -184,6 +185,19 @@ export async function claimAiBack(
     )
     .returning({ id: aiRedo.id });
   return claimed.length === 1;
+}
+
+// AI work waits that AI is on for, such as the Web lookups past one run's cap: makes a redo due at
+// `at`, or just after the due time already set. A redo running now ends only the due time it read,
+// so the new, later one stays due. Jobs run one at a time, so no other write comes between the read
+// and the write.
+export async function markAiRedoDue(database: Database, at: Date): Promise<void> {
+  const { dueAt } = await readAiRedo(database);
+  const due = dueAt !== null && dueAt >= at ? new Date(dueAt.getTime() + 1) : at;
+  await database
+    .insert(aiRedo)
+    .values({ id: AI_REDO_ROW, dueAt: due })
+    .onConflictDoUpdate({ target: aiRedo.id, set: { dueAt: due } });
 }
 
 // A redo starts with AI on: AI is not away. A call that finds AI away during the redo marks it

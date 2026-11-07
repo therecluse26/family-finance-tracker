@@ -150,6 +150,7 @@ describe("the AI routes", () => {
         writerModel: "gpt-6.1-terra",
         prices: { quick: { source: "table" }, writer: { source: "table" } },
         status: { state: "on" },
+        webLookup: { on: true, unavailable: null },
       },
     });
     const later = JSON.stringify(await shown(tab));
@@ -429,6 +430,85 @@ describe("the AI routes", () => {
         )
       ).status,
     ).toBe(403);
+  });
+
+  describe("the Web lookup switch", () => {
+    const lookupOn = async (tab: TestBrowser) => (await shown(tab))?.webLookup.on;
+
+    it("starts on with the AI, and turns off and on again", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      expect(await lookupOn(tab)).toBe(true);
+
+      const off = await tab.send("PUT", "/api/ai/web-lookup", { on: false });
+
+      expect(off.status).toBe(200);
+      expect(((await off.json()) as { ai: AiView }).ai.webLookup).toEqual({
+        on: false,
+        unavailable: null,
+      });
+      expect(await lookupOn(tab)).toBe(false);
+      expect((await tab.send("PUT", "/api/ai/web-lookup", { on: true })).status).toBe(200);
+      expect(await lookupOn(tab)).toBe(true);
+    });
+
+    it("says why a custom model has no Web lookup", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(
+        tab,
+        openai({
+          provider: "openai-compatible",
+          baseUrl: "http://192.168.1.50:8080/v1",
+          apiKey: undefined,
+          prices: LOCAL,
+        }),
+      );
+
+      expect((await shown(tab))?.webLookup).toEqual({ on: true, unavailable: "no web search" });
+    });
+
+    it("answers 409 with no AI provider, and stores nothing", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+
+      const res = await tab.send("PUT", "/api/ai/web-lookup", { on: false });
+
+      expect([res.status, await res.json()]).toEqual([
+        409,
+        { error: "Set up an AI provider first." },
+      ]);
+      expect(await shown(tab)).toBeNull();
+    });
+
+    it("answers 401 with no session, 403 to another site and to no Origin, 415 to text, and 400 to a bad body, changing nothing", async () => {
+      await finishWizard();
+      const tab = await signedIn();
+      await save(tab, openai());
+      const stranger = new TestBrowser(app, APP_URL, "192.168.1.201");
+
+      expect((await stranger.send("PUT", "/api/ai/web-lookup", { on: false })).status).toBe(401);
+      for (const origin of ["http://evil.example", `${APP_URL}.evil.example`, undefined]) {
+        expect(
+          (await tab.send("PUT", "/api/ai/web-lookup", { on: false }, { origin })).status,
+        ).toBe(403);
+      }
+      expect(
+        (
+          await tab.send(
+            "PUT",
+            "/api/ai/web-lookup",
+            { on: false },
+            { "content-type": "text/plain" },
+          )
+        ).status,
+      ).toBe(415);
+      for (const body of [{}, { on: "false" }, { on: 0 }, { on: null }]) {
+        expect((await tab.send("PUT", "/api/ai/web-lookup", body)).status).toBe(400);
+      }
+      expect(await lookupOn(tab)).toBe(true);
+    });
   });
 
   it("removes the AI provider, so every use takes its no-AI path", async () => {

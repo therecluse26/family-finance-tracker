@@ -21,6 +21,10 @@ export function categoryChosenBy(part: ShownPart): CategoryChosenBy | null {
       return part.categoryConfidence === "medium" || part.categoryConfidence === "low"
         ? "AI, unsure"
         : "AI";
+    case "Web lookup":
+      return part.categoryConfidence === "medium" || part.categoryConfidence === "low"
+        ? "Web lookup, unsure"
+        : "Web lookup";
     case "money movement":
       return "Money movement";
     default:

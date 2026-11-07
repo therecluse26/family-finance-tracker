@@ -77,6 +77,8 @@ export type CategoryChosenBy =
   | "Merchant history"
   | "AI"
   | "AI, unsure"
+  | "Web lookup"
+  | "Web lookup, unsure"
   | "best guess"
   | "Money movement";
 
@@ -118,6 +120,9 @@ export type TransactionDetailView = {
   otherLinks: OtherLinkView[];
   // The Transaction on the other side of each link, for its evidence (spec 03, Evidence).
   matched: TransactionRowView[];
+  // The line about the business that a Web lookup found, when a Web lookup chose a part's Category
+  // (spec 04, Web lookup). Else null.
+  webLookup: { description: string } | null;
 };
 
 // A link a Member makes by hand (spec 03, Undo and hand links).

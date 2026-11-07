@@ -129,6 +129,7 @@ describe('the AI box, "This week"', () => {
     writerModel: "gpt-6.1-terra",
     prices: { quick: { source: "table" }, writer: { source: "table" } },
     status,
+    webLookup: { on: true, unavailable: null },
   });
 
   beforeEach(async () => {

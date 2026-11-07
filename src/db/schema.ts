@@ -524,6 +524,12 @@ export const aiSettings = sqliteTable(
     // Goes up by 1 on each save and each Remove AI provider. A save writes only when the row is
     // still at the generation it read before its checks, so it never undoes a later change.
     generation: integer("generation").notNull().default(0),
+    // The Web lookup's switch (spec 08, Merchant web lookup): on whenever AI is on, until a Member
+    // turns it off. A save and a Remove AI provider keep it.
+    webLookup: integer("web_lookup", { mode: "boolean" }).notNull().default(true),
+    // The AI provider and Quick model, as "provider:model", whose AI provider refused the Web
+    // lookup's search request: that model has no web search, until the Quick model changes.
+    webSearchRefused: text("web_search_refused"),
   },
   (table) => [
     check("ai_settings_one_row", sql`${table.id} = 1`),
@@ -540,6 +546,7 @@ export const aiSettings = sqliteTable(
 export const AI_USE_NAMES = [
   "category fix",
   "merchant cleanup",
+  "merchant lookup",
   "unclear transfer",
   "reimbursement linking",
   "reading a goal",
@@ -1212,6 +1219,7 @@ export const transactionParts = sqliteTable(
         "provider",
         "Merchant history",
         "AI",
+        "Web lookup",
         "best guess",
         "money movement",
       ],
@@ -1320,6 +1328,37 @@ export const merchantNameAnswers = sqliteTable("merchant_name_answers", {
   description: text("description").primaryKey(),
   name: text("name").notNull(),
   answeredAt: moment("answered_at").notNull(),
+});
+
+// The Web lookup's answer for each Merchant (spec 04, Web lookup), by the key Merchant identity
+// gives it: "id:" and the provider's Merchant ID, else "name:" and the clean name as identity
+// compares it. A Household-wide fact about the Merchant, not about a Connection: a Connection's
+// delete removes only the answers no Transaction's Merchant holds any more. A lookup that found
+// nothing keeps no Category, and the Merchant is looked up again only 90 days after it.
+export const merchantLookups = sqliteTable(
+  "merchant_lookups",
+  {
+    merchantKey: text("merchant_key").primaryKey(),
+    outcome: text("outcome", { enum: ["found", "nothing found"] }).notNull(),
+    category: text("category"),
+    confidence: text("confidence", { enum: ["high", "medium", "low"] }),
+    // One line about the business, in the one plain voice.
+    description: text("description"),
+    lookedUpAt: moment("looked_up_at").notNull(),
+  },
+  (table) => [
+    check(
+      "merchant_lookups_found",
+      sql`(${table.outcome} = 'found') = (${table.category} IS NOT NULL AND ${table.confidence} IS NOT NULL AND ${table.description} IS NOT NULL)`,
+    ),
+  ],
+);
+
+// The Merchant lookups of each month, YYYY-MM in Household time, for their cap of 200 (spec 08,
+// Merchant web lookup). A lookup takes its place here before it calls, in one statement.
+export const merchantLookupMonths = sqliteTable("merchant_lookup_months", {
+  month: text("month").primaryKey(),
+  lookups: integer("lookups").notNull(),
 });
 
 // Recurring charges (spec 06, What the app stores): Spending with one Merchant that repeats on a

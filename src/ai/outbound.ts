@@ -1,7 +1,14 @@
 import type { LanguageModelMiddleware } from "ai";
 import type { AiProviderName, AiUse } from "./ai-view.ts";
 import type { AiCost } from "./cost.ts";
-import { type CallTokens, costOf, type ModelPrice, nanosOfDollars } from "./prices.ts";
+import {
+  type CallTokens,
+  costOf,
+  type ModelPrice,
+  nanosOfDollars,
+  searchFeeOf,
+  type WebSearchFee,
+} from "./prices.ts";
 
 // The cost gate and the cost count (spec 10, Module seams: `ai`). src/ai/call.ts, the one AI call
 // path, stacks costMiddleware on every model it hands out, behind the privacy filter, so every
@@ -42,6 +49,9 @@ export type OutboundCall = {
   cost: AiCost;
   // The Chat thread a Chat answer's calls are for. The AI request log links their text to it.
   chatThreadId?: string;
+  // The Merchant lookup's web search fee, which counts on top of the tokens (spec 08, Counting
+  // cost).
+  searchFee?: WebSearchFee;
 };
 
 // A model call's request, as the AI SDK hands it to the model: after the privacy filter.
@@ -146,16 +156,23 @@ export function costMiddleware(call: OutboundCall, log?: CallLog): LanguageModel
     if (pause !== undefined) throw new AiPausedError(pause);
   }
 
-  // Returns the AI usage row's ID.
-  async function count(usage: ProviderUsage, metadata: ProviderMetadata): Promise<number> {
+  // Returns the AI usage row's ID. `searches` is how many web searches the AI provider ran for the
+  // reply: each one is a tool call it ran itself.
+  async function count(
+    usage: ProviderUsage,
+    metadata: ProviderMetadata,
+    searches = 0,
+  ): Promise<number> {
     const tokens = tokensOf(usage);
     const replyCost = call.provider === "openrouter" ? openRouterCost(metadata) : undefined;
+    const fee = call.searchFee === undefined ? 0 : searchFeeOf(call.searchFee, searches);
     return call.cost.record({
       use: call.use,
       provider: call.provider,
       model: call.model,
       ...tokens,
-      costNanos: replyCost === undefined ? costOf(tokens, call.price) : nanosOfDollars(replyCost),
+      costNanos:
+        (replyCost === undefined ? costOf(tokens, call.price) : nanosOfDollars(replyCost)) + fee,
     });
   }
 
@@ -171,7 +188,10 @@ export function costMiddleware(call: OutboundCall, log?: CallLog): LanguageModel
         await kept?.end({ aiCallId: undefined, reply: [], error });
         throw error;
       }
-      const aiCallId = await count(result.usage, result.providerMetadata);
+      const searches = result.content.filter(
+        (part) => part.type === "tool-call" && part.providerExecuted === true,
+      ).length;
+      const aiCallId = await count(result.usage, result.providerMetadata, searches);
       await kept?.end({ aiCallId, reply: replyOf(result.content) });
       return result;
     },

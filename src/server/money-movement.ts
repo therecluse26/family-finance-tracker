@@ -1,4 +1,5 @@
 import { isCategory } from "../categories/index.ts";
+import { transactionWebLookupLine } from "../categorization/index.ts";
 import { type Database, readShownTransactions } from "../db/index.ts";
 import {
   addManualLoan,
@@ -34,6 +35,12 @@ export function moneyMovementRoutes(database: Database): MoneyMovementRoutes {
       );
       const transaction = rows.find((row) => row.id === transactionId);
       if (transaction === undefined) return undefined;
+      // The line about the business, when a Web lookup chose a part's Category.
+      const byLookup = transaction.parts.some(
+        (part) =>
+          part.categoryChosenBy === "Web lookup" || part.categoryChosenBy === "Web lookup, unsure",
+      );
+      const line = byLookup ? await transactionWebLookupLine(database, transactionId) : undefined;
       return {
         transaction,
         decision:
@@ -41,6 +48,7 @@ export function moneyMovementRoutes(database: Database): MoneyMovementRoutes {
         transferLink: detail.transferLink,
         otherLinks: detail.otherLinks,
         matched: rows.filter((row) => row.id !== transactionId),
+        webLookup: line === undefined ? null : { description: line },
       };
     },
 

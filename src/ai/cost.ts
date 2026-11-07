@@ -1,6 +1,7 @@
 import {
   addAiCall,
   claimCapNotice,
+  countMerchantLookups,
   type Database,
   listMonthAiCalls,
   readCostCap,
@@ -17,6 +18,7 @@ import {
   type AiUse,
   DEFAULT_COST_CAP_CENTS,
   MAX_COST_CAP_CENTS,
+  MERCHANT_LOOKUPS_A_MONTH,
 } from "./ai-view.ts";
 import type { CallTokens } from "./prices.ts";
 import { atCap, capLine, firstOfNextMonth, monthOf, nearCap } from "./usage-view.ts";
@@ -42,6 +44,8 @@ export type AiCost = {
   // A cap above the month's total starts background AI again at once.
   setCap(capCents: number): Promise<void>;
   usage(): Promise<AiUsageView>;
+  // The calendar month now in the Household time zone, YYYY-MM, as the AI usage page counts it.
+  currentMonth(): Promise<string>;
 };
 
 // The calls the AI usage page lists: this month's, newest first.
@@ -131,17 +135,21 @@ export function aiCost(options: {
       await trySendNotices();
     },
 
+    currentMonth: async () => monthOf(await today()),
+
     async usage() {
       const now = await month();
-      const [byUse, calls] = await Promise.all([
+      const [byUse, calls, lookups] = await Promise.all([
         readMonthCostByUse(database, now.month),
         listMonthAiCalls(database, now.month, LISTED_CALLS),
+        countMerchantLookups(database, now.month),
       ]);
       return {
         month: now.month,
         totalNanos: now.totalNanos,
         capCents: now.capCents,
         pausedUntil: atCap(now.totalNanos, now.capCents) ? firstOfNextMonth(now.month) : null,
+        lookups: { count: lookups, cap: MERCHANT_LOOKUPS_A_MONTH },
         byUse,
         calls: calls.map(({ month: _month, provider: _provider, at, logEntryId, ...call }) => ({
           ...call,

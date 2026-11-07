@@ -506,6 +506,7 @@ describe("the Transactions page", () => {
         transactions={[
           row("ai", { parts: [part({ categoryChosenBy: "AI, unsure" })] }),
           row("hand", { parts: [part({ categoryChosenBy: "hand-set" })] }),
+          row("web", { parts: [part({ categoryChosenBy: "Web lookup" })] }),
         ]}
         accounts={accountLabels(ACCOUNTS)}
         today={TODAY}
@@ -514,6 +515,7 @@ describe("the Transactions page", () => {
     expect(cellsOf("td", aiRows).filter((cell) => cell.startsWith("Restaurants"))).toEqual([
       "Restaurants AI (Category chosen by the AI)",
       "Restaurants",
+      "Restaurants AI (Category chosen by the AI)",
     ]);
     // The tag's meaning reaches screen readers as words, not as a tooltip; the visible "AI" is
     // hidden from them.
@@ -568,6 +570,7 @@ describe("the Transaction detail view", () => {
     transferLink: null,
     otherLinks: [],
     matched: [],
+    webLookup: null,
     ...fields,
   });
   const refundLink = {
@@ -630,6 +633,8 @@ describe("the Transaction detail view", () => {
       "Merchant history",
       "AI",
       "AI, unsure",
+      "Web lookup",
+      "Web lookup, unsure",
       "best guess",
       "Money movement",
     ];
@@ -650,6 +655,19 @@ describe("the Transaction detail view", () => {
     expect(text(inRouter(body(detailOf(row("new"), { decision: null }))))).toContain(
       "The app has not decided this Transaction yet.",
     );
+    // A Web lookup's Category shows the line it kept about the business.
+    const looked = text(
+      inRouter(
+        body(
+          detailOf(row("looked", { parts: [part({ categoryChosenBy: "Web lookup" })] }), {
+            webLookup: { description: "A pet supply shop." },
+          }),
+        ),
+      ),
+    );
+    expect(looked).toContain("Category chosen by: Web lookup");
+    expect(looked).toContain("Web lookup: A pet supply shop.");
+    expect(html).not.toContain("Web lookup: ");
   });
 
   it("shows a Refund on a split purchase per part, and a part the bank shrank to $0 sensibly", () => {

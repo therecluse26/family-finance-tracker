@@ -5,7 +5,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
-import { addConnection, markSetupStep } from "../db/index.ts";
+import { lookupKeys } from "../categorization/web-lookup.ts";
+import { addConnection, markSetupStep, storeMerchantLookup } from "../db/index.ts";
 import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { runMatching, startMoneyMovement } from "../money-movement/index.ts";
@@ -200,6 +201,7 @@ describe("the money-movement routes", () => {
       },
       otherLinks: [],
       matched: [expect.objectContaining({ id: ids.get("save-out"), amount: -50_000 })],
+      webLookup: null,
     } satisfies TransactionDetailView);
     const rent = (await (
       await browser.get(`/api/transactions/${ids.get("rent")}`)
@@ -207,6 +209,37 @@ describe("the money-movement routes", () => {
     expect(rent.transferLink).toBeNull();
     expect((await browser.get(`/api/transactions/${ids.get("gone")}`)).status).toBe(404);
     expect((await browser.get("/api/transactions/no-such-id")).status).toBe(404);
+  });
+
+  it("shows the line a Web lookup kept about the business, only when a Web lookup chose the Category", async () => {
+    const id = ids.get("rent") ?? "";
+    const [row] = (
+      await test.database.$client.execute({
+        sql: "SELECT merchant_id AS merchantId, merchant_clean_name AS name FROM transactions WHERE id = ?",
+        args: [id],
+      })
+    ).rows;
+    const [key] = lookupKeys({
+      id: row?.merchantId === null ? null : String(row?.merchantId),
+      name: String(row?.name),
+    });
+    await storeMerchantLookup(test.database, key ?? "", {
+      outcome: "found",
+      category: "Pets",
+      confidence: "high",
+      description: "A property manager.",
+      lookedUpAt: new Date(),
+    });
+    const shown = async () =>
+      ((await (await browser.get(`/api/transactions/${id}`)).json()) as TransactionDetailView)
+        .webLookup;
+
+    expect(await shown()).toBeNull();
+    await test.database.$client.execute({
+      sql: "UPDATE transaction_parts SET type = 'Spending', category = 'Pets', category_source = 'Web lookup', category_confidence = 'medium' WHERE transaction_id = ?",
+      args: [id],
+    });
+    expect(await shown()).toEqual({ description: "A property manager." });
   });
 
   it("ties a one-sided Transfer to the Unconnected account a Member adds", async () => {

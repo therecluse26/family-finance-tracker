@@ -9,10 +9,13 @@ import {
   readAiSettings,
   readAiSettingsVersion,
   readMemberPrice,
+  readWebLookupSwitch,
+  readWebSearchRefused,
   removeAiSettings,
   type StoredAiSettings,
   storeAiSettings,
   storeMemberPrice,
+  storeWebLookupSwitch,
 } from "../db/index.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 import { endCondition, type NewNotice, raiseNotice } from "../notify/index.ts";
@@ -34,11 +37,12 @@ import {
   onGateway,
   type PriceSource,
   USE_TIERS,
+  type WebLookupView,
 } from "./ai-view.ts";
-import { type AiFailure, checkModel, privateModels, testModel } from "./call.ts";
+import { type AiFailure, checkModel, hasWebSearch, privateModels, testModel } from "./call.ts";
 import type { AiCost } from "./cost.ts";
 import type { AiPause } from "./outbound.ts";
-import { type ModelPrice, memberPrice, tablePrice } from "./prices.ts";
+import { type ModelPrice, memberPrice, tablePrice, WEB_SEARCH_FEES } from "./prices.ts";
 import type { AiConnection, AiModelMaker } from "./providers.ts";
 import { endRetriesRanOut } from "./retries.ts";
 
@@ -55,6 +59,21 @@ const KEY_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.ap
 const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.gateway_token" };
 
 const TIERS = ["quick", "writer"] as const;
+
+// The Quick model as the Web lookup remembers a refused search for it: "provider:model".
+export const webSearchModel = (stored: { provider: AiProviderName; quickModel: string }) =>
+  `${stored.provider}:${stored.quickModel}`;
+
+// Why no Web lookup runs with these AI settings, or null when one may (spec 08, Merchant web
+// lookup): the AI provider has no web search, or it refused the search with this Quick model.
+export async function webSearchMissing(
+  database: Database,
+  stored: { provider: AiProviderName; quickModel: string },
+): Promise<WebLookupView["unavailable"]> {
+  if (!hasWebSearch(stored.provider)) return "no web search";
+  const refused = await readWebSearchRefused(database);
+  return refused === webSearchModel(stored) ? "model has no web search" : null;
+}
 
 // What stops AI besides the key.
 export type AiGates = {
@@ -234,6 +253,10 @@ export function aiSettings(options: AiOptions): AiSettings {
         writer: await priceSource(stored.provider, stored.writerModel),
       },
       status: await status(stored),
+      webLookup: {
+        on: await readWebLookupSwitch(database),
+        unavailable: await webSearchMissing(database, stored),
+      },
     };
   }
 
@@ -443,6 +466,12 @@ export function aiSettings(options: AiOptions): AiSettings {
 
     usage: () => cost.usage(),
 
+    async setWebLookup(on) {
+      if ((await readAiSettings(database)) === undefined) return undefined;
+      await storeWebLookupSwitch(database, on);
+      return view();
+    },
+
     async setCostCap(capCents) {
       await cost.setCap(capCents);
       await changed();
@@ -453,8 +482,9 @@ export function aiSettings(options: AiOptions): AiSettings {
 
 // The model for one AI use, or why that use takes its no-AI path.
 // `generation` is the AI settings' generation the model was made from.
+// The Merchant lookup's model comes with its AI provider, whose web search tools the call offers.
 export type ModelFor =
-  | { ready: true; model: LanguageModel; generation: number }
+  | { ready: true; model: LanguageModel; generation: number; webSearch?: AiProviderName }
   | { ready: false; pause: AiPause };
 
 export type AiCalls = {
@@ -499,6 +529,8 @@ export function aiCalls(options: AiOptions): AiCalls {
       const model = tier === "quick" ? stored.quickModel : stored.writerModel;
       const price = await priceOf(database, stored.provider, model);
       if (price === undefined) return { ready: false, pause: "no price" };
+      const lookup = use === "merchant lookup";
+      const searchFee = WEB_SEARCH_FEES[stored.provider];
       const models = privateModels(
         database,
         makeModels,
@@ -512,9 +544,20 @@ export function aiCalls(options: AiOptions): AiCalls {
           gate: () => gate(use, sendAnyway),
           cost,
           ...(chatThreadId === undefined ? {} : { chatThreadId }),
+          ...(lookup && searchFee !== undefined ? { searchFee } : {}),
         }),
       );
-      return { ready: true, model: models[tier], generation };
+      if (!lookup) return { ready: true, model: models[tier], generation };
+      // The caller checks first that the AI provider has a web search (spec 08, Merchant web
+      // lookup), so a lookup with none is the app's own mistake.
+      if (
+        models.lookup === undefined ||
+        !hasWebSearch(stored.provider) ||
+        searchFee === undefined
+      ) {
+        throw new TypeError("This AI provider has no web search.");
+      }
+      return { ready: true, model: models.lookup, generation, webSearch: stored.provider };
     },
   };
 }

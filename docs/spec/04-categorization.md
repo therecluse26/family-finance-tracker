@@ -87,7 +87,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
 | 2 | Category rule | A Category rule matches its Merchant. |
 | 3 | Provider category | The provider's category maps cleanly to one Category, and Plaid's `confidence_level` is `VERY_HIGH` or `HIGH`. |
 | 4 | Merchant history | The Merchant's last 3 Transactions all have the same Category. |
-| 5 | AI | An AI provider is set up and available. Its answer always applies. |
+| 5 | Web lookup, then AI | A Web lookup kept for the Merchant answers at once. Otherwise an AI provider is set up and available, and its answer always applies. When the AI is unsure of a Merchant it does not know, a Web lookup may answer in its place. |
 | 6 | Best guess | No AI is available. The Transaction takes the best guess so far, or Miscellaneous. |
 
 - **Step 3.** A provider code maps cleanly when the mapping does not flag it lossy ([Provider categories](#provider-categories)).
@@ -98,6 +98,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
 - **Step 5.** The AI gets the provider's category as a hint. It answers with one of the 30 Categories and a confidence: high, medium, or low.
   - The answer always applies.
   - Below "high", the AI counts as unsure. The Transaction also goes on the Review list.
+  - Step 5 starts with the Web lookup's cache ([Web lookup](#web-lookup)). A Category kept for the Merchant decides at once, with no AI call and no search.
 - **Step 6.** The best guess is the Category the provider's code maps to, even when lossy or at low confidence. With no provider category, it is the Merchant's most recent Category. With neither, it is Miscellaneous. The Transaction also goes on the Review list.
 - The cascade runs after matching ([Money movement](03-money-movement.md#order-of-decisions)). It works through Transactions oldest first, so Merchant history builds in date order.
 - An unlinked Refund goes through the cascade as if it were Spending. It takes the Category its Merchant would get.
@@ -109,7 +110,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
 
 ### Provenance
 
-- The app stores which step chose each Category, and how confident that step was.
+- The app stores which step chose each Category, and how confident that step was. A Category from a Web lookup has its own source, "Web lookup", with "Web lookup, unsure" below "high".
 - Members' corrections then show how accurate each step is. Developers use this to tune the steps between releases. Nothing tunes itself inside the app.
 - The Transactions page shows how each Category was chosen ([Dashboard and pages](07-dashboard-and-pages.md)).
 
@@ -118,6 +119,23 @@ Each Spending Transaction takes the first answer it gets, in this order:
 - When the provider changes a Transaction, the cascade runs again, unless a Member set its Category by hand.
 - When a Category rule is made, changed, or deleted, the cascade runs again on that Merchant's Transactions. Hand-set Transactions keep their Category.
 - When a pending Transaction posts, its Category carries over ([Money movement](03-money-movement.md#pending-transactions)).
+
+### Web lookup
+
+A Member often looks up an unknown Merchant on the web to learn what it sells. The app does the same when the AI is unsure.
+
+- **When.** The Category fix's answer for each Transaction says whether the Merchant needs a lookup. The AI says yes only when its confidence is below "high" and the line names a business it does not know. A well-known Merchant, such as Whole Foods or Verizon, never needs one.
+- **Never looked up:**
+  - a payment-app or Zelle line to or from a person, or one that names no one ([Identity](#identity));
+  - a Transfer, a loan payment, or a card payment, by the provider's category;
+  - a line with no clean Merchant name;
+  - a Merchant name in which the privacy filter finds a Member's name or a protected number.
+- **The lookup** asks the AI provider's own web search, with the clean Merchant name alone ([AI](08-ai.md#merchant-web-lookup)). It answers with one Category, a confidence, and a one-line description of the business.
+- **Outcome.** The lookup's answer takes the place of the AI's, with the source "Web lookup". At "high", it decides. Below "high", it still applies, and the Transaction goes on the Review list, as an unsure AI answer does.
+- **Cache.** The app keeps one answer for each Merchant, by the same identity as everywhere else: its Category, confidence, description, the time of the lookup, and whether the lookup found the business. A kept answer decides each later Transaction of that Merchant at step 5. A lookup that found nothing is kept too, and the app looks that Merchant up again only after 90 days. The cache holds facts about Merchants, not about a Connection, so removing a Connection keeps it.
+- **Corrections.** A Member's correction of a Web lookup's Category wins and makes a Category rule, as with every other source.
+- **The Transaction's page** shows "Category chosen by: Web lookup" and the description of the business.
+- **Switch.** Settings, AI has a switch for the Web lookup. It is on whenever AI is on. Off, the app makes no lookup and reads no kept answer.
 
 ## Provider categories
 
@@ -176,9 +194,10 @@ Each Spending Transaction takes the first answer it gets, in this order:
 
 ## AI decisions
 
-- The AI decides two things in this file:
+- The AI decides three things in this file:
   - a Category, at step 5 of the cascade;
-  - a Merchant name that the cleanup rules cannot fix.
+  - a Merchant name that the cleanup rules cannot fix;
+  - a Category from a Web lookup, when it was unsure of a Merchant it does not know ([Web lookup](#web-lookup)).
 - The app always applies the AI's Category. Below "high" confidence, the Transaction also goes on the Review list.
 - The app uses the AI's Merchant name as the clean name.
 - Without AI, the cascade stops at step 6, and the rule-cleaned name stays. The app marks these items. When AI is available again, the app sends each marked item to the AI once ([Money movement](03-money-movement.md#ai-decisions-and-the-no-ai-path)).
@@ -190,7 +209,7 @@ The Review list is optional. Each Category below already counts, so nothing wait
 
 | Item | Why it is there | What a Member's answer does |
 |---|---|---|
-| A Category the AI chose with confidence below "high" | The AI was unsure | Accepting makes a Category rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this Transaction". |
+| A Category the AI or a Web lookup chose with confidence below "high" | The AI was unsure | Accepting makes a Category rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this Transaction". |
 | A best guess made without AI | No AI was available | Same as above |
 
 - When a later AI answer has high confidence, its item leaves the Review list.

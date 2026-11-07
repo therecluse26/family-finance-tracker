@@ -25,3 +25,4 @@ export {
   correctCategory,
   deleteCategoryRule,
 } from "./rules.ts";
+export { transactionWebLookupLine } from "./web-lookup.ts";
