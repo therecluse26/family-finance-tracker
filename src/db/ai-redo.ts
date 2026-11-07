@@ -115,9 +115,9 @@ export async function countMarkedItems(database: Database): Promise<number> {
 // "Run AI on all history" (spec 08, AI work on your Transactions): marks the Category of each part
 // the cascade covers, Spending and a Refund with no link, on the shown Transactions posted on or
 // after `since`, a calendar date, when the provider, Merchant history, the AI, or a best guess
-// chose it. A hand-set Category, a Category rule, and a Category Money movement names stay
-// unmarked. The redo then asks the AI about each marked part that is not a best guess at step 5,
-// past steps 3 and 4. One statement. Returns how many parts it marked.
+// chose it. A hand-set Category, a Category rule, a Category Money movement names, and a part of a
+// tracked loan payment stay unmarked. The redo then asks the AI about each marked part that is not
+// a best guess at step 5, past steps 3 and 4. One statement. Returns how many parts it marked.
 export async function markCategoriesForAi(database: Database, since: string): Promise<number> {
   const marked = await database
     .update(transactionParts)
@@ -134,6 +134,8 @@ export async function markCategoriesForAi(database: Database, since: string): Pr
           eq(transactionParts.type, "Spending"),
           and(eq(transactionParts.type, "Refund"), eq(transactionParts.linked, false)),
         ),
+        // A part of a tracked loan payment keeps its Category: only a hand edit changes it.
+        eq(transactionParts.keepsCategory, false),
         inArray(
           transactionParts.transactionId,
           database

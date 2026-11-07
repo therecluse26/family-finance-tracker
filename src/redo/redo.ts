@@ -191,10 +191,15 @@ async function redo(
       // A call of this step found AI away: the later steps make no call.
       if (aiOn && (await readAiRedo(database)).awayAt !== null) aiOn = false;
     }
-    await endAiRedo(database, state.dueAt);
+    // The redo ends, and its failures count from 0, only once nothing more can fail: a step that
+    // fails after the end on each attempt would never reach the last attempt (K4).
+    const end = async (outcome: "finished" | "stopped") => {
+      await record(outcome);
+      await endAiRedo(database, state.dueAt);
+    };
     if (!aiOn) {
       log.info("AI went away during the redo of no-AI work", { firstRun, kind });
-      await record("stopped");
+      await end("stopped");
       return "AI away";
     }
     if (firstRun) {
@@ -204,7 +209,7 @@ async function redo(
       const cards = await writeInsightCards({ database, ai, now });
       if (cards !== "written" && (await readAiRedo(database)).awayAt !== null) {
         log.info("The first AI run's Insight card run waits for AI");
-        await record("stopped");
+        await end("stopped");
         return "AI away";
       }
       if (await claimFirstAiRunDone(database, now())) log.info("The first AI run finished");
@@ -215,7 +220,7 @@ async function redo(
       decidedAgain: decided.size,
       aiCategories,
     });
-    await record("finished");
+    await end("finished");
     return "done";
   } catch (error) {
     await record("stopped");
