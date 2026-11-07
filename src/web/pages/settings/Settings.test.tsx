@@ -35,6 +35,29 @@ describe("Settings' row of tabs", () => {
     expect(classes).toContain("overflow-x-auto");
     expect(classes).not.toContain("flex-wrap");
     expect(classes).toContain("min-[900px]:flex-wrap");
+    // A thin scrollbar shows, so a mouse with no sideways wheel can reach every tab.
+    expect(classes).toContain("[scrollbar-width:thin]");
+    expect(classes).not.toContain("[scrollbar-width:none]");
+  });
+
+  it("draws each tab's focus ring inside the tab, so the scrolling row never clips it", () => {
+    const router = createMemoryRouter(routes, { initialEntries: ["/settings/household"] });
+    const html = renderToString(<RouterProvider router={router} />);
+    const nav = /<nav aria-label="Settings sections".*?<\/nav>/s.exec(html)?.[0] ?? "";
+    const tabs = [...nav.matchAll(/<a[^>]*class="([^"]*)"/g)].map((match) =>
+      (match[1] ?? "").split(" "),
+    );
+
+    expect(tabs.length).toBeGreaterThan(1);
+    for (const classes of tabs) {
+      expect(classes).toEqual(
+        expect.arrayContaining([
+          "focus-visible:outline-2",
+          "focus-visible:-outline-offset-2",
+          "focus-visible:outline-accent",
+        ]),
+      );
+    }
   });
 });
 

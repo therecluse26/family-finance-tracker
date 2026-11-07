@@ -318,7 +318,7 @@ export const plaidSettings = sqliteTable(
   (table) => [check("plaid_settings_one_row", sql`${table.id} = 1`)],
 );
 
-// The last check of a pasted Master key, by the wizard's step 3 or "Check my master key" (spec 09,
+// The last check of a pasted Master key, by the wizard's step 3 or "Check my Master key" (spec 09,
 // The Master key). One row, with ID 1. It holds who checked, when, and whether the key matched, and
 // never the key.
 export const masterKeyChecks = sqliteTable("master_key_checks", {

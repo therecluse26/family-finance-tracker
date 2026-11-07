@@ -84,19 +84,21 @@ const NUMBER_WORD = /^(?:#\d*|[A-Z]{0,2}-?\d{3,}|\d+)$|\d{4}/i;
 // Where the rules put a phone number. A phone number is always a place marker.
 const PHONE_MARK = "\u0000PHONE";
 
-// The 50 states, DC, and Puerto Rico. A bank puts a city and its state at the end of a description.
+// The 50 states, DC, and Puerto Rico. A bank puts a city and its state at the end of a
+// description.
 const STATES = new Set(
   (
-    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ " +
-    "NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY"
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV " +
+    "NH NJ NM NY NC ND OH OK OR PA PR RI SC SD TN TX UT VT VA WA WV WI WY"
   ).split(" "),
 );
 
 // Descriptions of a paper check. A check has no Merchant.
 const CHECK = /^(?:CHECK|CHK|CHEQUE)(?:\s+PAID)?\s*(?:#|NO\.?|NUMBER)?\s*\d*$/i;
 
-// A word that is only digits or symbols.
-const NO_LETTERS = /^[^\p{L}]+$/u;
+// A word that is only digits or symbols. A modifier letter, such as "ｰ" in "4ｰ8ｰ2ｰ1", looks like
+// a symbol, so it counts as one.
+const NO_LETTERS = /^[\P{L}\p{Lm}]+$/u;
 
 function words(text: string): string[] {
   return text.split(/\s+/).filter((word) => word !== "");
@@ -129,19 +131,18 @@ function placeIndex(parts: readonly string[]): number {
   });
 }
 
-// "TRADER JOE'S" is "Trader Joe's". Text with any lowercase letter keeps its case, and so does a
-// word with "&", such as H&M or AT&T.
+// "TRADER" is "Trader". A word with "&", such as H&M or AT&T, keeps its case.
+const titleWord = (word: string) =>
+  word.includes("&")
+    ? word
+    : word
+        .toLowerCase()
+        .replace(/(^|[-/])(\p{L})/gu, (_, before, letter) => before + letter.toUpperCase());
+
+// "TRADER JOE'S" is "Trader Joe's". Text with any lowercase letter keeps its case.
 function titleCase(text: string): string {
   if (/\p{Ll}/u.test(text)) return text;
-  return words(text)
-    .map((word) =>
-      word.includes("&")
-        ? word
-        : word
-            .toLowerCase()
-            .replace(/(^|[-/])(\p{L})/gu, (_, before, letter) => before + letter.toUpperCase()),
-    )
-    .join(" ");
+  return words(text).map(titleWord).join(" ");
 }
 
 // The rules' words for one bank description, before title case. `unsure` when a card number or a
@@ -199,10 +200,10 @@ const CARD_PAYMENT = "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT";
 // The words of a card payment line that name the payment, not the bank.
 const PAYMENT_WORDS = new Set(
   (
-    "payment payments epayment pmt pmts pymt pymnt pymnts paymt pmnt pay paid autopay autopmt auto " +
-    "automatic epay e-pay e-payment e-pmt online mobile web internet banking phone tel thank " +
-    "thanks you thankyou card crd cd dc bill billpay received recd rcvd ach to id ppd ccd web acct " +
-    "account ending in ref conf confirmation transfer xfer electronic elec recurring"
+    "payment payments epayment pmt pmts pymt pymnt pymnts paymt pmnt pay paid autopay autopmt " +
+    "auto automatic epay e-pay e-payment e-pmt online mobile web internet banking phone tel " +
+    "thank thanks you thankyou card crd cd dc bill billpay received recd rcvd ach to id ppd ccd " +
+    "web acct account ending in ref conf confirmation transfer xfer electronic elec recurring"
   ).split(" "),
 );
 // "CREDIT" names the payment only before "CARD", so "CREDIT ONE BANK" keeps it.
@@ -214,8 +215,25 @@ const PERSON_WORDS = /^(?:from|by|for|per)$/i;
 // them, or after "ORIG CO NAME:", and the payer's name is in one of them. A run of 6 or more digits
 // is an ID, and a bank such as Wells Fargo puts the payer's name after it with no field name.
 const ORIGINATOR = /\bORIG(?:INATOR)?\s?CO\s?NAME\s?:\s?/i;
-const ACH_FIELD =
-  /\b(?:DES|DESCR|INDN|IND\s?NAME|IND\s?ID|NAME|CO\s?ID|ORIG\s?ID|CO\s?ENTRY\s?DESCR|RECEIVER|RECV|TRN|SEC|TRACE|EED|DESC\s?DATE)\s?[:#]|\d{6,}/i;
+const ACH_FIELD_NAMES = [
+  "DES",
+  "DESCR",
+  "INDN",
+  "IND\\s?NAME",
+  "IND\\s?ID",
+  "NAME",
+  "CO\\s?ID",
+  "ORIG\\s?ID",
+  "CO\\s?ENTRY\\s?DESCR",
+  "RECEIVER",
+  "RECV",
+  "TRN",
+  "SEC",
+  "TRACE",
+  "EED",
+  "DESC\\s?DATE",
+];
+const ACH_FIELD = new RegExp(`\\b(?:${ACH_FIELD_NAMES.join("|")})\\s?[:#]|\\d{6,}`, "i");
 
 // A card payment line with its digits apart from the letters glued before them, as in "CHASE4821",
 // so the bank's word stays when its card number goes. A mask such as "XXXX4821" stays whole, so it
@@ -237,9 +255,10 @@ function digitsApart(text: string): string {
 
 // The bank a card payment line names: Plaid's financial institution on the line, when it has one.
 // Then the provider's Merchant name, when it starts with a known card issuer. Otherwise the
-// rule-cleaned line up to its first ACH field, with no payment words, when the rules are sure: 1 to
-// 3 words of letters, and nothing that may name a person. `bank` is null when the rules are not
-// sure.
+// rule-cleaned line up to its first ACH field, with no payment words, when the rules are sure: a
+// known card issuer's words at the start, and nothing that may name a person. A known issuer is
+// written in its own form, such as "WF" or "Bank of America". `bank` is null when the rules are
+// not sure.
 function cardPaymentBank(txn: {
   description: string;
   merchantName: string | null;
@@ -249,10 +268,14 @@ function cardPaymentBank(txn: {
     ?.find((party) => party.type === "financial_institution")
     ?.name.replace(/\s+/g, " ")
     .trim();
-  if (institution !== undefined && institution !== "") return { bank: institution };
-  const provider = words(txn.merchantName ?? "");
-  const providerIssuer = issuerWords(provider);
-  if (providerIssuer > 0) return { bank: provider.slice(0, providerIssuer).join(" ") };
+  // A known issuer is written in its own form; any other institution stays as Plaid sends it.
+  if (institution !== undefined && institution !== "") {
+    const whole = words(institution);
+    const issuer = issuerOf(whole);
+    return { bank: issuer !== null && issuerLength(whole) === whole.length ? issuer : institution };
+  }
+  const providerIssuer = issuerOf(words(txn.merchantName ?? ""));
+  if (providerIssuer !== null) return { bank: providerIssuer };
 
   let text = digitsApart(plainForms(txn.description));
   const originator = ORIGINATOR.exec(text);
@@ -263,7 +286,7 @@ function cardPaymentBank(txn: {
   if (cleaned.unsure) return { bank: null };
 
   const kept: string[] = [];
-  const parts = words(titleCase(cleaned.parts.join(" ")));
+  const parts = cleaned.parts;
   for (const [index, word] of parts.entries()) {
     if (PERSON_WORDS.test(word)) return { bank: null };
     if (PAYMENT_WORDS.has(word.toLowerCase())) continue;
@@ -272,72 +295,84 @@ function cardPaymentBank(txn: {
     const rest = pieces.join("-").replace(/^[-,:#.]+|[-,:#.]+$/g, "");
     if (rest !== "") kept.push(rest);
   }
-  // A word that starts with an earlier one names the payment, as in "CITI ... CITICARDAP".
-  const bank = kept.filter(
-    (word, index) =>
-      !kept.slice(0, index).some((before) => word.toLowerCase().startsWith(before.toLowerCase())),
-  );
+  // A word that starts with an earlier one names the payment, as in "CITI ... CITICARDAP". Only
+  // the first words can name an issuer, so only they are read, and a long line costs no more
+  // than a short one (K3).
+  const first = kept.slice(0, LONGEST_ISSUER).map((word) => word.toLowerCase());
+  const bank = kept
+    .slice(0, LONGEST_ISSUER)
+    .filter(
+      (_, index) => !first.slice(0, index).some((before) => first[index]?.startsWith(before)),
+    );
   if (bank.length === 0) return { bank: "" };
-  const issuer = issuerWords(bank);
-  return { bank: issuer === 0 ? null : bank.slice(0, issuer).join(" ") };
+  return { bank: issuerOf(bank) };
 }
 
 // The card issuers the rules know by name. The words after an issuer's name may be the payer, as
 // in `CHASE CREDIT CRD EPAY 260105 8273645101 JAMIE RIVERA`, so they go. A line that starts with
-// any other word is not sure to name a bank, so the name goes to AI cleanup.
-const CARD_ISSUERS = new Set([
-  "alliant",
-  "american express",
-  "amex",
-  "bank of america",
-  "barclaycard",
-  "barclays",
-  "bmo",
-  "boa",
-  "bofa",
-  "capital one",
-  "chase",
-  "citi",
-  "citibank",
-  "citizens",
-  "comenity",
-  "credit one",
-  "credit one bank",
-  "discover",
-  "elan",
-  "fifth third",
-  "first national bank of omaha",
-  "first premier",
-  "fnbo",
-  "goldman sachs",
-  "hsbc",
-  "huntington",
-  "jpmorgan chase",
-  "merrick bank",
-  "mission lane",
-  "navy federal",
-  "penfed",
-  "pnc",
-  "regions",
-  "synchrony",
-  "synchrony bank",
-  "td bank",
-  "truist",
-  "us bank",
-  "usaa",
-  "usbank",
-  "wells fargo",
-  "wf",
+// any other word is not sure to name a bank, so the name goes to AI cleanup. Each issuer maps to
+// the form the bank itself writes, such as "WF" or "Bank of America".
+const CARD_ISSUERS = new Map([
+  ["alliant", "Alliant"],
+  ["american express", "American Express"],
+  ["amex", "Amex"],
+  ["bank of america", "Bank of America"],
+  ["barclaycard", "Barclaycard"],
+  ["barclays", "Barclays"],
+  ["bmo", "BMO"],
+  ["boa", "BoA"],
+  ["bofa", "BofA"],
+  ["capital one", "Capital One"],
+  ["chase", "Chase"],
+  ["citi", "Citi"],
+  ["citibank", "Citibank"],
+  ["citizens", "Citizens"],
+  ["comenity", "Comenity"],
+  ["credit one", "Credit One"],
+  ["credit one bank", "Credit One Bank"],
+  ["discover", "Discover"],
+  ["elan", "Elan"],
+  ["fifth third", "Fifth Third"],
+  ["first national bank of omaha", "First National Bank of Omaha"],
+  ["first premier", "First Premier"],
+  ["fnbo", "FNBO"],
+  ["goldman sachs", "Goldman Sachs"],
+  ["hsbc", "HSBC"],
+  ["huntington", "Huntington"],
+  ["jpmorgan chase", "JPMorgan Chase"],
+  ["merrick bank", "Merrick Bank"],
+  ["mission lane", "Mission Lane"],
+  ["navy federal", "Navy Federal"],
+  ["penfed", "PenFed"],
+  ["pnc", "PNC"],
+  ["regions", "Regions"],
+  ["synchrony", "Synchrony"],
+  ["synchrony bank", "Synchrony Bank"],
+  ["td bank", "TD Bank"],
+  ["truist", "Truist"],
+  ["us bank", "US Bank"],
+  ["usaa", "USAA"],
+  ["usbank", "USBank"],
+  ["wells fargo", "Wells Fargo"],
+  ["wf", "WF"],
 ]);
-const LONGEST_ISSUER = Math.max(...[...CARD_ISSUERS].map((name) => name.split(" ").length));
+const LONGEST_ISSUER = Math.max(...[...CARD_ISSUERS.keys()].map((name) => name.split(" ").length));
 
 // How many of the first words name a known card issuer, longest first, or 0.
-function issuerWords(bank: readonly string[]): number {
+function issuerLength(bank: readonly string[]): number {
   const folded = bank.map((word) => word.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase());
   for (let count = Math.min(LONGEST_ISSUER, folded.length); count > 0; count--) {
     if (CARD_ISSUERS.has(folded.slice(0, count).join(" "))) return count;
   }
   return 0;
+}
+
+// The known card issuer the first words name, in its own form, or null.
+function issuerOf(bank: readonly string[]): string | null {
+  const count = issuerLength(bank);
+  if (count === 0) return null;
+  const folded = bank.slice(0, count).map((word) => word.normalize("NFKD").replace(/\p{M}/gu, ""));
+  return CARD_ISSUERS.get(folded.join(" ").toLowerCase()) ?? null;
 }
 
 // A card payment line, which Plaid files under its credit card payment code, is named

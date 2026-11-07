@@ -9,12 +9,16 @@
 //   digit, such as "⁴" or "④", and a circled digit with no such form, such as "❹";
 // - a full-width letter or symbol becomes its plain form;
 // - every dash becomes "-";
-// - format characters, such as a zero-width space, go;
+// - format characters, such as a zero-width space, go, and so does every other character Unicode
+//   says a reader never sees, such as a variation selector or the grapheme joiner U+034F;
+// - an unseen character that Unicode counts as a letter, such as the Hangul filler U+3164, which
+//   shows as a blank, becomes a space, so it never joins or splits a number as a letter would;
 // - a combining mark on a letter stays, as in "Café", and one on anything else goes, as in "4́".
 const IS_DIGIT = /^\p{Nd}$/u;
 const IS_LETTER = /^\p{L}$/u;
 const IS_MARK = /^\p{M}$/u;
 const IS_FORMAT = /^\p{Cf}$/u;
+const IS_IGNORABLE = /^\p{Default_Ignorable_Code_Point}$/u;
 const IS_DASH = /^\p{Pd}$/u;
 // A compatibility form that is a number, such as "④" (4), "⑴" ((1)), or "⒋" (4.).
 const NUMBER_FORM = /^\(?(\p{Nd}+)[.)]?$/u;
@@ -55,32 +59,64 @@ function asciiDigit(char: string): string {
 
 const asciiDigits = (digits: string) => [...digits].map(asciiDigit).join("");
 
+// What a character becomes: its plain form, nothing ("skip"), or a mark that stays only on a
+// letter ("mark").
+type Plain = { plain: string; letter: boolean } | "skip" | "mark";
+
+function plainOf(char: string): Plain {
+  let plain = char;
+  if (IS_IGNORABLE.test(char) && IS_LETTER.test(char)) {
+    plain = " ";
+  } else if (IS_FORMAT.test(char) || IS_IGNORABLE.test(char)) {
+    return "skip";
+  } else if (IS_MARK.test(char)) {
+    return "mark";
+  } else if (char >= "！" && char <= "～") {
+    plain = String.fromCharCode((char.codePointAt(0) ?? 0) - 0xfee0);
+  } else if (IS_DIGIT.test(char)) {
+    plain = asciiDigit(char);
+  } else if (IS_DASH.test(char)) {
+    plain = "-";
+  } else if (!IS_LETTER.test(char)) {
+    const number = NUMBER_FORM.exec(char.normalize("NFKC"));
+    if (number?.[1] !== undefined) plain = asciiDigits(number[1]);
+    else if (IS_OTHER_NUMBER.test(char) && char.normalize("NFKC") === char)
+      plain = otherNumber(char);
+  }
+  return { plain, letter: IS_LETTER.test(plain) };
+}
+
+// Each character's answer is kept, so a long line tests each kind of character once. The store
+// has a cap, so a line of many different characters cannot grow it without end.
+const CHAR_STORE_CAP = 4096;
+function remembered<T>(store: Map<string, T>, char: string, find: (char: string) => T): T {
+  let found = store.get(char);
+  if (found === undefined) {
+    found = find(char);
+    if (store.size < CHAR_STORE_CAP) store.set(char, found);
+  }
+  return found;
+}
+
+const plains = new Map<string, Plain>();
+
 export function plainForms(text: string): string {
   let out = "";
   let afterLetter = false;
   for (const char of text) {
-    let plain = char;
     if (char < "\u0080") {
-      plain = char;
-    } else if (IS_FORMAT.test(char)) {
+      out += char;
+      afterLetter = (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
       continue;
-    } else if (IS_MARK.test(char)) {
+    }
+    const plain = remembered(plains, char, plainOf);
+    if (plain === "skip") continue;
+    if (plain === "mark") {
       if (afterLetter) out += char;
       continue;
-    } else if (char >= "！" && char <= "～") {
-      plain = String.fromCharCode((char.codePointAt(0) ?? 0) - 0xfee0);
-    } else if (IS_DIGIT.test(char)) {
-      plain = asciiDigit(char);
-    } else if (IS_DASH.test(char)) {
-      plain = "-";
-    } else if (!IS_LETTER.test(char)) {
-      const number = NUMBER_FORM.exec(char.normalize("NFKC"));
-      if (number?.[1] !== undefined) plain = asciiDigits(number[1]);
-      else if (IS_OTHER_NUMBER.test(char) && char.normalize("NFKC") === char)
-        plain = otherNumber(char);
     }
-    out += plain;
-    afterLetter = IS_LETTER.test(plain);
+    out += plain.plain;
+    afterLetter = plain.letter;
   }
   return out;
 }
@@ -88,12 +124,20 @@ export function plainForms(text: string): string {
 // The line as words (letters, with their marks), digit runs, and gaps (everything else).
 type Token = { kind: "word" | "digits" | "gap"; start: number; end: number; fold: string };
 
-const kindOf = (char: string): Token["kind"] =>
+// A modifier letter with no plain letter in it, such as "ｰ" (U+FF70) or "ː" (U+02D0), looks like
+// a dash or a colon, so it is a gap: "4ｰ8ｰ2ｰ1" is one number. One that is a small letter, such as
+// "ˣ", is a letter, so "ˣˣˣˣ" is a mask.
+const IS_MODIFIER_LETTER = /^\p{Lm}$/u;
+const isGapLetter = (char: string) =>
+  IS_MODIFIER_LETTER.test(char) && !/\p{L}/u.test(char.normalize("NFKD").replace(/\p{Lm}/gu, ""));
+const kindOfChar = (char: string): Token["kind"] =>
   char >= "0" && char <= "9"
     ? "digits"
-    : IS_LETTER.test(char) || IS_MARK.test(char)
+    : (IS_LETTER.test(char) && !isGapLetter(char)) || IS_MARK.test(char)
       ? "word"
       : "gap";
+const kinds = new Map<string, Token["kind"]>();
+const kindOf = (char: string): Token["kind"] => remembered(kinds, char, kindOfChar);
 
 // A word without case or marks, so "ÉNDING" is "ending".
 const foldWord = (word: string) => word.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
@@ -191,7 +235,8 @@ function leadInAt(tokens: readonly Token[], at: number): LeadIn | undefined {
     if (joiningGap(tokens[account]) && tokens[account]?.fold.includes("#")) {
       return { end: account, strong: true, labelled: true };
     }
-    // "ACCT 4821" says it is an Account number; "CARD 2500" may be part of a name, as in "Gift Card".
+    // "ACCT 4821" says it is an Account number; "CARD 2500" may be part of a name, as in
+    // "Gift Card".
     return { end: account, strong: !wordIs(tokens[at], CARD_WORDS), labelled: false };
   }
   const end = endingAt(tokens, at) ?? lastFourAt(tokens, at);
@@ -242,7 +287,8 @@ function takes(leadIn: LeadIn, number: NumberRun, cardPayment: boolean): boolean
 }
 
 // What the scan found: spans to remove, and whether the rules are unsure.
-type Found = { spans: { start: number; end: number }[]; unsure: boolean };
+type Span = { start: number; end: number };
+type Found = { spans: Span[]; unsure: boolean };
 
 function scan(text: string, cardPayment: boolean): Found {
   const tokens = tokensOf(text);
@@ -285,12 +331,67 @@ function scan(text: string, cardPayment: boolean): Found {
   return { spans, unsure };
 }
 
+// The bracket or quote that closes each one that opens.
+const CLOSERS: Readonly<Record<string, string>> = {
+  "(": ")",
+  "[": "]",
+  "{": "}",
+  "<": ">",
+  '"': '"',
+  "'": "'",
+  "“": "”",
+  "‘": "’",
+  "«": "»",
+};
+const opens = (char: string | undefined) => char !== undefined && Object.hasOwn(CLOSERS, char);
+const isSpace = (char: string | undefined) => char !== undefined && /\s/u.test(char);
+
+// A span with the brackets and quotes around its number, as in "ENDING IN (4821)", "[4821]", or
+// "(ACCT 4821)": a closer just after the span goes with its opener, inside the span or just before
+// it. An opener just before the span goes too when nothing follows the span, and so does a "." or
+// "," just after it, as in "#4821.". An opener counts only after a space, so "DONUTS' ACCT 4821"
+// keeps its "'". Each span reads only its own text and the brackets and spaces next to it, and
+// `textEnd` is where the text's last word ends, so the work stays linear (K3).
+function widened(text: string, span: Span, textEnd: number): Span {
+  const inside: string[] = [];
+  for (const char of text.slice(span.start, span.end)) {
+    const last = inside.at(-1);
+    if (last !== undefined && CLOSERS[last] === char) inside.pop();
+    else if (opens(char)) inside.push(char);
+  }
+  // The openers just before the span, nearest first.
+  const before: number[] = [];
+  for (let at = span.start - 1; at >= 0 && (isSpace(text[at]) || opens(text[at])); at--) {
+    if (opens(text[at]) && (at === 0 || isSpace(text[at - 1]) || opens(text[at - 1]))) {
+      before.push(at);
+    } else if (!isSpace(text[at])) break;
+  }
+  const pending = [...before.map((at) => text[at] ?? "").reverse(), ...inside];
+  let end = span.end;
+  let closed = 0;
+  for (;;) {
+    let at = end;
+    while (isSpace(text[at])) at++;
+    const last = pending.at(-1);
+    if (last === undefined || text[at] !== CLOSERS[last]) break;
+    pending.pop();
+    closed += 1;
+    end = at + 1;
+  }
+  if (text[end] === "." || text[end] === ",") end += 1;
+  const takenBefore = end >= textEnd ? before.length : closed - inside.length;
+  const start = takenBefore > 0 ? (before[takenBefore - 1] ?? span.start) : span.start;
+  return { start, end };
+}
+
 function removeSpans(text: string, spans: Found["spans"], mark: string): string {
   let out = "";
   let at = 0;
-  for (const span of spans) {
-    out += `${text.slice(at, span.start)} ${mark} `;
-    at = span.end;
+  const textEnd = text.trimEnd().length;
+  for (const found of spans) {
+    const span = widened(text, found, textEnd);
+    out += `${text.slice(at, Math.max(at, span.start))} ${mark} `;
+    at = Math.max(at, span.end);
   }
   return out + text.slice(at);
 }
@@ -307,8 +408,9 @@ export function markAccountNumbers(
 }
 
 // A lead-in left in a clean name. One at the end, as when the bank cut the line short ("CHASE CARD
-// ENDING IN"), goes. Any lead-in, or a mask such as "XXXX", left in the name makes the rules unsure,
-// so the name is marked for AI cleanup. A lone "ENDING" or "CARD" stays, as in "Ending Books".
+// ENDING IN"), goes. Any lead-in, or a mask such as "XXXX", left in the name makes the rules
+// unsure, so the name is marked for AI cleanup. A lone "ENDING" or "CARD" stays, as in
+// "Ending Books".
 export function leftLeadIns(name: string): { name: string; unsure: boolean } {
   const tokens = tokensOf(name);
   const lastWord = tokens.findLastIndex((token) => token.kind !== "gap");

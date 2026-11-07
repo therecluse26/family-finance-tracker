@@ -168,7 +168,7 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 **Step 3, Master key:**
 
 - The step shows the Master key on each visit, with a Copy button, until the Member presses "I saved it".
-- The app does not ask the Member to paste the key back. "Check my master key" in settings tests a saved copy later ([Members, login, and security](09-members-login-security.md#the-master-key)).
+- The app does not ask the Member to paste the key back. "Check my Master key" in settings tests a saved copy later ([Members, login, and security](09-members-login-security.md#the-master-key)).
 - After "I saved it", the app never shows the Master key again.
 
 **Step 4, Household:** how the app uses these facts, and how Members edit them later, is in [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md).
@@ -228,7 +228,7 @@ The wizard has 6 steps. Each step shows "Step N of 6", the name of each step, an
 
 - The backup folder holds readable history, so use an encrypted disk.
 - Keep a copy of `compose.yaml` and `.env`, because backups do not include them.
-- Save the Master key in a password manager. "Check my master key" in settings tests the saved copy.
+- Save the Master key in a password manager. "Check my Master key" in settings tests the saved copy.
 - Prefer the Master key file to `FFT_MASTER_KEY`.
 - If Plaid Link fails on plain HTTP, use Tailscale Serve.
 

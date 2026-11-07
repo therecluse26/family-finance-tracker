@@ -292,7 +292,7 @@ describe("card payment lines", () => {
     ["CITI AUTOPAY 260105 ONLINE", "Citi card payment"],
     ["DISCOVER E-PAYMENT 10/05", "Discover card payment"],
     ["AMEX EPAYMENT ACH PMT", "Amex card payment"],
-    ["BANK OF AMERICA ONLINE PMT XXXX4821", "Bank Of America card payment"],
+    ["BANK OF AMERICA ONLINE PMT XXXX4821", "Bank of America card payment"],
     ["CHASE CREDIT CRD AUTOPAY PPD ID: 4760039224", "Chase card payment"],
   ])("names %j %j", (description, name) => {
     expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
@@ -341,6 +341,45 @@ describe("card payment lines", () => {
     });
   });
 
+  // The provider's Merchant name gives the issuer in its own form, whatever its case.
+  it.each([
+    ["WF", "WF card payment"],
+    ["wf", "WF card payment"],
+    ["usaa", "USAA card payment"],
+    ["USAA", "USAA card payment"],
+    ["bank of america", "Bank of America card payment"],
+    ["JPMORGAN CHASE", "JPMorgan Chase card payment"],
+  ])("writes the provider's Merchant name %j as its issuer's own form", (merchantName, name) => {
+    expect(
+      cleanMerchant({
+        description: "THANK YOU-MOBILE",
+        merchantName,
+        merchantId: "m-1",
+        category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+      }),
+    ).toEqual({ merchant: { id: null, name }, needsAi: false });
+  });
+
+  // Plaid's financial institution is written in its issuer's own form when it is a known issuer,
+  // and as Plaid sends it otherwise.
+  it.each([
+    ["WELLS FARGO", "Wells Fargo card payment"],
+    ["usaa", "USAA card payment"],
+    ["Pnc", "PNC card payment"],
+    ["Harbor National Bank", "Harbor National Bank card payment"],
+    ["Chase Bluebird Credit Union", "Chase Bluebird Credit Union card payment"],
+  ])("writes the financial institution %j as %j", (institution, name) => {
+    expect(
+      cleanMerchant({
+        description: "ONLINE PAYMENT 0042 TO CARDMEMBER SVCS",
+        merchantName: null,
+        merchantId: null,
+        counterparties: [{ name: institution, type: "financial_institution" }],
+        category: { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" },
+      }),
+    ).toEqual({ merchant: { id: null, name }, needsAi: false });
+  });
+
   it("names the bank by Plaid's financial institution when the line has one", () => {
     expect(
       cleanMerchant({
@@ -363,7 +402,8 @@ describe("card payment lines", () => {
     ["WF Credit Card AUTO PAY 260105 123456 JAMIE RIVERA", "WF card payment", false],
     // ACH fields: the bank is the originator, and the payer is in a field.
     [
-      "ORIG CO NAME:CITI CARD ONLINE ORIG ID:CITICTP CO ENTRY DESCR:PAYMENT SEC:WEB IND NAME:JAMIE RIVERA",
+      "ORIG CO NAME:CITI CARD ONLINE ORIG ID:CITICTP CO ENTRY DESCR:PAYMENT SEC:WEB " +
+        "IND NAME:JAMIE RIVERA",
       "Citi card payment",
       false,
     ],
@@ -377,7 +417,7 @@ describe("card payment lines", () => {
     ],
     // Only a known card issuer is sure to be a bank; the words after it may be the payer.
     ["PAYMENT TO CHASE JAMIE RIVERA", "Chase card payment", false],
-    ["FIRST NATIONAL BANK OF OMAHA PAYMENT", "First National Bank Of Omaha card payment", false],
+    ["FIRST NATIONAL BANK OF OMAHA PAYMENT", "First National Bank of Omaha card payment", false],
     // A payer the rules cannot tell from a bank: "Card payment", for AI cleanup.
     ["PAYMENT FROM JAMIE RIVERA", "Card payment", true],
     ["PAYMENT TO JAMIE RIVERA", "Card payment", true],
@@ -392,6 +432,25 @@ describe("card payment lines", () => {
     ["CHASE CARD ENDING IN 4́8́2́1́", "Chase card payment", false],
   ])("names %j %j", (description, name, needsAi) => {
     expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi });
+  });
+
+  // The issuer reads as the bank writes it, whatever the line's case.
+  it.each([
+    ["chase credit crd epay", "Chase card payment"],
+    ["wf credit card auto pay 260105", "WF card payment"],
+    ["Wf Credit Card Auto Pay", "WF card payment"],
+    ["BANK OF AMERICA ONLINE PMT Ref 4821", "Bank of America card payment"],
+    ["bank of america online pmt", "Bank of America card payment"],
+    ["first national bank of omaha payment", "First National Bank of Omaha card payment"],
+    ["Capital one mobile pmt", "Capital One card payment"],
+    ["USAA CREDIT CARD PAYMENT", "USAA card payment"],
+    ["pnc bank online pmt", "PNC card payment"],
+    ["Td Bank Payment", "TD Bank card payment"],
+    ["JPMORGAN CHASE EPAY", "JPMorgan Chase card payment"],
+    ["penfed payment", "PenFed card payment"],
+    ["citi autopay payment Citicardap", "Citi card payment"],
+  ])("writes the issuer in its own form in %j", (description, name) => {
+    expect(cardPayment(description)).toEqual({ merchant: { id: null, name }, needsAi: false });
   });
 
   it("keeps no digit of the card in the name, in any script or form", () => {
@@ -507,6 +566,34 @@ describe("card numbers in other forms", () => {
     "NORTHWIND ENDING INXXXX4821",
     "NORTHWIND 4.8.2.1",
     "NORTHWIND ④⑧②①",
+    // Characters a reader never sees, or that look like a gap, but that Unicode counts as letters
+    // or marks: Hangul fillers, Mongolian and other variation selectors, the grapheme joiner, an
+    // unassigned invisible code point, and modifier letters that look like a dash or a colon.
+    "NORTHWIND ENDING IN 4\u3164821",
+    "NORTHWIND ENDING IN 4\u115F8\u11602\uFFA01",
+    "NORTHWIND 4\u3164821",
+    "NORTHWIND ENDING\u3164IN\u31644821",
+    "NORTHWIND ACCT\uFFA0ENDING 4821",
+    "NORTHWIND ENDING IN 4\u180B8\u180D2\u180F1",
+    "NORTHWIND ENDING IN 4\uFE0F8\u{E0100}21",
+    "NORTHWIND ENDING IN 4\u034F8\u17B421",
+    "NORTHWIND ENDING IN 4\u20658\u{E0FFF}21",
+    "NORTHWIND ENDING IN 4\uFF708\uFF702\uFF701",
+    "NORTHWIND ENDING IN 4\u30FC8\u30FC2\u30FC1",
+    "NORTHWIND 4\u02D08\u02D02\u02D01",
+    "NORTHWIND CARD \u02E3\u02E3\u02E3\u02E3 4821",
+    "NORTHWIND ACCT ENDING \u2800 4821",
+    // A number in brackets or quotes takes them with it.
+    "NORTHWIND ACCT ENDING IN (4821)",
+    "NORTHWIND ACCT [4821]",
+    "NORTHWIND ACCT {XXXX4821}",
+    'NORTHWIND ACCT "4821"',
+    "NORTHWIND ACCT \u201C4821\u201D",
+    "NORTHWIND ACCT #4821.",
+    "NORTHWIND (ACCT ENDING IN 4821)",
+    "NORTHWIND ( ACCT ENDING IN 4821 )",
+    "NORTHWIND [CARD XXXX 4821",
+    "NORTHWIND \uFF08ACCT 4821\uFF09",
   ])("cleans %j to Northwind", (description) => {
     expect(fromBank(description)).toEqual({
       merchant: { id: null, name: "Northwind" },
@@ -514,9 +601,20 @@ describe("card numbers in other forms", () => {
     });
   });
 
+  it.each([
+    ["NORTHWIND (NYC) ACCT 4821", "Northwind (nyc)"],
+    ["DONUTS' ACCT 4821", "Donuts'"],
+    ["BLUEBIRD BOOKS (PORTLAND) ACCT ENDING IN (4821)", "Bluebird Books (portland)"],
+    ["CAFÉ LUNA ACCT 4821, THANK YOU", "Café Luna Thank You"],
+  ])("keeps the brackets and quotes that are not around the number in %j", (description, name) => {
+    expect(fromBank(description).merchant?.name).toBe(name);
+  });
+
   // The rules run in the sync, so no line may take long, however it is built (K3).
   // The short lines come first, so a slow rule fails in a second instead of hanging the run.
-  it("cleans a 10,000-character line in a few milliseconds", () => {
+  // The limit grows with the line, 50 ms for each 10,000 characters: a rule whose work grows with
+  // the square of the line took 440 ms on a 40,000-character card payment line.
+  it("cleans a 40,000-character line in time that grows with its length", () => {
     const line = (piece: string, length: number) =>
       piece.repeat(Math.ceil(length / piece.length)).slice(0, length);
     const pieces = [
@@ -534,21 +632,34 @@ describe("card numbers in other forms", () => {
       "LAST 4 ",
       "ENDING IN ",
       "❹ ",
+      // A card payment line of many short words, each starting with the one before it.
+      "A AB ",
+      "CHASE CHASEX ",
+      "ACCT (4821) ",
+      "( ",
+      "\u3164",
+      "4\u3164",
+      "4\uFF70",
     ];
-    const lines = [250, 10_000].flatMap((length) =>
-      pieces.flatMap((piece) => ["", " 4821 SHOP"].map((end) => `${line(piece, length)}${end}`)),
+    const lines = [250, 10_000, 40_000].flatMap((length) =>
+      pieces.flatMap((piece) =>
+        ["", " 4821 SHOP"].map((end) => ({ length, description: `${line(piece, length)}${end}` })),
+      ),
     );
-    for (const description of lines) {
-      for (const category of [null, { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" }]) {
+    const cardPayment = { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" };
+    for (const { length, description } of lines) {
+      const limit = Math.max(50, (length / 10_000) * 50);
+      // The longest lines run only as card payment lines, the slowest kind, to keep the test short.
+      for (const category of length > 10_000 ? [cardPayment] : [null, cardPayment]) {
         const txn = { description, merchantName: null, merchantId: null, category };
-        // The fastest of 3 runs, so a busy host does not fail the test.
+        // The fastest of up to 3 runs, so a busy host does not fail the test.
         let fastest = Number.POSITIVE_INFINITY;
-        for (let run = 0; run < 3; run += 1) {
+        for (let run = 0; run < 3 && fastest >= limit; run += 1) {
           const start = performance.now();
           cleanMerchant(txn);
           fastest = Math.min(fastest, performance.now() - start);
         }
-        expect(fastest, JSON.stringify(description.slice(0, 20))).toBeLessThan(50);
+        expect(fastest, JSON.stringify(description.slice(0, 20))).toBeLessThan(limit);
       }
     }
   });

@@ -321,7 +321,9 @@ describe("the Transactions page's routes", () => {
          WHEN 'lunch' THEN '2026-10-25' WHEN 'refund' THEN '2026-10-30' WHEN 'dinner' THEN '2026-10-25'
        END WHERE provider_transaction_id IN ('lunch', 'refund', 'dinner')`,
     );
-    const shownTie = [id("lunch"), id("dinner")].sort().map(providerIdOf);
+    // Lunch and dinner show the same date: the later posted date goes first (lunch posts
+    // 2026-11-03, dinner 2026-10-20), then the ID.
+    const shownTie = ["lunch", "dinner"];
     const order = ["tonight", "paycheck", "refund", ...shownTie, "purchase"];
 
     const whole = await list("");

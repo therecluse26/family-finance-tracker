@@ -13,8 +13,8 @@ import {
 import type { Secrets } from "../secrets/index.ts";
 import type { MasterKeyCheckResult, MasterKeyRoutes } from "./master-key-views.ts";
 
-// The wizard's step 3 and "Check my master key" (spec 09, The Master key). Step 3 shows the key
-// until the Member says they saved it. "Check my master key" uses the secrets module's
+// The wizard's step 3 and "Check my Master key" (spec 09, The Master key). Step 3 shows the key
+// until the Member says they saved it. "Check my Master key" uses the secrets module's
 // checkMasterKey. A pasted key is never stored, logged, or sent back.
 
 // Wrong Master keys count per Member, as failed sign-ins do, in the same window.

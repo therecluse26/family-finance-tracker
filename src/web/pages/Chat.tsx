@@ -53,10 +53,13 @@ const EVERY_MEMBER = "Every Member sees every thread.";
 // the messages scroll on their own, and the input stays at the foot.
 const CHAT_PAGE =
   "-mx-4 -mt-4 -mb-24 flex h-dvh min-w-0 flex-col pb-[calc(59px+env(safe-area-inset-bottom))] min-[900px]:-mx-5 min-[900px]:-mt-7 min-[900px]:-mb-12 min-[900px]:pb-0";
-// The open thread, or a new one: its header, its messages, and the input.
-const THREAD_PANE = "flex min-h-0 min-w-0 flex-1 flex-col wrap-anywhere";
-// The messages scroll inside the pane, so the input stays in view.
-const SCROLLER = "min-h-0 flex-1 overflow-y-auto";
+// The open thread, or a new one: its header, its messages, and the input. On a phone, where the
+// thread list sits above it, it is never shorter than its header and input, so on a short screen
+// the thread list gives up its room instead and the input stays in view.
+const THREAD_PANE = "flex min-h-min min-w-0 flex-1 flex-col wrap-anywhere md:min-h-0";
+// The messages scroll inside the pane, so the input stays in view. Size containment keeps the
+// messages out of the pane's own least height.
+const SCROLLER = "min-h-0 flex-1 overflow-y-auto [contain:size]";
 const MESSAGES = `w-full max-w-[816px] py-6 ${GUTTER}`;
 
 // What the page shows after "Send": the new thread answers its first message once it opens.
@@ -548,8 +551,9 @@ export function NewThread(props: {
 }
 
 // The threads, newest first, each with the day of its last message. On a phone the list sits over
-// the open thread, at most 160 px tall, and scrolls; from 768 px it is a column at the left, the
-// pane's full height, and scrolls on its own.
+// the open thread, at most 160 px tall, and scrolls; on a short screen it shrinks, so the open
+// thread's input stays in view. From 768 px it is a column at the left, the pane's full height,
+// and scrolls on its own.
 export function ThreadList(props: {
   threads: ChatThreadItemView[];
   open: string | undefined;
@@ -559,7 +563,7 @@ export function ThreadList(props: {
   return (
     <nav
       aria-label="Chat threads"
-      className={`max-h-40 min-w-0 shrink-0 overflow-y-auto border-b border-line ${FAINT} px-3 py-4 md:max-h-none md:w-[260px] md:border-r md:border-b-0 md:py-5`}
+      className={`max-h-40 min-h-0 min-w-0 shrink overflow-y-auto border-b border-line ${FAINT} px-3 py-4 md:max-h-none md:w-[260px] md:border-r md:border-b-0 md:py-5`}
     >
       <Link to="/chat" className={`${buttonClass("primary")} w-full`}>
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14">

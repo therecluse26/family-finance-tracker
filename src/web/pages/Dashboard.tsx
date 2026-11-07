@@ -570,10 +570,11 @@ function emptyChartLine(bars: GroupBar[]): string | undefined {
   return first === undefined ? "No Spending yet" : `No Spending since ${first.label}`;
 }
 
-// A group: in a box under 480 px, as on a phone, a compact row (its name and "$spent of $Budget",
-// its status at the right), as on the approved phone dashboard board; from 480 px, a box with its
-// chart. The chart stays drawn under 480 px, clipped to no height, so its chart library always
-// has a width to measure.
+// A group: on a phone (under 900 px) in a box under 480 px, a compact row (its name and
+// "$spent of $Budget", its status at the right), as on the approved phone dashboard board.
+// Everywhere else, a box with its 13-bar chart (spec 07, section 5), so the narrow right column
+// from 900 px keeps the charts. The chart stays drawn in a compact row, clipped to no height, so
+// its chart library always has a width to measure.
 function GroupBox(props: {
   group: UsualGroup;
   view: BudgetsView;
@@ -590,25 +591,27 @@ function GroupBox(props: {
   const empty = emptyChartLine(bars);
   return (
     <li
-      className={`min-w-0 border-t border-line-soft @min-[480px]:rounded-[10px] @min-[480px]:border ${props.open ? "@max-[479px]:bg-selected @min-[480px]:border-accent" : ""}`}
+      className={`min-w-0 border-t border-line-soft min-[900px]:rounded-[10px] min-[900px]:border @min-[480px]:rounded-[10px] @min-[480px]:border ${props.open ? "max-[900px]:@max-[480px]:bg-selected min-[900px]:border-accent @min-[480px]:border-accent" : ""}`}
       data-group={group.categoryGroup}
     >
       <button
         type="button"
         aria-expanded={props.open}
-        className="flex w-full items-baseline justify-between gap-x-3 px-1.5 py-2 text-left hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent @min-[480px]:block @min-[480px]:rounded-t-[10px] @min-[480px]:px-3 @min-[480px]:pt-3 @min-[480px]:pb-0"
+        className="flex w-full items-baseline justify-between gap-x-3 px-1.5 py-2 text-left hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-[900px]:block min-[900px]:rounded-t-[10px] min-[900px]:px-3 min-[900px]:pt-3 min-[900px]:pb-0 @min-[480px]:block @min-[480px]:rounded-t-[10px] @min-[480px]:px-3 @min-[480px]:pt-3 @min-[480px]:pb-0"
         onClick={props.onOpen}
       >
         <span className="block min-w-0">
           <span className="block text-sm font-semibold">{group.categoryGroup}</span>
           <span className="mt-0.5 block text-small text-muted tabular-nums" data-slot="group-line">
-            {budget === 0
-              ? `${wholeDollars(spent)}, no Budget`
-              : `${wholeDollars(spent)} of ${wholeDollars(budget)}`}
+            {budget > 0
+              ? `${wholeDollars(spent)} of ${wholeDollars(budget)}`
+              : (box?.yearly ?? 0) > 0
+                ? `${wholeDollars(spent)}, no monthly Budget`
+                : `${wholeDollars(spent)}, no Budget`}
           </span>
         </span>
         {status === undefined ? null : (
-          <span className="block shrink-0 text-right text-small @min-[480px]:mt-0.5 @min-[480px]:text-left">
+          <span className="block shrink-0 text-right text-small min-[900px]:mt-0.5 min-[900px]:text-left @min-[480px]:mt-0.5 @min-[480px]:text-left">
             <Status {...status} />
           </span>
         )}
@@ -617,7 +620,7 @@ function GroupBox(props: {
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the button above does the same. */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the button above takes the keyboard. */}
       <div
-        className="cursor-pointer px-3 pb-3 @max-[479px]:invisible @max-[479px]:h-0 @max-[479px]:overflow-hidden @max-[479px]:p-0"
+        className="cursor-pointer px-3 pb-3 max-[900px]:@max-[480px]:invisible max-[900px]:@max-[480px]:h-0 max-[900px]:@max-[480px]:overflow-hidden max-[900px]:@max-[480px]:p-0"
         data-slot="group-chart-area"
         onClick={props.onOpen}
       >
@@ -728,7 +731,7 @@ export function UsualMonthBox(props: {
       )}
       <ul
         aria-label="Category groups"
-        className="mt-3 grid grid-cols-1 @min-[480px]:mt-3.5 @min-[480px]:grid-cols-3 @min-[480px]:gap-2.5"
+        className="mt-3 grid grid-cols-1 min-[900px]:mt-3.5 min-[900px]:gap-2.5 @min-[480px]:mt-3.5 @min-[480px]:grid-cols-3 @min-[480px]:gap-2.5"
         data-slot="groups"
       >
         {usual.groups.map((group) => (
@@ -744,10 +747,14 @@ export function UsualMonthBox(props: {
       </ul>
       {/* The charts are hidden from screen readers, and each group's words say what they show, so
           the key to the charts is hidden too. It names the dashed line only once a chart draws one,
-          and goes with the charts in a box under 480 px. */}
+          and goes with the charts in a compact row. */}
       {usual.groups.length === 0 ? null : (
         <p className="mt-2.5 text-small text-muted" data-slot="chart-key">
-          <span aria-hidden="true" className="@max-[479px]:hidden" data-slot="chart-key-bars">
+          <span
+            aria-hidden="true"
+            className="max-[900px]:@max-[480px]:hidden"
+            data-slot="chart-key-bars"
+          >
             Grey bars: the last 12 months. Blue: {month.name} so far.
             {budgetLine ? " Dashed line: the Budget." : ""}
           </span>{" "}

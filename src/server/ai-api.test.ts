@@ -362,6 +362,10 @@ describe("the AI routes", () => {
     });
 
     expect(res.status).toBe(409);
+    // The page's button is "Save".
+    expect(await res.json()).toEqual({
+      error: "The AI settings changed while the app checked them. Save again.",
+    });
     expect(await shown(tab)).toBeNull();
     expect(await ready()).toBe(false);
   });
