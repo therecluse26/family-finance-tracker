@@ -163,7 +163,9 @@ export function firstSentIndex(count: number, lastIsMember: boolean): number {
 // The words the browser shows when an answer fails, with "Try again".
 function failureWords(end: Exclude<StreamEnd, { answered: string }>): string {
   if ("refused" in end) {
-    return "The privacy filter stopped this question, so nothing went to the AI.";
+    return end.sent
+      ? "The privacy filter stopped this answer partway. Your question went to the AI, but nothing more did."
+      : "The privacy filter stopped this answer, so nothing went to the AI.";
   }
   if ("paused" in end) {
     return end.paused === "send anyway?"

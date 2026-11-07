@@ -1,5 +1,6 @@
 import type { LanguageModelMiddleware } from "ai";
 import { isNeverSentToAi } from "../household/index.ts";
+import { log } from "../log.ts";
 import { typedValueOf } from "./typed.ts";
 
 // The privacy filter (spec 08, Privacy filter; spec 01, 11. Privacy). It rewrites every request
@@ -84,6 +85,10 @@ function withoutMark<Message extends { providerOptions?: Record<string, unknown>
 export class PrivacyRefusal extends Error {
   override name = "PrivacyRefusal";
 }
+
+// What the AI reads in place of a tool result the filter refuses on its own (spec 08, Privacy
+// filter). The rest of the call goes out, so the AI answers from what is left.
+export const HELD_BACK = "The privacy filter held back this result.";
 
 export type PrivacyFilter = {
   text(text: string): string;
@@ -1373,7 +1378,74 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     });
   }
 
+  // A tool result the filter refuses on its own, such as one with a store number it cannot cut
+  // from a typed amount, is held back: the AI reads HELD_BACK in its place, and the rest of the
+  // call goes out. A part that carries the filter's mark is an app bug, so it still refuses the
+  // call. Each held-back result is logged by its tool's name and the rule, never its value.
+  function withHeldBack(messages: Prompt): Prompt {
+    return messages.map((message): Prompt[number] => {
+      if (message.role !== "tool" && message.role !== "assistant") return message;
+      let changed = false;
+      const content = message.content.map((part) => {
+        if (part.type !== "tool-result" || isMarked(part)) return part;
+        try {
+          filterParams({ prompt: [{ role: message.role, content: [part] }] as Prompt });
+          return part;
+        } catch (error) {
+          if (!(error instanceof PrivacyRefusal)) throw error;
+          changed = true;
+          log.warn("The privacy filter held back a tool result", {
+            tool: part.toolName,
+            rule: error.message,
+          });
+          return { ...part, output: { type: "error-text" as const, value: HELD_BACK } };
+        }
+      });
+      return changed ? ({ ...message, content } as Prompt[number]) : message;
+    });
+  }
+
+  // Where a refused call fails, for the log: the first message the filter refuses on its own, by
+  // its place and role, and its tools' names for tool results. Never a value.
+  function refusedPlace(input: CallOptions): string {
+    for (const [index, message] of input.prompt.entries()) {
+      try {
+        filterParams({ prompt: [message] });
+      } catch (error) {
+        if (!(error instanceof PrivacyRefusal)) throw error;
+        const tools = Array.isArray(message.content)
+          ? message.content.flatMap((part) => ("toolName" in part ? [part.toolName] : []))
+          : [];
+        return `message ${index + 1} of ${input.prompt.length} (${message.role}${
+          tools.length === 0 ? "" : `: ${tools.join(", ")}`
+        })`;
+      }
+    }
+    try {
+      filterParams({ prompt: [] as Prompt, tools: input.tools });
+    } catch {
+      return "the tools";
+    }
+    return "across messages or in the call's options";
+  }
+
+  // The whole request, filtered, with each refused tool result held back. A refusal anywhere else
+  // refuses the call, and is logged by its place and rule.
   function params(input: CallOptions): CallOptions {
+    try {
+      return filterParams({ ...input, prompt: withHeldBack(input.prompt) });
+    } catch (error) {
+      if (error instanceof PrivacyRefusal) {
+        log.warn("The privacy filter refused an AI call", {
+          rule: error.message,
+          place: refusedPlace(input),
+        });
+      }
+      throw error;
+    }
+  }
+
+  function filterParams(input: CallOptions): CallOptions {
     const filtered: CallOptions = {
       ...input,
       prompt: prompt(input.prompt),
