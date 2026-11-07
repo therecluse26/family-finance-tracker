@@ -47,11 +47,26 @@ Upkeep stays with what it maintains: home repairs in Home and garden, and car re
   - store numbers;
   - payment-processor prefixes, such as `SQ *` and `TST*`;
   - cities;
-  - dates.
+  - dates;
+  - card and Account numbers, with the words that introduce them. A lead-in is "ending in", "ends with", "last 4" or "last four"; an account word such as "acct", "account" or "a/c"; or "card" or "crd" with a word such as "ending", "#", "no." or "number". A mask such as `XXXX`, `****` or `XXXX-XXXX-` goes with its digits too. The words go with the number wherever it stands, so `NORTHWIND UTILITIES ACCT ENDING 4821` is "Northwind Utilities" and `NORTHWIND CARD XXXX XXXX XXXX 4821` is "Northwind". A word inside a longer word, as in "Neverending", stays. An order code after `*`, such as `*2K4JD8`, goes as one piece.
+- Before the rules read a line, they make its plain form:
+  - every digit, in any script and in any superscript or circled form, becomes 0 to 9; any other number sign with no plain form counts as a digit;
+  - every dash becomes "-", and a full-width character becomes its plain form;
+  - format characters, such as a zero-width space, go;
+  - a combining mark stays on a letter, as in "Café", and goes from anything else, so `ENDING IN 4́8́2́1` reads as `ENDING IN 4821`.
+- A short run of spaces or symbols between the words and digits of a lead-in counts as one gap, so `ACCT ENDING 4.8.2.1` loses the whole number.
+- "Card" alone before digits, as in `GIFT CARD 2500` or `STARBUCKS CARD 1234`, may be part of the name. Its words stay, and the name is marked for AI cleanup. On a card payment line, or when the digits carry a mask, the word and the digits go.
+- A lead-in that ends the line with no number after it, as when the bank cut the line short (`CHASE CARD ENDING IN`), goes too. A lead-in or mask the rules leave in the name, as in `ENDS WITH 99 BOUTIQUE`, marks the name for AI cleanup.
 - A name counts as fixed when the result has 1 to 4 words. No word may be only digits or symbols.
-- **A card payment line,** which Plaid files under its credit card payment code, gets the name "<bank> card payment", such as "Chase card payment". The bank is what the line names after the rules remove payment words, such as "card ending in", "mobile pymt", "autopay", "online" and "thank you", and every run of digits. When the line names no bank, as in `THANK YOU-MOBILE` on the card's own Account, the name is "Card payment". A card's last 4 never stays in the name.
+- **A card payment line,** which Plaid files under its credit card payment code, with no provider Merchant name, gets the name "<bank> card payment", such as "Chase card payment".
+  - The bank is Plaid's financial institution counterparty, when the line has one.
+  - Otherwise it is the card issuer the line names first, from a list the rules know, such as Chase, Citi, Capital One or Discover, after the rules remove payment words, such as "card ending in", "mobile pymt", "autopay", "online" and "thank you", and every run of digits. On an ACH line, the bank is the originator (`ORIG CO NAME:`), and the text from the first field name (`IND NAME:`, `INDN:`, `NAME:`, `RECEIVER:`, `ID:` and the like) or the first run of 6 or more digits on goes, because the payer's name follows it.
+  - When the line names no bank, as in `THANK YOU-MOBILE` on the card's own Account, the name is "Card payment".
+  - The words after the issuer's name go, because they may be the payer, as in `CHASE CREDIT CRD EPAY 260105 8273645101 JAMIE RIVERA` ("Chase card payment").
+  - When the words left do not start with a known issuer, as in `PAYMENT FROM JAMIE RIVERA` or a small bank's line, the rules cannot be sure they name a bank. The name is "Card payment" and is marked for AI cleanup.
+  - No part of a card or Account number stays in any name.
 - When an AI provider is set up, the AI cleans only the names the rules cannot fix. The app keeps each answer and reuses it for the same description text. So the AI sees each text once.
-- The cleanup rules run when a Transaction arrives, before matching, because Refund links need the Merchant. AI cleanup runs in the categorization step.
+- The cleanup rules run when a Transaction arrives, before matching, because Refund links need the Merchant. AI cleanup runs in the categorization step. A stored Transaction gets the rules again only when the provider sends it again as changed; a change to the rules does not rename stored Transactions.
 
 ### Identity
 

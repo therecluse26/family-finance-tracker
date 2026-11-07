@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEMO_BANKS, demoRecords } from "../bank/demo.ts";
 import { fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { runFollowUp } from "../follow-up/index.ts";
+import { K7_LINES } from "../large-history/history.ts";
+import { cleanMerchant } from "../merchants/index.ts";
 import {
   addManualLoan,
   editManualLoan,
@@ -14,6 +17,7 @@ import {
   totalsByMonth,
   undoLink,
 } from "./index.ts";
+import { namesLender } from "./manual-loans.ts";
 
 // Manual loans (spec 02, Manual loans and Interest; spec 03, Payments on a tracked loan and Loan
 // payouts), through the Matching follow-up step on Transactions the fake adapter syncs.
@@ -318,5 +322,38 @@ describe("Manual loans", () => {
       { kind: "Reimbursement", made_by: "Member" },
     ]);
     expect(await totalsByMonth(bank.database)).toEqual(before);
+  });
+});
+
+// The clean Merchant name is one of the texts that name a lender. On the fake bank's lines and
+// the hard Merchant lines (K7), it names no lender that the description or a financial
+// institution counterparty does not, so a change to the cleanup rules changes no lender match.
+describe("the lender a line names", () => {
+  const lenders = [
+    ...DEMO_BANKS.map((demo) => demo.bankName),
+    "Chase",
+    "Synchrony Bank",
+    "Capital One",
+    "Larkspur",
+    "Venmo",
+    "PayPal",
+  ];
+  const lines: TxnRecord[] = [
+    ...demoRecords(),
+    ...K7_LINES.map((description, n) =>
+      fakeTxn({ id: `k7-${n}`, accountId: CHECKING, amount: -1_000, description }),
+    ),
+  ];
+
+  it("comes from the description and the counterparties alone", () => {
+    for (const line of lines) {
+      const { merchant } = cleanMerchant(line);
+      for (const lender of lenders) {
+        expect(
+          namesLender({ ...line, merchantCleanName: merchant?.name ?? null }, lender),
+          `${line.description} / ${lender}`,
+        ).toBe(namesLender({ ...line, merchantCleanName: null }, lender));
+      }
+    }
   });
 });
