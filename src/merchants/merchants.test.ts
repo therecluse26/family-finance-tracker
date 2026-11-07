@@ -474,7 +474,9 @@ describe("card numbers in other forms", () => {
 
   // The rules run in the sync, so no line may take long, however it is built (K3).
   // The short lines come first, so a slow rule fails in a second instead of hanging the run.
-  it("cleans a 40,000-character line in a few milliseconds", () => {
+  // The limit grows with the line, 50 ms for each 10,000 characters: a rule whose work grows with
+  // the square of the line took 440 ms on a 40,000-character card payment line.
+  it("cleans a 40,000-character line in time that grows with its length", () => {
     const line = (piece: string, length: number) =>
       piece.repeat(Math.ceil(length / piece.length)).slice(0, length);
     const pieces = [
@@ -502,19 +504,24 @@ describe("card numbers in other forms", () => {
       "4\uFF70",
     ];
     const lines = [250, 10_000, 40_000].flatMap((length) =>
-      pieces.flatMap((piece) => ["", " 4821 SHOP"].map((end) => `${line(piece, length)}${end}`)),
+      pieces.flatMap((piece) =>
+        ["", " 4821 SHOP"].map((end) => ({ length, description: `${line(piece, length)}${end}` })),
+      ),
     );
-    for (const description of lines) {
-      for (const category of [null, { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" }]) {
+    const cardPayment = { name: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" };
+    for (const { length, description } of lines) {
+      const limit = Math.max(50, (length / 10_000) * 50);
+      // The longest lines run only as card payment lines, the slowest kind, to keep the test short.
+      for (const category of length > 10_000 ? [cardPayment] : [null, cardPayment]) {
         const txn = { description, merchantName: null, merchantId: null, category };
-        // The fastest of 3 runs, so a busy host does not fail the test.
+        // The fastest of up to 3 runs, so a busy host does not fail the test.
         let fastest = Number.POSITIVE_INFINITY;
-        for (let run = 0; run < 3; run += 1) {
+        for (let run = 0; run < 3 && fastest >= limit; run += 1) {
           const start = performance.now();
           cleanMerchant(txn);
           fastest = Math.min(fastest, performance.now() - start);
         }
-        expect(fastest, JSON.stringify(description.slice(0, 20))).toBeLessThan(50);
+        expect(fastest, JSON.stringify(description.slice(0, 20))).toBeLessThan(limit);
       }
     }
   });

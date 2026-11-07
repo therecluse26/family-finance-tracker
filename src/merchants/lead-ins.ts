@@ -59,34 +59,64 @@ function asciiDigit(char: string): string {
 
 const asciiDigits = (digits: string) => [...digits].map(asciiDigit).join("");
 
+// What a character becomes: its plain form, nothing ("skip"), or a mark that stays only on a
+// letter ("mark").
+type Plain = { plain: string; letter: boolean } | "skip" | "mark";
+
+function plainOf(char: string): Plain {
+  let plain = char;
+  if (IS_IGNORABLE.test(char) && IS_LETTER.test(char)) {
+    plain = " ";
+  } else if (IS_FORMAT.test(char) || IS_IGNORABLE.test(char)) {
+    return "skip";
+  } else if (IS_MARK.test(char)) {
+    return "mark";
+  } else if (char >= "！" && char <= "～") {
+    plain = String.fromCharCode((char.codePointAt(0) ?? 0) - 0xfee0);
+  } else if (IS_DIGIT.test(char)) {
+    plain = asciiDigit(char);
+  } else if (IS_DASH.test(char)) {
+    plain = "-";
+  } else if (!IS_LETTER.test(char)) {
+    const number = NUMBER_FORM.exec(char.normalize("NFKC"));
+    if (number?.[1] !== undefined) plain = asciiDigits(number[1]);
+    else if (IS_OTHER_NUMBER.test(char) && char.normalize("NFKC") === char)
+      plain = otherNumber(char);
+  }
+  return { plain, letter: IS_LETTER.test(plain) };
+}
+
+// Each character's answer is kept, so a long line tests each kind of character once. The store
+// has a cap, so a line of many different characters cannot grow it without end.
+const CHAR_STORE_CAP = 4096;
+function remembered<T>(store: Map<string, T>, char: string, find: (char: string) => T): T {
+  let found = store.get(char);
+  if (found === undefined) {
+    found = find(char);
+    if (store.size < CHAR_STORE_CAP) store.set(char, found);
+  }
+  return found;
+}
+
+const plains = new Map<string, Plain>();
+
 export function plainForms(text: string): string {
   let out = "";
   let afterLetter = false;
   for (const char of text) {
-    let plain = char;
     if (char < "\u0080") {
-      plain = char;
-    } else if (IS_IGNORABLE.test(char) && IS_LETTER.test(char)) {
-      plain = " ";
-    } else if (IS_FORMAT.test(char) || IS_IGNORABLE.test(char)) {
+      out += char;
+      afterLetter = (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
       continue;
-    } else if (IS_MARK.test(char)) {
+    }
+    const plain = remembered(plains, char, plainOf);
+    if (plain === "skip") continue;
+    if (plain === "mark") {
       if (afterLetter) out += char;
       continue;
-    } else if (char >= "！" && char <= "～") {
-      plain = String.fromCharCode((char.codePointAt(0) ?? 0) - 0xfee0);
-    } else if (IS_DIGIT.test(char)) {
-      plain = asciiDigit(char);
-    } else if (IS_DASH.test(char)) {
-      plain = "-";
-    } else if (!IS_LETTER.test(char)) {
-      const number = NUMBER_FORM.exec(char.normalize("NFKC"));
-      if (number?.[1] !== undefined) plain = asciiDigits(number[1]);
-      else if (IS_OTHER_NUMBER.test(char) && char.normalize("NFKC") === char)
-        plain = otherNumber(char);
     }
-    out += plain;
-    afterLetter = IS_LETTER.test(plain);
+    out += plain.plain;
+    afterLetter = plain.letter;
   }
   return out;
 }
@@ -100,12 +130,14 @@ type Token = { kind: "word" | "digits" | "gap"; start: number; end: number; fold
 const IS_MODIFIER_LETTER = /^\p{Lm}$/u;
 const isGapLetter = (char: string) =>
   IS_MODIFIER_LETTER.test(char) && !/\p{L}/u.test(char.normalize("NFKD").replace(/\p{Lm}/gu, ""));
-const kindOf = (char: string): Token["kind"] =>
+const kindOfChar = (char: string): Token["kind"] =>
   char >= "0" && char <= "9"
     ? "digits"
     : (IS_LETTER.test(char) && !isGapLetter(char)) || IS_MARK.test(char)
       ? "word"
       : "gap";
+const kinds = new Map<string, Token["kind"]>();
+const kindOf = (char: string): Token["kind"] => remembered(kinds, char, kindOfChar);
 
 // A word without case or marks, so "ÉNDING" is "ending".
 const foldWord = (word: string) => word.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
