@@ -1,6 +1,9 @@
 // AI work on your Transactions, as Settings → AI sees it (spec 08, AI work on your Transactions):
-// "Finish AI work now", "Run AI on all history", and the status line of the AI's work. This file
+// "Finish AI work now", "Run AI on all history", the status line of the AI's work, and the live AI
+// status (spec 08, Live AI status). This file imports only a type from src/ai/ai-view.ts, which
 // imports nothing, so the web app's type check can follow it.
+
+import type { ModelUse } from "../ai/ai-view.ts";
 
 // The two runs a Member starts.
 // - "finish": the redo of no-AI work at once, for every marked item, and the first AI run if it is
@@ -76,8 +79,29 @@ export type AiWorkPress =
   | { started: true; work: AiWorkView }
   | { started: false; refusal: AiWorkRefusal };
 
-// Settings, AI's routes for the AI's work (src/redo/redo.ts).
+// A background AI use: every use but Chat and reading a Goal, which a Member starts and watches.
+export type AiActivityUse = Exclude<ModelUse, "chat" | "reading a goal">;
+
+// The background AI work running now, as the live AI status sees it (spec 08, Live AI status):
+// a run of the redo of no-AI work with its kind and step, and each background use with a call in
+// progress, in the order their calls started, with how many calls each has. Only names and
+// counts: never a Transaction, a Merchant name, an amount, a prompt, or a Member name.
+export type AiActivityView = {
+  run: { kind: AiWorkKind | null; step: AiWorkStep } | null;
+  uses: { use: AiActivityUse; calls: number }[];
+};
+
+// The live AI status's feed. `watch` calls `changed` with each new view, and `ended` once, when
+// the app stops; it returns the function that stops watching. `stop` ends every watch.
+export type AiActivityFeed = {
+  now(): AiActivityView;
+  watch(changed: (view: AiActivityView) => void, ended: () => void): () => void;
+  stop(): void;
+};
+
+// Settings, AI's routes for the AI's work (src/redo/redo.ts), and the live AI status's feed.
 export type AiWork = {
   view(): Promise<AiWorkView>;
   press(kind: AiWorkKind): Promise<AiWorkPress>;
+  activity: AiActivityFeed;
 };

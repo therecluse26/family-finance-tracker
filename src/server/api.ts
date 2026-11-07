@@ -16,6 +16,7 @@ import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
 import { AI_WORK_REFUSALS, type AiWorkKind } from "../redo/work-view.ts";
+import { aiActivityStream } from "./ai-activity.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -1674,6 +1675,8 @@ export const api = new Hono<ServerEnv>()
   })
   .post("/ai/work/finish", (c) => pressAiWork(c, "finish"))
   .post("/ai/work/all-history", (c) => pressAiWork(c, "all history"))
+  // The live AI status (spec 08, Live AI status): server-sent events of the background AI work.
+  .get("/ai/activity/stream", aiActivityStream)
   // Settings, Alerts: the Household's SMTP server. The password is never in an answer.
   .get("/smtp/settings", async (c) => c.json({ smtp: await c.var.smtp.view() }))
   .post("/smtp/settings", async (c) => {

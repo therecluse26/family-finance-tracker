@@ -1,5 +1,6 @@
 import { claimAiBack, listMemberNamesById, markAiAway } from "../db/index.ts";
 import { log } from "../log.ts";
+import { isActivityUse, startAiActivity } from "./activity.ts";
 import { isBackground } from "./ai-view.ts";
 import {
   AiCallError,
@@ -128,6 +129,8 @@ export function householdAi(options: AiOptions): HouseholdAi {
     }
     const found = await calls.modelFor(use, { sendAnyway });
     if (!found.ready) return found;
+    // Spec 08, Live AI status: a background call shows from here to its end, whatever the end.
+    const ended = isActivityUse(use) ? startAiActivity(use) : undefined;
     try {
       const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
       const reply = await callModel(found.model, sent);
@@ -148,6 +151,8 @@ export function householdAi(options: AiOptions): HouseholdAi {
       if (!background) return { ready: false, failed: failure };
       const retryAt = await retries.failed(use, new Date());
       return retryAt === undefined ? { ready: false, failed: failure } : { ready: false, retryAt };
+    } finally {
+      ended?.();
     }
   }
 

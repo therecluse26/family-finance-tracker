@@ -6,6 +6,7 @@ import {
   type AiWorkView,
   type AiWorkWait,
 } from "../../../redo/work-view.ts";
+import { useAiActivity } from "../../ai-activity.ts";
 import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
@@ -17,9 +18,6 @@ import { ADD_PANEL, BUTTONS, HINT, Lead, SettingCard } from "./settings-ui.tsx";
 // work now" runs the redo of no-AI work at once, and "Run AI on all history", after its confirm
 // step, runs the first AI run's work again on the last 18 months. The status line says whether the
 // work runs, why it waits, or what the last run did, in Household time.
-
-// How often the page reads the line again while a run goes on.
-const RUNNING_POLL_MS = 3_000;
 
 // The tone of each reason AI work waits: its icon and color beside the words.
 const WAIT_TONE: Record<AiWorkWait, StatusTone> = {
@@ -129,16 +127,13 @@ export function AiWorkCard(props: { ai?: unknown; usage?: unknown }) {
       .catch(() => {});
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `ai` and `usage` only say when to load again.
-  useEffect(load, [load, props.ai, props.usage]);
+  // The line also follows the live AI status (spec 08, Live AI status): it loads again when a run
+  // starts, changes its step, or ends, and not on a timer.
+  const run = JSON.stringify(useAiActivity()?.run ?? null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `ai`, `usage` and `run` only say when to load again.
+  useEffect(load, [load, props.ai, props.usage, run]);
 
-  // While a run goes on, the line follows its steps.
   const running = work?.running != null;
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(load, RUNNING_POLL_MS);
-    return () => clearInterval(timer);
-  }, [running, load]);
 
   async function press(kind: AiWorkKind) {
     setBusy(true);

@@ -1,4 +1,4 @@
-import type { HouseholdAi } from "../ai/index.ts";
+import { aiActivity, type HouseholdAi, showRunActivity } from "../ai/index.ts";
 import { registerFirstRunStep } from "../bank/index.ts";
 import {
   claimAiBack,
@@ -121,6 +121,24 @@ let step: AiWorkStep | undefined;
 // A Member's run, from the press until its job ends. Set before the press's first await, so
 // presses sent together start one run (K18).
 let pressed: AiWorkKind | undefined;
+// True once the running redo has found that it is due and that AI may run.
+let working = false;
+
+// The live AI status's run (spec 08, Live AI status): a Member's press from the press on, and a
+// redo the app starts once it is due with AI on. Each change of `busy`, `step`, `pressed`, and
+// `working` calls it.
+function showRun(): void {
+  showRunActivity(
+    pressed !== undefined || (busy && working)
+      ? { kind: pressed ?? null, step: step ?? "starting" }
+      : null,
+  );
+}
+
+function pressedNow(kind: AiWorkKind | undefined): void {
+  pressed = kind;
+  showRun();
+}
 
 // Runs the redo once, when AI has come back or the first AI run is due. With `kind`, it is a
 // Member's run, which runs at once. A redo that AI's return starts gives way to a Member's run
@@ -129,11 +147,14 @@ export async function runRedo(kind?: AiWorkKind): Promise<RedoOutcome> {
   if (busy || (kind === undefined && pressed !== undefined)) return "busy";
   busy = true;
   step = "starting";
+  showRun();
   try {
     return await redo(running(), kind);
   } finally {
     busy = false;
     step = undefined;
+    working = false;
+    showRun();
   }
 }
 
@@ -165,6 +186,8 @@ async function redo(
     return "AI away";
   }
   await clearAiAway(database);
+  working = true;
+  showRun();
   // Each item whose mark goes away during the run is one the run decided: by the AI, or by an
   // earlier cascade step such as Merchant history.
   const before = await countMarkedItems(database);
@@ -179,6 +202,7 @@ async function redo(
       const work = steps.get(name);
       if (work === undefined) continue;
       step = name;
+      showRun();
       const run = {
         decided: [...decided],
         ai: aiOn,
@@ -204,6 +228,7 @@ async function redo(
     }
     if (firstRun) {
       step = "Insight cards";
+      showRun();
       // A Writer call that found AI away leaves the first AI run to AI's return, which runs it
       // again.
       const cards = await writeInsightCards({ database, ai, now });
@@ -252,12 +277,12 @@ export async function runRedoJob(kind?: AiWorkKind): Promise<void> {
       kind,
       errorName: error instanceof Error ? error.name : typeof error,
     });
-    if (kind !== undefined) pressed = undefined;
+    if (kind !== undefined) pressedNow(undefined);
     await endAiRedo(database, (await readAiRedo(database)).dueAt);
     await raiseNotice({ kind: "condition", condition: REDO_STOPPED, text: REDO_STOPPED_TEXT });
     return;
   }
-  if (kind !== undefined) pressed = undefined;
+  if (kind !== undefined) pressedNow(undefined);
   if (outcome === "done") await endCondition(REDO_STOPPED);
 }
 
@@ -307,7 +332,7 @@ export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
   const { database } = services;
   // The place is taken here, before the first await (K18).
   if (busy || pressed !== undefined) return { started: false, refusal: "running" };
-  pressed = kind;
+  pressedNow(kind);
   let refusal: AiWorkRefusal | undefined;
   try {
     refusal = await waitsFor(services.ai);
@@ -324,19 +349,19 @@ export async function pressAiWork(kind: AiWorkKind): Promise<AiWorkPress> {
     }
     if (refusal === undefined) await services.startWork(kind);
   } catch (error) {
-    pressed = undefined;
+    pressedNow(undefined);
     throw error;
   }
   if (refusal !== undefined) {
-    pressed = undefined;
+    pressedNow(undefined);
     return { started: false, refusal };
   }
   log.info("A Member started AI work", { kind });
   return { started: true, work: await aiWorkView() };
 }
 
-// Settings, AI's routes for the AI's work.
-export const aiWork: AiWork = { view: aiWorkView, press: pressAiWork };
+// Settings, AI's routes for the AI's work, and the live AI status's feed.
+export const aiWork: AiWork = { view: aiWorkView, press: pressAiWork, activity: aiActivity };
 
 // Starts a Redo no-AI work job, unless one already waits.
 export function requestRedo(): Promise<boolean> {
@@ -401,8 +426,10 @@ export function startRedo(options: {
       stopStep();
       if (services === started) {
         services = undefined;
-        pressed = undefined;
+        pressedNow(undefined);
       }
+      // No open live AI status stream outlives the app (spec 10, HTTP routes).
+      aiActivity.stop();
     },
   };
 }
