@@ -12,3 +12,5 @@ coverage/
 .claude/
 # The source files of the Benchmark snapshot, which the owner downloads by hand (docs/data-sources.md).
 /benchmark-sources/
+# Screenshots that agents save in the repo root while they check the UI.
+/*.png
