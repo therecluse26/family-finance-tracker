@@ -42,6 +42,12 @@ export {
   UNCLEAR_PAIR_KIND,
 } from "./matching.ts";
 export {
+  deleteTransferAnswer,
+  ONE_SIDED_KIND,
+  type TransferAnswerView,
+  transferAnswerViews,
+} from "./one-sided-cards.ts";
+export {
   DECISION_STEPS,
   type Decision,
   type DecisionInput,

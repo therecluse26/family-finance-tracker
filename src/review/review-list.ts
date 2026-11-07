@@ -65,6 +65,9 @@ export type ReviewKind = {
     choice: ReviewChoice,
     answered: { memberId: string; database: Database },
   ): Promise<void>;
+  // The page shows the kind's items between the same two Accounts as one group, for display only:
+  // each keeps its own answer, and the group counts once (spec 07, Review list page).
+  groupsByAccounts?: boolean;
 };
 
 const kinds = new Map<string, ReviewKind>();
@@ -161,8 +164,14 @@ export async function openReviewItemsOfKind(
   return (await listOpenReviewItemsOfKind(database, kind)).map(itemOf);
 }
 
+// The kinds whose items the page groups by their two Accounts.
+export function kindsGroupedByAccounts(): string[] {
+  return [...kinds].flatMap(([kind, handler]) => (handler.groupsByAccounts === true ? [kind] : []));
+}
+
+// How many open items the page shows, counting a group once.
 export function countReviewItems(database: Database): Promise<number> {
-  return countOpenReviewItems(database);
+  return countOpenReviewItems(database, kindsGroupedByAccounts());
 }
 
 async function openItem(database: Database, id: string) {
@@ -298,11 +307,13 @@ export function regroupReviewItems(
   database: Database,
   regroup: {
     close: readonly { id: string; reason: string }[];
+    // A revised item keeps its no-AI mark unless the revision gives one.
     revise: readonly {
       id: string;
       subject: ReviewSubject;
       decided: string;
       bestAnswer: ReviewChoice;
+      needsAi?: boolean;
     }[];
     open: readonly NewItem[];
   },
@@ -310,10 +321,10 @@ export function regroupReviewItems(
   if (regroup.close.some(({ reason }) => reason.trim() === "" || reason === "answered")) {
     throw new Error("Say which event settled the Review list item.");
   }
-  const revise = regroup.revise.map(({ id, subject, decided, bestAnswer }) => {
+  const revise = regroup.revise.map(({ id, subject, decided, bestAnswer, needsAi }) => {
     const subjectIds = subjectIdsOf(subject);
     if (subjectIds.length === 0) throw new Error("A Review list item needs its Transactions.");
-    return { id, subjectIds, decided, bestAnswer };
+    return { id, subjectIds, decided, bestAnswer, ...(needsAi === undefined ? {} : { needsAi }) };
   });
   const open = regroup.open.map(storedItem);
   return oneAtATime(() =>

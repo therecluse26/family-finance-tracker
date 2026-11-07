@@ -1,8 +1,17 @@
 // The Review list's interface. Other modules import from here.
 export {
+  type CardFace,
+  type CardMember,
+  type CardRegroup,
+  cardsByKey,
+  GROUPED as GROUPED_ON_CARD,
+  regroupCards,
+} from "./cards.ts";
+export {
   answerReviewItem,
   countReviewItems,
   everAskedAbout,
+  kindsGroupedByAccounts,
   lastAskedAbout,
   NotAChoice,
   openReviewItem,

@@ -1,6 +1,6 @@
 import type { ReviewItemView } from "../server/review-views.ts";
 import { api } from "./api.ts";
-import { transactionRequests } from "./transactions.ts";
+import { HAND_SET_TYPES, type HandSetType, transactionRequests } from "./transactions.ts";
 
 // The Review list page's requests (spec 07, Review list page). Every kind answers through the same
 // route: its best answer's value, or one of the other choices' values. The answer route reads its
@@ -83,6 +83,25 @@ export async function changeOneCategory(
 ): Promise<string | undefined> {
   try {
     const res = await transactionRequests.setCategory(transactionId, category, true);
+    if (res.ok) return undefined;
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : "That did not work.";
+  } catch {
+    return "The server did not answer.";
+  }
+}
+
+// "Change" on a row of a Money movement card: sets that Transaction's type by hand, alone, so it
+// leaves the card (spec 03, Review list items). Resolves with the server's words when it did not
+// work.
+export async function changeOneType(
+  transactionId: string,
+  type: string,
+): Promise<string | undefined> {
+  const handSet = HAND_SET_TYPES.find((each): each is HandSetType => each === type);
+  if (handSet === undefined) return "Pick a type.";
+  try {
+    const res = await transactionRequests.setType(transactionId, handSet);
     if (res.ok) return undefined;
     const body = (await res.json().catch(() => ({}))) as { error?: unknown };
     return typeof body.error === "string" ? body.error : "That did not work.";

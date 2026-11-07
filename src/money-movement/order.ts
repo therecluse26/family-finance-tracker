@@ -4,6 +4,7 @@ import { cardPayment, cardPaymentReceived, cardRewards } from "./card-payments.t
 import { type LoanFacts, loanPayout } from "./loans.ts";
 import { type ManualLoanFacts, manualLoanTreatment } from "./manual-loans.ts";
 import { oneSidedTransfer } from "./one-sided.ts";
+import type { RememberedAnswer } from "./one-sided-cards.ts";
 import { accountsTreatment, isExcluded, pairTreatment } from "./pairs.ts";
 import {
   cashWithdrawal,
@@ -105,6 +106,8 @@ export type DecisionContext = {
   // How much each linked Refund or Reimbursement among the Transactions decided reduces its
   // Spending, by the money in's ID (spec 03, Link shapes).
   spendingAllocations: ReadonlyMap<string, number>;
+  // The remembered one-sided Transfer answers, by key (spec 03, Review list items).
+  transferAnswers?: ReadonlyMap<string, RememberedAnswer>;
 };
 
 // What a rule reads: the Transaction, and its context.

@@ -102,9 +102,30 @@ export async function listOpenReviewItemsOfKind(
     .orderBy(desc(reviewItems.createdAt), desc(reviewItems.id));
 }
 
-export async function countOpenReviewItems(database: Database): Promise<number> {
+// The Accounts an item's two shown Transactions are in, sorted, as one text, or null when it does
+// not have exactly two that show. Each item reads its own two Transactions by ID.
+const accountsOfPair = sql<string | null>`(
+  SELECT CASE WHEN count(*) = 2
+    THEN min(${transactions.accountId}) || ' ' || max(${transactions.accountId}) END
+  FROM json_each(${reviewItems.subjectIds}) AS subject
+  JOIN ${transactions} ON ${transactions.id} = subject.value
+  WHERE ${reviewItems.subjectType} = 'transactions' AND ${transactions.hiddenReason} IS NULL
+)`;
+
+// How many open items the Review list shows. Items of a kind in `groupedByAccounts` between the
+// same two Accounts show as one group, so they count once (spec 07, Review list page).
+export async function countOpenReviewItems(
+  database: Database,
+  groupedByAccounts: readonly string[] = [],
+): Promise<number> {
+  const shown =
+    groupedByAccounts.length === 0
+      ? count()
+      : sql<number>`count(DISTINCT CASE WHEN ${inArray(reviewItems.kind, [...groupedByAccounts])}
+          THEN coalesce('accounts ' || ${reviewItems.kind} || ' ' || ${accountsOfPair}, 'item ' || ${reviewItems.id})
+          ELSE 'item ' || ${reviewItems.id} END)`.mapWith(Number);
   const [row] = await database
-    .select({ open: count() })
+    .select({ open: shown })
     .from(reviewItems)
     .where(isNull(reviewItems.closedAt));
   return row?.open ?? 0;
@@ -211,6 +232,8 @@ export type ReviewItemRegroup = {
     subjectIds: string[];
     decided: string;
     bestAnswer: Choice;
+    // Kept as it is when absent.
+    needsAi?: boolean;
   }[];
   open: readonly NewReviewItem[];
 };
@@ -241,10 +264,10 @@ export async function regroupOpenReviewItems(
           );
       }
     }
-    for (const { id, subjectIds, decided, bestAnswer } of revise) {
+    for (const { id, subjectIds, decided, bestAnswer, needsAi } of revise) {
       await tx
         .update(reviewItems)
-        .set({ subjectIds, decided, bestAnswer })
+        .set({ subjectIds, decided, bestAnswer, ...(needsAi === undefined ? {} : { needsAi }) })
         .where(and(eq(reviewItems.id, id), isNull(reviewItems.closedAt)));
     }
     return addReviewItems(tx, open, at);

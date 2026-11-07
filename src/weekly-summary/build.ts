@@ -1,11 +1,6 @@
 import { mergedAlertList } from "../anomalies/index.ts";
 import { budgetSpending, budgetsForMonth } from "../budgets/index.ts";
-import {
-  countOpenReviewItems,
-  type Database,
-  listLinkedMoneyPostedDates,
-  listPostedParts,
-} from "../db/index.ts";
+import { type Database, listLinkedMoneyPostedDates, listPostedParts } from "../db/index.ts";
 import {
   calendarDateIn,
   dateLabel,
@@ -16,6 +11,7 @@ import {
 } from "../format.ts";
 import { type PostedPart, totalsByPeriod } from "../money-movement/index.ts";
 import { addDays, recurringCharges } from "../recurring/index.ts";
+import { countReviewItems } from "../review/index.ts";
 import { median } from "../server/usual.ts";
 import { plainLine } from "../summary/index.ts";
 import type { SummaryWeek } from "./week.ts";
@@ -159,7 +155,7 @@ export async function buildWeeklySummary(options: {
   );
 
   // The Review list.
-  const open = await countOpenReviewItems(database);
+  const open = await countReviewItems(database);
   paragraphs.push(
     [`Review list: ${count(open, "item")} open.`, `See it: ${address("/review-list")}`].join("\n"),
   );

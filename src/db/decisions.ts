@@ -96,7 +96,7 @@ export type DecisionAccount = {
   memberApr: number | null;
 };
 
-export async function listDecisionAccounts(database: Database): Promise<DecisionAccount[]> {
+export async function listDecisionAccounts(database: Queries): Promise<DecisionAccount[]> {
   const rows = await database
     .select({
       id: householdAccounts.id,

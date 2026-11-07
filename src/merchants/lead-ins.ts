@@ -428,3 +428,20 @@ export function leftLeadIns(name: string): { name: string; unsure: boolean } {
   }
   return { name, unsure };
 }
+
+// The last 4 digits of each card or Account number in a bank description, found as
+// markAccountNumbers finds them, on the line's plain forms: every digit script reads as 0 to 9,
+// format characters go, and a short run of other characters is a gap (K13). A number with a mask
+// and fewer than 4 digits gives the digits it has. In the order the line holds them, with no
+// repeat. The digits stay in the app: they key a one-sided Transfer card (spec 03, Review list
+// items), and never go to the AI.
+export function accountLastFours(description: string): string[] {
+  const text = plainForms(description);
+  const found: string[] = [];
+  for (const span of scan(text, false).spans) {
+    const digits = text.slice(span.start, span.end).replace(/[^0-9]/g, "");
+    const last = digits.slice(-4);
+    if (last !== "" && !found.includes(last)) found.push(last);
+  }
+  return found;
+}

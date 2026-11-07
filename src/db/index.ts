@@ -146,6 +146,7 @@ export {
   setAccountExcluded,
   setHandSetCategory,
   setHandSetFields,
+  setHandSetType,
   storeSyncPage,
   type TransactionFilter,
   type TransactionPage,
@@ -654,6 +655,16 @@ export {
   searchTransactions,
   type TransactionSearch,
 } from "./transaction-search.ts";
+export {
+  type CardFacts,
+  listCardFactsAt,
+  listTransferAnswers,
+  type NewTransferAnswer,
+  readCardFacts,
+  removeTransferAnswer,
+  type StoredTransferAnswer,
+  storeTransferAnswer,
+} from "./transfer-answers.ts";
 export {
   addUnconnectedAccount,
   assignToUnconnectedAccount,

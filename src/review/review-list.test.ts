@@ -195,6 +195,7 @@ describe("the Review list", () => {
         bestAnswer: { value: "restaurants", label: "Yes, Restaurants" },
         createdAt: "2026-11-03T14:00:00.000Z",
         needsAi: false,
+        group: null,
       },
     ]);
   });

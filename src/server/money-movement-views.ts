@@ -196,6 +196,18 @@ export type SplitAnswer =
   | { outcome: "not Spending" }
   | { outcome: "wrong total" };
 
+// A remembered one-sided Transfer answer, as Settings → Categories lists it (spec 03, One-sided
+// Transfer cards).
+export type TransferAnswerView = {
+  id: string;
+  merchantName: string;
+  // The last 4 digits of each account number the lines hold, or empty.
+  lastFours: string[];
+  // "Keep it as a Transfer", "Not a Transfer", or the account's name.
+  answer: string;
+  madeAt: string;
+};
+
 export type MoneyMovementRoutes = {
   // Undefined when no Transaction that shows has the ID.
   transaction(transactionId: string): Promise<TransactionDetailView | undefined>;
@@ -226,4 +238,8 @@ export type MoneyMovementRoutes = {
     body: ManualLoanBody,
     memberId: string,
   ): Promise<ManualLoanView | undefined>;
+  // Settings → Categories: every remembered one-sided Transfer answer, by Merchant name.
+  transferAnswers(): Promise<TransferAnswerView[]>;
+  // False when no remembered answer has the ID.
+  deleteTransferAnswer(id: string): Promise<boolean>;
 };

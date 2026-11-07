@@ -2,6 +2,7 @@ import { type Database, listAccounts, readShownParts, readShownTransactions } fr
 import {
   answerReviewItem,
   countReviewItems,
+  kindsGroupedByAccounts,
   otherReviewChoices,
   reviewListItems,
 } from "../review/index.ts";
@@ -23,6 +24,18 @@ export function reviewRoutes(database: Database): ReviewRoutes {
       const accountNames = new Map(
         (await listAccounts(database)).map((account) => [account.id, account.name]),
       );
+      // An item of a grouped kind with two shown Transactions groups with the others between the
+      // same two Accounts, as the count counts them.
+      const grouped = new Set(kindsGroupedByAccounts());
+      const groupOf = (kind: string, ids: readonly string[]) => {
+        if (!grouped.has(kind)) return null;
+        const accounts = ids.flatMap((id) => {
+          const txn = shown.get(id);
+          return txn === undefined ? [] : [txn.accountId];
+        });
+        if (accounts.length !== 2) return null;
+        return `accounts ${kind} ${accounts.sort().join(" ")}`;
+      };
       return items.map((item): ReviewItemView => {
         const transactions =
           item.subject.type === "transactions"
@@ -57,6 +70,10 @@ export function reviewRoutes(database: Database): ReviewRoutes {
               ? (accountNames.get(item.subject.accountId) ?? null)
               : null,
           createdAt: item.createdAt.toISOString(),
+          group:
+            item.subject.type === "transactions"
+              ? groupOf(item.kind, item.subject.transactionIds)
+              : null,
         };
       });
     },

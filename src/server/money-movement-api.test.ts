@@ -15,6 +15,7 @@ import type {
   MonthTotalsView,
   TransactionDecisionView,
   TransactionDetailView,
+  TransferAnswerView,
 } from "./money-movement-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
@@ -272,6 +273,69 @@ describe("the money-movement routes", () => {
     expect(accounts.map((account) => account.estimate)).toEqual([
       { balance: 25_000, state: "estimated", typedOn: null },
     ]);
+  });
+
+  it("lists a remembered one-sided Transfer answer and deletes it, so its Transfers ask again", async () => {
+    const at = () => new Date("2026-10-20T15:00:00.000Z");
+    fake.addPages(BANK, {
+      added: ["2026-10-06", "2026-10-07"].map((postedDate, i) =>
+        fakeTxn({
+          id: `to-brokerage-${i}`,
+          accountId: "acc-checking",
+          amount: -10_000,
+          postedDate,
+          description: "ONLINE TRANSFER TO BROKERAGE XXXX4821",
+          merchantName: "Online Transfer To Brokerage",
+        }),
+      ),
+    });
+    await syncConnection(connectionId, at);
+    await runFollowUp(at);
+    const open = async () =>
+      (
+        (await (await browser.get("/api/review-list")).json()) as {
+          items: { id: string; kind: string; subject: { transactionIds?: string[] } }[];
+        }
+      ).items.filter((item) => item.kind === "one-sided Transfer");
+    const [card] = await open();
+    expect(card?.subject.transactionIds).toHaveLength(2);
+    const answer = await browser.send("POST", `/api/review-list/${card?.id}/answer`, {
+      value: "not a transfer",
+    });
+    expect(answer.status).toBe(200);
+    await runFollowUp(at);
+    expect(await open()).toEqual([]);
+
+    const list = async () =>
+      (
+        (await (await browser.get("/api/transfer-answers")).json()) as {
+          answers: TransferAnswerView[];
+        }
+      ).answers;
+    const [remembered] = await list();
+    expect(remembered).toMatchObject({
+      merchantName: "Online Transfer To Brokerage",
+      lastFours: ["4821"],
+      answer: "Not a Transfer",
+    });
+
+    // K1: no session, another site, or no Origin changes nothing.
+    const remove = `/api/transfer-answers/${remembered?.id}`;
+    const signedOut = new TestBrowser(app, APP_URL, "192.168.1.21");
+    expect((await signedOut.get("/api/transfer-answers")).status).toBe(401);
+    expect((await signedOut.send("DELETE", remove)).status).toBe(401);
+    for (const origin of ["http://evil.example", undefined]) {
+      expect((await browser.send("DELETE", remove, undefined, { origin })).status).toBe(403);
+    }
+    await runFollowUp(at);
+    expect(await list()).toEqual([remembered]);
+    expect(await open()).toEqual([]);
+
+    expect((await browser.send("DELETE", remove)).status).toBe(200);
+    await runFollowUp(at);
+    expect(await list()).toEqual([]);
+    expect((await open())[0]?.subject.transactionIds).toHaveLength(2);
+    expect((await browser.send("DELETE", remove)).status).toBe(404);
   });
 
   it("reads and sets a connected loan's type and the APR a Member typed", async () => {

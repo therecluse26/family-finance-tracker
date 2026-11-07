@@ -3,6 +3,7 @@ import { transactionWebLookupLine } from "../categorization/index.ts";
 import { type Database, readShownTransactions } from "../db/index.ts";
 import {
   addManualLoan,
+  deleteTransferAnswer,
   editManualLoan,
   linkByHand,
   listManualLoanViews,
@@ -13,6 +14,7 @@ import {
   setTransactionType,
   splitTransaction,
   totalsByMonth,
+  transferAnswerViews,
   undoLink,
 } from "../money-movement/index.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
@@ -101,6 +103,14 @@ export function moneyMovementRoutes(database: Database): MoneyMovementRoutes {
 
     editManualLoan(id, body, memberId) {
       return editManualLoan(database, id, body, memberId);
+    },
+
+    transferAnswers() {
+      return transferAnswerViews(database);
+    },
+
+    deleteTransferAnswer(id) {
+      return deleteTransferAnswer(database, id);
     },
   };
 }
