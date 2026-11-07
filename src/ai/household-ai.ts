@@ -1,7 +1,15 @@
-import { claimAiBack, listMemberNamesById, markAiAway } from "../db/index.ts";
+import {
+  claimAiBack,
+  giveBackMerchantLookup,
+  listMemberNamesById,
+  markAiAway,
+  readAiSettings,
+  readWebLookupSwitch,
+  reserveMerchantLookup,
+} from "../db/index.ts";
 import { log } from "../log.ts";
 import { isActivityUse, startAiActivity } from "./activity.ts";
-import { isBackground } from "./ai-view.ts";
+import { isBackground, MERCHANT_LOOKUPS_A_MONTH } from "./ai-view.ts";
 import {
   AiCallError,
   type AiFailure,
@@ -13,6 +21,7 @@ import {
 import { type AiPause, AiPausedError } from "./outbound.ts";
 import { memberLabel, PrivacyRefusal, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, isQuickBatchUse, plainData } from "./prompt.ts";
+import { webSearchTools } from "./providers.ts";
 import { aiRetries } from "./retries.ts";
 import { type AiOptions, aiCalls, markKeyRejected, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
@@ -65,6 +74,16 @@ export type HouseholdAi = {
   // Each Member's label, such as "Member A", by their ID: the label the privacy filter gives the
   // Member's name, by the order Members joined. App-built text names a Member by it, never by name.
   memberLabels(): Promise<ReadonlyMap<string, string>>;
+  // The Merchant lookup (spec 08, Merchant web lookup). Whether a lookup may run now: AI is set up
+  // with an AI provider that has a web search, and the Web lookup's switch is on. It makes no call,
+  // and says nothing of the AI cost cap, which pauses the call itself.
+  webLookupOn(): Promise<boolean>;
+  // Takes one lookup's place under the month's cap of 200, in one step, or undefined at the cap
+  // (known finding K18). `giveBack` returns the place when no call went out.
+  reserveLookup(): Promise<{ giveBack(): Promise<void> } | undefined>;
+  // Whether the privacy filter finds a Member's name or a protected number in each text. A lookup
+  // never goes out for a name it finds one in.
+  privacyMatches(texts: readonly string[]): Promise<boolean[]>;
   // A tool's result as the AI reads it (spec 08, Privacy filter): plain JSON data, with each text
   // made plain, then filtered as app-built text. Its typed values, such as amounts and dates, pass
   // as the app built them (src/ai/typed.ts). Throws when the filter cannot pass it.
@@ -145,7 +164,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
     const ended = isActivityUse(use) ? startAiActivity(use) : undefined;
     try {
       const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
-      const reply = await callModel(found.model, sent);
+      const reply = await callModel(found.model, sent, found.tools);
       badReplies.delete(use);
       if (background) await retries.worked(use);
       return { ready: true, ...reply };
@@ -167,7 +186,8 @@ export function householdAi(options: AiOptions): HouseholdAi {
         return { ready: false, pause: "key rejected" };
       }
       if (!background) return { ready: false, failed: failure };
-      if (failure === "bad reply" && isQuickBatchUse(use)) {
+      // A Merchant lookup reads web pages, so a bad reply is not an outage either.
+      if (failure === "bad reply" && (isQuickBatchUse(use) || use === "merchant lookup")) {
         const inARow = (badReplies.get(use) ?? 0) + 1;
         badReplies.set(use, inARow);
         if (inARow < BAD_REPLIES_IN_A_ROW) return { ready: false, failed: failure, badReply: true };
@@ -224,6 +244,23 @@ export function householdAi(options: AiOptions): HouseholdAi {
         ]),
       ),
     toolResult: async (data) => (await filter()).json(plainData(data)),
+    async webLookupOn() {
+      const stored = await readAiSettings(database);
+      if (stored === undefined || webSearchTools(stored.provider) === undefined) return false;
+      return readWebLookupSwitch(database);
+    },
+    async reserveLookup() {
+      const month = await options.cost.currentMonth();
+      if (!(await reserveMerchantLookup(database, month, MERCHANT_LOOKUPS_A_MONTH))) {
+        return undefined;
+      }
+      return { giveBack: () => giveBackMerchantLookup(database, month) };
+    },
+    async privacyMatches(texts) {
+      if (texts.length === 0) return [];
+      const shown = await filter();
+      return texts.map((each) => shown.matches(each));
+    },
   };
 }
 

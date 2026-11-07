@@ -12,6 +12,7 @@ import {
   type EnteredPrice,
   type KeyTestResult,
   MAX_COST_CAP_CENTS,
+  MERCHANT_LOOKUPS_A_MONTH,
   type ModelCheck,
   onGateway,
   USAGE_LIMIT_LINKS,
@@ -601,6 +602,82 @@ export function CostCapForm(props: {
   );
 }
 
+// The board's switch (.sw), as AiRequestLog.tsx draws it.
+const SWITCH_TRACK =
+  "relative inline-block h-6 w-10 shrink-0 rounded-full bg-field peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent peer-disabled:opacity-70 after:absolute after:top-[3px] after:left-[3px] after:size-[18px] after:rounded-full after:bg-white after:content-[''] peer-checked:after:left-[19px]";
+
+export const NO_WEB_SEARCH = "Your AI provider has no web search, so the app makes no Web lookup.";
+
+// Turns the Web lookup on or off. Answers the AI settings after it, or the words for a refusal.
+export async function saveWebLookup(on: boolean): Promise<{ ai: AiView } | { error: string }> {
+  const res = await api.ai["web-lookup"].$put({ json: { on } });
+  if (!res.ok) return { error: await refusal(res) };
+  return { ai: ((await res.json()) as { ai: AiView }).ai };
+}
+
+// The Web lookup's switch (spec 08, AI settings page; Merchant web lookup). It saves at once. With
+// an AI provider that has no web search, it shows off and says why.
+export function WebLookupCard(props: { ai: AiView; onSaved: (ai: AiView) => void }) {
+  const { webLookup } = props.ai;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const unavailable = webLookup.unavailable !== null;
+  const on = webLookup.on && !unavailable;
+
+  async function turn() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const answer = await saveWebLookup(!webLookup.on);
+      if ("error" in answer) return setError(answer.error);
+      props.onSaved(answer.ai);
+    } catch {
+      setError("The server did not answer.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SettingCard
+      id="web-lookup"
+      title="Web lookup"
+      status={
+        on ? <StatusText tone="good">On</StatusText> : <span className="text-muted">Off</span>
+      }
+    >
+      <Lead>
+        When the AI is unsure of a Merchant it does not know, it looks the Merchant up on the web
+        with your AI provider's own search, and keeps the answer.
+      </Lead>
+      <div className="mt-4 border-t border-line-soft pt-3.5">
+        <label className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+          <input
+            type="checkbox"
+            role="switch"
+            className="peer sr-only"
+            aria-checked={on}
+            aria-describedby="web-lookup-what"
+            checked={on}
+            disabled={busy || unavailable}
+            onChange={turn}
+          />
+          <span aria-hidden="true" className={SWITCH_TRACK} />
+          <span className="min-w-0 flex-[1_1_220px]">
+            <span className="block font-semibold">Look up unknown Merchants</span>
+            <span id="web-lookup-what" className="mt-0.5 block text-small text-muted">
+              {unavailable
+                ? NO_WEB_SEARCH
+                : `Only the Merchant's clean name is sent. At most ${MERCHANT_LOOKUPS_A_MONTH} new lookups a month; each search counts toward the AI cost cap.`}
+            </span>
+          </span>
+        </label>
+      </div>
+      <ErrorLine error={error} />
+    </SettingCard>
+  );
+}
+
 // What the privacy filter takes out of each call (spec 08, Privacy filter), on a grey card.
 function AiPrivacyNote() {
   return (
@@ -690,6 +767,7 @@ export function AiSettingsFields() {
             />
           </SettingCard>
           <AiWorkCard ai={ai} usage={usage} />
+          {ai === null ? null : <WebLookupCard ai={ai} onSaved={setAi} />}
           {usage === undefined || today === undefined ? null : (
             <CostCapForm usage={usage} today={today} onSaved={setUsage} />
           )}

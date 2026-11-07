@@ -153,10 +153,15 @@ export class StubModels {
   streamFails = false;
   // A streamed reply's text and tool input go out in pieces of this many characters, or in one.
   streamPiece: number | undefined;
+  // How many web searches the AI provider runs in each Merchant lookup before its reply. Each shows
+  // in the reply as a provider-executed tool call and its result, as a real provider's does.
+  searches = 1;
 
   readonly makeModels: AiModelMaker = (connection, models: TierModels) => {
     this.connections.push(connection);
-    const model = (tier: AiTier) =>
+    // The lookup model is the Quick model with the provider's web search (spec 08, Merchant web
+    // lookup). A custom model has none.
+    const model = (tier: AiTier, lookup = false) =>
       new MockLanguageModelV4({
         provider: connection.provider,
         modelId: models[tier],
@@ -178,6 +183,7 @@ export class StubModels {
             connection,
             options.prompt as StubMessage[],
             options.toolChoice?.type !== "none",
+            lookup,
           );
         },
         doStream: async (options) => {
@@ -198,6 +204,7 @@ export class StubModels {
             connection,
             options.prompt as StubMessage[],
             options.toolChoice?.type !== "none",
+            lookup,
           );
           if (this.streamFails) {
             const text = this.reply;
@@ -224,30 +231,32 @@ export class StubModels {
             stream: simulateReadableStream<StreamPart>({
               chunks: [
                 ...content.flatMap((part): StreamPart[] =>
-                  part.type === "text"
-                    ? [
-                        { type: "text-start" as const, id: "1" },
-                        ...pieces(part.text).map((delta) => ({
-                          type: "text-delta" as const,
-                          id: "1",
-                          delta,
-                        })),
-                        { type: "text-end" as const, id: "1" },
-                      ]
-                    : [
-                        {
-                          type: "tool-input-start" as const,
-                          id: part.toolCallId,
-                          toolName: part.toolName,
-                        },
-                        ...pieces(part.input).map((delta) => ({
-                          type: "tool-input-delta" as const,
-                          id: part.toolCallId,
-                          delta,
-                        })),
-                        { type: "tool-input-end" as const, id: part.toolCallId },
-                        part,
-                      ],
+                  part.type === "tool-result"
+                    ? [part]
+                    : part.type === "text"
+                      ? [
+                          { type: "text-start" as const, id: "1" },
+                          ...pieces(part.text).map((delta) => ({
+                            type: "text-delta" as const,
+                            id: "1",
+                            delta,
+                          })),
+                          { type: "text-end" as const, id: "1" },
+                        ]
+                      : [
+                          {
+                            type: "tool-input-start" as const,
+                            id: part.toolCallId,
+                            toolName: part.toolName,
+                          },
+                          ...pieces(part.input).map((delta) => ({
+                            type: "tool-input-delta" as const,
+                            id: part.toolCallId,
+                            delta,
+                          })),
+                          { type: "tool-input-end" as const, id: part.toolCallId },
+                          part,
+                        ],
                 ),
                 {
                   type: "finish" as const,
@@ -260,10 +269,20 @@ export class StubModels {
           };
         },
       });
-    return { quick: model("quick"), writer: model("writer") };
+    return {
+      quick: model("quick"),
+      writer: model("writer"),
+      ...(connection.provider === "openai-compatible" ? {} : { lookup: model("quick", true) }),
+    };
   };
 
-  private answer(tier: AiTier, connection: AiConnection, messages: StubMessage[], mayCall = false) {
+  private answer(
+    tier: AiTier,
+    connection: AiConnection,
+    messages: StubMessage[],
+    mayCall = false,
+    lookup = false,
+  ) {
     const secrets = `${connection.apiKey ?? ""} ${connection.gatewayToken ?? ""}`;
     const headers = {
       authorization: `Bearer ${connection.apiKey ?? ""}`,
@@ -293,10 +312,27 @@ export class StubModels {
     }
     const { noCache, cacheRead, cacheWrite, output } = this.usage;
     const toolCalls = (mayCall ? this.callTools?.(messages) : undefined) ?? [];
+    const searches = lookup
+      ? Array.from({ length: this.searches }, (_, index) => [
+          {
+            type: "tool-call" as const,
+            toolCallId: `search-${index + 1}`,
+            toolName: "web_search",
+            input: JSON.stringify({ query: "a business" }),
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result" as const,
+            toolCallId: `search-${index + 1}`,
+            toolName: "web_search",
+            result: [{ url: "https://shop.example/", title: "A shop", content: "A shop." }],
+          },
+        ]).flat()
+      : [];
     return {
       content:
         toolCalls.length === 0
-          ? [{ type: "text" as const, text: this.replyTo?.(messages) ?? this.reply }]
+          ? [...searches, { type: "text" as const, text: this.replyTo?.(messages) ?? this.reply }]
           : toolCalls.map((call, index) => ({
               type: "tool-call" as const,
               toolCallId: `call-${index + 1}`,

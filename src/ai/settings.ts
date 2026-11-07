@@ -1,4 +1,4 @@
-import type { LanguageModel } from "ai";
+import type { LanguageModel, ToolSet } from "ai";
 import { aiMayRun } from "../bank/index.ts";
 import {
   AI_SETTINGS_ROW,
@@ -9,10 +9,12 @@ import {
   readAiSettings,
   readAiSettingsVersion,
   readMemberPrice,
+  readWebLookupSwitch,
   removeAiSettings,
   type StoredAiSettings,
   storeAiSettings,
   storeMemberPrice,
+  storeWebLookupSwitch,
 } from "../db/index.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 import { endCondition, type NewNotice, raiseNotice } from "../notify/index.ts";
@@ -38,8 +40,8 @@ import {
 import { type AiFailure, checkModel, privateModels, testModel } from "./call.ts";
 import type { AiCost } from "./cost.ts";
 import type { AiPause } from "./outbound.ts";
-import { type ModelPrice, memberPrice, tablePrice } from "./prices.ts";
-import type { AiConnection, AiModelMaker } from "./providers.ts";
+import { type ModelPrice, memberPrice, tablePrice, WEB_SEARCH_FEES } from "./prices.ts";
+import { type AiConnection, type AiModelMaker, webSearchTools } from "./providers.ts";
 import { endRetriesRanOut } from "./retries.ts";
 
 // The Household's one AI provider (spec 08, AI settings page). The API key and the gateway token
@@ -234,6 +236,10 @@ export function aiSettings(options: AiOptions): AiSettings {
         writer: await priceSource(stored.provider, stored.writerModel),
       },
       status: await status(stored),
+      webLookup: {
+        on: await readWebLookupSwitch(database),
+        unavailable: webSearchTools(stored.provider) === undefined ? "no web search" : null,
+      },
     };
   }
 
@@ -443,6 +449,12 @@ export function aiSettings(options: AiOptions): AiSettings {
 
     usage: () => cost.usage(),
 
+    async setWebLookup(on) {
+      if ((await readAiSettings(database)) === undefined) return undefined;
+      await storeWebLookupSwitch(database, on);
+      return view();
+    },
+
     async setCostCap(capCents) {
       await cost.setCap(capCents);
       await changed();
@@ -453,8 +465,9 @@ export function aiSettings(options: AiOptions): AiSettings {
 
 // The model for one AI use, or why that use takes its no-AI path.
 // `generation` is the AI settings' generation the model was made from.
+// The Merchant lookup's model comes with its AI provider's web search tools, which the call offers.
 export type ModelFor =
-  | { ready: true; model: LanguageModel; generation: number }
+  | { ready: true; model: LanguageModel; generation: number; tools?: ToolSet }
   | { ready: false; pause: AiPause };
 
 export type AiCalls = {
@@ -499,6 +512,8 @@ export function aiCalls(options: AiOptions): AiCalls {
       const model = tier === "quick" ? stored.quickModel : stored.writerModel;
       const price = await priceOf(database, stored.provider, model);
       if (price === undefined) return { ready: false, pause: "no price" };
+      const lookup = use === "merchant lookup";
+      const searchFee = WEB_SEARCH_FEES[stored.provider];
       const models = privateModels(
         database,
         makeModels,
@@ -512,9 +527,17 @@ export function aiCalls(options: AiOptions): AiCalls {
           gate: () => gate(use, sendAnyway),
           cost,
           ...(chatThreadId === undefined ? {} : { chatThreadId }),
+          ...(lookup && searchFee !== undefined ? { searchFee } : {}),
         }),
       );
-      return { ready: true, model: models[tier], generation };
+      if (!lookup) return { ready: true, model: models[tier], generation };
+      // The caller checks first that the AI provider has a web search (spec 08, Merchant web
+      // lookup), so a lookup with none is the app's own mistake.
+      const tools = webSearchTools(stored.provider);
+      if (models.lookup === undefined || tools === undefined || searchFee === undefined) {
+        throw new TypeError("This AI provider has no web search.");
+      }
+      return { ready: true, model: models.lookup, generation, tools };
     },
   };
 }

@@ -35,7 +35,13 @@ import {
   merchantOf,
   registerCascadeStep,
 } from "./cascade.ts";
-import { cleanMarkedNames, fixCategories, type QuickAnswer } from "./quick-tier.ts";
+import {
+  type CategoryFixAnswer,
+  type CategoryFixRow,
+  cleanMarkedNames,
+  fixCategories,
+  type QuickAnswer,
+} from "./quick-tier.ts";
 import {
   applyCorrection,
   categoryChoices,
@@ -43,6 +49,13 @@ import {
   ruleFor,
   takesCategory,
 } from "./rules.ts";
+import {
+  type LookupResult,
+  lookupKeys,
+  readKeptAnswers,
+  skipsLookup,
+  WebLookups,
+} from "./web-lookup.ts";
 
 // The Categorization follow-up step (spec 10, The follow-up pipeline; spec 04, The categorization
 // cascade). It runs after Matching, on the parts Matching decided, and works through Transactions
@@ -125,7 +138,8 @@ function reviewState(record: CategoryRecord, chosen: ReadonlyMap<number, Chosen>
   const asCategory = (choice: Chosen | undefined) =>
     choice?.category != null && isCategory(choice.category) ? choice.category : null;
   const guess = asCategory(covered.find((choice) => choice.source === "best guess"));
-  const ai = covered.filter((choice) => choice.source === "AI");
+  // A Web lookup's answer counts as the AI's: below high, the AI was unsure.
+  const ai = covered.filter((choice) => choice.source === "AI" || choice.source === "Web lookup");
   const unsure = ai.find(
     (choice) => choice.confidence !== undefined && choice.confidence !== "high",
   );
@@ -205,12 +219,17 @@ export async function chooseCategories(
   let aiOn = ai !== undefined;
   let choices: PartCategory[] = [];
   let waiting: Waiting[] = [];
+  // The run's Web lookups, started at the first batch the AI answers.
+  let lookups: WebLookups | undefined;
 
+  // `needsAi` marks a Category whose Web lookup an AI error or the AI cost cap stopped, for the redo
+  // of no-AI work.
   const choose = (
     record: CategoryRecord,
     part: number,
     choice: Choice,
     chosen: Map<number, Chosen>,
+    needsAi = false,
   ) => {
     chosen.set(part, choice);
     choices.push({
@@ -219,7 +238,7 @@ export async function chooseCategories(
       category: choice.category,
       categorySource: choice.source,
       categoryConfidence: choice.confidence,
-      categoryNeedsAi: choice.source === "best guess",
+      categoryNeedsAi: choice.source === "best guess" || needsAi,
     });
   };
 
@@ -254,34 +273,96 @@ export async function chooseCategories(
     if (waiting.length === 0) return;
     const asked = waiting;
     waiting = [];
-    let answer: QuickAnswer<{
-      row: number;
-      category: Category;
-      confidence: "high" | "medium" | "low";
-    }> = {
-      noAi: "off",
-    };
+    let answer: QuickAnswer<CategoryFixAnswer> = { noAi: "off" };
+    // The answer for each waiting Transaction by its place in `asked`: a kept Web lookup's, the
+    // AI's, or a new Web lookup's in the AI's place. `marked` holds the places whose Web lookup
+    // waits for the redo.
+    const answers = new Map<number, Choice>();
+    const marked = new Set<number>();
     if (aiOn && typeof ai === "object") {
       const facts = await readCategoryFixFacts(
         database,
         asked.map(({ record }) => record.id),
       );
-      const labels = await ai.accountLabels();
-      answer = await fixCategories(
+      lookups ??= await WebLookups.start(database, ai);
+      const lookable = await lookableLines(
         ai,
-        asked.map(({ record, txn }) => {
-          const fact = facts.get(record.id);
-          return {
-            merchant: txn.merchant?.name || null,
-            description: fact?.description ?? "",
-            amount: fact?.amount ?? 0,
-            date: record.postedDate,
-            account: fact === undefined ? null : (labels.get(fact.accountId) ?? null),
-            providerCategory: record.providerCategory,
-            mcc: fact?.mcc ?? null,
-          };
-        }),
+        lookups,
+        asked.map(({ record, txn }) => ({
+          merchant: txn.merchant,
+          description: facts.get(record.id)?.description ?? "",
+          providerCategory: record.providerCategory,
+        })),
       );
+      // Step 5 starts with the Web lookup's kept answers, read once for the batch: a found answer
+      // decides at once, with no AI call and no search.
+      const kept = await readKeptAnswers(
+        database,
+        asked.map(({ txn }, index) => (lookable[index] === true ? txn.merchant : null)),
+        new Date(),
+      );
+      const sent: number[] = [];
+      for (const [index, each] of kept.entries()) {
+        if (typeof each === "object") {
+          answers.set(index, {
+            category: each.category,
+            source: "Web lookup",
+            confidence: each.confidence,
+          });
+        } else sent.push(index);
+      }
+      const labels = sent.length === 0 ? new Map<string, string>() : await ai.accountLabels();
+      answer =
+        sent.length === 0
+          ? { answers: [] }
+          : await fixCategories(
+              ai,
+              sent.map((index): CategoryFixRow => {
+                const { record, txn } = asked[index] as Waiting;
+                const fact = facts.get(record.id);
+                return {
+                  merchant: txn.merchant?.name || null,
+                  description: fact?.description ?? "",
+                  amount: fact?.amount ?? 0,
+                  date: record.postedDate,
+                  account: fact === undefined ? null : (labels.get(fact.accountId) ?? null),
+                  providerCategory: record.providerCategory,
+                  mcc: fact?.mcc ?? null,
+                };
+              }),
+            );
+      if ("answers" in answer) {
+        const unsure: number[] = [];
+        for (const reply of answer.answers) {
+          const index = sent[reply.row - 1];
+          if (index === undefined) continue;
+          answers.set(index, {
+            category: reply.category,
+            source: "AI",
+            confidence: reply.confidence,
+          });
+          // Only an unsure answer about a Merchant the AI does not know needs a lookup.
+          if (
+            reply.needsLookup &&
+            reply.confidence !== "high" &&
+            lookable[index] === true &&
+            kept[index] === undefined
+          ) {
+            unsure.push(index);
+          }
+        }
+        await lookUp(
+          lookups,
+          unsure.map((index) => (asked[index] as Waiting).txn.merchant),
+          (place, result) => {
+            const index = unsure[place] as number;
+            if (typeof result !== "object") return;
+            if ("found" in result) {
+              answers.set(index, { ...result.found, source: "Web lookup" });
+            } else if (result.stopped.mark) marked.add(index);
+          },
+        );
+      }
     }
     if ("retryAt" in answer) {
       again = answer.retryAt;
@@ -292,15 +373,9 @@ export async function chooseCategories(
     if ("noAi" in answer && answer.noAi === "off") aiOn = false;
     const loaded = await loadHistory();
     // A row the AI gave no good answer takes the no-AI path.
-    const byRow = new Map(
-      "answers" in answer ? answer.answers.map((each) => [each.row, each]) : [],
-    );
     for (const [index, { record, txn, parts, chosen, historyWaits, direct }] of asked.entries()) {
-      const reply = byRow.get(index + 1);
-      const fromAi: Choice | undefined =
-        reply === undefined
-          ? undefined
-          : { category: reply.category, source: "AI", confidence: reply.confidence };
+      const fromAi = answers.get(index);
+      const needsAi = marked.has(index);
       // The earlier Transactions of this batch are in Merchant history by now.
       const history = historyWaits ? fromProviderOrHistory(txn, loaded) : undefined;
       const choice: Choice =
@@ -309,10 +384,10 @@ export async function chooseCategories(
       for (const part of parts) {
         if (direct.has(part)) {
           if (fromAi === undefined) continue;
-          choose(record, part, fromAi, chosen);
+          choose(record, part, fromAi, chosen, needsAi);
           tookAnswer = true;
         } else {
-          choose(record, part, choice, chosen);
+          choose(record, part, choice, chosen, needsAi && choice === fromAi);
           if (choice === fromAi) tookAnswer = true;
         }
       }
@@ -404,6 +479,49 @@ export async function chooseCategories(
     choices = [];
   }
   return { reviews, left, again, answered };
+}
+
+// Whether each line may be looked up: the Web lookup is on, the skip rules pass it, and the privacy
+// filter finds no Member's name or protected number in its Merchant name, with one read of the
+// filter's facts for the batch (spec 04, Web lookup).
+async function lookableLines(
+  ai: HouseholdAi,
+  lookups: WebLookups,
+  lines: readonly Parameters<typeof skipsLookup>[0][],
+): Promise<boolean[]> {
+  if (!lookups.on) return lines.map(() => false);
+  const passed = lines.map((line) => !skipsLookup(line));
+  const names = lines.flatMap((line, index) =>
+    passed[index] === true && line.merchant !== null ? [line.merchant.name] : [],
+  );
+  const matched = await ai.privacyMatches(names);
+  let next = 0;
+  return passed.map((passes) => {
+    if (!passes) return false;
+    const found = matched[next];
+    next += 1;
+    return found === false;
+  });
+}
+
+// Looks up each Merchant once, one at a time, in order, and hands each Transaction's place its
+// Merchant's result. Once the run stops, every place left gets the stop.
+async function lookUp(
+  lookups: WebLookups,
+  merchants: readonly CascadeInput["merchant"][],
+  each: (place: number, result: LookupResult) => void,
+): Promise<void> {
+  const results = new Map<string, LookupResult>();
+  for (const [place, merchant] of merchants.entries()) {
+    const key = merchant === null ? undefined : lookupKeys(merchant)[0];
+    if (merchant === null || key === undefined) continue;
+    let result = results.get(key);
+    if (result === undefined) {
+      result = await lookups.lookUp(merchant);
+      results.set(key, result);
+    }
+    each(place, result);
+  }
 }
 
 const transactionIdsOf = (item: ReviewItem) =>

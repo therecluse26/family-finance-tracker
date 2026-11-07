@@ -88,6 +88,8 @@ describe("the AI settings", () => {
         writerModel: "claude-sonnet-5-5",
         prices: { quick: { source: "table" }, writer: { source: "table" } },
         status: { state: "on" },
+
+        webLookup: { on: true, unavailable: null },
       },
     });
     expect(JSON.stringify(saved)).not.toContain(input.apiKey);

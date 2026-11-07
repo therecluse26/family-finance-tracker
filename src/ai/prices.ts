@@ -77,3 +77,28 @@ export function costOf(tokens: CallTokens, modelPrice: ModelPrice): number {
 export function nanosOfDollars(dollars: number): number {
   return Math.round(dollars * 1_000_000_000);
 }
+
+// Each AI provider's fee for its web search (spec 08, Counting cost), in billionths of a dollar:
+// for each search the reply made, or for each call. From each AI provider's price page in
+// November 2026:
+// - Anthropic, https://platform.claude.com/docs/en/about-claude/pricing: "$10 USD per 1,000
+//   searches, plus standard token costs for search-generated content". Each search counts once.
+// - OpenAI, https://developers.openai.com/api/docs/pricing: web search "$10.00 / 1k calls +
+//   Search content tokens billed at model rates". The tokens come in the reply's usage.
+// - OpenRouter, https://openrouter.ai/docs/guides/features/plugins/web-search: the Exa engine's
+//   "$0.007 per request" with up to 10 results, one search per call. The page does not say whether
+//   the reply's usage.cost holds it, so the fee counts on top, on the AI cost cap's safe side.
+// An OpenAI-compatible endpoint has no web search.
+export type WebSearchFee = { nanos: number; per: "search" | "call" };
+
+export const WEB_SEARCH_FEES: Record<AiProviderName, WebSearchFee | undefined> = {
+  anthropic: { nanos: nanosOfDollars(10 / 1000), per: "search" },
+  openai: { nanos: nanosOfDollars(10 / 1000), per: "search" },
+  openrouter: { nanos: nanosOfDollars(0.007), per: "call" },
+  "openai-compatible": undefined,
+};
+
+// The web search fee of one reply that made `searches` searches.
+export function searchFeeOf(fee: WebSearchFee, searches: number): number {
+  return fee.per === "call" ? fee.nanos : fee.nanos * searches;
+}

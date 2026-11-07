@@ -200,6 +200,7 @@ describe("the money-movement routes", () => {
       },
       otherLinks: [],
       matched: [expect.objectContaining({ id: ids.get("save-out"), amount: -50_000 })],
+      webLookup: null,
     } satisfies TransactionDetailView);
     const rent = (await (
       await browser.get(`/api/transactions/${ids.get("rent")}`)

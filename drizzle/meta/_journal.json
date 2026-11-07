@@ -484,6 +484,13 @@
       "when": 1794061603523,
       "tag": "0068_ai_request_log",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "6",
+      "when": 1794071227360,
+      "tag": "0069_merchant_lookups",
+      "breakpoints": true
     }
   ]
 }

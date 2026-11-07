@@ -33,6 +33,7 @@ const OPENAI: AiView = {
   writerModel: "gpt-6.1-terra",
   prices: { quick: { source: "table" }, writer: { source: "table" } },
   status: { state: "on" },
+  webLookup: { on: true, unavailable: null },
 };
 
 // A month at $3.12 of $10.00, with one Chat call and one check on save.
@@ -41,6 +42,7 @@ const USAGE: AiUsageView = {
   totalNanos: 3_120_000_000,
   capCents: 1000,
   pausedUntil: null,
+  lookups: { count: 12, cap: 200 },
   byUse: [
     { use: "chat", calls: 1, costNanos: 3_119_979_000 },
     { use: "check on save", calls: 2, costNanos: 21_000 },

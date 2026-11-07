@@ -299,12 +299,14 @@ export class RedoNoAiWorkJob extends Job {
   }
 }
 
-// The Quick-tier uses a redo calls: Merchant names, Money movement, and Categories.
+// The Quick-tier uses a redo calls: Merchant names, Money movement, and Categories, with their
+// Merchant lookups.
 export const REDO_AI_USES = [
   "merchant cleanup",
   "unclear transfer",
   "reimbursement linking",
   "category fix",
+  "merchant lookup",
 ] as const;
 
 // The latest time a use the redo calls tries again after a failed call, while it is still to come.

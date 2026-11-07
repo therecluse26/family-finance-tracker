@@ -122,6 +122,7 @@ describe("Settings → AI usage: the Open link of a call with kept text", () => 
     totalNanos: 6_400_000,
     capCents: 1000,
     pausedUntil: null,
+    lookups: { count: 0, cap: 200 },
     byUse: [{ use: "chat", calls: 2, costNanos: 6_400_000 }],
     calls: [
       {

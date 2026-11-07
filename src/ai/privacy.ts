@@ -16,6 +16,14 @@ type ToolResultOutput = Extract<
   { type: "tool-result" }
 >["output"];
 
+// The AI provider tools the filter lets through: the Merchant lookup's web search tools
+// (src/ai/providers.ts), and no other. Their settings are the app's own constants, such as at most
+// 2 searches, never Household data.
+const WEB_SEARCH_TOOL_IDS: ReadonlySet<string> = new Set([
+  "anthropic.web_search_20260318",
+  "openai.web_search",
+]);
+
 // A Member, with the number of their label: 0 is "Member A" (src/db/members.ts).
 export type PrivacyMember = { name: string; email: string; labelNumber: number };
 
@@ -79,6 +87,9 @@ export class PrivacyRefusal extends Error {
 
 export type PrivacyFilter = {
   text(text: string): string;
+  // Whether the filter finds anything to remove in the text, such as a Member's name or a protected
+  // number. Each text the filter only normalizes counts as clean.
+  matches(text: string): boolean;
   // A tool result: plain JSON data. Its typed values pass as they are (src/ai/typed.ts).
   json(value: unknown): unknown;
   // The whole request, as the AI SDK hands it to the model.
@@ -1228,7 +1239,9 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
     const checked = [
       appBuilt,
       (params.tools ?? []).map((tool) =>
-        tool.type === "function" ? { ...tool, inputSchema: undefined } : tool,
+        tool.type === "function"
+          ? { ...tool, inputSchema: undefined }
+          : { ...tool, args: undefined },
       ),
       params.responseFormat?.type === "json"
         ? { ...params.responseFormat, schema: undefined }
@@ -1366,6 +1379,8 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
         ? {}
         : {
             tools: input.tools.map((tool) => {
+              // An AI provider's own web search, whose settings are the app's own constants.
+              if (tool.type === "provider" && WEB_SEARCH_TOOL_IDS.has(tool.id)) return tool;
               if (tool.type !== "function") throw refusePart();
               return tool.description === undefined
                 ? tool
@@ -1441,6 +1456,7 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
 
   return {
     text,
+    matches: (input) => text(input) !== normalizeText(input).normalize("NFD").normalize("NFC"),
     json: (value) => json(value, true),
     params,
     accountLabels,

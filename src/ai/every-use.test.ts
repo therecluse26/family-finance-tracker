@@ -185,8 +185,21 @@ describe("the demo Household through every AI use", () => {
         .map((text) => JSON.parse(text) as { row: number; kind?: string });
       const has = (words: string) => texts.some((text) => text.includes(words));
       if (has("Choose one Category for each Transaction")) {
+        // The first row is unsure of a Merchant it does not know, so it is looked up.
         return JSON.stringify({
-          answers: rows.map(({ row }) => ({ row, category: "Pets", confidence: "high" })),
+          answers: rows.map(({ row }) =>
+            row === 1
+              ? { row, category: "Pets", confidence: "medium", needsLookup: true }
+              : { row, category: "Pets", confidence: "high", needsLookup: false },
+          ),
+        });
+      }
+      if (has("Look up the business named below")) {
+        return JSON.stringify({
+          found: true,
+          category: "Pets",
+          confidence: "high",
+          description: "A pet shop.",
         });
       }
       if (has("Give the Merchant's clean name")) {
@@ -248,6 +261,7 @@ describe("the demo Household through every AI use", () => {
       return {
         quick: kept(models.quick as object),
         writer: kept(models.writer as object),
+        lookup: kept(models.lookup as object),
       } as never;
     };
     const gates: AiGates = {

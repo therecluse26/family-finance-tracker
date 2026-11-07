@@ -32,6 +32,7 @@ export const MONTHLY_REVIEW_RETRY_MS = 6 * 60 * 60_000;
 export const FOLLOW_UP_AI_USES: readonly ModelUse[] = [
   "category fix",
   "merchant cleanup",
+  "merchant lookup",
   "unclear transfer",
   "reimbursement linking",
   "alert advice",
@@ -49,6 +50,7 @@ type LastRetryUse = Exclude<ModelUse, "chat" | "reading a goal" | "monthly revie
 const USE_WORDS: Record<LastRetryUse, { work: string; again: string }> = {
   "category fix": { work: "Categories", again: "at the next sync" },
   "merchant cleanup": { work: "Merchant names", again: "at the next sync" },
+  "merchant lookup": { work: "Merchant web lookups", again: "at the next sync" },
   "unclear transfer": { work: "unclear Transfers", again: "at the next sync" },
   "reimbursement linking": { work: "Reimbursements", again: "at the next sync" },
   "alert advice": { work: "Alert advice", again: "at the next sync" },

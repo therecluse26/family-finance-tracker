@@ -164,6 +164,7 @@ function ipv6Kind(words: number[]): HostKind {
 export const AI_USES = [
   "category fix",
   "merchant cleanup",
+  "merchant lookup",
   "unclear transfer",
   "reimbursement linking",
   "reading a goal",
@@ -181,6 +182,7 @@ export type AiUse = (typeof AI_USES)[number];
 export const AI_USE_LABELS: Record<AiUse, string> = {
   "category fix": "Category fix",
   "merchant cleanup": "Merchant cleanup",
+  "merchant lookup": "Merchant lookup",
   "unclear transfer": "Unclear Transfer",
   "reimbursement linking": "Reimbursement linking",
   "reading a goal": "Reading a Goal",
@@ -199,6 +201,7 @@ export type ModelUse = Exclude<AiUse, "check on save" | "key test">;
 export const USE_TIERS: Record<ModelUse, AiTier> = {
   "category fix": "quick",
   "merchant cleanup": "quick",
+  "merchant lookup": "quick",
   "unclear transfer": "quick",
   "reimbursement linking": "quick",
   "reading a goal": "quick",
@@ -244,6 +247,8 @@ export type AiUsageView = {
   capCents: number;
   // The date background AI starts again, YYYY-MM-DD, while the month is at the cap.
   pausedUntil: string | null;
+  // The month's Merchant lookups against their cap (spec 08, Merchant web lookup).
+  lookups: { count: number; cap: number };
   byUse: { use: AiUse; calls: number; costNanos: number }[];
   calls: AiCallView[];
 };
@@ -262,6 +267,13 @@ export type PriceSource =
   | { source: "member"; input: number; output: number }
   | { source: "none" };
 
+// The Web lookup's switch (spec 08, Merchant web lookup). "no web search" when the AI provider has
+// none, such as an OpenAI-compatible endpoint: the app makes no lookup, whatever the switch says.
+export type WebLookupView = { on: boolean; unavailable: "no web search" | null };
+
+// The most Merchant lookups in a month, in Household time. A kept answer does not count.
+export const MERCHANT_LOOKUPS_A_MONTH = 200;
+
 export type AiView = {
   provider: AiProviderName;
   keySet: boolean;
@@ -271,6 +283,7 @@ export type AiView = {
   writerModel: string;
   prices: Record<AiTier, PriceSource>;
   status: AiStatus;
+  webLookup: WebLookupView;
 };
 
 // Input and output prices a Member enters for a model not in the price table, each in millionths
@@ -344,4 +357,6 @@ export type AiSettings = {
   usage(): Promise<AiUsageView>;
   // Sets the AI cost cap, in cents. A cap above the month's total starts background AI again.
   setCostCap(capCents: number): Promise<AiUsageView>;
+  // Turns the Web lookup on or off. Undefined with no AI provider set up.
+  setWebLookup(on: boolean): Promise<AiView | undefined>;
 };

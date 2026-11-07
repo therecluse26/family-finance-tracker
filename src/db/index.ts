@@ -459,6 +459,16 @@ export {
   removeMember,
 } from "./members.ts";
 export {
+  countMerchantLookups,
+  giveBackMerchantLookup,
+  type KeptMerchantLookup,
+  readMerchantLookups,
+  readWebLookupSwitch,
+  reserveMerchantLookup,
+  storeMerchantLookup,
+  storeWebLookupSwitch,
+} from "./merchant-lookups.ts";
+export {
   applyMigrations,
   checkMigrations,
   type MigrationCheck,

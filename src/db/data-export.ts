@@ -230,9 +230,11 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   // base URL may hold a sign-in name and password.
   exported(
     schema.aiSettings,
-    ["provider", "quickModel", "writerModel"],
+    ["provider", "quickModel", "writerModel", "webLookup"],
     ["id", "apiKey", "gatewayToken", "baseUrl", "keyRejectedAt", "generation"],
   ),
+  // Each Merchant's Web lookup: its Category and the line about the business.
+  exported(schema.merchantLookups, "every column"),
   exported(schema.aiCalls, "every column"),
   exported(schema.aiCostCap, ["capCents"], ["id", "warnedMonth", "reachedMonth"]),
   exported(schema.aiModelPrices, "every column"),
@@ -289,6 +291,7 @@ export const NEVER_EXPORTED_TABLES: ReadonlyMap<string, string> = new Map([
   [getTableName(schema.followUpMarks), "Work state: the follow-up pipeline."],
   [getTableName(schema.followUpChanges), "Work state: the follow-up pipeline."],
   [getTableName(schema.merchantNameAnswers), "A cache of AI answers. Each clean name is exported."],
+  [getTableName(schema.merchantLookupMonths), "Work state: the Web lookup's monthly count."],
   [getTableName(schema.budgetMonthStarts), "Work state: the Month start job."],
   [getTableName(schema.alertDecisions), "Work state: the Alerts step's tries."],
   [getTableName(schema.anomalyChecks), "Work state: the Anomaly checks' tries."],

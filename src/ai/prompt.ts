@@ -109,6 +109,7 @@ const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
   "unclear transfer": QUICK_BATCH_TOKENS,
   "reimbursement linking": QUICK_BATCH_TOKENS,
   "reading a goal": 300,
+  "merchant lookup": 300,
   "insight cards": 1_000,
   "monthly review": 4_000,
   "budget tailoring": 1_500,

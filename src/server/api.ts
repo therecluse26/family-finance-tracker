@@ -497,6 +497,9 @@ const aiSettingsBody = z.object({
 // The AI cost cap, in whole cents.
 const costCapBody = z.object({ capCents: z.number().int().min(0).max(MAX_COST_CAP_CENTS) });
 
+// The Web lookup's switch (spec 08, AI settings page).
+const webLookupBody = z.object({ on: z.boolean() });
+
 // A base URL as the AI SDK takes it: http or https, with no login, query, or fragment, and no
 // trailing slash. Empty is none. Undefined when it is not such a URL.
 function aiBaseUrl(text: string | null): string | null | undefined {
@@ -1683,6 +1686,15 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Enter the AI cost cap in dollars, from $0 to $10,000." }, 400);
     }
     return c.json({ usage: await c.var.ai.setCostCap(body.data.capCents) }, 200);
+  })
+  // The Web lookup's switch: on or off for the Household. Turning it off stops new lookups and the
+  // use of kept answers (spec 04, Web lookup).
+  .put("/ai/web-lookup", async (c) => {
+    const body = webLookupBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Turn the Web lookup on or off." }, 400);
+    const ai = await c.var.ai.setWebLookup(body.data.on);
+    if (ai === undefined) return c.json({ error: "Set up an AI provider first." }, 409);
+    return c.json({ ai }, 200);
   })
   // AI work on your Transactions (spec 08): the status line, "Finish AI work now", and "Run AI on
   // all history". Reading the line and a refused press make no AI call. A press answers 202: its

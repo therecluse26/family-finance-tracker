@@ -568,6 +568,7 @@ describe("the Transaction detail view", () => {
     transferLink: null,
     otherLinks: [],
     matched: [],
+    webLookup: null,
     ...fields,
   });
   const refundLink = {

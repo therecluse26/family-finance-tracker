@@ -396,6 +396,12 @@ export function TransactionDetailBody(props: {
             ))}
           </ul>
         )}
+        {detail.webLookup === null ? null : (
+          <p className="mt-2.5 text-sm">
+            <span className="text-muted">Web lookup: </span>
+            {detail.webLookup.description}
+          </p>
+        )}
       </Card>
 
       <Card aria-labelledby="links">

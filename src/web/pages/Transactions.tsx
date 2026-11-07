@@ -286,7 +286,13 @@ const TD =
 const FOLDED_FACT = `${TD} text-muted max-sm:order-3 max-sm:text-small`;
 // On a phone a dot ends each fact but the last, so a wrapped line never starts with one.
 const DOT_AFTER = "max-sm:after:px-1 max-sm:after:content-['·']";
-const AI_CHOSEN: readonly CategoryChosenBy[] = ["AI", "AI, unsure"];
+// A Web lookup's Category is the AI's too: the AI read the web pages.
+const AI_CHOSEN: readonly CategoryChosenBy[] = [
+  "AI",
+  "AI, unsure",
+  "Web lookup",
+  "Web lookup, unsure",
+];
 
 // One row. The whole row opens the detail view. The Merchant's link is the row's one link for the
 // keyboard and screen readers, and it names the date and amount too, so a list of links tells the

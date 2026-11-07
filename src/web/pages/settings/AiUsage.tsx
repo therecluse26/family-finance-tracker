@@ -31,6 +31,12 @@ const CELL = "border-b border-line-soft px-3 py-[11px] tabular-nums";
 const NUMBER = `${CELL} text-right`;
 const NUMBER_HEAD = `${HEAD} text-right`;
 
+// The month's Merchant lookups against their cap (spec 08, AI usage page).
+export function lookupLine(lookups: AiUsageView["lookups"]): string {
+  const line = `${count(lookups.count)} of ${count(lookups.cap)} web lookups`;
+  return lookups.count >= lookups.cap ? `${line}. No web lookups until the 1st` : line;
+}
+
 // The page once the usage has loaded. Times show in `zone`, the Household time zone. `children`
 // go under the month's total.
 export function AiUsageReport(props: {
@@ -55,6 +61,7 @@ export function AiUsageReport(props: {
             </StatusText>
           </p>
         )}
+        <p className="mt-1.5 tabular-nums">{lookupLine(usage.lookups)}</p>
         {usage.calls.length === 0 ? (
           <p className="mt-1.5 text-muted">No AI calls this month.</p>
         ) : null}
