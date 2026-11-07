@@ -1312,3 +1312,84 @@ describe("the privacy filter on a Merchant lookup", () => {
     }
   });
 });
+
+describe("a fact split across tool results", () => {
+  // A tool message with one tool result whose text is `value`.
+  const result = (id: string, value: string) => ({
+    role: "tool" as const,
+    content: [
+      {
+        type: "tool-result" as const,
+        toolCallId: id,
+        toolName: `lookup${id}`,
+        output: { type: "text" as const, value },
+      },
+    ],
+  });
+  const front = `a=${card.slice(0, 4)}&b=${card.slice(4, 8)}`;
+  const back = `&c=${card.slice(8, 12)}&d=${card.slice(12)}`;
+  const heldBackLines = (warn: { mock: { calls: unknown[][] } }) =>
+    warn.mock.calls.filter(([message]) => message === "The privacy filter held back a tool result");
+
+  it("holds back the tool result that completes a card number split across two, and sends the rest", () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const sent = filter.params({
+        prompt: [result("1", front), result("2", back)],
+      });
+
+      expect(sent.prompt).toEqual([result("1", front), heldBack([result("2", "")])[0]]);
+      expect(heldBackLines(warn)).toEqual([
+        [
+          "The privacy filter held back a tool result",
+          { tool: "lookup2", rule: "The privacy filter found private data across tool results." },
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("holds back a JSON tool result that completes a card number begun in app-built text", () => {
+    const sent = filter.params({
+      prompt: [
+        {
+          role: "user",
+          content: [{ type: "text", text: front }],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "lookup",
+              output: { type: "json", value: [back] },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(JSON.stringify(sent.prompt)).not.toContain(card.slice(12));
+    expect(JSON.stringify(sent.prompt)).toContain(HELD_BACK);
+  });
+
+  it("still refuses a fact split outside the tool results, and holds none back", () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      expect(() =>
+        filter.params({
+          prompt: [
+            { role: "system", content: front },
+            { role: "user", content: [{ type: "text", text: back }] },
+            result("1", "Nothing private."),
+          ],
+        }),
+      ).toThrow(PrivacyRefusal);
+      expect(heldBackLines(warn)).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
