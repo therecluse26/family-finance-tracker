@@ -102,6 +102,15 @@ export function matchingCategories(categories: readonly Category[], typed: strin
   return categories.filter((name) => name.toLocaleLowerCase().includes(words));
 }
 
+// The answer a picked Category sends. The box counts only when the server offered "only this
+// Transaction" for the item.
+export function pickedCategoryValue(
+  category: Category,
+  box: { offered: boolean; checked: boolean },
+): string {
+  return categoryChoiceValue(category, box.offered && box.checked);
+}
+
 // "Not this" on a Category item: a search box over the Categories, and "Only this Transaction".
 // Picking a Category answers the item. Without "Only this Transaction", the answer also makes a
 // Category rule for the Merchant (spec 04, Review list items).
@@ -125,7 +134,7 @@ function CategoryPicker(props: {
 
   const pick = (name: Category) => {
     setOpen(false);
-    props.pick(categoryChoiceValue(name, props.onlyThisOffered && onlyThis));
+    props.pick(pickedCategoryValue(name, { offered: props.onlyThisOffered, checked: onlyThis }));
   };
   const move = (by: number) => {
     setOpen(true);

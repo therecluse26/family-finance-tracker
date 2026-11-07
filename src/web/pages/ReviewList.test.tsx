@@ -25,6 +25,7 @@ import {
   type ItemActions,
   KIND_LABEL,
   matchingCategories,
+  pickedCategoryValue,
   ReviewItems,
   ReviewListItem,
 } from "./ReviewList.tsx";
@@ -427,6 +428,26 @@ describe("the Review list page", () => {
     expect(matchingCategories(all, " AND ")).toEqual(["Home and garden", "Alcohol and tobacco"]);
     expect(matchingCategories(all, "")).toEqual(all);
     expect(matchingCategories(all, "shopping")).toEqual([]);
+  });
+
+  it("posts a picked Category, with the box only when it was offered, then reads the count", async () => {
+    const sent = recordRequests();
+    const pick = (offered: boolean, checked: boolean) =>
+      answerItem("guess", pickedCategoryValue("Groceries", { offered, checked }));
+
+    expect(await pick(true, false)).toEqual({ answered: true, openCount: 2 });
+    expect(await pick(true, true)).toEqual({ answered: true, openCount: 2 });
+    // A box that was not offered cannot make the answer only this Transaction.
+    expect(await pick(false, true)).toEqual({ answered: true, openCount: 2 });
+
+    expect(
+      sent.filter((request) => request.method === "POST").map((request) => request.body),
+    ).toEqual([
+      { value: "Groceries" },
+      { value: categoryChoiceValue("Groceries", true) },
+      { value: "Groceries" },
+    ]);
+    expect(sent.filter((request) => request.path.endsWith("/count"))).toHaveLength(3);
   });
 
   it("sends a picked Category with or without only this Transaction as the server reads it", () => {
