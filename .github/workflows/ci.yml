@@ -4,7 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
-    # A release tag, such as v1.2.3. The publish job pushes the image once every other job passes.
+    # A release tag, such as v1.2.3. The publish job pushes the image once every other job passes,
+    # then the release job makes the GitHub release. A pre-release tag, such as v1.2.0-rc1, runs
+    # every check but skips the benchmarks, publish, and release jobs, so the run is green and
+    # nothing is pushed. docs/releasing.md has the steps.
     tags: ["v*"]
 
 permissions:
@@ -163,9 +166,10 @@ jobs:
       - name: compose.yaml starts the app as UID 1000, and PUID and PGID change it
         run: scripts/compose-smoke-test.sh family-finance-tracker:ci
       # The README's quick start, word for word, with APP_URL=http://localhost:3000. It fetches
-      # nothing: compose.yaml and .env.example come from this checkout. The link check on the
-      # README and docs/self-hosting.md runs with the tests, in scripts/doc-links.test.ts.
-      - name: The README quick start prints a setup link, and GET /healthz answers 200
+      # nothing: compose.yaml and .env.example come from this checkout. Then the first-run wizard
+      # with the Banks step skipped, and the restore drill. No bank is connected. The link check
+      # on the README and docs/self-hosting.md runs with the tests, in scripts/doc-links.test.ts.
+      - name: The README quick start reaches the dashboard, and a backup restores, on amd64
         run: scripts/quick-start-test.sh family-finance-tracker:ci
 
   platforms:
@@ -195,12 +199,54 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The arm64 image alone, loaded into Docker. The step above left its layers in the builder.
+      - name: Load the arm64 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          tags: family-finance-tracker:arm64
+      # The same quick start, wizard, and restore drill as on amd64, under QEMU.
+      - name: The README quick start reaches the dashboard, and a backup restores, on arm64
+        run: scripts/quick-start-test.sh family-finance-tracker:arm64 linux/arm64
+
+  benchmarks:
+    name: Release Benchmark snapshot check
+    # The release's own check, with the publish job's condition. It fails while the Benchmark
+    # snapshot is the sample built from the made-up fixture files, so a release can never ship
+    # sample numbers. Pushes and pull requests do not run it. It runs the packages' code, so it is
+    # its own job with a read-only token, and the publish job, which can push images, runs none.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') &&
+      !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A release builds from scratch, so the install reads no cache that another run wrote.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - run: pnpm install --frozen-lockfile
+      - name: The Benchmark snapshot was built from the real source files
+        run: pnpm check:benchmarks
 
   publish:
     name: Publish the image
-    # Only a v* tag publishes, and only after every other job passes on the tagged commit.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [check, licenses, audit, secrets, image, platforms]
+    # Only a v* tag publishes, and only after every other job passes on the tagged commit,
+    # benchmarks included. A pre-release tag, such as v1.2.0-rc1, has a "-", so it skips this job,
+    # the benchmarks job, and the release job: the run is green, and no image or release is made.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') &&
+      !contains(github.ref_name, '-')
+    needs: [check, licenses, audit, secrets, image, platforms, benchmarks]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -219,12 +265,24 @@ jobs:
             echo "$TAG is not a release tag, such as v1.2.3." >&2
             exit 1
           fi
+          version=${BASH_REMATCH[1]}
+          major=${BASH_REMATCH[2]}
+          # The app shows package.json's version in Settings, About, and the release job reads
+          # the tag's release notes, so both must match the tag before anything is pushed.
+          if [ "$(jq --raw-output .version package.json)" != "$version" ]; then
+            echo "package.json's version is not $version." >&2
+            exit 1
+          fi
+          if ! [ -f "docs/release-notes/$TAG.md" ]; then
+            echo "docs/release-notes/$TAG.md is missing." >&2
+            exit 1
+          fi
           image=ghcr.io/therecluse26/family-finance-tracker
           {
-            echo "version=${BASH_REMATCH[1]}"
+            echo "version=$version"
             echo "tags<<EOF"
-            echo "$image:${BASH_REMATCH[1]}"
-            echo "$image:${BASH_REMATCH[2]}"
+            echo "$image:$version"
+            echo "$image:$major"
             echo "$image:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -259,3 +317,30 @@ jobs:
       - name: Sign out of the registry
         if: always()
         run: docker logout ghcr.io
+
+  release:
+    name: GitHub release
+    # Only after the image push succeeds. A skipped publish job, as for a pre-release tag, skips
+    # this one too. Its own job, so only this short step holds a token that can write to the repo.
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The workflow's own token makes the release, from the tag's notes in docs/release-notes/.
+      - name: Make the GitHub release from its release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The publish job checks the tag too. This job checks it again, so it stays safe if its
+          # needs change.
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$TAG is not a release tag, such as v1.2.3." >&2
+            exit 1
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+            --notes-file "docs/release-notes/$TAG.md"

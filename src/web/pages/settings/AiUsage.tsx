@@ -3,11 +3,11 @@ import { Link } from "react-router";
 import { AI_USE_LABELS, type AiUsageView } from "../../../ai/ai-view.ts";
 import { callCost, capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
-import type { HouseholdFactsView } from "../../../server/household-views.ts";
 import { api } from "../../api.ts";
 import { Card } from "../../components/Card.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import { todayHere } from "./Ai.tsx";
 import { TEXT_LINK } from "./settings-ui.tsx";
 
@@ -119,17 +119,9 @@ export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: 
 export function AiUsage() {
   const [usage, setUsage] = useState<AiUsageView | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const [zone, setZone] = useState<string | undefined>();
-  const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const zone = useHouseholdZone();
 
   useEffect(() => {
-    api.household
-      .$get()
-      .then(async (res) => {
-        if (!res.ok) return;
-        setZone(((await res.json()) as { facts: HouseholdFactsView | null }).facts?.timeZone);
-      })
-      .catch(() => {});
     api.ai.usage
       .$get()
       .then(async (res) => {
@@ -150,8 +142,8 @@ export function AiUsage() {
         </p>
       </div>
       <ErrorLine error={error} />
-      {usage === undefined ? null : (
-        <AiUsageReport usage={usage} zone={zone ?? here} today={todayHere(new Date(), zone)} />
+      {usage === undefined || zone === undefined ? null : (
+        <AiUsageReport usage={usage} zone={zone} today={todayHere(new Date(), zone)} />
       )}
     </>
   );

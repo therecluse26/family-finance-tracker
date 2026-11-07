@@ -165,6 +165,79 @@ describe("the first-run wizard, steps 1 and 2", () => {
     expect(await query("SELECT id FROM sessions")).toHaveLength(1);
   });
 
+  // Each write that makes the first Member fails in turn, through a trigger that aborts it.
+  it.each([
+    ["the Member", "INSERT ON members"],
+    ["the password", "INSERT ON accounts"],
+    ["the TOTP, backup codes and used time step", "INSERT ON two_factors"],
+    ["using up the waiting TOTP secret", "DELETE ON verifications"],
+    ["the session", "INSERT ON sessions"],
+  ])(
+    "leaves no part of the Member when the write of %s fails, and the same setup code makes them next",
+    async (_what, write) => {
+      const tab = browser();
+      const { totpURI } = (await (await tab.newTotp(code)).json()) as { totpURI: string };
+      const madeUp = `made-up-${crypto.randomUUID()}`;
+      await query(
+        `CREATE TRIGGER fail_first_member BEFORE ${write} BEGIN SELECT RAISE(ABORT, '${madeUp}'); END`,
+      );
+      const stdout: string[] = [];
+      vi.spyOn(process.stdout, "write").mockImplementation(
+        (chunk) => stdout.push(String(chunk)) > 0,
+      );
+
+      let failed: Response;
+      try {
+        failed = await tab.create(code, await totpCodeFromURI(totpURI));
+      } finally {
+        vi.mocked(process.stdout.write).mockRestore();
+      }
+
+      expect(failed.status).toBe(500);
+      expect(await failed.json()).toEqual(
+        expect.objectContaining({ code: "FIRST_MEMBER_NOT_MADE" }),
+      );
+      expect(await tab.isSignedIn()).toBe(false);
+      for (const table of ["members", "accounts", "two_factors", "sessions"]) {
+        expect(await query(`SELECT id FROM ${table}`)).toEqual([]);
+      }
+      const waiting = "SELECT id FROM verifications WHERE identifier = 'first-member-new-totp'";
+      expect(await query(waiting)).toHaveLength(1);
+      // The auth module's log says what failed by the error's name only, never the rows it was
+      // writing: no password hash, session token or email.
+      const failures = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === "The first Member was not made");
+      expect(failures).toEqual([
+        { time: expect.any(String), level: "error", msg: failures[0]?.msg, errorName: "Error" },
+      ]);
+      expect([...lines, ...stdout].join("")).not.toContain(madeUp);
+      expect([...lines, ...stdout].join("")).not.toContain("alice@example.com");
+
+      await query("DROP TRIGGER fail_first_member");
+      // Another short-lived value, which making the Member leaves alone.
+      const at = new Date().toISOString();
+      await query(
+        `INSERT INTO verifications VALUES ('other-row', 'other-value-for', 'x', '${at}', '${at}', '${at}')`,
+      );
+      const made = await tab.create(code, await totpCodeFromURI(totpURI));
+
+      expect(made.status).toBe(200);
+      expect(await tab.isSignedIn()).toBe(true);
+      expect(await query("SELECT id FROM members")).toHaveLength(1);
+      expect(await query("SELECT id FROM accounts")).toHaveLength(1);
+      // The code that made the Member is used.
+      expect(await query("SELECT last_totp_step FROM two_factors")).toEqual([
+        expect.objectContaining({ last_totp_step: Math.floor(Date.now() / 30_000) }),
+      ]);
+      expect(await query("SELECT id FROM sessions")).toHaveLength(1);
+      expect(await query(waiting)).toEqual([]);
+      expect(await query("SELECT id FROM verifications")).toEqual([
+        expect.objectContaining({ id: "other-row" }),
+      ]);
+    },
+  );
+
   it("refuses a wrong TOTP code, and makes no Member", async () => {
     const tab = browser();
     await tab.newTotp(code);

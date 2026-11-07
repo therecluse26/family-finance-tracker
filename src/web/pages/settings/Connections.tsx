@@ -15,6 +15,7 @@ import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import type { PollState } from "../../polling.ts";
 import { SignedOut } from "../../requests.ts";
 import {
@@ -236,14 +237,14 @@ export function historySoFar(loading: HistoryLoadingView | undefined): string {
 }
 
 // A Connection's sync state for its row (Settings → Banks): its first sync, its history load, or
-// when it last synced, in this browser's time zone. Null while it is removed, held, needs a Member,
-// or is Broken: its own note says so.
+// when it last synced, in `zone`, the Household time zone. Null while it is removed, held, needs a
+// Member, or is Broken: its own note says so. Null too for the last sync while the zone loads.
 export function syncState(
   connection: ConnectionView,
   loading: HistoryLoadingView | undefined,
   poll: PollState,
-  now = new Date(),
-  zone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+  now: Date,
+  zone: string | undefined,
 ): { word: string; detail: string | null } | null {
   if (connection.removed || connection.held) return null;
   if (connection.health === "needs a member" || connection.health === "broken") return null;
@@ -255,6 +256,7 @@ export function syncState(
   if (!connection.historyLoaded) {
     return { word: "Loading history", detail: `${historySoFar(loading)}. ${updates}` };
   }
+  if (zone === undefined) return null;
   const at = new Date(connection.lastSyncedAt);
   const day = calendarDateIn(at, zone);
   const today = calendarDateIn(now, zone);
@@ -1087,7 +1089,8 @@ export function ConnectionItem(props: {
   poll?: PollState;
 }) {
   const { connection } = props;
-  const state = syncState(connection, props.loading, props.poll ?? "ended");
+  const zone = useHouseholdZone();
+  const state = syncState(connection, props.loading, props.poll ?? "ended", new Date(), zone);
   const [asking, setAsking] = useState<"remove" | "delete history" | undefined>();
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);

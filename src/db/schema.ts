@@ -1354,7 +1354,8 @@ export const budgets = sqliteTable(
     setAt: moment("set_at").notNull(),
     // True on a row that ends the Category's Budget: from its month on, the Category has no Budget
     // in effect, and earlier months keep theirs. Undo writes one for a Proposal that gave a Category
-    // its first Budget in an earlier month (spec 08, Lifecycle). Its amount is 0.
+    // its first Budget, in this month or an earlier one (spec 08, Lifecycle), so the Category stays
+    // without a Budget until a Member sets one (spec 05, When the app drafts). Its amount is 0.
     noBudget: integer("no_budget", { mode: "boolean" }).notNull().default(false),
     // The AI's one-sentence reason for an "AI draft" Budget (spec 05, The AI's part in a draft),
     // with each Member's name in place of their label. Null for every other Budget.

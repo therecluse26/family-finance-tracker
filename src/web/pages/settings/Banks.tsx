@@ -8,6 +8,7 @@ import { Button } from "../../components/Button.tsx";
 import { Card } from "../../components/Card.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import { Connections } from "./Connections.tsx";
 import { AddManualLoan, lenderInAddress, ManualLoanRows } from "./ManualLoans.tsx";
 import {
@@ -159,14 +160,13 @@ export function ItemsUsedForm(props: { plaid: PlaidView; onSaved: (plaid: PlaidV
   );
 }
 
-// What Sync now did with one Connection. Times show in this browser's time zone.
-export function syncNowLine(result: SyncNowView, now = new Date()): string {
+// What Sync now did with one Connection. Times show in `zone`, the Household time zone.
+export function syncNowLine(result: SyncNowView, zone: string, now = new Date()): string {
   if (result.outcome === "syncing") {
     return result.refreshed
       ? `${result.bankName}: syncing now, and again in 5 minutes for the bank's fresh data.`
       : `${result.bankName}: syncing now.`;
   }
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const at = new Date(result.canSyncAt);
   const day = calendarDateIn(at, zone);
   const today = calendarDateIn(now, zone);
@@ -175,13 +175,13 @@ export function syncNowLine(result: SyncNowView, now = new Date()): string {
   return `${result.bankName} synced a short while ago. It can sync again ${when}.`;
 }
 
-export function SyncNowResults(props: { results: SyncNowView[] }) {
+export function SyncNowResults(props: { results: SyncNowView[]; zone: string }) {
   if (props.results.length === 0) return <p className="mt-3">No bank is ready to sync.</p>;
   return (
     <ul className="mt-3">
       {props.results.map((result) => (
         <li key={result.connectionId} className="border-t border-line-soft py-2 first:border-t-0">
-          {syncNowLine(result)}
+          {syncNowLine(result, props.zone)}
         </li>
       ))}
     </ul>
@@ -194,6 +194,7 @@ export function SyncNow() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [results, setResults] = useState<SyncNowView[] | undefined>();
+  const zone = useHouseholdZone();
 
   async function press() {
     setBusy(true);
@@ -223,7 +224,9 @@ export function SyncNow() {
         </Button>
       </div>
       <ErrorLine error={error} />
-      {results === undefined ? null : <SyncNowResults results={results} />}
+      {results === undefined || zone === undefined ? null : (
+        <SyncNowResults results={results} zone={zone} />
+      )}
     </section>
   );
 }
@@ -344,7 +347,7 @@ export function NotSynced() {
   const [accountsError, setAccountsError] = useState<string | undefined>();
   const [loansError, setLoansError] = useState<string | undefined>();
   const [lender] = useState(lenderInAddress);
-  const today = calendarDateIn(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const zone = useHouseholdZone();
 
   const load = useCallback(() => {
     api["unconnected-accounts"]
@@ -369,13 +372,15 @@ export function NotSynced() {
     <>
       <ErrorLine error={accountsError} />
       <ErrorLine error={loansError} />
-      <NotSyncedList
-        accounts={accounts}
-        loans={loans}
-        today={today}
-        lender={lender}
-        onSaved={load}
-      />
+      {zone === undefined ? null : (
+        <NotSyncedList
+          accounts={accounts}
+          loans={loans}
+          today={calendarDateIn(new Date(), zone)}
+          lender={lender}
+          onSaved={load}
+        />
+      )}
     </>
   );
 }

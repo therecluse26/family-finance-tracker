@@ -34,7 +34,7 @@ import { startCategorization } from "../categorization/index.ts";
 import { type Chat, chat } from "../chat/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
-import { type GoalWriting, goalWriting } from "../goals/index.ts";
+import { type GoalWriting, goalWriting, startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { requestInsightCardCheck, startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
@@ -263,6 +263,8 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     // Budget tailoring: the AI's part in the first draft, and its Tailoring and Goal runs.
     const tailoring = startBudgetTailoring({ database, ai });
     const budgets = startBudgets({ database, tailorDraft: tailorFirstDraft });
+    // The Goal Done check, in each follow-up job and in the Month start job.
+    const goals = startGoals({ database });
     // The redraft triggers: Income, Benchmark, New bank and Facts redrafts.
     const redrafts = startRedrafts({ database, ai });
     const overspending = startOverspendingChecks({ database });
@@ -286,6 +288,7 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
       insights.stop();
       alertSending.stop();
       overspending.stop();
+      goals.stop();
       budgets.stop();
       redrafts.stop();
       tailoring.stop();

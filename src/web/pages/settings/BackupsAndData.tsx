@@ -5,6 +5,7 @@ import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import { lastCheckText, sendPastedKey } from "../../master-key.ts";
 import {
   BUTTONS,
@@ -39,9 +40,8 @@ export function sizeLabel(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
-// "Nov 2 at 3:00 AM", in this browser's time zone.
-function momentLabel(at: string, now: Date): string {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+// "Nov 2 at 3:00 AM", in `zone`, the Household time zone.
+function momentLabel(at: string, zone: string, now: Date): string {
   const moment = new Date(at);
   return `${dateLabel(calendarDateIn(moment, zone), calendarDateIn(now, zone))} at ${timeLabel(moment, zone)}`;
 }
@@ -65,8 +65,8 @@ export function FolderPath(props: { path: string }) {
   );
 }
 
-export function BackupLines(props: { backups: BackupsView; now?: Date }) {
-  const { backups } = props;
+export function BackupLines(props: { backups: BackupsView; zone: string; now?: Date }) {
+  const { backups, zone } = props;
   const now = props.now ?? new Date();
   const count = backups.files === 1 ? "1 file" : `${backups.files} files`;
   return (
@@ -79,7 +79,7 @@ export function BackupLines(props: { backups: BackupsView; now?: Date }) {
         <p className="mt-1.5">
           {backups.lastBackupAt === null
             ? "No backup yet."
-            : `Last backup: ${momentLabel(backups.lastBackupAt, now)}. ${count}, ${sizeLabel(backups.bytes)} in all.`}
+            : `Last backup: ${momentLabel(backups.lastBackupAt, zone, now)}. ${count}, ${sizeLabel(backups.bytes)} in all.`}
         </p>
       ) : (
         <p className="mt-1.5">
@@ -95,6 +95,7 @@ function Backups() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
+  const zone = useHouseholdZone();
 
   useEffect(() => {
     api.backups
@@ -123,7 +124,9 @@ function Backups() {
   return (
     <SettingCard id="backups" title="Backups">
       <Lead>The app backs up its data every day at 3:00 AM, Household time.</Lead>
-      {backups === undefined ? null : <BackupLines backups={backups} />}
+      {backups === undefined || zone === undefined ? null : (
+        <BackupLines backups={backups} zone={zone} />
+      )}
       <div className={BUTTONS}>
         <Button type="button" variant="outlined" disabled={busy} onClick={backUp}>
           Back up now
@@ -148,6 +151,8 @@ function CheckMasterKey() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState<string | undefined>();
+
+  const zone = useHouseholdZone();
 
   const readLastCheck = async () => setLastCheck(await fetchLastCheck());
 
@@ -180,7 +185,9 @@ function CheckMasterKey() {
           Paste the Master key you saved, and the app says whether it matches. The app never shows
           the Master key.
         </Lead>
-        {lastCheck === undefined ? null : <p className={HINT}>{lastCheckText(lastCheck)}</p>}
+        {lastCheck === undefined || zone === undefined ? null : (
+          <p className={HINT}>{lastCheckText(lastCheck, zone)}</p>
+        )}
         <label className={LABEL}>
           Master key
           <textarea

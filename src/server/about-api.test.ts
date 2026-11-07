@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth } from "../auth/testing.ts";
 import { markCpiFetched, markSetupStep, readUpdateCheck } from "../db/index.ts";
 import { createLogger } from "../log.ts";
-import { APP_VERSION } from "../version.ts";
 import type { AboutView } from "./about-views.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -65,12 +64,13 @@ describe("the Settings, About routes", () => {
   const isOn = async () => (await readUpdateCheck(test.database)).enabled;
 
   it("shows the version, the Source code link, the notices, the Update check, and the Data sources page's parts", async () => {
+    // The release's own version, written out: each release changes it (docs/releasing.md).
     expect(await about()).toEqual({
-      version: APP_VERSION,
-      sourceCode: `https://github.com/therecluse26/family-finance-tracker/tree/v${APP_VERSION}`,
+      version: "1.0.0",
+      sourceCode: "https://github.com/therecluse26/family-finance-tracker/tree/v1.0.0",
       thirdPartyNotices: "/third-party-notices.txt",
       updateCheck: { on: true, checkedAt: null, update: null, lastFailure: null },
-      dataSources: { cpiFetchedAt: null, benchmarkNotice: "Sample numbers, not real data" },
+      dataSources: { cpiFetchedAt: null, benchmarkNotice: null },
     });
   });
 

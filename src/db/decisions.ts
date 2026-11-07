@@ -46,6 +46,8 @@ export type StoredDecision = {
 // What the order of decisions reads of a Transaction.
 export type DecisionRecord = {
   id: string;
+  // The adapter's stable ID. A tie between Transactions breaks on it, never on the random `id`.
+  providerTransactionId: string;
   accountId: string;
   amount: number;
   postedDate: string;
@@ -180,6 +182,7 @@ export async function readDecisionRecords(
     const rows = await database
       .select({
         id: transactions.id,
+        providerTransactionId: transactions.providerTransactionId,
         accountId: transactions.accountId,
         amount: transactions.amount,
         postedDate: transactions.postedDate,
@@ -353,11 +356,13 @@ type LinkedSpending = {
   postedDate: string;
   authorizedDate: string | null;
   category: string | null;
+  // Posted and not hidden: the Spending counts in the totals.
+  counted: boolean;
 };
 
 // The Spending that each linked Refund or Reimbursement reduces, by the money in's ID: its ID, its
-// dates, which give the month, and the Category of its first Spending part that has one. Reads every
-// link, or the links of these Transactions.
+// dates, which give the month, the Category of its first Spending part that has one, and whether it
+// counts. Reads every link, or the links of these Transactions.
 async function readLinkedSpending(
   database: Queries,
   moneyIds?: readonly string[],
@@ -378,6 +383,8 @@ async function readLinkedSpending(
         postedDate: spent.postedDate,
         authorizedDate: spent.authorizedDate,
         category: firstCategory,
+        pending: spent.pending,
+        hiddenReason: spent.hiddenReason,
       })
       .from(spendingLinks)
       .innerJoin(spent, eq(spent.id, spendingLinks.spendingTransactionId));
@@ -386,7 +393,12 @@ async function readLinkedSpending(
   for (const chunk of chunks(moneyIds ?? [])) {
     rows.push(...(await select().where(inArray(spendingLinks.transactionId, chunk))));
   }
-  return new Map(rows.map(({ moneyId, ...spending }) => [moneyId, spending]));
+  return new Map(
+    rows.map(({ moneyId, pending, hiddenReason, ...spending }) => [
+      moneyId,
+      { ...spending, counted: !pending && hiddenReason === null },
+    ]),
+  );
 }
 
 // Divides `total` in proportion to `weights`, in whole cents. The shares add up to `total`: each
@@ -471,8 +483,10 @@ function spreadLinked<Row extends SpendingPart>(
 
 // Every part of every posted Transaction that is not hidden, with the dates its month comes from.
 // A linked Refund or Reimbursement part has its Spending's ID, dates, and Category instead (spec 03,
-// Which month a link changes); every other part has a null spendingTransactionId. While its link is
-// gone, before Matching decides it again, it keeps its own. When its Spending has several Spending
+// Which month a link changes); every other part has a null spendingTransactionId. It counts only
+// while its Spending counts: a Spending still pending, or hidden, counts nowhere, so neither does
+// the part that reduces it (spec 05, Formula terms). While its link is gone, before Matching decides
+// it again, it keeps its own. When its Spending has several Spending
 // parts, such as a split (spec 04, Splits), the linked part becomes one part for each of them, in
 // proportion to their amounts, each with that part's Category.
 export async function listPostedParts(database: Database) {
@@ -500,7 +514,9 @@ export async function listPostedParts(database: Database) {
     (row): ((typeof rows)[number] & { spendingTransactionId: string | null })[] => {
       const found = row.linked ? spending.get(row.transactionId) : undefined;
       if (found === undefined) return [{ ...row, spendingTransactionId: null }];
-      return spreadLinked({ ...row, ...found }, spendingParts.get(row.transactionId) ?? []);
+      const { counted, ...linked } = found;
+      if (!counted) return [];
+      return spreadLinked({ ...row, ...linked }, spendingParts.get(row.transactionId) ?? []);
     },
   );
 }

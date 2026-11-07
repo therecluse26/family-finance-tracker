@@ -15,18 +15,24 @@ import {
   alertTitle,
   mergedAlertList,
 } from "../anomalies/index.ts";
-import { type AlertState, type Database, readShownTransactions } from "../db/index.ts";
+import {
+  type AlertState,
+  type Database,
+  listInsightCards,
+  readShownTransactions,
+} from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { openProposals } from "../proposals/index.ts";
 
-// The note a Chat thread starts from with "Ask about this" (spec 08, Threads): an Alert note or an
-// open Proposal in the AI box. Or the Alert a thread starts from with "Ask the AI" in the Alert
-// list (spec 06, "Ask the AI"). The app reads the note itself from its ID, never from the browser,
-// and keeps a copy with the thread: the words the thread shows, and the pieces the AI reads, with
-// each amount, date, and month as a typed value (src/ai/typed.ts).
+// The note a Chat thread starts from with "Ask about this" (spec 08, Threads): an Alert note, an
+// open Proposal, or an Insight card in the AI box. Or the Alert a thread starts from with "Ask the
+// AI" in the Alert list (spec 06, "Ask the AI"). The app reads the note itself from its ID, never
+// from the browser, and keeps a copy with the thread: the words the thread shows, and the pieces
+// the AI reads, with each amount, date, and month as a typed value (src/ai/typed.ts).
 
-export type NoteKind = "Alert note" | "Proposal" | "Alert";
+const NOTE_KINDS = ["Alert note", "Proposal", "Insight card", "Alert"] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
 
 // One piece of the note the AI reads: text, or a number the app made. app.db stores the pieces as
 // JSON, never a typed value, whose mark is new each time the app starts.
@@ -227,6 +233,60 @@ async function proposalNote(
   };
 }
 
+// Each card group by the name the AI box shows.
+const CARD_GROUPS = {
+  worth_acting_on: "Worth acting on",
+  heads_up: "Heads up",
+  good_news: "Good news",
+} as const;
+
+// The largest figure a card shows (src/insights/cards.ts): past it, the card shows none.
+const MAX_FIGURE = 1e12;
+
+// A card's figure as pieces: whole dollars as "$" and a typed value, a count typed, and a percent
+// as a typed count and "%". A figure too large for a typed count goes as text.
+function figurePieces(figure: number, kind: "dollars" | "count" | "percent"): Piece[] {
+  if (kind === "dollars") return dollars(Math.round(figure * 100));
+  const whole = Math.floor(Math.abs(figure) + 0.5);
+  const sign = figure < 0 && whole > 0 ? "-" : "";
+  return [
+    sign,
+    whole < 1_000_000_000 ? { count: whole } : String(whole),
+    kind === "percent" ? "%" : "",
+  ];
+}
+
+// The current Insight card with this ID. A card from an older run is gone: each run replaces every
+// card. Every word on a card is the AI's, stored with each Member's name for the screen, so each
+// goes as text through the privacy filter; its figure is a number the app checked, so it goes typed.
+async function insightCardNote(database: Database, id: string): Promise<ChatNote | undefined> {
+  const card = (await listInsightCards(database)).find((each) => each.id === id);
+  if (card === undefined) return undefined;
+  const goodNews = card.group === "good_news";
+  const pieces: Piece[] = [
+    `An Insight card in ${CARD_GROUPS[card.group]}, about ${plain(card.about)}: ${plain(card.title)}`,
+  ];
+  if (card.figure !== null && Number.isFinite(card.figure) && Math.abs(card.figure) < MAX_FIGURE) {
+    pieces.push(
+      "\n- Its figure: ",
+      ...figurePieces(card.figure, card.figureKind),
+      ` ${plain(card.figureLabel)}`,
+    );
+  }
+  pieces.push(
+    `\n- Why: ${plain(card.why)}`,
+    goodNews
+      ? `\n- What it means: ${plain(card.nextStep)}`
+      : `\n- Next step: ${plain(card.nextStep)}`,
+  );
+  return {
+    kind: "Insight card",
+    title: card.title,
+    lines: [card.why, goodNews ? card.nextStep : `Next step: ${card.nextStep}`],
+    pieces,
+  };
+}
+
 // The note in the AI box at `now` with this kind and ID, or undefined when none is there now.
 export function readNote(
   database: Database,
@@ -234,9 +294,14 @@ export function readNote(
   note: { kind: Exclude<NoteKind, "Alert">; id: string },
   now: Date,
 ): Promise<ChatNote | undefined> {
-  return note.kind === "Alert note"
-    ? alertNote(database, ai, note.id, now)
-    : proposalNote(database, note.id, now);
+  switch (note.kind) {
+    case "Alert note":
+      return alertNote(database, ai, note.id, now);
+    case "Proposal":
+      return proposalNote(database, note.id, now);
+    case "Insight card":
+      return insightCardNote(database, note.id);
+  }
 }
 
 const isPiece = (piece: unknown): piece is Piece => {
@@ -252,7 +317,7 @@ export function storedNote(json: unknown): ChatNote | undefined {
   if (typeof json !== "object" || json === null) return undefined;
   const note = json as Partial<ChatNote>;
   const fits =
-    (note.kind === "Alert note" || note.kind === "Proposal" || note.kind === "Alert") &&
+    NOTE_KINDS.some((kind) => kind === note.kind) &&
     typeof note.title === "string" &&
     Array.isArray(note.lines) &&
     note.lines.every((line) => typeof line === "string") &&

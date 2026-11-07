@@ -38,12 +38,16 @@ function chunks<T>(items: readonly T[]): T[][] {
   return out;
 }
 
-// The money in linked to one Spending, as a Refund or a Reimbursement.
+// The money in linked to one Spending, as a Refund or a Reimbursement, with the fixed key a tie
+// breaks on: its dates, its provider ID, and its description.
 export type ReducingLink = {
   transactionId: string;
   spendingTransactionId: string;
   amount: number;
   postedDate: string;
+  authorizedDate: string | null;
+  providerTransactionId: string;
+  description: string;
 };
 
 // Each of these Transactions' Spending, positive and in whole cents: the sum of its Spending
@@ -73,6 +77,9 @@ export async function readSpendingToReduce(
           spendingTransactionId: spendingLinks.spendingTransactionId,
           amount: transactions.amount,
           postedDate: transactions.postedDate,
+          authorizedDate: transactions.authorizedDate,
+          providerTransactionId: transactions.providerTransactionId,
+          description: transactions.description,
         })
         .from(spendingLinks)
         .innerJoin(transactions, eq(transactions.id, spendingLinks.transactionId))
@@ -91,9 +98,11 @@ export async function readSpendingToReduce(
 // Transfer pair or loan link.
 export type RefundPurchase = {
   id: string;
+  providerTransactionId: string;
   accountId: string;
   postedDate: string;
   authorizedDate: string | null;
+  description: string;
   merchantId: string | null;
   merchantCleanName: string;
 };
@@ -124,7 +133,7 @@ export async function storeAppRefundLinks(
 }
 
 // The purchases on these Accounts bought from `from` to `to`, by purchase date when there is one,
-// else by posted date, oldest first. One statement a chunk of Accounts.
+// else by posted date, oldest posted first, then by provider ID. One statement a chunk of Accounts.
 export async function listRefundPurchases(
   database: Database,
   accountIds: readonly string[],
@@ -136,9 +145,11 @@ export async function listRefundPurchases(
     const rows = await database
       .selectDistinct({
         id: transactions.id,
+        providerTransactionId: transactions.providerTransactionId,
         accountId: transactions.accountId,
         postedDate: transactions.postedDate,
         authorizedDate: transactions.authorizedDate,
+        description: transactions.description,
         merchantId: transactions.merchantId,
         merchantCleanName: sql<string>`${transactions.merchantCleanName}`,
       })
@@ -174,10 +185,14 @@ export async function listRefundPurchases(
           ),
         ),
       )
-      .orderBy(asc(transactions.postedDate), asc(transactions.id));
+      .orderBy(asc(transactions.postedDate), asc(transactions.providerTransactionId));
     found.push(...rows);
   }
-  return found.sort((a, b) => a.postedDate.localeCompare(b.postedDate) || a.id.localeCompare(b.id));
+  return found.sort(
+    (a, b) =>
+      a.postedDate.localeCompare(b.postedDate) ||
+      a.providerTransactionId.localeCompare(b.providerTransactionId),
+  );
 }
 
 // Spending a Reimbursement could pay back: shown money out with a Spending part, on any Account.

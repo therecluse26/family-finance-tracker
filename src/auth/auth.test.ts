@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "./testing.ts";
 
@@ -65,5 +66,28 @@ describe("auth.handle", () => {
     expect((await rows("SELECT ip_address FROM sessions")).map((row) => row.ip_address)).toEqual([
       CLIENT,
     ]);
+  });
+
+  it("signs in while a long write transaction holds app.db: its writes wait their turn", async () => {
+    let holding = true;
+    // Longer than it takes the sign-in to reach its first write.
+    const long = test.database.transaction(async () => {
+      await sleep(300);
+      holding = false;
+    });
+
+    const waiting = await post("/sign-in/email", { email: alice.email, password: alice.password });
+    // The sign-in's first write waited for the transaction to end.
+    expect(holding).toBe(false);
+    const done = await post(
+      "/two-factor/verify-totp",
+      { code: await alice.totpCode() },
+      cookiesOf(waiting),
+    );
+
+    await long;
+    expect(waiting.status).toBe(200);
+    expect(done.status).toBe(200);
+    expect(await rows("SELECT ip_address FROM sessions")).toHaveLength(1);
   });
 });

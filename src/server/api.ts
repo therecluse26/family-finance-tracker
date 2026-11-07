@@ -16,6 +16,7 @@ import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
+import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
@@ -173,7 +174,7 @@ const chatThreadBody = z
   .object({
     text: z.string().max(20_000),
     note: z
-      .object({ kind: z.enum(["Alert note", "Proposal"]), id: z.string().min(1).max(100) })
+      .object({ kind: z.enum(CHAT_NOTE_KINDS), id: z.string().min(1).max(100) })
       .strict()
       .nullable(),
     sendAnyway: z.boolean(),
@@ -1256,6 +1257,8 @@ export const api = new Hono<ServerEnv>()
   })
   // The Household facts: the wizard's step 4, and Settings, Household (spec 05, Household facts).
   .get("/household", async (c) => c.json({ facts: await c.var.household.facts() }))
+  // The Household time zone alone, with no ZIP code or ages, for the pages that show times.
+  .get("/household/time-zone", async (c) => c.json({ timeZone: await c.var.household.timeZone() }))
   .put("/household", async (c) => {
     const body = householdFactsBody.safeParse(await jsonBody(c));
     if (!body.success) {
@@ -1705,6 +1708,12 @@ export const api = new Hono<ServerEnv>()
     if (added.added) return c.json({ added: true }, 200);
     const status = added.refusal === "unknown push service" ? 400 : 409;
     return c.json({ error: DEVICE_REFUSALS[added.refusal] }, status);
+  })
+  // Whose push is on in this browser. The endpoint goes in the body, never in the URL.
+  .post("/push/devices/owner", async (c) => {
+    const body = endpointBody.safeParse(await jsonBody(c));
+    if (!body.success) return c.json({ error: "Send this browser's push endpoint." }, 400);
+    return c.json({ owner: await c.var.push.deviceOwner(c.var.member.id, body.data.endpoint) });
   })
   // "Turn off Alerts on this device": only the signed-in Member's own device.
   .delete("/push/devices", async (c) => {

@@ -5,6 +5,7 @@ import {
   projectCategories,
   projectMerchant,
   readProjectionFacts,
+  registerMonthStartStep,
 } from "../budgets/index.ts";
 import { type Category, isCategory } from "../categories/index.ts";
 import {
@@ -20,8 +21,10 @@ import {
   storeGoalStart,
   sumSavingSince,
 } from "../db/index.ts";
+import { registerFollowUpStep } from "../follow-up/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
+import { log } from "../log.ts";
 import { type Merchant, sameMerchant } from "../merchants/index.ts";
 import { listManualLoanViews, type ManualLoan } from "../money-movement/index.ts";
 import {
@@ -515,6 +518,41 @@ export function listGoalsWithProgress(database: Database, now = new Date()): Pro
   return goalsWithProgress(database, now, true);
 }
 
+// The Done check (spec 05, Done): every active Goal that meets its "Done when" rule is set to done
+// on `now`'s day, Household time, as listGoalsWithProgress sets it, and leaves the AI's context at
+// once. It reads each Goal's progress once. The follow-up job and the Month start job run it.
+export async function checkGoalsDone(database: Database, now = new Date()): Promise<void> {
+  await goalsWithProgress(database, now, true);
+}
+
+// The Done check's place in the follow-up job and in the Month start job, on the 1st. A failed
+// check is logged and stops neither job: it runs again in the next one. The start calls it before
+// jobs run.
+export function startGoals(options: { database: Database; now?: () => Date }): { stop(): void } {
+  const { database, now = () => new Date() } = options;
+  const check = async (at: Date) => {
+    try {
+      await checkGoalsDone(database, at);
+    } catch (error) {
+      log.error("The Goal Done check failed", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  };
+  const stops = [
+    registerFollowUpStep("Goal done check", async () => {
+      await check(now());
+      return undefined;
+    }),
+    registerMonthStartStep("Goal done check", check),
+  ];
+  return {
+    stop() {
+      for (const stop of stops.reverse()) stop();
+    },
+  };
+}
+
 // The Goals as listGoalsWithProgress gives them, for a read that writes nothing, such as Chat's
 // lookup: an active Goal that meets its "Done when" rule shows done today, and stays active in
 // app.db until the Goals page or the next read that saves sets it.
@@ -557,7 +595,10 @@ async function goalsWithProgress(database: Database, now: Date, save: boolean): 
       : met,
   );
   // A done Goal leaves the AI's context at once: the next Writer use builds the summary again.
-  if (save && done.size > 0) await dropHouseholdSummary(database);
+  if (save && done.size > 0) {
+    await dropHouseholdSummary(database);
+    log.info("Set Goals done", { goals: done.size });
+  }
   for (const goal of goals) {
     if (!done.has(goal.id)) continue;
     goal.status = "done";

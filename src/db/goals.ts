@@ -11,7 +11,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { isGoalRunOf } from "./budget-tailoring.ts";
-import type { Database } from "./client.ts";
+import type { Database, Queries } from "./client.ts";
 import { goals, proposals, spendingLinks, transactionParts, transactions } from "./schema.ts";
 
 // Goals in app.db (spec 05, Goals). The goals module decides; these functions store and read.
@@ -42,14 +42,15 @@ export async function listGoals(database: Database): Promise<StoredGoal[]> {
   return database.select().from(goals).orderBy(asc(goals.date), asc(sql`rowid`));
 }
 
-export async function readGoal(database: Database, id: string): Promise<StoredGoal | undefined> {
+export async function readGoal(database: Queries, id: string): Promise<StoredGoal | undefined> {
   const [row] = await database.select().from(goals).where(eq(goals.id, id));
   return row;
 }
 
-// Sets an active Goal's amount and start. False when no active Goal has the ID.
+// Sets an active Goal's amount and start. False when no active Goal has the ID. It writes only
+// through `database`, so it may run inside a Goal amount Accept's transaction.
 export async function storeGoalStart(
-  database: Database,
+  database: Queries,
   id: string,
   start: GoalStart,
 ): Promise<boolean> {
@@ -131,8 +132,9 @@ const purchaseDate = (table: typeof transactions) =>
 
 // The Spending, Refund and Reimbursement parts of shown, posted Transactions whose purchase date is
 // `from` or later, each with its Transaction, type, Category, purchase date and Merchant. A linked
-// Refund or Reimbursement carries its Spending's date and Merchant, as the totals count it. Amounts
-// have the Transaction sign: Spending is negative.
+// Refund or Reimbursement carries its Spending's date and Merchant, as the totals count it. It is
+// left out while its Spending is pending or hidden: that Spending counts nowhere, so neither does
+// the part that reduces it. Amounts have the Transaction sign: Spending is negative.
 export async function listSpendingPartsSince(
   database: Database,
   from: string,
@@ -173,6 +175,7 @@ export async function listSpendingPartsSince(
       and(
         inArray(transactionParts.type, ["Spending", "Refund", "Reimbursement"]),
         shownAndPosted(),
+        or(isNull(spent.id), and(eq(spent.pending, false), isNull(spent.hiddenReason))),
         sql`${date} >= ${from}`,
       ),
     );

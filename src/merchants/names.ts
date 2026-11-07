@@ -216,6 +216,24 @@ const ORIGINATOR = /\bORIG(?:INATOR)?\s?CO\s?NAME\s?:\s?/i;
 const ACH_FIELD =
   /\b(?:DES|DESCR|INDN|IND\s?NAME|IND\s?ID|NAME|CO\s?ID|ORIG\s?ID|CO\s?ENTRY\s?DESCR|RECEIVER|RECV|TRN|SEC|TRACE|EED|DESC\s?DATE)\s?[:#]|\d{6,}/i;
 
+// A card payment line with its digits apart from the letters glued before them, as in "CHASE4821",
+// so the bank's word stays when its card number goes. A mask such as "XXXX4821" stays whole, so it
+// goes with its digits. One pass over the line.
+function digitsApart(text: string): string {
+  let out = "";
+  let letters = "";
+  for (const char of text) {
+    if (/\p{L}/u.test(char)) {
+      letters += char;
+      continue;
+    }
+    const glued = letters !== "" && char >= "0" && char <= "9" && !/^x+$/i.test(letters);
+    out += glued ? `${letters} ${char}` : letters + char;
+    letters = "";
+  }
+  return out + letters;
+}
+
 // The bank a card payment line names: Plaid's financial institution on the line, when it has one.
 // Otherwise the rule-cleaned line up to its first ACH field, with no payment words, when the rules
 // are sure: 1 to 3 words of letters, and nothing that may name a person. `bank` is null when the
@@ -230,7 +248,7 @@ function cardPaymentBank(txn: {
     .trim();
   if (institution !== undefined && institution !== "") return { bank: institution };
 
-  let text = plainForms(txn.description);
+  let text = digitsApart(plainForms(txn.description));
   const originator = ORIGINATOR.exec(text);
   if (originator !== null) text = text.slice(originator.index + originator[0].length);
   const field = ACH_FIELD.exec(text);

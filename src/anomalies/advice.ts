@@ -185,8 +185,9 @@ async function adviceParts(
     return [`\n   ${category} this month: `, ...dollars(unbudgeted?.spending ?? 0), ", no Budget."];
   };
 
+  // A done Goal leaves the AI's context at once (spec 05, Rules).
   const goals = (await readGoalsWithProgress(database, now)).filter(
-    (goal) => goal.list === "active",
+    (goal) => goal.status === "active",
   );
   const marks = await listNotAProblemAlerts(database, NOT_A_PROBLEM_MARKS);
   const lines: SummaryPart[][] = [

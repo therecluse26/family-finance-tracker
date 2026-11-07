@@ -311,6 +311,24 @@ describe("Coming up on the demo household", () => {
     ]);
   });
 
+  it("finds the demo's yearly Recurring charges only where no other Transactions fall between", async () => {
+    const { charges } = (await (await browser.get("/api/recurring-charges")).json()) as {
+      charges: RecurringChargeView[];
+    };
+    // Blue Door Cafe and HomeWorks Supply are shops the Household visits all year, and the card's
+    // interest is in Interest and fees. Alex Rivera has only 2 other payments between the yearly
+    // pair, so by spec 06 that pair is a yearly series.
+    expect(
+      charges
+        .filter((charge) => charge.schedule === "yearly")
+        .map((charge) => charge.merchantName)
+        .sort(),
+    ).toEqual(["Alex Rivera", "ShopMart Plus"]);
+    expect(charges.map((charge) => charge.merchantName)).not.toContain(
+      "Interest Charge On Purchases",
+    );
+  });
+
   it("shows a Manual loan's regular payment on the day of the month of its last linked payment", async () => {
     await addToBank("fake-ally", [
       checkingLine("loan-pmt", "2026-10-17", -38_500, "Online Payment"),
@@ -685,5 +703,235 @@ describe("Coming up on the demo household", () => {
       larkspurPayment("car-1", "2026-10-20", -30_000, "LOAN_PAYMENTS_CAR_PAYMENT"),
     ]);
     expect(await loanRow("Personal Loan payment")).toEqual([]);
+  });
+
+  // A monthly payment from checking to a loan, under Plaid's car payment code.
+  const carPayment = (id: string, postedDate: string, amount: number, description: string) =>
+    fakeTxn({
+      id,
+      accountId: "demo-ally-checking",
+      amount,
+      postedDate,
+      description,
+      category: {
+        name: "LOAN_PAYMENTS_CAR_PAYMENT",
+        confidence: "VERY_HIGH",
+        version: "v2",
+        mcc: null,
+      },
+    });
+  const months = ["2026-08", "2026-09", "2026-10"];
+
+  it("shows a loan payment once: no Recurring charge of the payments to a loan with its own row", async () => {
+    const before = await comingUp();
+    // The auto loan in the T83 review: its minimum payment is due on the 15th, and each payment
+    // from checking pairs with the loan's own side.
+    const autoLoan = fakeAccount({
+      id: "auto-loan",
+      name: "Auto Loan",
+      type: "loan",
+      subtype: "auto",
+      mask: "5150",
+      currentBalance: -412_380,
+      loan: {
+        apr: 6.9,
+        principal: -3_200_000,
+        interestPaidThisYear: 31_870,
+        minimumPayment: 61_250,
+        dueDate: "2026-11-15",
+      },
+    });
+    await addLoanBank(
+      "fake-summit",
+      "Summit Auto Finance",
+      [autoLoan],
+      months.map((month) =>
+        fakeTxn({
+          id: `summit-in-${month}`,
+          accountId: autoLoan.id,
+          amount: 61_250,
+          postedDate: `${month}-16`,
+          description: "PAYMENT RECEIVED - THANK YOU",
+        }),
+      ),
+    );
+    await addToBank(
+      "fake-ally",
+      months.map((month) =>
+        carPayment(`summit-out-${month}`, `${month}-15`, -61_250, "SUMMIT AUTO LOAN PMT 5150"),
+      ),
+    );
+    const { charges } = (await (await browser.get("/api/recurring-charges")).json()) as {
+      charges: RecurringChargeView[];
+    };
+    expect(charges.map((charge) => charge.merchantName)).toContain("Summit Auto Loan Pmt");
+
+    const view = await comingUp();
+    // Only the loan payment row is new: every Recurring charge that pays no loan still shows.
+    const isAutoLoan = (row: { what: string }) => row.what === "Auto Loan payment";
+    expect(shape(view).filter(isAutoLoan)).toEqual([
+      { date: "2026-11-15", kind: "loan payment", what: "Auto Loan payment", onCard: false },
+    ]);
+    expect(shape(view).filter((row) => !isAutoLoan(row))).toEqual(shape(before));
+    // The big number and "Checking after" count it once.
+    expect(view.outgoing - before.outgoing).toBe(61_250);
+    const lastChecking = (each: ComingUpView) =>
+      each.rows.filter((row) => !row.onCard).at(-1)?.checkingAfter ?? 0;
+    expect(view.checking).toBe(before.checking);
+    expect(lastChecking(view) - lastChecking(before)).toBe(-61_250);
+
+    // A loan with no due date has no row of its own, so the Recurring charge of its payments shows.
+    const noDueDate = fakeAccount({
+      ...autoLoan,
+      id: "boat-loan",
+      name: "Boat Loan",
+      mask: "7788",
+      loan: {
+        apr: 6.9,
+        principal: -1_200_000,
+        interestPaidThisYear: 9_000,
+        minimumPayment: 20_000,
+        dueDate: null,
+      },
+    });
+    await addLoanBank(
+      "fake-north",
+      "North Marine Credit",
+      [noDueDate],
+      months.map((month) =>
+        fakeTxn({
+          id: `north-in-${month}`,
+          accountId: noDueDate.id,
+          amount: 20_000,
+          postedDate: `${month}-20`,
+          description: "PAYMENT RECEIVED - THANK YOU",
+        }),
+      ),
+    );
+    await addToBank(
+      "fake-ally",
+      months.map((month) =>
+        carPayment(`north-out-${month}`, `${month}-19`, -20_000, "NORTH MARINE LOAN PMT 7788"),
+      ),
+    );
+    expect(
+      shape(await comingUp()).filter(
+        (row) => row.what.startsWith("North Marine") || row.what === "Boat Loan payment",
+      ),
+    ).toEqual([
+      {
+        date: "2026-11-19",
+        kind: "Recurring charge",
+        what: "North Marine Loan Pmt",
+        onCard: false,
+      },
+    ]);
+  });
+
+  it("shows the Recurring charge of a loan's payments when the loan's own row is after the window", async () => {
+    const before = await comingUp();
+    // Due on Nov 24, after the window ends on Nov 21, and paid on the 21st each month.
+    const autoLoan = fakeAccount({
+      id: "auto-loan",
+      name: "Auto Loan",
+      type: "loan",
+      subtype: "auto",
+      mask: "5150",
+      currentBalance: -412_380,
+      loan: {
+        apr: 6.9,
+        principal: -3_200_000,
+        interestPaidThisYear: 31_870,
+        minimumPayment: 61_250,
+        dueDate: "2026-11-24",
+      },
+    });
+    await addLoanBank(
+      "fake-summit",
+      "Summit Auto Finance",
+      [autoLoan],
+      months.map((month) =>
+        fakeTxn({
+          id: `summit-in-${month}`,
+          accountId: autoLoan.id,
+          amount: 61_250,
+          postedDate: `${month}-22`,
+          description: "PAYMENT RECEIVED - THANK YOU",
+        }),
+      ),
+    );
+    await addToBank(
+      "fake-ally",
+      months.map((month) =>
+        carPayment(`summit-out-${month}`, `${month}-21`, -61_250, "SUMMIT AUTO LOAN PMT 5150"),
+      ),
+    );
+
+    const view = await comingUp();
+    expect(
+      shape(view).filter(
+        (row) => row.what.startsWith("Summit") || row.what === "Auto Loan payment",
+      ),
+    ).toEqual([
+      { date: "2026-11-21", kind: "Recurring charge", what: "Summit Auto Loan Pmt", onCard: false },
+    ]);
+    const lastChecking = (each: ComingUpView) =>
+      each.rows.filter((row) => !row.onCard).at(-1)?.checkingAfter ?? 0;
+    expect(view.outgoing - before.outgoing).toBe(61_250);
+    expect(lastChecking(view) - lastChecking(before)).toBe(-61_250);
+  });
+
+  it("shows no Recurring charge of the payments to a Manual loan or a lender with a loan row", async () => {
+    const shown = async (what: string) =>
+      (await comingUp()).rows.filter((row) => row.what === what).map((row) => row.kind);
+
+    // Payments to Lakeside Auto: a Recurring charge, until the last one links to a Manual loan,
+    // which then has its own row. On a Purchase loan, the principal stays Spending, so the linked
+    // payment still continues the Recurring charge, at any amount.
+    await addToBank(
+      "fake-ally",
+      ["2026-07", ...months].map((month) =>
+        checkingLine(`lakeside-${month}`, `${month}-17`, -38_500, "Online Payment"),
+      ),
+    );
+    expect(await shown("Online Payment")).toEqual(["Recurring charge"]);
+    const added = await browser.post("/api/manual-loans", {
+      lender: "Lakeside Auto",
+      kind: "car",
+      balance: 1_000_000,
+      balanceDate: "2026-10-01",
+      apr: 7.3,
+      regularPayment: 38_500,
+      loanType: "purchase loan",
+    });
+    const { loan } = (await added.json()) as { loan: { id: string } };
+    const payment = (await listTransactions(test.database)).find(
+      (each) => each.description === "ONLINE PAYMENT lakeside-2026-10",
+    );
+    const linked = await browser.post("/api/links", {
+      kind: "loan",
+      transactionId: payment?.id,
+      loanAccountId: loan.id,
+    });
+    expect(linked.status).toBe(200);
+    const { charges } = (await (await browser.get("/api/recurring-charges")).json()) as {
+      charges: RecurringChargeView[];
+    };
+    expect(charges.map((charge) => charge.merchantName)).toContain("Online Payment");
+    expect(await shown("Lakeside Auto payment")).toEqual(["loan payment"]);
+    expect(await shown("Online Payment")).toEqual([]);
+
+    // Untracked payments to the lender of a connected loan with no loan details, which give the
+    // loan its row.
+    await addLoanBank("fake-harbor", "Harbor Auto Credit", [noDetails("harbor")]);
+    await addToBank(
+      "fake-ally",
+      months.map((month) => ({
+        ...carPayment(`harbor-${month}`, `${month}-12`, -27_500, `HARBOR AUTO CREDIT ${month}`),
+        merchantName: "Harbor Auto Credit",
+      })),
+    );
+    expect(await shown("Loan harbor payment")).toEqual(["loan payment"]);
+    expect(await shown("Harbor Auto Credit")).toEqual([]);
   });
 });

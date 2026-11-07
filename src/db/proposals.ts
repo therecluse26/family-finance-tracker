@@ -331,41 +331,22 @@ export async function storeNewGoalAccept(
   });
 }
 
-// Marks an open Goal amount accepted, before the goals module sets the amount. False when no open
-// Goal amount has the ID.
+// Marks an open Goal amount accepted. False when no open Goal amount has the ID. Accept runs it in
+// one transaction with the Goal amount's start and storeGoalAmountApplied.
 export function claimGoalAmount(
-  database: Database,
+  database: Queries,
   accept: { id: string; memberId: string; at: Date },
 ): Promise<boolean> {
   return claim(database, accept.id, "Goal amount", accept.memberId, accept.at);
 }
 
-// Records what accepting a Goal amount set, once the goals module set it.
+// Records what accepting a Goal amount set.
 export async function storeGoalAmountApplied(
-  database: Database,
+  database: Queries,
   id: string,
   applied: AppliedGoalChange,
 ): Promise<void> {
   await database.update(proposals).set({ applied }).where(eq(proposals.id, id));
-}
-
-// Opens again a Goal amount whose change the goals module refused or failed to make, so nothing
-// stays changed: in one write, the Goal gets back what it held before, when `before` is given, and
-// the Proposal is open again.
-export async function reopenProposal(
-  database: Database,
-  id: string,
-  goal?: { id: string; before: GoalStart },
-): Promise<void> {
-  await database.transaction(async (tx) => {
-    if (goal !== undefined) {
-      await tx.update(goals).set(goal.before).where(eq(goals.id, goal.id));
-    }
-    await tx
-      .update(proposals)
-      .set({ status: "open", closedAt: null, closedBy: null, applied: null })
-      .where(and(eq(proposals.id, id), eq(proposals.status, "accepted")));
-  });
 }
 
 // Skips an open Proposal: it closes, with the Member and the time. A skipped redraft still records
@@ -488,8 +469,9 @@ export async function listUndoableProposals(
 // - A Budget change puts back each Budget it replaced. A Budget it wrote this month, or this year
 //   for a yearly Budget, is removed, so the one before is in effect again. Past months keep their
 //   Budgets (spec 05, Stored Budgets): from `month`, a Budget it wrote earlier gives way to a copy
-//   of the one it replaced, or, for a Category that had none, to a row that ends its Budget. The
-//   Member who undid it set either one, as a Member edit.
+//   of the one it replaced. For a Category that had none, either one gives way to a row that ends
+//   its Budget, so the Category stays without one until a Member sets one. The Member who undid it
+//   set the copy or the row, as a Member edit.
 // - A Goal amount puts back what the Goal held before.
 // - A new Goal is marked dropped on `today`, by the Member.
 // Returns "undone", "not found", "already undone", or "not offered", with nothing changed.
@@ -512,7 +494,10 @@ export async function storeProposalUndo(
         const from = takesEffectIn(applied.period, month);
         if (applied.takesEffect === from) {
           await tx.delete(budgets).where(eq(budgets.id, applied.id));
-          continue;
+          // A first Budget still gives way to a row that ends the Category's Budget, so no later
+          // 1st gives it a first Budget again (spec 05, When the app drafts: an undone first
+          // Budget).
+          if (line.replacedBudgetId !== null) continue;
         }
         const replaced =
           line.replacedBudgetId === null

@@ -75,10 +75,11 @@ A Benchmark is typical Spending for a Category by similar US households, from pu
 - It fetches once a month, on the 20th, Household time. A failed fetch tries again the next day.
 - Offline, or until a fetch succeeds, the app uses the newest CPI value it has: shipped or fetched.
 - A new CPI value changes the Benchmarks the app shows. It never changes a Budget by itself.
+- BLS published no CPI for October 2025, during the 2025 lapse in appropriations. The snapshot prices the 2025 CE table at the mean of the 11 months BLS published. The release script accepts only this one gap and fails on any other missing month.
 
 ### The Benchmark for a Category
 
-1. **Pick the CE column.** Take the Household's yearly Income: I × 12. Use the CE size × income table for the Household's size. Pick the income column whose mean income after taxes is nearest that figure. If that table has no column for the size, use the one-year income table.
+1. **Pick the CE column.** Take the Household's yearly Income: I × 12. Use the CE size × income table for the Household's size. Pick the income column whose mean income before taxes is nearest that figure. If that table has no column for the size, use the one-year income table. BLS stopped publishing income after taxes in 2024, so the match uses income before taxes. A Household's Income is take-home pay, so it lands slightly lower than its peers: the cautious side.
 2. **Find the share.** s(c) = the column's mean yearly Spending on c's CE lines ÷ the column's mean total yearly Spending.
 3. **Apply it to Income.** B(c) = s(c) × I.
 
@@ -88,16 +89,16 @@ Shares are ratios, so CE figures need no CPI aging. The Category-to-CE-line map 
 
 ### The Groceries and Superstores Benchmark
 
-Groceries and Superstores share one Benchmark, B_GS, because Superstores mixes food at home, household supplies, and personal-care products.
+Groceries and Superstores share one Benchmark, B_GS, because Superstores mixes food at home and household supplies.
 
-B_GS = F + (s(housekeeping supplies) + s(personal care products)) × I
+B_GS = F + s(housekeeping supplies) × I
 
 - F is the USDA Moderate-Cost plan for the Household, per month:
   1. Take each person's cost for their age. Where USDA splits by sex, use the mean of the male and female costs. A child under 1 uses the 1-year cost.
   2. Add the people's costs. Apply USDA's household-size adjustment.
   3. Multiply by the CPI food at home now ÷ the CPI food at home in the plan's month.
-  4. For an Alaska or Hawaii ZIP code, multiply by that state's Thrifty cost ÷ the US Thrifty cost.
-- The Personal care Benchmark uses only CE personal care services, because the products sit in B_GS.
+  4. For an Alaska or Hawaii ZIP code, multiply by that state's Thrifty cost ÷ the US Thrifty cost. USDA prices the state Thrifty plans only for its reference family, a couple aged 20-50 with children aged 6-8 and 9-11, so both costs are that family's.
+- The Personal care Benchmark uses the CE row personal care products and services. Since 2025 the CE tables join the products and the services in one row, so B_GS takes no personal care share.
 
 Example: F is $1,000 for two adults and one child. Supplies are 2% of I = $6,000, so $120. B_GS = $1,120.
 

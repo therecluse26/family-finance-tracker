@@ -4,6 +4,7 @@ import type { WeeklySummaryView } from "../../../weekly-summary/view.ts";
 import { api } from "../../api.ts";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
+import { useHouseholdZone } from "../../household-zone.ts";
 import { HINT } from "./settings-ui.tsx";
 
 // Settings, Alerts: the Member's own "Weekly summary email" switch, a row of the My channels card
@@ -29,10 +30,6 @@ function dayLabel(date: string, today: string): string {
   return `${weekday}, ${dateLabel(date, today)}`;
 }
 
-// The browser's own date: only the year of a label depends on it.
-const browserToday = () =>
-  calendarDateIn(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
-
 // The board's switch (.sw): 40 by 24 px, accent when on, the field gray when off. This page draws
 // its own, as Budgets.tsx does for "Follow the bill"; one shared switch should move to components.
 const SWITCH_TRACK =
@@ -42,7 +39,9 @@ export function WeeklySummaryRow(props: { initial: WeeklySummaryView; today?: st
   const [view, setView] = useState(props.initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const today = props.today ?? browserToday();
+  // Today in the Household time zone: only the year of a label depends on it.
+  const zone = useHouseholdZone();
+  const today = props.today ?? (zone === undefined ? undefined : calendarDateIn(new Date(), zone));
 
   // The email server's state comes from the page: saving the server below changes it.
   useEffect(() => {
@@ -87,7 +86,7 @@ export function WeeklySummaryRow(props: { initial: WeeklySummaryView; today?: st
         </span>
       </label>
       {view.emailSetUp ? null : <p className={HINT}>Needs the email server. Save it below.</p>}
-      {last === null ? null : last.state === "sent" ? (
+      {last === null || today === undefined ? null : last.state === "sent" ? (
         <p className="mt-1.5 text-small">
           <StatusText tone="good">Last sent {dayLabel(last.on, today)}</StatusText>
         </p>

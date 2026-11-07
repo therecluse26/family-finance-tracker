@@ -21,6 +21,7 @@ import {
   type FollowUpStepName,
   startFollowUpPipeline,
 } from "../follow-up/index.ts";
+import { startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { startInsightCards } from "../insights/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -179,6 +180,16 @@ export const APP_MODULES: readonly AppModule[] = [
       name: "Bills Budgets",
       path: "Bills Budgets follow-up on the full history",
       buildLimitMs: 10_000,
+    },
+  },
+  {
+    name: "startGoals",
+    start: ({ database }) => startGoals({ database, now: HISTORY_NOW }),
+    // The history has no Goal, so the step reads none: the Goal Done check case times it with 50.
+    step: {
+      name: "Goal done check",
+      path: "Goal Done check follow-up on the full history",
+      buildLimitMs: 5_000,
     },
   },
   {

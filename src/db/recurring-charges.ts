@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import type { Database } from "./client.ts";
 import { recurringCharges, transactionParts, transactions } from "./schema.ts";
 
@@ -23,8 +23,13 @@ export type PostedSpendingRow = {
 };
 
 // Every posted Spending Transaction that shows, oldest first. A Transaction with more than one
-// Spending part counts once, with their sum. A Transfer never counts.
-export async function listPostedSpending(database: Database): Promise<PostedSpendingRow[]> {
+// Spending part counts once, with their sum. A Transfer never counts. With `exceptCategory`, the
+// Spending parts in that Category are left out, and a Transaction with no other Spending part.
+export async function listPostedSpending(
+  database: Database,
+  options: { exceptCategory?: string } = {},
+): Promise<PostedSpendingRow[]> {
+  const { exceptCategory } = options;
   const rows = await database
     .select({
       id: transactions.id,
@@ -44,6 +49,9 @@ export async function listPostedSpending(database: Database): Promise<PostedSpen
         eq(transactionParts.type, "Spending"),
         eq(transactions.pending, false),
         isNull(transactions.hiddenReason),
+        exceptCategory === undefined
+          ? undefined
+          : or(isNull(transactionParts.category), ne(transactionParts.category, exceptCategory)),
       ),
     )
     .orderBy(asc(transactions.postedDate), asc(transactions.id), asc(transactionParts.part));

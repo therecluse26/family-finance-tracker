@@ -4,7 +4,7 @@ v1 is one Node.js process, written in TypeScript. A Hono server serves the API a
 
 ## Runtime and tooling
 
-- **Node.js 22.6 or later,** because Sidequest needs it. The image uses the newest Node.js LTS line at build start.
+- **Node.js 26 or later.** CI and the image run Node.js 26 only, so older lines are not tested. The image uses the newest Node.js LTS line at build start.
 - **TypeScript** in strict mode, for the server, the web app, the jobs, the `fft` command, and the tests.
 - **One package,** with no workspaces. **pnpm** installs it.
 - **Vitest** runs the tests. **Biome** lints and formats.

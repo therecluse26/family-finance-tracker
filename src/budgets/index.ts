@@ -29,6 +29,8 @@ export {
   MONTH_START_CAP,
   MONTH_START_STOPPED,
   MonthStartJob,
+  type MonthStartStep,
+  registerMonthStartStep,
   runMonthStart,
 } from "./month-start.ts";
 export {

@@ -3,6 +3,7 @@ import type { AccountSnapshot } from "../bank/adapter.ts";
 import { fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { addUnconnectedAccount, syncConnection } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
+import { runMonthStart } from "../budgets/index.ts";
 import {
   addGoal,
   addManualLoan,
@@ -10,10 +11,13 @@ import {
   type NewGoal,
   readGoal,
   storeDecisions,
+  storeFirstDraft,
   storeOtherLink,
   updateManualLoan,
 } from "../db/index.ts";
-import { type Goal, listGoalsWithProgress, markGoal, startGoal } from "./index.ts";
+import { registerFollowUpStep, runFollowUp } from "../follow-up/index.ts";
+import { householdSummary } from "../summary/index.ts";
+import { type Goal, listGoalsWithProgress, markGoal, startGoal, startGoals } from "./index.ts";
 
 // Goals and their progress (spec 05, Goals; Progress; Done), on Transactions and balances the fake
 // adapter synced. Each reading is written directly, with no AI. The Household time zone is unset,
@@ -53,8 +57,12 @@ describe("Goal progress", () => {
   let bank: TestBank;
   let connectionId: string;
 
+  let stopGoals: () => void;
+  let clock = at("2026-10-01");
+
   beforeEach(async () => {
     bank = await newTestBank();
+    stopGoals = startGoals({ database: bank.database, now: () => clock }).stop;
     connectionId = await bank.connect(BANK);
     for (const id of ["member-a", "member-b"]) {
       await bank.database.$client.execute({
@@ -66,6 +74,7 @@ describe("Goal progress", () => {
   });
 
   afterEach(() => {
+    stopGoals();
     bank.close();
   });
 
@@ -233,6 +242,36 @@ describe("Goal progress", () => {
       });
     });
 
+    // Spec 05, Done: the app checks every active Goal on the 1st, Household time.
+    it("is done on the 1st, by the Month start job, with no Goals list read", async () => {
+      await storeFirstDraft(bank.database, {
+        inputs: {
+          steadyIncome: $(6_000),
+          ceDataYear: 2024,
+          sampleBenchmarks: false,
+          firstDraftMonth: "2026-10",
+          fixedCostsPassIncome: false,
+          recordedAt: at("2026-10-01"),
+        },
+        budgets: [],
+      });
+      const id = await goal({ date: "2026-10-01", target: restaurants });
+      await startGoal(bank.database, id, { goalAmount: $(480), now: at("2026-10-01") });
+      await sync(
+        "2026-10-20",
+        [],
+        [spend("o1", "2026-10-02", 300), spend("o2", "2026-10-12", 150)],
+      );
+
+      expect(await runMonthStart(bank.database, at("2026-11-01"))).toBe("done");
+
+      expect(await readGoal(bank.database, id)).toMatchObject({
+        status: "done",
+        endedOn: "2026-11-01",
+        endedBy: null,
+      });
+    });
+
     it("is not done after a month over it", async () => {
       const id = await goal({ date: "2026-10-01", target: restaurants });
       await startGoal(bank.database, id, { goalAmount: $(480), now: at("2026-10-01") });
@@ -311,6 +350,42 @@ describe("Goal progress", () => {
       expect((await progressOn("2026-11-04")).get(id)).toMatchObject({
         status: "done",
         endedOn: "2026-11-04",
+      });
+    });
+
+    it("leaves out a linked Refund while its purchase is pending or hidden, as the month totals do", async () => {
+      const id = await goal({ date: "2026-10-01", target: cornerBean, change: { amount: $(30) } });
+      await startGoal(bank.database, id, { goalAmount: $(60), now: at("2026-10-01") });
+      await sync(
+        "2026-10-15",
+        [],
+        [
+          spend("cb-1", "2026-10-03", 70, "Corner Bean"),
+          spend("cb-2", "2026-10-10", 10, "Corner Bean"),
+        ],
+      );
+      const purchase = (set: string) =>
+        bank.database.$client.execute(
+          `UPDATE transactions SET ${set} WHERE provider_transaction_id = 'cb-2'`,
+        );
+      // A $25 Refund is linked to the October 10 purchase while that purchase is still pending.
+      await purchase("pending = 1");
+      await sync(
+        "2026-11-04",
+        [],
+        [{ id: "cb-refund", date: "2026-11-03", type: "Refund", dollars: 25, linkedTo: "cb-2" }],
+      );
+
+      // October counts $70 at Corner Bean, over $60: the Refund waits for its purchase.
+      expect((await progressOn("2026-11-04")).get(id)?.status).toBe("active");
+      await purchase("pending = 0, hidden_reason = 'removed by provider'");
+      expect((await progressOn("2026-11-05")).get(id)?.status).toBe("active");
+
+      // Once the purchase posts and shows, October is $70 + $10 − $25 = $55.
+      await purchase("hidden_reason = NULL");
+      expect((await progressOn("2026-11-06")).get(id)).toMatchObject({
+        status: "done",
+        endedOn: "2026-11-06",
       });
     });
   });
@@ -601,6 +676,117 @@ describe("Goal progress", () => {
     expect((await progressOn("2027-01-02")).get(id)).toMatchObject({
       list: "active",
       progress: null,
+    });
+  });
+
+  // Spec 05, Done: the app checks every active Goal in each follow-up job.
+  describe("the Done check in the follow-up job", () => {
+    const WORDS = "Put money aside for the beach trip";
+    const summaryText = async () =>
+      (
+        await householdSummary({
+          database: bank.database,
+          ai: { accountLabels: async () => new Map(), memberLabels: async () => new Map() },
+          now: () => clock,
+        }).today()
+      ).text;
+
+    // A Goal to save $500, with Saving as the target, from October 1.
+    const saveGoal = async () => {
+      const id = await goal({
+        words: WORDS,
+        date: "2026-10-01",
+        target: { kind: "Saving" },
+        change: { amount: $(500) },
+      });
+      await startGoal(bank.database, id, { now: at("2026-10-01") });
+      return id;
+    };
+
+    it("sets a Goal met by a synced Transaction done, with no Goals list read, and it leaves the Household summary", async () => {
+      const id = await saveGoal();
+      clock = at("2026-11-04");
+      expect(await summaryText()).toContain(WORDS);
+
+      await sync(
+        "2026-11-04",
+        [],
+        [{ id: "saved", date: "2026-11-03", type: "Saving", dollars: 500 }],
+      );
+      await runFollowUp(() => clock);
+
+      expect(await readGoal(bank.database, id)).toMatchObject({
+        status: "done",
+        endedOn: "2026-11-04",
+        endedBy: null,
+      });
+      expect(await summaryText()).not.toContain(WORDS);
+      // The Goals page shows the same result.
+      expect((await progressOn("2026-11-05")).get(id)).toMatchObject({
+        status: "done",
+        endedOn: "2026-11-04",
+        list: "active",
+      });
+    });
+
+    it("stops neither job when it fails, and runs again in the next follow-up job", async () => {
+      const id = await saveGoal();
+      const later: string[] = [];
+      const stopAlerts = registerFollowUpStep("alerts", async (unhandled) => {
+        later.push(...unhandled);
+        return undefined;
+      });
+      try {
+        // The Goal can no longer be read, so the check throws.
+        const target = await bank.database.$client.execute({
+          sql: "SELECT target FROM goals WHERE id = ?",
+          args: [id],
+        });
+        await bank.database.$client.execute({
+          sql: "UPDATE goals SET target = 'broken' WHERE id = ?",
+          args: [id],
+        });
+        clock = at("2026-11-04");
+        await sync(
+          "2026-11-04",
+          [],
+          [{ id: "saved", date: "2026-11-03", type: "Saving", dollars: 500 }],
+        );
+        expect(await runFollowUp(() => clock)).toBeUndefined();
+        // The step after it ran, and the check is not retried on its own.
+        expect(later).toHaveLength(1);
+        expect(await runFollowUp(() => clock)).toBeUndefined();
+        expect(later).toHaveLength(1);
+
+        // The Month start's result does not change.
+        await storeFirstDraft(bank.database, {
+          inputs: {
+            steadyIncome: $(6_000),
+            ceDataYear: 2024,
+            sampleBenchmarks: false,
+            firstDraftMonth: "2026-10",
+            fixedCostsPassIncome: false,
+            recordedAt: at("2026-10-01"),
+          },
+          budgets: [],
+        });
+        expect(await runMonthStart(bank.database, at("2026-11-01"))).toBe("done");
+
+        // The next follow-up job checks again.
+        await bank.database.$client.execute({
+          sql: "UPDATE goals SET target = ? WHERE id = ?",
+          args: [String(target.rows[0]?.target), id],
+        });
+        clock = at("2026-11-05");
+        await sync("2026-11-05", [], [spend("coffee", "2026-11-05", 4)]);
+        await runFollowUp(() => clock);
+        expect(await readGoal(bank.database, id)).toMatchObject({
+          status: "done",
+          endedOn: "2026-11-05",
+        });
+      } finally {
+        stopAlerts();
+      }
     });
   });
 

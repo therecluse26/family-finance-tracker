@@ -137,13 +137,13 @@ export async function storeFirstDraft(
   });
 }
 
-// Each Category's Budget in effect in `month` (YYYY-MM): the newest monthly Budget that takes
-// effect in it or before, and the newest yearly Budget that takes effect in its year or before. A
-// Category whose newest row ends its Budget has none.
-export async function listBudgetsInEffect(
+// Each Category's newest row in `month` (YYYY-MM): the newest monthly row that takes effect in it
+// or before, and the newest yearly row that takes effect in its year or before. It is the Budget in
+// effect, or a row that ends the Category's Budget.
+async function newestRows(
   database: Queries,
   month: string,
-): Promise<StoredBudget[]> {
+): Promise<Map<string, StoredBudget & { noBudget: boolean }>> {
   const rows = await database
     .select({ ...BUDGET_COLUMNS, noBudget: budgets.noBudget })
     .from(budgets)
@@ -154,17 +154,30 @@ export async function listBudgetsInEffect(
       ),
     )
     .orderBy(desc(budgets.takesEffect), desc(budgets.id));
-  const newest = new Map<string, StoredBudget | null>();
-  for (const { noBudget, ...row } of rows) {
-    if (!newest.has(row.category)) newest.set(row.category, noBudget ? null : row);
+  const newest = new Map<string, StoredBudget & { noBudget: boolean }>();
+  for (const row of rows) {
+    if (!newest.has(row.category)) newest.set(row.category, row);
   }
-  return [...newest.values()].filter((row): row is StoredBudget => row !== null);
+  return newest;
+}
+
+// Each Category's Budget in effect in `month` (YYYY-MM). A Category whose newest row ends its
+// Budget has none.
+export async function listBudgetsInEffect(
+  database: Queries,
+  month: string,
+): Promise<StoredBudget[]> {
+  return [...(await newestRows(database, month)).values()].flatMap(({ noBudget, ...row }) =>
+    noBudget ? [] : [row],
+  );
 }
 
 // A Budget the formula sets for a month (spec 05, When the app drafts; Changing Budgets).
 // - `follows`: a Bills Budget, which follows the formula each month. It replaces the Budget in
 //   effect unless that one is pinned, or a Member set this month's by hand.
-// - `first`: it becomes the Category's first Budget when the Category has none in effect.
+// - `first`: it becomes the Category's first Budget when the Category has none in effect. A
+//   Category whose first Budget a Member undid gets none this way: it stays without a Budget until
+//   a Member sets one (spec 05, When the app drafts: an undone first Budget).
 // - `sharesTWith`: the Category this one shares T with, Groceries or Superstores (spec 05, Shopping:
 //   Groceries and Superstores). When that one gets its first Budget in this write while the formula
 //   set this one's Budget in effect, this entry replaces it, so their total stays T. A Budget a
@@ -181,17 +194,17 @@ export async function storeMonthBudgets(
   entries: readonly MonthBudget[],
 ): Promise<number> {
   return database.transaction(async (tx) => {
-    const inEffect = new Map(
-      (await listBudgetsInEffect(tx, month)).map((row) => [row.category, row]),
-    );
+    const newest = await newestRows(tx, month);
     let written = 0;
     // The Categories that get their first Budget in this write, and the entries that wait on them.
     const firsts = new Set<string>();
     const shares: { sharesTWith: string; current: StoredBudget; entry: NewBudget }[] = [];
     for (const { follows, first, sharesTWith, ...entry } of entries) {
-      const current = inEffect.get(entry.category);
+      const row = newest.get(entry.category);
+      const current = row?.noBudget === true ? undefined : row;
       if (current === undefined) {
-        if (!first) continue;
+        // Only the Undo of a first Budget leaves a row that ends the Budget.
+        if (!first || row?.noBudget === true) continue;
         firsts.add(entry.category);
       } else if (sharesTWith !== undefined) {
         shares.push({ sharesTWith, current, entry });
@@ -231,27 +244,30 @@ export async function storeMonthBudgets(
 }
 
 // A Member's edit of the Budget in effect in `month` (spec 05, Changing Budgets): it takes effect in
-// that month, or for a yearly Budget in that whole year. An edited Bills Budget is pinned. Returns
-// the new Budget, or undefined when the Category has no Budget in effect.
+// that month, or for a yearly Budget in that whole year. An edited Bills Budget is pinned. A
+// Category whose first Budget a Member undid gets its Budget again this way, in the period it had
+// (spec 05, When the app drafts: an undone first Budget); `bills` says whether it is a Bills
+// Category. Returns the new Budget, or undefined when the Category has no Budget in effect and none
+// was undone.
 export async function storeBudgetEdit(
   database: Database,
   month: string,
-  edit: { category: string; amount: number; setBy: string; setAt: Date },
+  edit: { category: string; amount: number; setBy: string; setAt: Date; bills: boolean },
 ): Promise<StoredBudget | undefined> {
+  const { bills, ...fields } = edit;
   return database.transaction(async (tx) => {
-    const current = (await listBudgetsInEffect(tx, month)).find(
-      (row) => row.category === edit.category,
-    );
+    const current = (await newestRows(tx, month)).get(edit.category);
     if (current === undefined) return undefined;
+    // Only a Bills Budget has a pinned flag. A row that ends a Budget has none of its own.
+    const pinned = current.noBudget ? bills : current.pinned !== null;
     const [stored] = await tx
       .insert(budgets)
       .values({
-        ...edit,
+        ...fields,
         period: current.period,
         takesEffect: current.period === "yearly" ? month.slice(0, 4) : month,
         source: "Member edit",
-        // Only a Bills Budget has a pinned flag.
-        pinned: current.pinned === null ? null : true,
+        pinned: pinned ? true : null,
       })
       .returning(BUDGET_COLUMNS);
     return stored;

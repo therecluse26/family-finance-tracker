@@ -2,10 +2,11 @@ import type { ReactElement } from "react";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AiBoxNoteView } from "../../server/ai-box-views.ts";
+import type { AiBoxInsightCardView, AiBoxNoteView } from "../../server/ai-box-views.ts";
 import type { ChatThreadView } from "../../server/chat-views.ts";
 import {
   askAboutAlertNote,
+  askAboutInsightCard,
   askAboutOf,
   askAboutProposal,
   DROPPED_LINE,
@@ -105,6 +106,17 @@ describe("Ask about this", () => {
     );
     expect(html).not.toContain(`disabled=""`);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens a new thread with an Insight card attached, as for an Alert note", () => {
+    const card = { id: "c1", title: "Delivery fees add up" } as AiBoxInsightCardView;
+    const ask = askAboutOf(askAboutInsightCard(card));
+    expect(ask).toEqual({ kind: "Insight card", id: "c1", title: "Delivery fees add up" });
+
+    const html = render(<NewThread status="ready" ask={ask} onStarted={() => {}} />);
+
+    expect(text(html)).toContain("Insight card: Delivery fees add up");
+    expect(html).toContain(">Tell me more about this: Delivery fees add up</textarea>");
   });
 
   it("names a Proposal by its changes, and reads only a note it knows from the page's state", () => {

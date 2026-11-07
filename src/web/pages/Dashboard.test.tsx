@@ -28,9 +28,11 @@ import {
   groupBars,
   headerLine,
   leftText,
+  numberTiles,
   paceLine,
   retryHistoryJobs,
   statusLines,
+  tileDirection,
   usualMonthLine,
 } from "../dashboard.ts";
 import type { GoalsAnswer } from "../goals.ts";
@@ -134,8 +136,8 @@ const NUMBER_TILES: NumberTilesView = {
   lastMonth: "2026-09",
   spending: tile(412_000, 400_000),
   income: tile(650_000, 650_000),
-  cashOnHand: tile(1_234_500, 1_300_000),
-  debt: { ...tile(820_000, 800_000), estimatedLoans: 2 },
+  cashOnHand: { ...tile(1_234_500, 1_300_000), estimatedUsual: false },
+  debt: { ...tile(820_000, 800_000), estimatedUsual: false, estimatedLoans: 2 },
 };
 
 const bars = (spending: number, budget: number | null) => [
@@ -442,10 +444,21 @@ describe("the dashboard's header", () => {
 
   it("dates a sync from an earlier day, and says when nothing has synced", () => {
     const month = dashboardMonth(NOW, ZONE);
-    expect(headerLine(month, [{ lastSyncedAt: "2026-10-19T23:40:00.000Z" }], ZONE)).toBe(
-      "Day 20 of 31 · synced Oct 19, 7:40 PM",
+    expect(
+      headerLine(month, [{ lastSyncedAt: "2026-10-19T23:40:00.000Z", removed: false }], ZONE),
+    ).toBe("Day 20 of 31 · synced Oct 19, 7:40 PM");
+    expect(headerLine(month, [{ lastSyncedAt: null, removed: false }], ZONE)).toBe(
+      "Day 20 of 31 · not synced yet",
     );
-    expect(headerLine(month, [{ lastSyncedAt: null }], ZONE)).toBe("Day 20 of 31 · not synced yet");
+  });
+
+  it("leaves a removed Connection out of the sync time, even when it synced last", () => {
+    const month = dashboardMonth(NOW, ZONE);
+    const kept = { lastSyncedAt: "2026-10-19T23:40:00.000Z", removed: false };
+    const removed = { lastSyncedAt: "2026-10-20T15:00:00.000Z", removed: true };
+
+    expect(headerLine(month, [kept, removed], ZONE)).toBe("Day 20 of 31 · synced Oct 19, 7:40 PM");
+    expect(headerLine(month, [removed], ZONE)).toBe("Day 20 of 31 · not synced yet");
   });
 });
 
@@ -787,6 +800,46 @@ describe("the number tiles", () => {
     expect(tiles).toContain('class="block text-sm text-serious">▼ $655 below usual');
   });
 
+  it('says "estimated usual" on Cash on hand and Debt when the server flags their usual', () => {
+    const html = render(
+      data({
+        numberTiles: {
+          ...NUMBER_TILES,
+          cashOnHand: { ...NUMBER_TILES.cashOnHand, estimatedUsual: true },
+          debt: { ...tile(808_000, 800_000), estimatedUsual: true, estimatedLoans: 0 },
+        },
+      }),
+    );
+
+    expect(listItems(html, "Number tiles")).toEqual([
+      "Spending in September $4,120 ▲ $120 above usual",
+      "Income in September $6,500 ● about usual",
+      "Cash on hand $12,345 ▼ $655 below estimated usual",
+      "Debt $8,080 ● about estimated usual",
+    ]);
+  });
+
+  it("words a tile's direction against its usual, or its estimated usual", () => {
+    const [, , cash, debt] = numberTiles(NUMBER_TILES);
+    if (cash === undefined || debt === undefined) throw new Error("Four tiles.");
+
+    expect(tileDirection(cash)).toEqual({ tone: "serious", text: "▼ $655 below usual" });
+    expect(tileDirection({ ...cash, estimatedUsual: true })).toEqual({
+      tone: "serious",
+      text: "▼ $655 below estimated usual",
+    });
+    expect(tileDirection({ ...debt, estimatedUsual: true })?.text).toBe(
+      "▲ $200 above estimated usual",
+    );
+    expect(tileDirection({ ...debt, tile: tile(800_000, 800_000), estimatedUsual: true })).toEqual({
+      tone: "muted",
+      text: "● about estimated usual",
+    });
+    expect(tileDirection({ ...debt, tile: tile(800_000, null), estimatedUsual: true })).toBe(
+      undefined,
+    );
+  });
+
   it("says about usual within 2% of the usual, either way", () => {
     expect(changeAgainstUsual(102_000, 100_000)).toBe(0);
     expect(changeAgainstUsual(98_000, 100_000)).toBe(0);
@@ -803,7 +856,7 @@ describe("the number tiles", () => {
         numberTiles: {
           ...NUMBER_TILES,
           spending: tile(0, null),
-          debt: { ...tile(820_000, null), estimatedLoans: 0 },
+          debt: { ...tile(820_000, null), estimatedUsual: false, estimatedLoans: 0 },
         },
       }),
     );
@@ -1578,9 +1631,10 @@ describe('the AI box, "This week"', () => {
     // The picture shows under "Why?", inside the reason it opens.
     const [, , acting, , groceries, fuel] = notes(html);
     expect(slotHtml(acting ?? "", "note-why")).toContain('data-slot="note-picture"');
-    // Chat takes Alert notes only: an Insight card's "Ask about this" is disabled, an Alert's is not.
+    // Every note has "Ask about this": an Insight card's is enabled, as an Alert note's is.
     const ask = (item: string) => /<button[^>]*>Ask about this<\/button>/.exec(item)?.[0] ?? "";
-    expect(ask(acting ?? "")).toContain(' disabled=""');
+    expect(ask(acting ?? "")).toMatch(/^<button/u);
+    expect(ask(acting ?? "")).not.toContain(' disabled=""');
     expect(ask(notes(html)[0] ?? "")).not.toContain(' disabled=""');
 
     // A Good news card's last words carry no "Next step:" label, and a card with no picture or

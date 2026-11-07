@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";
+import { type Budget, budgetSpending } from "../budgets/index.ts";
+import { categoryGroupOf } from "../categories/index.ts";
 import { startCategorization } from "../categorization/index.ts";
-import { runFollowUp } from "../follow-up/index.ts";
+import { followUpAgain, runFollowUp } from "../follow-up/index.ts";
 import {
   linkByHand,
   readTransactionDecision,
@@ -139,7 +141,7 @@ describe("Refunds", () => {
     ...fields,
   });
 
-  beforeEach(async () => {
+  const openBank = async () => {
     bank = await newTestBank();
     stops = [
       startMoneyMovement({ database: bank.database }).stop,
@@ -151,12 +153,14 @@ describe("Refunds", () => {
        VALUES ('${MEMBER}', 'Jamie', 'jamie@example.com', '2026-10-01T00:00:00.000Z',
          '2026-10-01T00:00:00.000Z')`,
     );
-  });
-
-  afterEach(() => {
+  };
+  const closeBank = () => {
     for (const stop of stops.reverse()) stop();
     bank.close();
-  });
+  };
+
+  beforeEach(openBank);
+  afterEach(closeBank);
 
   it("links at once to the latest earlier purchase on the same Account and Merchant, and changes that past month", async () => {
     await sync({
@@ -262,6 +266,74 @@ describe("Refunds", () => {
       byCategory: { Clothing: 0 },
     });
     expect(await month("2026-11")).toMatchObject({ spending: 9_000 });
+  });
+
+  it("gives the same links and Refund parts whatever random row IDs the Transactions get", async () => {
+    const page = {
+      added: [
+        // Two purchases on one day: a tie for the latest earlier purchase.
+        txn("tie-big", -10_000, "2026-10-01", "Shoe Barn"),
+        txn("tie-small", -2_000, "2026-10-01", "Shoe Barn"),
+        txn("tie-back", 10_000, "2026-10-06", "Shoe Barn"),
+        // Two Refunds on one day, for a purchase with room for one and a part: a tie for which
+        // takes its amount first.
+        txn("coat", -5_000, "2026-10-02", "Coat Corner"),
+        txn("coat-back-1", 4_000, "2026-10-08", "Coat Corner"),
+        txn("coat-back-2", 4_000, "2026-10-08", "Coat Corner"),
+        // Two Refunds on one day, for a purchase with room for just one: a tie for which links.
+        txn("hat", -4_000, "2026-10-02", "Hat Shack"),
+        txn("hat-back-1", 4_000, "2026-10-08", "Hat Shack"),
+        txn("hat-back-2", 4_000, "2026-10-08", "Hat Shack"),
+      ],
+    };
+    // Each Transaction's parts, by its provider ID.
+    const parts = async () => {
+      const rows = await bank.database.$client.execute(
+        `SELECT t.provider_transaction_id AS txn, p.type, p.amount, p.linked
+         FROM transaction_parts p JOIN transactions t ON t.id = p.transaction_id
+         ORDER BY txn, p.part`,
+      );
+      return rows.rows.map((row) => ({ ...row }));
+    };
+    // Syncs the page with row IDs that rise, or fall, in the order the app makes them.
+    const outcome = async (idAt: (n: number) => number) => {
+      let made = 0;
+      const ids = vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+        made += 1;
+        const tail = idAt(made).toString(16).padStart(12, "0");
+        return `00000000-0000-4000-8000-${tail}` as ReturnType<typeof crypto.randomUUID>;
+      });
+      try {
+        await sync(page);
+      } finally {
+        ids.mockRestore();
+      }
+      return { links: await links(), parts: await parts() };
+    };
+
+    const rising = await outcome((made) => made);
+    closeBank();
+    await openBank();
+    const falling = await outcome((made) => 0xffff_ffff - made);
+
+    expect(falling).toEqual(rising);
+    // A tie breaks on the provider's Transaction ID: the latest purchase is the one that sorts
+    // last, and the Refund that sorts first links first and takes its amount first.
+    expect(rising.links).toEqual([
+      { money: "coat-back-1", spending: "coat", kind: "Refund", madeBy: "app" },
+      { money: "coat-back-2", spending: "coat", kind: "Refund", madeBy: "app" },
+      { money: "hat-back-1", spending: "hat", kind: "Refund", madeBy: "app" },
+      { money: "tie-back", spending: "tie-small", kind: "Refund", madeBy: "app" },
+    ]);
+    expect(rising.parts.filter((part) => String(part.txn).includes("back"))).toEqual([
+      { txn: "coat-back-1", type: "Refund", amount: 4_000, linked: 1 },
+      { txn: "coat-back-2", type: "Refund", amount: 1_000, linked: 1 },
+      { txn: "coat-back-2", type: "Refund", amount: 3_000, linked: 0 },
+      { txn: "hat-back-1", type: "Refund", amount: 4_000, linked: 1 },
+      { txn: "hat-back-2", type: "Refund", amount: 4_000, linked: 0 },
+      { txn: "tie-back", type: "Refund", amount: 2_000, linked: 1 },
+      { txn: "tie-back", type: "Refund", amount: 8_000, linked: 0 },
+    ]);
   });
 
   it("never takes any Category's month below $0, and keeps the others' Spending", async () => {
@@ -486,6 +558,65 @@ describe("Refunds", () => {
     expect(await month("2026-10")).toBeUndefined();
   });
 
+  it("counts a linked Refund in its purchase's month only once the purchase posts, in the totals and the Budget alike", async () => {
+    const clothing: Budget = {
+      category: "Clothing",
+      categoryGroup: categoryGroupOf("Clothing"),
+      amount: 50_000,
+      period: "monthly",
+      takesEffect: "2026-01",
+      source: "formula",
+      setBy: null,
+      pinned: null,
+      reason: null,
+    };
+    // September's Clothing, as the totals and as the Budget (and so Left to spend) count it.
+    const septemberClothing = async () => {
+      const found = await budgetSpending(bank.database, "2026-09", [clothing], NOW());
+      return {
+        total: (await month("2026-09"))?.byCategory.Clothing,
+        budget: found.budgets.get("Clothing")?.spending,
+        group: found.groups.get(categoryGroupOf("Clothing"))?.spending,
+      };
+    };
+    const shoes = txn("shoes", -10_000, "2026-09-28", "Shoe Barn", { pending: true });
+    await sync({
+      added: [
+        txn("socks", -3_000, "2026-09-05", "Shoe Barn"),
+        shoes,
+        txn("refund", 4_000, "2026-10-02", "Shoe Barn"),
+      ],
+    });
+    expect(await links()).toEqual([
+      { money: "refund", spending: "shoes", kind: "Refund", madeBy: "app" },
+    ]);
+
+    // The pending purchase is not counted yet, so its Refund is not either.
+    expect(await month("2026-09")).toMatchObject({ spending: 3_000 });
+    expect(await septemberClothing()).toEqual({ total: 3_000, budget: 3_000, group: 3_000 });
+    expect((await month("2026-10"))?.byCategory.Clothing ?? 0).toBe(0);
+
+    // Once it posts, both count: the purchase minus the Refund.
+    await sync({
+      added: [postedOf(shoes, { postedDate: "2026-10-01" })],
+      removed: [{ id: "shoes" }],
+    });
+    expect(await links()).toEqual([
+      { money: "refund", spending: "shoes-posted", kind: "Refund", madeBy: "app" },
+    ]);
+    expect(await month("2026-09")).toMatchObject({ spending: 9_000 });
+    expect(await septemberClothing()).toEqual({ total: 9_000, budget: 9_000, group: 9_000 });
+
+    // A sync hides the purchase, and its link still stands until Matching runs: the purchase
+    // counts nowhere, so its Refund does not either.
+    await hideBySync("shoes-posted");
+    expect(await links()).toEqual([
+      { money: "refund", spending: "shoes-posted", kind: "Refund", madeBy: "app" },
+    ]);
+    expect(await month("2026-09")).toMatchObject({ spending: 3_000 });
+    expect(await septemberClothing()).toEqual({ total: 3_000, budget: 3_000, group: 3_000 });
+  });
+
   it("keeps a hand Reimbursement on a pending dinner that posts after the money in", async () => {
     const dinner = txn("dinner", -5_000, "2026-10-03", "Corner Bistro", {
       category: code(RESTAURANT),
@@ -625,6 +756,51 @@ describe("Refunds", () => {
       spending: 5_000,
       byCategory: { Clothing: 5_000 },
     });
+  });
+
+  it("keeps a hand link and an app link that tie on their day through a re-run, with the same totals", async () => {
+    await sync({
+      added: [
+        txn("shoes", -5_000, "2026-09-28", "Shoe Barn"),
+        txn("coat", -4_000, "2026-10-02", "Coat Corner"),
+        txn("refund", 3_000, "2026-10-05", "Shoe Barn"),
+        txn("store-credit", 3_000, "2026-10-05", null, { description: "STORE CREDIT" }),
+      ],
+    });
+    await linkHand("Refund", "store-credit", "shoes");
+    const both = [
+      { money: "refund", spending: "shoes", kind: "Refund", madeBy: "app" },
+      { money: "store-credit", spending: "shoes", kind: "Refund", madeBy: "Member" },
+    ];
+    // The two arrived on one day, and take the purchase in their fixed order: $30, then the $20
+    // left. The rest of the second reduces the month it arrives.
+    const shown = async () => ({
+      links: await links(),
+      refund: (await decisionOf("refund"))?.parts,
+      storeCredit: (await decisionOf("store-credit"))?.parts,
+      september: await month("2026-09"),
+      october: await month("2026-10"),
+    });
+    const before = await shown();
+    expect(before.links).toEqual(both);
+    expect(before.refund).toEqual([
+      { type: "Refund", amount: 3_000, category: "Clothing", linked: true },
+    ]);
+    expect(before.storeCredit).toEqual([
+      { type: "Refund", amount: 2_000, category: "Clothing", linked: true },
+      { type: "Refund", amount: 1_000, category: "Clothing" },
+    ]);
+    expect(before.september).toMatchObject({ spending: 0, byCategory: { Clothing: 0 } });
+    expect(before.october).toMatchObject({ spending: 3_000, byCategory: { Clothing: 3_000 } });
+
+    // Every Transaction is decided again.
+    const ids = await bank.database.$client.execute("SELECT id FROM transactions");
+    await followUpAgain(
+      bank.database,
+      ids.rows.map((row) => String(row.id)),
+    );
+    await runFollowUp(NOW);
+    expect(await shown()).toEqual(before);
   });
 
   it("links 2,500 Refunds on a first history load in a few seconds", async () => {

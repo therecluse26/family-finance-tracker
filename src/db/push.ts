@@ -68,6 +68,19 @@ export async function storePushDevice(
   return stored.length > 0;
 }
 
+// The Member whose device is at this endpoint, or undefined when no device is. One browser's push
+// belongs to one Member: the endpoint is unique.
+export async function readPushDeviceMember(
+  database: Database,
+  endpoint: string,
+): Promise<string | undefined> {
+  const [row] = await database
+    .select({ memberId: pushDevices.memberId })
+    .from(pushDevices)
+    .where(eq(pushDevices.endpoint, endpoint));
+  return row?.memberId;
+}
+
 // Turns Alerts off for one of this Member's devices. True when it removed one.
 export async function removePushDevice(
   database: Database,

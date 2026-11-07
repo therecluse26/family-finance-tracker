@@ -321,13 +321,21 @@ export async function findManualLoanPayments(
     });
   }
   await askAboutPayments(database, asks);
-  // A high "no" applies, so an item the redo sent to the AI leaves the Review list.
+  // A high "no" applies, so an item the redo sent to the AI leaves the Review list: only the item
+  // about that payment and that loan. A payment that names two lenders keeps its open question
+  // about the other loan. Reads the open items of the kind once.
   if (refusing.length > 0) {
-    await settleReviewItems(
-      database,
-      { kind: POSSIBLE_PAYMENT_KIND, subjectIds: refusing.map((link) => link.transactionId) },
-      "The AI found it is not a payment on this loan",
+    const refused = new Set(refusing.map((link) => `${link.transactionId} ${link.loanAccountId}`));
+    const settled = (await openReviewItemsOfKind(database, POSSIBLE_PAYMENT_KIND)).filter((item) =>
+      refused.has(`${paymentOf(item)} ${loanOf(item)}`),
     );
+    if (settled.length > 0) {
+      await settleReviewItems(
+        database,
+        { kind: POSSIBLE_PAYMENT_KIND, subjectIds: settled.map(paymentOf) },
+        "The AI found it is not a payment on this loan",
+      );
+    }
   }
   if (made.length === 0) return again;
   log.info("Linked payments to Manual loans", { linked: made.length });

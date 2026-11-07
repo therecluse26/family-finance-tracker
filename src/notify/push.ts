@@ -7,6 +7,7 @@ import {
   handOutPushes,
   listWaitingPushes,
   type PushDeviceFields,
+  readPushDeviceMember,
   readSetupSteps,
   readVapidKeys,
   removeMemberPushDevices,
@@ -253,6 +254,12 @@ export function pushSettings(options: {
       if (!stored) return { added: false, refusal: "another Member's device" };
       logger.info("Turned Alerts on for a device");
       return { added: true };
+    },
+
+    async deviceOwner(memberId, endpoint) {
+      const owner = await readPushDeviceMember(database, endpoint);
+      if (owner === undefined) return "no Member";
+      return owner === memberId ? "this Member" : "another Member";
     },
 
     async removeDevice(memberId, endpoint) {

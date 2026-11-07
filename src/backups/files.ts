@@ -1,5 +1,6 @@
 import { lstat, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { type FolderCall, folderCalls, missingUnlessHung } from "./folder-calls.ts";
 
 // The backup folder's files (spec 11, How the app makes a backup; How many are kept). The app reads
 // and deletes only files with its own names, so a file a self-hoster puts in the folder stays.
@@ -57,15 +58,18 @@ export type BackupFile = { name: string; kind: BackupKind; at: Date; bytes: numb
 
 // The backups in the folder, newest first. A link, a folder, or any other file is left out, even
 // one with a backup's name, and so is a name whose time is not a real one: the app never lists,
-// counts, or deletes it.
-export async function listBackups(folder: string): Promise<BackupFile[]> {
+// counts, or deletes it. Each call on the folder goes through `call`, within its time limit.
+export async function listBackups(
+  folder: string,
+  call: FolderCall = folderCalls(),
+): Promise<BackupFile[]> {
   const files: BackupFile[] = [];
-  for (const name of await readdir(folder)) {
+  for (const name of await call(() => readdir(folder))) {
     const match = BACKUP_NAME.exec(name);
     if (match === null) continue;
     const at = timeOf(match[1] ?? "");
     if (at === undefined) continue;
-    const stat = await lstat(join(folder, name)).catch(() => undefined);
+    const stat = await call(() => lstat(join(folder, name))).catch(missingUnlessHung);
     if (stat === undefined || !stat.isFile()) continue;
     files.push({ name, kind: match[2] as BackupKind, at, bytes: stat.size });
   }
@@ -81,25 +85,32 @@ export function isRegular(kind: BackupKind): boolean {
 // A backup that names a later time than now, such as one copied from a server whose clock ran
 // ahead, is neither counted nor deleted, so it never pushes out a new backup. Returns the names it
 // deleted.
-export async function deleteOldBackups(folder: string, now: Date): Promise<string[]> {
-  const backups = (await listBackups(folder)).filter((file) => file.at <= now);
+export async function deleteOldBackups(
+  folder: string,
+  now: Date,
+  call: FolderCall = folderCalls(),
+): Promise<string[]> {
+  const backups = (await listBackups(folder, call)).filter((file) => file.at <= now);
   const old = [
     ...backups.filter((file) => isRegular(file.kind)).slice(REGULAR_KEPT),
     ...backups.filter((file) => !isRegular(file.kind)).slice(SAFETY_KEPT),
   ];
-  for (const file of old) await unlink(join(folder, file.name));
+  for (const file of old) await call(() => unlink(join(folder, file.name)));
   return old.map((file) => file.name);
 }
 
 // Deletes the temporary files a stopped backup left behind, and returns how many. A link or a
 // folder with such a name stays.
-export async function deleteLeftoverFiles(folder: string): Promise<number> {
+export async function deleteLeftoverFiles(
+  folder: string,
+  call: FolderCall = folderCalls(),
+): Promise<number> {
   let deleted = 0;
-  for (const name of await readdir(folder)) {
+  for (const name of await call(() => readdir(folder))) {
     if (!TEMPORARY_NAME.test(name)) continue;
-    const stat = await lstat(join(folder, name)).catch(() => undefined);
+    const stat = await call(() => lstat(join(folder, name))).catch(missingUnlessHung);
     if (stat === undefined || !stat.isFile()) continue;
-    await unlink(join(folder, name));
+    await call(() => unlink(join(folder, name)));
     deleted += 1;
   }
   return deleted;

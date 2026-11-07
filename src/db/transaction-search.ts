@@ -1,9 +1,7 @@
 import {
   aliasedTable,
   and,
-  asc,
   count,
-  desc,
   eq,
   exists,
   gte,
@@ -14,6 +12,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
+import { NEWEST_SHOWN_FIRST, shownDate } from "./bank-data.ts";
 import type { Database } from "./client.ts";
 import type { PartType } from "./decisions.ts";
 import { spendingLinks, transactionParts, transactions } from "./schema.ts";
@@ -37,13 +36,15 @@ export type TransactionSearch = {
 };
 
 export type FoundTransactions = {
-  // At most `limit` Transactions, newest first.
+  // At most `limit` Transactions, newest first by the date each shows.
   transactions: {
     id: string;
     accountId: string;
     // Money into the Account is positive.
     amount: number;
     postedDate: string;
+    // The date the row shows: the purchase date when the bank gives one, else the posted date.
+    shownDate: string;
     pending: boolean;
     merchantCleanName: string | null;
   }[];
@@ -127,12 +128,14 @@ export async function searchTransactions(
       accountId: transactions.accountId,
       amount: transactions.amount,
       postedDate: transactions.postedDate,
+      // The date the row shows, which it sorts by: the purchase date, else the posted date.
+      shownDate,
       pending: transactions.pending,
       merchantCleanName: transactions.merchantCleanName,
     })
     .from(transactions)
     .where(where)
-    .orderBy(desc(transactions.postedDate), asc(transactions.id))
+    .orderBy(...NEWEST_SHOWN_FIRST)
     .limit(limit);
   const [matches] = await database
     .select({

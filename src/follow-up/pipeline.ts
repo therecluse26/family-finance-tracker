@@ -22,6 +22,9 @@ export const FOLLOW_UP_STEPS = [
   // This month's Bills Budgets, which follow the Recurring charges and loan payments the checks
   // found, before the Alerts read them (spec 05, Bills group).
   "Bills Budgets",
+  // The Goal Done check, on the Transactions matching and categorization just decided, before any
+  // step that gives the AI the active Goals (spec 05, Done).
+  "Goal done check",
   // The Income redraft check, on the Steady Income the Income series just found give (spec 05,
   // Which Proposals exist).
   "redraft check",

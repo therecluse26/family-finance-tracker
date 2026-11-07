@@ -1,18 +1,21 @@
-import type { BetterAuthPlugin } from "better-auth";
-import { APIError, createAuthEndpoint } from "better-auth/api";
+import { type BetterAuthPlugin, generateId } from "better-auth";
+import { APIError, createAuthEndpoint, getIP } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import * as z from "zod";
 import {
   addSignInTries,
-  claimTotpStep,
   countSignInTries,
   type Database,
+  type FirstMemberRows,
   hasMember,
+  makeFirstMember,
   removeSignInTries,
   removeSignInTriesUpTo,
 } from "../db/index.ts";
+import type { Logger } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { newBackupCodes, newTotpSecret, storedTwoFactor, totpURI } from "./my-login.ts";
+import { sealedValues } from "./sealed-adapter.ts";
 import { limitedAddress } from "./sign-in-limit.ts";
 import { totpStepOf } from "./totp-once.ts";
 
@@ -40,8 +43,13 @@ const email = z.email().max(254);
 
 type EndpointContext = { headers?: Headers; request?: Request };
 
-export function firstMember(options: { database: Database; secrets: Secrets }): BetterAuthPlugin {
-  const { database, secrets } = options;
+// A failure is logged through `logger`, the auth module's own.
+export function firstMember(options: {
+  database: Database;
+  secrets: Secrets;
+  logger: Logger;
+}): BetterAuthPlugin {
+  const { database, secrets, logger } = options;
 
   // Makes the first Member one request at a time, so two requests at once with the right code
   // make exactly one. The app is one Node process (ADR 0002), so this queue covers every request.
@@ -159,35 +167,74 @@ export function firstMember(options: { database: Database; secrets: Secrets }): 
               });
             }
 
-            const user = await adapter.createUser(
-              {
-                name: ctx.body.name,
-                email: ctx.body.email.toLowerCase(),
-                emailVerified: false,
-                twoFactorEnabled: true,
-              },
-              { method: "email-password" },
-            );
-            await adapter.linkAccount({
-              userId: user.id,
-              providerId: "credential",
-              accountId: user.id,
-              password: await ctx.context.password.hash(password),
-            });
+            // Every row of the new Member is written in one transaction, so a failure partway
+            // leaves no half-made Member, and the setup code still works. The session is made as
+            // Better Auth makes one. The code that made the Member cannot sign them in again.
+            const at = new Date();
             const backupCodes = newBackupCodes();
-            await ctx.context.adapter.create({
-              model: "twoFactor",
-              data: {
-                userId: user.id,
-                verified: true,
-                ...(await storedTwoFactor(ctx.context.secretConfig, { secret, backupCodes })),
+            const twoFactorId = crypto.randomUUID();
+            const sealed = sealedValues(
+              secrets,
+              "twoFactor",
+              twoFactorId,
+              await storedTwoFactor(ctx.context.secretConfig, { secret, backupCodes }),
+            );
+            const headers = ctx.request?.headers ?? ctx.headers;
+            const user = {
+              id: crypto.randomUUID(),
+              name: ctx.body.name,
+              email: ctx.body.email.toLowerCase(),
+              emailVerified: false,
+              image: null,
+              twoFactorEnabled: true,
+              createdAt: at,
+              updatedAt: at,
+            };
+            const session = {
+              id: crypto.randomUUID(),
+              token: generateId(32),
+              userId: user.id,
+              expiresAt: new Date(at.getTime() + ctx.context.sessionConfig.expiresIn * 1000),
+              ipAddress: (headers && getIP(headers, ctx.context.options)) || "",
+              userAgent: headers?.get("user-agent") || "",
+              createdAt: at,
+              updatedAt: at,
+            };
+            const rows: FirstMemberRows = {
+              at,
+              member: { id: user.id, name: user.name, email: user.email },
+              account: {
+                id: crypto.randomUUID(),
+                password: await ctx.context.password.hash(password),
               },
-            });
-            // The code that made the Member cannot sign them in again.
-            await claimTotpStep(database, user.id, step);
-            await adapter.deleteVerificationByIdentifier(NEW_TOTP_IDENTIFIER);
+              twoFactor: {
+                id: twoFactorId,
+                secret: String(sealed.secret),
+                backupCodes: String(sealed.backupCodes),
+                lastTotpStep: step,
+              },
+              pendingTotp: NEW_TOTP_IDENTIFIER,
+              session: {
+                id: session.id,
+                token: session.token,
+                expiresAt: session.expiresAt,
+                ipAddress: session.ipAddress,
+                userAgent: session.userAgent,
+              },
+            };
+            try {
+              await makeFirstMember(database, rows);
+            } catch (error) {
+              // The error's name only: a database error repeats the rows it was writing.
+              logger.error("The first Member was not made", {
+                errorName: error instanceof Error ? error.name : typeof error,
+              });
+              throw APIError.from("INTERNAL_SERVER_ERROR", {
+                code: "FIRST_MEMBER_NOT_MADE",
+                message: "The first Member was not made, and nothing was saved. Try again.",
+              });
+            }
 
-            const session = await adapter.createSession(user.id);
             await setSessionCookie(ctx, { session, user });
             ctx.setHeader("Cache-Control", "no-store");
             return ctx.json({ backupCodes });

@@ -1,5 +1,6 @@
 // The goals module's interface (spec 05, Goals). Other modules import from here.
 export {
+  checkGoalsDone,
   type Goal,
   type GoalList,
   type GoalReading,
@@ -11,14 +12,17 @@ export {
   readGoalsWithProgress,
   readingOf as goalReadingOf,
   startGoal,
+  startGoals,
 } from "./goals.ts";
 export {
+  type DetailPiece,
   type GoalChange,
   type GoalKind,
   type GoalProgress,
   type GoalState,
   goalAmountFrom,
   NO_GOAL_AMOUNT,
+  progressDetailPieces,
 } from "./progress.ts";
 export {
   GOAL_READING_TASK,

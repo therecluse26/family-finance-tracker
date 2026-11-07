@@ -1,5 +1,10 @@
 import type { Database } from "../db/index.ts";
-import { type HouseholdFacts, readHouseholdFacts, saveHouseholdFacts } from "../household/index.ts";
+import {
+  type HouseholdFacts,
+  householdTimeZone,
+  readHouseholdFacts,
+  saveHouseholdFacts,
+} from "../household/index.ts";
 import type { HouseholdFactsView, HouseholdRoutes } from "./household-views.ts";
 
 // The Household facts routes, through the household module. Only the Members' own pages get the
@@ -18,6 +23,10 @@ export function householdRoutes(database: Database): HouseholdRoutes {
     async facts() {
       const facts = await readHouseholdFacts(database);
       return facts === undefined ? null : view(facts);
+    },
+
+    async timeZone() {
+      return (await householdTimeZone(database)) ?? null;
     },
 
     async save(body, memberId) {

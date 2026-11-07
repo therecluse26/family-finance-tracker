@@ -18,6 +18,7 @@ import {
   computeCategoryBenchmarks,
   type FoodPlan,
   foodPlanCost,
+  type ThriftyPlan,
 } from "./index.ts";
 
 // Each Category's Benchmark (spec 05, The Benchmark for a Category, The Groceries and Superstores
@@ -27,9 +28,9 @@ import {
 type Lines = Partial<Record<CeLine, number | null>>;
 
 // One CE column with $100,000 of total Spending, so a line's dollars over 1,000 are its percent.
-function column(label: string, incomeAfterTaxes: number, lines: Lines = {}) {
+function column(label: string, incomeBeforeTaxes: number, lines: Lines = {}) {
   const zero = Object.fromEntries(CE_LINES.map((line) => [line, 0])) as Record<CeLine, number>;
-  return { label, incomeAfterTaxes, totalSpending: 100_000, lines: { ...zero, ...lines } };
+  return { label, incomeBeforeTaxes, totalSpending: 100_000, lines: { ...zero, ...lines } };
 }
 
 function ceTable(columns: CeTable["columns"]): CeTable {
@@ -41,16 +42,24 @@ function ceTable(columns: CeTable["columns"]): CeTable {
   };
 }
 
+// The total column of each size × income table, as BLS labels it.
+const TOTAL_COLUMNS = [
+  "Total one person",
+  "Total two people",
+  "Total three people",
+  "Total four people",
+  "Total five or more people",
+];
+
 // The size × income table for `size` people. Restaurants (Food away from home) is `size`% of
 // Spending in the lower column and twice that in the upper one, so each table and column shows.
 const sizeTable = (size: number) =>
   ceTable([
     // Exactly I × 12 for I = $6,000. It is no income column, so it is never picked.
-    column("All consumer units", 72_000, { "Food away from home": 9_000 }),
+    column(TOTAL_COLUMNS[size - 1] ?? "", 72_000, { "Food away from home": 9_000 }),
     column("$40,000 to $69,999", 60_000, {
       "Food away from home": size * 1_000,
-      "Housekeeping supplies": 1_500,
-      "Personal care products": 500,
+      "Housekeeping supplies": 2_000,
     }),
     column("$70,000 to $99,999", 90_000, { "Food away from home": size * 2_000 }),
   ]);
@@ -70,6 +79,21 @@ const split = (
   { age, fromAge, toAge, sex: "male" as const, monthly: male },
   { age, fromAge, toAge, sex: "female" as const, monthly: female },
 ];
+
+// A Thrifty plan's monthly cost for USDA's reference family, the couple and two children.
+function thriftyPlan(area: string, family: number): ThriftyPlan {
+  return {
+    plan: "Thrifty",
+    area,
+    month: FOOD_MONTH,
+    pricedAt: { series: "CUUR0000SAF11", period: FOOD_MONTH, value: FOOD_CPI },
+    family: {
+      group: "Couple and children",
+      age: "20-50 years and children 6-8 and 9-11 years",
+      monthly: family,
+    },
+  };
+}
 
 function foodPlan(plan: FoodPlan["plan"], area: string, adult: number): FoodPlan {
   return {
@@ -100,9 +124,9 @@ const TEST: BenchmarkSnapshot = {
   food: {
     moderate: foodPlan("Moderate-Cost", "U.S. average", 400),
     thrifty: {
-      us: foodPlan("Thrifty", "U.S. average", 300),
-      alaska: foodPlan("Thrifty", "Alaska", 390),
-      hawaii: foodPlan("Thrifty", "Hawaii", 360),
+      us: thriftyPlan("U.S. average", 800),
+      alaska: thriftyPlan("Alaska", 980),
+      hawaii: thriftyPlan("Hawaii", 920),
     },
     sizeAdjustment: [
       { fromSize: 1, toSize: 1, percent: 20 },
@@ -136,9 +160,9 @@ const withSnapshot = (change: (snapshot: BenchmarkSnapshot) => void) => {
 };
 
 describe("the CE column", () => {
-  it("picks the income column nearest I × 12 in the size × income table, never All consumer units", () => {
-    // $72,000 a year: All consumer units matches exactly, but is skipped. $60,000 is nearer than
-    // $90,000.
+  it("picks the income column nearest I × 12 in the size × income table, never its total", () => {
+    // $72,000 a year: the "Total three people" column matches exactly, but is skipped. $60,000 is
+    // nearer than $90,000.
     expect(compute().ceColumn).toEqual({ table: "size and income", label: "$40,000 to $69,999" });
     expect(benchmarkOf("Restaurants")?.amount).toBe(18_000);
 
@@ -242,14 +266,15 @@ describe("the Benchmark for a Category", () => {
     expect(others("rent").filter(({ shareOnly }) => shareOnly)).toEqual([]);
   });
 
-  it("gives Personal care only the CE personal care services", () => {
+  it("gives Personal care the joined personal care products and services row, and B_GS none of it", () => {
     const snapshot = withSnapshot((changed) => {
       const lines = changed.ce.bySizeAndIncome[2]?.table.columns[1]?.lines;
       if (lines === undefined) throw new Error("No column.");
-      Object.assign(lines, { "Personal care services": 1_000, "Personal care products": 4_000 });
+      Object.assign(lines, { "Personal care products and services": 1_000 });
     });
 
     expect(benchmarkOf("Personal care", {}, snapshot)?.amount).toBe(6_000);
+    expect(benchmarkOf("Groceries", {}, snapshot)?.amount).toBe(benchmarkOf("Groceries")?.amount);
   });
 
   it("is $0 with I at $0, with no share", () => {
@@ -258,9 +283,9 @@ describe("the Benchmark for a Category", () => {
 });
 
 describe("the Groceries and Superstores Benchmark", () => {
-  it("is F plus the supplies and personal-care products share of I: $1,000 + 2% of $6,000 = $1,120", () => {
+  it("is F plus the housekeeping supplies share of I: $1,000 + 2% of $6,000 = $1,120", () => {
     // Two adults at $400 (the mean of $380 and $420) and a child at $200: F = $1,000. Housekeeping
-    // supplies 1.5% and personal care products 0.5% of $6,000: $120.
+    // supplies 2% of $6,000: $120.
     const { food, categories } = compute();
 
     expect(food).toBe(100_000);
@@ -296,9 +321,14 @@ describe("the Groceries and Superstores Benchmark", () => {
   });
 
   it("scales F by the state's Thrifty cost ÷ the US Thrifty cost for an Alaska or Hawaii ZIP code", () => {
-    // Thrifty adults: US $300, Alaska $390, Hawaii $360; the child is $200 in each.
+    // The reference family's Thrifty cost: US $800, Alaska $980, Hawaii $920.
     expect(foodPlanCost(TEST, [40, 38, 7], "AK", FOOD_CPI)).toBeCloseTo((1_000 * 980) / 800, 9);
     expect(foodPlanCost(TEST, [40, 38, 7], "HI", FOOD_CPI)).toBeCloseTo((1_000 * 920) / 800, 9);
+    // The same factor for any Household: USDA prices the state plans only for that family.
+    expect(foodPlanCost(TEST, [40], "AK", FOOD_CPI)).toBeCloseTo(
+      (foodPlanCost(TEST, [40], "NY", FOOD_CPI) * 980) / 800,
+      9,
+    );
   });
 
   it("prices the Alaska and US Thrifty costs at one month when their months differ", () => {

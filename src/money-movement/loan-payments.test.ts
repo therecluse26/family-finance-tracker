@@ -334,6 +334,44 @@ describe("Manual loan payments", () => {
     expect(new Set(listed.map((item) => item.createdAt.getTime())).size).toBe(1);
   });
 
+  it("closes only the refused loan's item on a high no, so another loan's question stays open", async () => {
+    // One payment names two lenders. The first payment on the Lakeside Credit loan is confident.
+    await sync([
+      payment("lake-1", 50_000, "2026-08-01"),
+      payment("both", 31_500, "2026-08-20", {
+        accountId: SAVINGS,
+        description: "RIDGE BANK LAKESIDE CREDIT LOAN",
+        merchantName: "Ridge Bank",
+      }),
+    ]);
+    const ridge = await add({ lender: "Ridge Bank" });
+    const [asked] = await items(POSSIBLE_PAYMENT_KIND);
+    expect(asked).toMatchObject({
+      subject: { type: "transactions", transactionIds: [await idOf("both")] },
+      bestAnswer: { value: `link ${ridge}` },
+    });
+
+    // A new loan that sorts first takes the payment; the AI says no, with high confidence.
+    let judged = 0;
+    stops.push(
+      registerUnclearLoanPaymentJudge(async (candidates) =>
+        candidates.map(() => {
+          judged += 1;
+          return { answer: "no", confidence: "high" } as const;
+        }),
+      ),
+    );
+    const lakeside = await add({ lender: "Lakeside Credit" });
+    expect(judged).toBe(1);
+    expect(await linkedPayments()).toEqual(["lake-1"]);
+    const refused = await bank.database.$client.execute(
+      "SELECT other_id AS loan, refused_by AS refusedBy FROM refused_links WHERE kind = 'loan'",
+    );
+    expect(refused.rows.map((row) => ({ ...row }))).toEqual([{ loan: lakeside, refusedBy: "AI" }]);
+    // The Ridge Bank question is still open.
+    expect(await items(POSSIBLE_PAYMENT_KIND)).toEqual([asked]);
+  });
+
   it("asks about a loan with no payment linked for 2 months after the last one, once for each gap", async () => {
     await sync([payment("aug", 50_000, "2026-08-14")]);
     const car = await add();

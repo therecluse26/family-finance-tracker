@@ -12,6 +12,7 @@ import {
   type CeTable,
   type FoodPlan,
   SAMPLE_NOTICE,
+  type ThriftyPlan,
 } from "../src/benchmarks/snapshot.ts";
 import { CATEGORIES } from "../src/categories/index.ts";
 import { readXlsx, type Sheet } from "./xlsx.ts";
@@ -84,15 +85,18 @@ function cellNumber(text: string | undefined): number | null {
   return /^-?\d+(?:\.\d+)?$/.test(plain) ? Number(plain) : null;
 }
 
-const STAT_ROWS = new Set(["share", "se", "standard error", "cv(%)", "cv (%)", "cv"]);
+const STAT_ROWS = new Set(["share", "se", "standard error", "rse", "cv(%)", "cv (%)", "cv"]);
 
-const INCOME_AFTER_TAXES = "Income after taxes";
+// BLS stopped publishing income after taxes in 2024 (spec 05, The Benchmark for a Category), so
+// the pick matches income before taxes.
+const INCOME_BEFORE_TAXES = "Income before taxes";
 const TOTAL_SPENDING = "Average annual expenditures";
 
-// One CE table: its income columns, with the mean income after taxes, the mean total yearly
+// One CE table: its income columns, with the mean income before taxes, the mean total yearly
 // Spending, and the mean yearly Spending on each CE line. Rows are found by their labels in the
-// first column: an item's label row, then its "Mean", "Share", "SE", and "CV(%)" rows. Columns are
-// found under the "Item" header. A column whose income or total BLS suppresses is left out.
+// first column: an item's label row, then its "Mean", "Share", "SE", and "RSE" or "CV(%)" rows.
+// Columns are found under the "Item" header. A column whose income or total BLS suppresses is left
+// out.
 export function parseCeTable(sheet: Sheet, file: string): Omit<CeTable, "pricedAt"> {
   const fail = (problem: string): never => {
     throw new Error(`${file}: ${problem}`);
@@ -152,22 +156,22 @@ export function parseCeTable(sheet: Sheet, file: string): Omit<CeTable, "pricedA
     }
     return values;
   };
-  const income = figures(INCOME_AFTER_TAXES);
+  const income = figures(INCOME_BEFORE_TAXES);
   const total = figures(TOTAL_SPENDING);
   const lines = CE_LINES.map((line) => [line, figures(line)] as const);
   if (missing.length > 0) {
     fail(`it has no figures for these rows: ${missing.map((label) => `"${label}"`).join(", ")}.`);
   }
   const kept = columns.flatMap(({ label }, index) => {
-    const incomeAfterTaxes = income[index];
+    const incomeBeforeTaxes = income[index];
     const totalSpending = total[index];
-    if (incomeAfterTaxes == null || totalSpending == null || totalSpending <= 0) return [];
+    if (incomeBeforeTaxes == null || totalSpending == null || totalSpending <= 0) return [];
     const byLine = Object.fromEntries(
       lines.map(([line, values]) => [line, values[index] ?? null]),
     ) as Record<CeLine, number | null>;
-    return [{ label, incomeAfterTaxes, totalSpending, lines: byLine }];
+    return [{ label, incomeBeforeTaxes, totalSpending, lines: byLine }];
   });
-  if (kept.length === 0) fail("every column lacks a mean income after taxes or a total.");
+  if (kept.length === 0) fail("every column lacks a mean income before taxes or a total.");
   return { title: titleCell.replace(/\s+/g, " ").trim(), years, columns: kept };
 }
 
@@ -238,6 +242,23 @@ export function checkSizeAdjustment(sheets: ReadonlyMap<string, Sheet>, file: st
   }
 }
 
+// The long table of a USDA cost-of-food file: its rows under the header with the columns
+// FOOD_COLUMNS, and where each column is.
+function foodTable(sheets: ReadonlyMap<string, Sheet>, file: string) {
+  let table: { rows: Sheet; at: Record<(typeof FOOD_COLUMNS)[number], number> } | undefined;
+  for (const sheet of sheets.values()) {
+    const headerAt = sheet.findIndex((row) => row.some((cell) => cell.trim() === "cost"));
+    const header = (sheet[headerAt] ?? []).map((cell) => cell.trim().toLowerCase());
+    if (headerAt < 0 || !FOOD_COLUMNS.every((name) => header.includes(name))) continue;
+    const at = Object.fromEntries(FOOD_COLUMNS.map((name) => [name, header.indexOf(name)]));
+    table = { rows: sheet.slice(headerAt + 1), at: at as Record<string, number> };
+  }
+  if (table === undefined) {
+    throw new Error(`${file}: no sheet has the columns ${FOOD_COLUMNS.join(", ")}.`);
+  }
+  return table;
+}
+
 // One food plan from a USDA cost-of-food file: the monthly cost per person, by age group and sex,
 // for the latest month in the file. The file's long table has the columns FOOD_COLUMNS.
 export function parseFoodPlan(
@@ -248,16 +269,7 @@ export function parseFoodPlan(
   const fail = (problem: string): never => {
     throw new Error(`${file}: ${problem}`);
   };
-  let table: { rows: Sheet; at: Record<(typeof FOOD_COLUMNS)[number], number> } | undefined;
-  for (const sheet of sheets.values()) {
-    const headerAt = sheet.findIndex((row) => row.some((cell) => cell.trim() === "cost"));
-    const header = (sheet[headerAt] ?? []).map((cell) => cell.trim().toLowerCase());
-    if (headerAt < 0 || !FOOD_COLUMNS.every((name) => header.includes(name))) continue;
-    const at = Object.fromEntries(FOOD_COLUMNS.map((name) => [name, header.indexOf(name)]));
-    table = { rows: sheet.slice(headerAt + 1), at: at as Record<string, number> };
-  }
-  if (table === undefined) return fail(`no sheet has the columns ${FOOD_COLUMNS.join(", ")}.`);
-  const { rows, at } = table;
+  const { rows, at } = foodTable(sheets, file);
   const word = new RegExp(plan === "Thrifty" ? "thrifty" : "moderate", "i");
   const picked = rows.flatMap((row) => {
     const cell = (name: (typeof FOOD_COLUMNS)[number]) => (row[at[name]] ?? "").trim();
@@ -298,7 +310,87 @@ export function parseFoodPlan(
     seen.add(key);
     return { age, ...range, sex, monthly };
   });
+  for (const sex of ["male", "female"] as const) {
+    const age = uncoveredAge(costs, sex);
+    if (age !== undefined) fail(`its ${month} costs have no age group for a ${sex} aged ${age}.`);
+  }
   return { plan, area, month, costs };
+}
+
+// A Thrifty plan from a USDA cost-of-food file: the monthly cost for USDA's reference family, a
+// couple with two children, for the latest month in the file. USDA prices the Alaska and Hawaii
+// plans only for this family, so the state food rule compares this cost in each file.
+export function parseThriftyFamily(
+  sheets: ReadonlyMap<string, Sheet>,
+  file: string,
+): Omit<ThriftyPlan, "pricedAt"> {
+  const fail = (problem: string): never => {
+    throw new Error(`${file}: ${problem}`);
+  };
+  const { rows, at } = foodTable(sheets, file);
+  const picked = rows.flatMap((row) => {
+    const cell = (name: (typeof FOOD_COLUMNS)[number]) => (row[at[name]] ?? "").trim();
+    if (!/month/i.test(cell("frequency")) || !/^family/i.test(cell("fam_indv"))) return [];
+    if (!/thrifty/i.test(cell("food_plan")) || !/couple and children/i.test(cell("group"))) {
+      return [];
+    }
+    const month = monthNumber(cell("month"));
+    const year = cell("year");
+    const monthly = cellNumber(cell("cost"));
+    if (month === undefined || !/^\d{4}$/.test(year) || monthly === null || monthly <= 0) {
+      return fail(`it has a monthly row with a bad year, month, or cost: ${row.join(", ")}.`);
+    }
+    return [
+      {
+        area: cell("geographic_area"),
+        month: `${year}-${String(month).padStart(2, "0")}`,
+        family: { group: cell("group"), age: cell("age"), monthly },
+      },
+    ];
+  });
+  const month = picked.map((row) => row.month).sort((a, b) => b.localeCompare(a))[0];
+  if (month === undefined) return fail("it has no monthly Thrifty cost for a couple and children.");
+  const latest = picked.filter((row) => row.month === month);
+  const [only] = latest;
+  if (only === undefined || latest.length > 1) {
+    return fail(`it has more than one ${month} Thrifty cost for a couple and children.`);
+  }
+  return { plan: "Thrifty", area: only.area, month, family: only.family };
+}
+
+// The first age from 1 up that no cost covers for a person of this sex, counting the costs USDA
+// gives for both sexes, or undefined when the age groups run with no gap from 1 to an open group,
+// such as "71+ years". The app prices a child under 1 at the 1-year cost.
+function uncoveredAge(
+  costs: readonly { fromAge: number; toAge: number | null; sex: "male" | "female" | null }[],
+  sex: "male" | "female",
+): number | undefined {
+  const groups = costs.filter((cost) => cost.sex === null || cost.sex === sex);
+  let age = 1;
+  for (;;) {
+    const group = groups.find(({ fromAge, toAge }) => fromAge <= age && age <= (toAge ?? age));
+    if (group === undefined) return age;
+    if (group.toAge === null) return undefined;
+    age = group.toAge + 1;
+  }
+}
+
+// Fails unless an Alaska or Hawaii food plan file is for that state: the workbook names the state,
+// and its costs' area does not name the other state. So two files saved under each other's names
+// fail the build.
+export function checkFoodPlanState(
+  sheets: ReadonlyMap<string, Sheet>,
+  plan: Pick<FoodPlan, "area">,
+  file: string,
+  state: "Alaska" | "Hawaii",
+): void {
+  const other = state === "Alaska" ? "Hawaii" : "Alaska";
+  const names = (text: string, place: string) => new RegExp(`\\b${place}\\b`, "i").test(text);
+  if (!names([...sheets.values()].flat(2).join(" "), state) || names(plan.area, other)) {
+    throw new Error(
+      `${file}: it is not the ${state} food plan: its costs are for "${plan.area}". Check that the Alaska and Hawaii files are not swapped.`,
+    );
+  }
 }
 
 // ---- CPI
@@ -340,6 +432,11 @@ function cpiForMonth({ series, values }: Cpi, month: string, file: string) {
   return { series, period: month, value };
 }
 
+// The one month BLS published no CPI for: October 2025, during the 2025 lapse in appropriations
+// (spec 05, CPI). A mean over 2025 uses the 11 months BLS published. Any other missing month fails
+// the build.
+export const CPI_UNPUBLISHED_MONTH = "2025-10";
+
 // The mean CPI over the CE year or years, such as "2023-2024": the mean of the monthly values,
 // to 3 decimals, as BLS rounds its annual averages.
 function cpiForYears({ series, values }: Cpi, years: string, file: string) {
@@ -350,6 +447,7 @@ function cpiForYears({ series, values }: Cpi, years: string, file: string) {
     for (let month = 1; month <= 12; month++) {
       const key = `${year}-${String(month).padStart(2, "0")}`;
       const value = values.get(key);
+      if (value === undefined && key === CPI_UNPUBLISHED_MONTH) continue;
       if (value === undefined) missing.push(key);
       else months.push(value);
     }
@@ -373,8 +471,18 @@ export function buildBenchmarkSnapshot(
   sample: boolean,
 ): BenchmarkSnapshot {
   const text = (key: SourceKey) => new TextDecoder().decode(read(key));
+  // A source file's sheets. A file that is not a real .xlsx, such as an error page saved in place
+  // of the download, fails naming the file.
+  const workbook = (key: SourceKey): Map<string, Sheet> => {
+    try {
+      return readXlsx(read(key));
+    } catch (error) {
+      const problem = error instanceof Error ? error.message : String(error);
+      throw new Error(`${SOURCE_FILES[key].file}: ${problem}`);
+    }
+  };
   const firstSheet = (key: SourceKey): Sheet => {
-    const [sheet] = readXlsx(read(key)).values();
+    const [sheet] = workbook(key).values();
     if (sheet === undefined) throw new Error(`${SOURCE_FILES[key].file}: it has no sheet.`);
     return sheet;
   };
@@ -393,10 +501,22 @@ export function buildBenchmarkSnapshot(
       pricedAt: cpiForYears(allItems, table.years, SOURCE_FILES.cpiAllItems.file),
     };
   };
-  const foodPlan = (key: SourceKey, plan: FoodPlan["plan"]): FoodPlan => {
-    const sheets = readXlsx(read(key));
-    if (key === "moderate") checkSizeAdjustment(sheets, SOURCE_FILES[key].file);
-    const parsed = parseFoodPlan(sheets, SOURCE_FILES[key].file, plan);
+  const moderatePlan = (): FoodPlan => {
+    const sheets = workbook("moderate");
+    checkSizeAdjustment(sheets, SOURCE_FILES.moderate.file);
+    const parsed = parseFoodPlan(sheets, SOURCE_FILES.moderate.file, "Moderate-Cost");
+    return {
+      ...parsed,
+      pricedAt: cpiForMonth(foodAtHome, parsed.month, SOURCE_FILES.cpiFoodAtHome.file),
+    };
+  };
+  const thriftyPlan = (key: "thriftyUs" | "thriftyAlaska" | "thriftyHawaii"): ThriftyPlan => {
+    const sheets = workbook(key);
+    const parsed = parseThriftyFamily(sheets, SOURCE_FILES[key].file);
+    if (key === "thriftyAlaska")
+      checkFoodPlanState(sheets, parsed, SOURCE_FILES[key].file, "Alaska");
+    if (key === "thriftyHawaii")
+      checkFoodPlanState(sheets, parsed, SOURCE_FILES[key].file, "Hawaii");
     return {
       ...parsed,
       pricedAt: cpiForMonth(foodAtHome, parsed.month, SOURCE_FILES.cpiFoodAtHome.file),
@@ -409,12 +529,21 @@ export function buildBenchmarkSnapshot(
   }
   const sizeKeys = ["ceSize1", "ceSize2", "ceSize3", "ceSize4", "ceSize5"] as const;
   const bySizeAndIncome = sizeKeys.map((key, index) => ({ size: index + 1, table: ceTable(key) }));
-  const moderate = foodPlan("moderate", "Moderate-Cost");
+  const moderate = moderatePlan();
   const thrifty = {
-    us: foodPlan("thriftyUs", "Thrifty"),
-    alaska: foodPlan("thriftyAlaska", "Thrifty"),
-    hawaii: foodPlan("thriftyHawaii", "Thrifty"),
+    us: thriftyPlan("thriftyUs"),
+    alaska: thriftyPlan("thriftyAlaska"),
+    hawaii: thriftyPlan("thriftyHawaii"),
   };
+  // The state food rule divides the state's cost by the US cost, so both must be for one family.
+  for (const key of ["thriftyAlaska", "thriftyHawaii"] as const) {
+    const { family } = key === "thriftyAlaska" ? thrifty.alaska : thrifty.hawaii;
+    if (family.group !== thrifty.us.family.group || family.age !== thrifty.us.family.age) {
+      throw new Error(
+        `${SOURCE_FILES[key].file}: its family, "${family.group}, ${family.age}", is not the US Thrifty plan's, "${thrifty.us.family.group}, ${thrifty.us.family.age}".`,
+      );
+    }
+  }
   const crossTabYears = bySizeAndIncome[0]?.table.years ?? "";
   const newest = (values: Map<string, number>) => [...values.keys()].sort().at(-1) ?? "";
   const bls = "Bureau of Labor Statistics" as const;

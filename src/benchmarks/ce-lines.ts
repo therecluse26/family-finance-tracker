@@ -24,7 +24,7 @@ export const CE_LINES = [
   "Housekeeping supplies",
   "Household furnishings and equipment",
   "Apparel and services",
-  "Gasoline, other fuels, and motor oil",
+  "Gasoline and other fuels",
   "Maintenance and repairs",
   "Vehicle rental, leases, licenses, and other charges",
   "Vehicle insurance",
@@ -38,8 +38,7 @@ export const CE_LINES = [
   "Pets",
   "Toys, hobbies, and playground equipment",
   "Other entertainment supplies, equipment, and services",
-  "Personal care products",
-  "Personal care services",
+  "Personal care products and services",
   "Reading",
   "Education",
   "Life and other personal insurance",
@@ -102,12 +101,9 @@ export type CeLineChoice =
     }
   | { readonly kind: "food plan and lines"; readonly lines: readonly CeLine[] };
 
-// The CE lines of B_GS: the household supplies and personal-care products a Superstore sells
-// beside food at home.
-export const B_GS_CE_LINES: readonly CeLine[] = Object.freeze([
-  "Housekeeping supplies",
-  "Personal care products",
-]);
+// The CE lines of B_GS: the household supplies a Superstore sells beside food at home. Since 2025
+// the CE tables join personal care products and services in one row, which feeds Personal care.
+export const B_GS_CE_LINES: readonly CeLine[] = Object.freeze(["Housekeeping supplies"]);
 
 const lines = (...chosen: CeLine[]): CeLineChoice =>
   Object.freeze({ kind: "lines", lines: Object.freeze(chosen) });
@@ -136,13 +132,13 @@ export const CE_LINE_MAP: Readonly<Partial<Record<Category, CeLineChoice>>> = Ob
   Clothing: lines("Apparel and services"),
   "Home and garden": lines("Household furnishings and equipment", "Other household expenses"),
   "Alcohol and tobacco": lines("Alcoholic beverages", "Tobacco products and smoking supplies"),
-  Gas: lines("Gasoline, other fuels, and motor oil"),
+  Gas: lines("Gasoline and other fuels"),
   // A vehicle purchase is a lump in CE and a loan payment at the bank, so it is left out.
   Car: lines("Maintenance and repairs", "Vehicle rental, leases, licenses, and other charges"),
   "Transit and rideshare": lines("Public and other transportation"),
   Health: lines("Medical services", "Drugs", "Medical supplies"),
-  // Only the services: the products sit in B_GS (spec 05).
-  "Personal care": lines("Personal care services"),
+  // The CE tables join the products and the services in one row (spec 05).
+  "Personal care": lines("Personal care products and services"),
   // CE's personal services are babysitting, day care, and care for the elderly.
   Childcare: lines("Personal services"),
   Pets: lines("Pets"),

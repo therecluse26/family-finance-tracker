@@ -31,7 +31,7 @@ import {
   SET_UP_AI,
   worthActingOnHeading,
 } from "../ai-box.ts";
-import { askAboutAlertNote, askAboutPath, askAboutProposal } from "../chat.ts";
+import { askAboutAlertNote, askAboutInsightCard, askAboutPath, askAboutProposal } from "../chat.ts";
 import { buttonClass } from "../components/Button.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
 import { NoticeList } from "../components/NoticeLines.tsx";
@@ -46,7 +46,6 @@ import {
   type DashboardData,
   type DashboardMonth,
   dashboardMonth,
-  directionOf,
   type GroupBar,
   type GroupBudgetRow,
   groupBars,
@@ -70,6 +69,7 @@ import {
   rowNote,
   type StatusLines,
   statusLines,
+  tileDirection,
   type UsualGroup,
   usualMonthLine,
   type YearlyRow,
@@ -464,7 +464,7 @@ function TrendLine(props: { trend: NumberTile["tile"]["trend"] }) {
 
 function NumberTileItem(props: { tile: NumberTile }) {
   const { tile } = props;
-  const direction = directionOf(tile.tile.amount, tile.tile.usual, tile.moreIs);
+  const direction = tileDirection(tile);
   return (
     <li
       className="min-w-0 rounded-card border border-line bg-white"
@@ -944,8 +944,7 @@ function AiNote(props: {
   goodNews: boolean;
   busy: boolean;
   onDone: (done: boolean) => void;
-  // "Ask about this": a new Chat thread with the note attached. Chat takes Alert notes only, so an
-  // Insight card's button stays disabled.
+  // "Ask about this": a new Chat thread with the note attached, an Alert note or an Insight card.
   onAsk?: () => void;
   whyOpen?: boolean;
 }) {
@@ -1163,11 +1162,14 @@ export function AiBox(props: {
                     goodNews={group.name === "Good news"}
                     busy={busy === note.id}
                     onDone={(mark) => void done(note, mark)}
-                    {...(note.kind === "Alert note"
-                      ? {
-                          onAsk: () => navigate(askAboutPath, { state: askAboutAlertNote(note) }),
-                        }
-                      : {})}
+                    onAsk={() =>
+                      navigate(askAboutPath, {
+                        state:
+                          note.kind === "Alert note"
+                            ? askAboutAlertNote(note)
+                            : askAboutInsightCard(note),
+                      })
+                    }
                     {...(props.whyOpen === note.id ? { whyOpen: true } : {})}
                   />
                 ),

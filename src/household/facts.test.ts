@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loginTables, readSetupSteps } from "../db/index.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import {
@@ -123,5 +123,30 @@ describe("the Household facts", () => {
 
     expect((await readHouseholdFacts(test.database))?.rentOrOwn).toBe("own");
     expect(edits).toHaveLength(1);
+  });
+
+  it("logs a failed listener with its error's name only, never its message or stack", async () => {
+    const madeUp = `made-up-${crypto.randomUUID()}`;
+    const written: string[] = [];
+    const capture = (chunk: string | Uint8Array) => written.push(String(chunk)) > 0;
+    vi.spyOn(process.stdout, "write").mockImplementation(capture);
+    vi.spyOn(process.stderr, "write").mockImplementation(capture);
+    const stop = onHouseholdFactsEdited(() => {
+      throw new RangeError(`A listener that fails with ${madeUp}`);
+    });
+    try {
+      await save(NEW_YORK);
+      await save({ ...NEW_YORK, rentOrOwn: "own" });
+    } finally {
+      stop();
+      vi.restoreAllMocks();
+    }
+
+    const failed = written
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.msg === "A Household facts listener failed");
+    expect(failed).toEqual([expect.objectContaining({ level: "error", errorName: "RangeError" })]);
+    expect(written.join("")).not.toContain(madeUp);
+    expect(written.join("")).not.toContain("facts.test.ts");
   });
 });

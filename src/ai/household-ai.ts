@@ -13,7 +13,7 @@ import { type AiPause, AiPausedError } from "./outbound.ts";
 import { memberLabel, privacyFilter } from "./privacy.ts";
 import { type AiCall, filterBatch, plainData } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
-import { type AiOptions, aiCalls, markKeyRejected } from "./settings.ts";
+import { type AiOptions, aiCalls, markKeyRejected, noticesOf } from "./settings.ts";
 import { plainVoice } from "./voice.ts";
 
 // The AI's reply, or why the use has none.
@@ -77,7 +77,7 @@ export type HouseholdAi = {
 export function householdAi(options: AiOptions): HouseholdAi {
   const { database, logger = log } = options;
   const calls = aiCalls(options);
-  const retries = aiRetries(database);
+  const retries = aiRetries(database, noticesOf(options), logger);
   const filter = async () => privacyFilter(await readPrivacyFacts(database));
 
   // Spec 08, Failures: a rejected key pauses AI until a Member fixes it, with one System notice.
@@ -131,7 +131,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
     try {
       const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
       const reply = await callModel(found.model, sent);
-      if (background) await retries.ended(use);
+      if (background) await retries.worked(use);
       return { ready: true, ...reply };
     } catch (error) {
       // The gate closed between modelFor and the call, such as at the AI cost cap.
