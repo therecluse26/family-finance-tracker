@@ -23,7 +23,6 @@ import { buildWeeklySummary, COMING_UP_SHOWN, summaryWeek } from "./index.ts";
 const APP_URL = "http://nas.local:8080";
 const NEW_YORK = "America/New_York";
 const SENT_AT = new Date("2026-11-08T13:00:00.000Z");
-const WEEK = summaryWeek(SENT_AT, NEW_YORK);
 const BANK = "fake-summary-bank";
 // The Account's name and mask must never reach the summary.
 const CARD = fakeAccount({
@@ -68,18 +67,22 @@ describe("the weekly summary's text", () => {
   let connectionId: string;
   let made = 0;
 
-  const build = () =>
+  // The summary sent at `sentAt`, the Nov 8 one unless a test names another Sunday.
+  const build = (sentAt = SENT_AT) =>
     buildWeeklySummary({
       database: bank.database,
-      week: WEEK,
+      week: summaryWeek(sentAt, NEW_YORK),
       timeZone: NEW_YORK,
       address: (path) => `${APP_URL}${path}`,
-      now: SENT_AT,
+      now: sentAt,
     });
 
-  const load = async (txns: TxnSpec[]) => {
+  // Syncs one page of these Transactions, and the bank's removal of others. Returns each
+  // Transaction's ID in app.db, by its bank ID.
+  const load = async (txns: TxnSpec[], removed: string[] = []) => {
     bank.fake.addPages(BANK, {
       accounts: [CARD],
+      removed: removed.map((id) => ({ id })),
       added: txns.map((txn) =>
         fakeTxn({
           id: txn.id,
@@ -108,6 +111,7 @@ describe("the weekly summary's text", () => {
         parts: txn.parts,
       })),
     );
+    return ids;
   };
 
   const draft = (budgets: NewBudget[]) =>
@@ -200,20 +204,20 @@ describe("the weekly summary's text", () => {
     ]);
     await load([
       // The history starts on Wednesday, Oct 7. As the Dashboard counts the month the history
-      // starts in, the usual counts the week it starts in: the median of $50, $100, $200 and $260
+      // starts in, the usual counts the week it starts in: the median of $50, $100, $200 and $200
       // is $150. Without that week it would be $200.
       spend("oct-7", "2026-10-07", 50, "Groceries"),
       spend("oct-14", "2026-10-14", 100, "Groceries"),
       spend("oct-21", "2026-10-21", 200, "Groceries"),
       spend("oct-28", "2026-10-28", 150, "Groceries"),
       spend("oct-31", "2026-10-31", 50, "Clothing"),
-      // Bought on Saturday, Oct 31, posted on Monday: it counts on its purchase date, in the week
-      // before, as in October's totals.
+      // Bought on Saturday, Oct 31, posted on Monday: still pending at the Nov 1 summary, so it
+      // counts in this one, the week it posted. October's totals count it on its purchase date.
       { ...spend("bought-oct-31", "2026-11-02", 60, "Groceries"), bought: "2026-10-31" },
-      // The summary's 7 days, by the app's Spending rule: Groceries $240 - a $30 Refund = $210;
-      // Restaurants $40 + $10 bought on Saturday and posted on Sunday = $50; and Clothing, a $20
-      // Refund with no Spending that week, counts $0, not -$20. In all, $260. At $240, the first is
-      // no Large purchase, so the projection counts it.
+      // The summary's 7 days, by the app's Spending rule: Groceries $60 + $240 - a $30 Refund =
+      // $270; Restaurants $40; and Clothing, a $20 Refund with no Spending that week, counts $0,
+      // not -$20. In all, $310. The $10 bought on Saturday and posted on Sunday is the next
+      // summary's. At $240, the Nov 3 purchase is no Large purchase, so the projection counts it.
       spend("nov-3", "2026-11-03", 240, "Groceries"),
       {
         id: "refund",
@@ -280,7 +284,7 @@ describe("the weekly summary's text", () => {
       [
         "Your weekly summary for Sunday, Nov 1 to Saturday, Nov 7.",
         "",
-        "Spending: $260, ▲ $110 above usual.",
+        "Spending: $310, ▲ $160 above usual.",
         `See it: ${APP_URL}/transactions?type=Spending&from=2026-11-01&to=2026-11-07`,
         "",
         "Budgets in November 2026:",
@@ -303,6 +307,50 @@ describe("the weekly summary's text", () => {
       ].join("\n"),
     );
     expect(email.text).not.toMatch(/Sapphire|4821|Reserve/);
+  });
+
+  it("counts each purchase in the summary of the week it posted, once, and keeps the usual like with like", async () => {
+    // $100 of Groceries posts each Wednesday from Oct 7. A $100 purchase bought on Saturday, Nov 7
+    // is still pending at the Nov 8 send.
+    const weekly = ["2026-10-07", "2026-10-14", "2026-10-21", "2026-10-28", "2026-11-04"].map(
+      (date) => spend(`weekly-${date}`, date, 100, "Groceries"),
+    );
+    await load([
+      ...weekly,
+      { ...spend("late-pending", "2026-11-07", 100, "Groceries"), pending: true },
+    ]);
+    expect((await build()).text).toContain("Spending: $100, ● about usual.\n");
+
+    // It posts on Monday, Nov 9, with Wednesday's $100. On Tuesday, a $40 Refund of the Oct 28
+    // purchase comes, linked to it: it counts in the week it came, not in October's.
+    const ids = await load(
+      [
+        { ...spend("late", "2026-11-09", 100, "Groceries"), bought: "2026-11-07" },
+        spend("weekly-2026-11-11", "2026-11-11", 100, "Groceries"),
+        {
+          id: "linked-refund",
+          date: "2026-11-10",
+          parts: [{ type: "Refund", amount: $(40), category: "Groceries", linked: true }],
+        },
+      ],
+      ["late-pending"],
+    );
+    await bank.database.$client.execute({
+      sql: `INSERT INTO spending_links (id, kind, transaction_id, spending_transaction_id, tier, signals, made_by, created_at)
+            VALUES ('link', 'Refund', ?, ?, 'Strong', '[]', 'app', ?)`,
+      args: [
+        ids.get("linked-refund") ?? "",
+        ids.get("weekly-2026-10-28") ?? "",
+        SENT_AT.toISOString(),
+      ],
+    });
+
+    // The Nov 15 summary counts it: $100 + $100 - $40 = $160. Its usual is $100: the Nov 1 to
+    // Nov 7 week still reads $100, as its own summary did, and the Oct 25 to Oct 31 week keeps its
+    // $100.
+    const nextSunday = new Date("2026-11-15T13:00:00.000Z");
+    expect((await build(nextSunday)).text).toContain("Spending: $160, ▲ $60 above usual.\n");
+    expect((await build()).text).toContain("Spending: $100, ● about usual.\n");
   });
 
   it("says so with no Budgets, no Spending history, no Alerts, and nothing due", async () => {

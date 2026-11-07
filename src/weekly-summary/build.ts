@@ -1,6 +1,11 @@
 import { mergedAlertList } from "../anomalies/index.ts";
 import { budgetSpending, budgetsForMonth } from "../budgets/index.ts";
-import { countOpenReviewItems, type Database, listPostedParts } from "../db/index.ts";
+import {
+  countOpenReviewItems,
+  type Database,
+  listLinkedMoneyPostedDates,
+  listPostedParts,
+} from "../db/index.ts";
 import {
   calendarDateIn,
   dateLabel,
@@ -9,7 +14,7 @@ import {
   statusText,
   wholeDollars,
 } from "../format.ts";
-import { purchaseDate, totalsByPeriod } from "../money-movement/index.ts";
+import { type PostedPart, totalsByPeriod } from "../money-movement/index.ts";
 import { addDays, recurringCharges } from "../recurring/index.ts";
 import { median } from "../server/usual.ts";
 import { plainLine } from "../summary/index.ts";
@@ -34,18 +39,29 @@ const WEEK_DAYS = 7;
 export type WeeklySummaryEmail = { subject: string; text: string };
 
 // The Spending in each 7-day window, by the app's Spending rule (totalsByPeriod): net of Refunds
-// and Reimbursements, no Category below $0, each part on its purchase date, and a linked Refund on
-// its Spending's. The windows are the summary's own 7 days, and the USUAL_WEEKS weeks before them.
-// As the Dashboard's usual leaves out each month before the history's first, the usual leaves out
-// each week that ends before it: a first week the history starts in counts. One read of the posted
-// parts.
+// and Reimbursements, and no Category below $0. Unlike a month's total, each part counts on the
+// day it posted, a linked Refund or Reimbursement on its own: a purchase still pending at the send
+// counts in the next week's summary, so each part counts in exactly one summary, and each usual
+// week reads as its own summary did. The windows are the summary's own 7 days, and the
+// USUAL_WEEKS weeks before them. As the Dashboard's usual leaves out each month before the
+// history's first, the usual leaves out each week that ends before it: a first week the history
+// starts in counts. One read of the posted parts, and one of the links.
 async function weekSpending(
   database: Database,
   from: string,
 ): Promise<{ spent: number; usual: number | null }> {
   const parts = await listPostedParts(database);
+  // A linked part has its Spending's dates (spec 03, Which month a link changes): it counts on
+  // the day its own money in posted instead.
+  const ownDates = parts.some((part) => part.spendingTransactionId !== null)
+    ? await listLinkedMoneyPostedDates(database)
+    : new Map<string, string>();
+  const postedOn = (part: PostedPart) =>
+    part.spendingTransactionId === null
+      ? part.postedDate
+      : (ownDates.get(part.transactionId) ?? part.postedDate);
   const first = parts.reduce<string | undefined>((earliest, part) => {
-    const date = purchaseDate(part);
+    const date = postedOn(part);
     return earliest === undefined || date < earliest ? date : earliest;
   }, undefined);
   const earliest = addDays(from, -USUAL_WEEKS * WEEK_DAYS);
@@ -53,7 +69,7 @@ async function weekSpending(
   const fromDay = Date.parse(`${from}T00:00:00Z`);
   // Each window by its index: 0 for the summary's own week, 1 for the week before, and on.
   const totals = totalsByPeriod(parts, (part) => {
-    const date = purchaseDate(part);
+    const date = postedOn(part);
     if (date < earliest || date > to) return null;
     const days = (Date.parse(`${date}T00:00:00Z`) - fromDay) / 86_400_000;
     return String(days >= 0 ? 0 : Math.ceil(-days / WEEK_DAYS));

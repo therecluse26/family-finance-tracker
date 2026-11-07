@@ -63,7 +63,6 @@ export {
   monthOf,
   type PeriodTotals,
   type PostedPart,
-  purchaseDate,
   totalsByMonth,
   totalsByPeriod,
 } from "./totals.ts";

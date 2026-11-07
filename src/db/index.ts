@@ -630,6 +630,8 @@ export {
 export {
   countWeeklySummaryFailures,
   finishWeeklySummary,
+  listLinkedMoneyPostedDates,
+  listTakenWeeklySummaries,
   listWeeklySummaryMembers,
   readLatestWeeklySummary,
   readWeeklySummarySwitch,

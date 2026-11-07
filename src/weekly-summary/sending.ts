@@ -2,6 +2,7 @@ import {
   countWeeklySummaryFailures,
   type Database,
   finishWeeklySummary,
+  listTakenWeeklySummaries,
   listWeeklySummaryMembers,
   readLatestWeeklySummary,
   readSmtpSettings,
@@ -26,7 +27,9 @@ import { type SummaryWeek, summaryWeek, weekFrom } from "./week.ts";
 //   through the Household's SMTP server. With no server saved, or a password the app cannot read,
 //   it sends nothing, and never sends that week later.
 // - It builds the text once a run, before it takes any Member's week, so a stop during the build
-//   loses no week. Every Member gets the same text.
+//   loses no week. Every Member gets the same text. A run with no Member left to take builds
+//   nothing. The take checks each Member's switch again, so a Member who turns it off during the
+//   build gets no email.
 // - At most one summary per Member and week: each Member's week is taken in app.db before the
 //   send, in the same write as the check, so two runs at once, or a run after a restart, send no
 //   second copy. A stop during a send leaves that week unsent.
@@ -126,6 +129,11 @@ export async function sendWeeklySummaries(weekStart?: string): Promise<SummaryRu
     return { ...done, skipped: mail };
   }
 
+  // A second run, or a retry after every send went out, has no Member to take: no build.
+  const ids = wanting.map((member) => member.id);
+  const already = new Set(await listTakenWeeklySummaries(database, week.from));
+  if (ids.every((id) => already.has(id))) return { ...done, skipped: "all taken" };
+
   // The build only reads, so it comes before the take: a stop during it leaves no week taken.
   let email: WeeklySummaryEmail | undefined;
   try {
@@ -137,12 +145,8 @@ export async function sendWeeklySummaries(weekStart?: string): Promise<SummaryRu
   }
 
   const taken = new Set(
-    await takeWeeklySummaries(
-      database,
-      wanting.map((member) => member.id),
-      week.from,
-      now,
-    ),
+    // The take checks each switch again: a Member who turned it off during the build is left out.
+    await takeWeeklySummaries(database, ids, week.from, now),
   );
   const members = wanting.filter((member) => taken.has(member.id));
   if (members.length === 0) return { ...done, skipped: "all taken" };

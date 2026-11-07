@@ -1,6 +1,12 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { alertChannels, members, weeklySummarySends } from "./schema.ts";
+import {
+  alertChannels,
+  members,
+  spendingLinks,
+  transactions,
+  weeklySummarySends,
+} from "./schema.ts";
 
 // The weekly summary email in app.db (spec 06, Weekly summary email): each Member's own switch, and
 // one row for each Member and week the app sends a summary for. The weekly-summary module decides;
@@ -43,9 +49,25 @@ export async function listWeeklySummaryMembers(
     .orderBy(asc(members.createdAt), asc(members.id));
 }
 
-// Takes the week's summary for each of these Members, in one statement: a Member with no row for
-// the week gets one, and a Member whose last try failed takes it again. A Member whose summary is
-// sending, sent, or given up is not taken. The check and the take are one write, so two runs at
+// The Members whose week's summary is taken already: sending, sent, or given up. A run that finds
+// every Member who wants it taken skips the build. The take still decides.
+export async function listTakenWeeklySummaries(
+  database: Database,
+  weekStart: string,
+): Promise<string[]> {
+  const rows = await database
+    .select({ memberId: weeklySummarySends.memberId })
+    .from(weeklySummarySends)
+    .where(
+      and(eq(weeklySummarySends.weekStart, weekStart), ne(weeklySummarySends.state, "failed")),
+    );
+  return rows.map((row) => row.memberId);
+}
+
+// Takes the week's summary for each of these Members whose switch is still on, in one statement:
+// a Member with no row for the week gets one, and a Member whose last try failed takes it again.
+// A Member who turned the switch off since the list was read is not taken, nor is a Member whose
+// summary is sending, sent, or given up. The checks and the take are one write, so two runs at
 // once never take one Member's week twice. Returns the IDs taken.
 export async function takeWeeklySummaries(
   database: Database,
@@ -54,16 +76,25 @@ export async function takeWeeklySummaries(
   at: Date,
 ): Promise<string[]> {
   if (memberIds.length === 0) return [];
+  // Every column, in the table's order, as an INSERT ... SELECT writes them. Members in the order
+  // they joined, as listWeeklySummaryMembers lists them.
+  const wanting = database
+    .select({
+      memberId: alertChannels.memberId,
+      weekStart: sql`${sql.param(weekStart, weeklySummarySends.weekStart)}`.as("week_start"),
+      state: sql`'sending'`.as("state"),
+      tries: sql`0`.as("tries"),
+      updatedAt: sql`${sql.param(at, weeklySummarySends.updatedAt)}`.as("updated_at"),
+    })
+    .from(alertChannels)
+    .innerJoin(members, eq(members.id, alertChannels.memberId))
+    .where(
+      and(inArray(alertChannels.memberId, [...memberIds]), eq(alertChannels.weeklySummary, true)),
+    )
+    .orderBy(asc(members.createdAt), asc(members.id));
   const rows = await database
     .insert(weeklySummarySends)
-    .values(
-      memberIds.map((memberId) => ({
-        memberId,
-        weekStart,
-        state: "sending" as const,
-        updatedAt: at,
-      })),
-    )
+    .select(wanting)
     .onConflictDoUpdate({
       target: [weeklySummarySends.memberId, weeklySummarySends.weekStart],
       set: { state: "sending", updatedAt: at },
@@ -150,4 +181,14 @@ export async function readLatestWeeklySummary(
     .orderBy(desc(weeklySummarySends.weekStart))
     .limit(1);
   return row;
+}
+
+// The posted date of each linked Refund or Reimbursement, by its ID. listPostedParts gives a linked
+// part its Spending's dates; the weekly summary counts it on its own.
+export async function listLinkedMoneyPostedDates(database: Database): Promise<Map<string, string>> {
+  const rows = await database
+    .select({ id: transactions.id, postedDate: transactions.postedDate })
+    .from(spendingLinks)
+    .innerJoin(transactions, eq(transactions.id, spendingLinks.transactionId));
+  return new Map(rows.map((row) => [row.id, row.postedDate]));
 }

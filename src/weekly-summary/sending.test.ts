@@ -294,6 +294,53 @@ describe("the weekly summary job", () => {
     ]);
   });
 
+  it("sends nothing to a Member who turns it off during the build, and takes no week for them", async () => {
+    await saveSmtp();
+    await storeWeeklySummarySwitch(test.database, alice.id, true);
+    await storeWeeklySummarySwitch(test.database, bob.id, true);
+    // Bob turns it off once the build has begun: its first link is made after the list is read.
+    let turnedOff: Promise<void> | undefined;
+    stops[0]?.();
+    stops[0] = startNotify({
+      database: test.database,
+      delivery: {
+        secrets: test.secrets,
+        address: (path) => {
+          turnedOff ??= storeWeeklySummarySwitch(test.database, bob.id, false);
+          return address(path);
+        },
+        startJob: async () => {},
+        makeTransport: stub.makeTransport,
+      },
+    }).stop;
+
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 1, failed: 0 });
+    await turnedOff;
+    expect(turnedOff).toBeDefined();
+    expect(stub.emails.map((email) => email.bcc)).toEqual([["alice@example.test"]]);
+    expect(await sends()).toEqual([
+      { memberId: alice.id, weekStart: "2026-11-01", state: "sent", tries: 0 },
+    ]);
+    // The take itself leaves out a Member whose switch is off.
+    expect(await takeWeeklySummaries(test.database, [bob.id], "2026-11-01", now)).toEqual([]);
+    expect(await sends()).toHaveLength(1);
+  });
+
+  it("builds nothing when every Member who wants the week has it already", async () => {
+    await saveSmtp();
+    await storeWeeklySummarySwitch(test.database, alice.id, true);
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 1 });
+    // From now on every build throws: a run that built would log it.
+    await test.database.$client.execute("ALTER TABLE review_items RENAME TO review_items_gone");
+    now = new Date("2026-11-10T15:00:00.000Z");
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 0, skipped: "all taken" });
+    expect(lines.join("")).not.toContain("did not build");
+    // A Member who turns it on later that week still gets one, and needs the build.
+    await storeWeeklySummarySwitch(test.database, bob.id, true);
+    expect(await sendWeeklySummaries()).toMatchObject({ sent: 0, failed: 1 });
+    expect(lines.join("")).toContain("did not build");
+  });
+
   it("sends nothing, and records nothing, with no SMTP server or a password it cannot read", async () => {
     await storeWeeklySummarySwitch(test.database, alice.id, true);
     expect(await sendWeeklySummaries()).toMatchObject({ sent: 0, skipped: "not set up" });

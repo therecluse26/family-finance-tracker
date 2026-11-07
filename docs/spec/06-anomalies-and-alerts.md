@@ -294,7 +294,7 @@ Each Member can turn on a short email about the Household's last 7 days. It goes
 - Only this schedule starts it. A sync, a start of the app, or a change of settings never starts one.
 - **The app was off:** if the app was off at 8:00 AM on Sunday, its next start sends that week's summary, with the same dates, until the next Sunday at 8:00 AM. After that, only the newer week's summary goes. A Member never gets a summary for an older week.
 - A Member who turns the switch on after the week's summary went out gets the next week's. While a retry of the week's summary waits ([When it fails](#when-it-fails)), a Member who turns the switch on gets that week's summary in the retry.
-- **At most one per Member per week.** Before it sends, the app records the Member and the week in app.db, under a unique key. The check and the record are one write, so two runs at once, or a run after a restart, send no second copy. If the app stops during a send, that week's summary is not sent again, because the app cannot know whether it went. The app builds the summary before it records any Member's week, so a stop during the build loses no week.
+- **At most one per Member per week.** Before it sends, the app records the Member and the week in app.db, under a unique key. The check and the record are one write, so two runs at once, or a run after a restart, send no second copy. If the app stops during a send, that week's summary is not sent again, because the app cannot know whether it went. The app builds the summary before it records any Member's week, so a stop during the build loses no week. The record checks the switch again, so a Member who turns it off while the summary builds gets none. A run that finds every Member's week recorded builds nothing.
 
 ### What it holds
 
@@ -302,7 +302,7 @@ The subject is "Weekly summary: {first date} to {last date}", such as "Weekly su
 
 | Part | What it says | Link |
 |---|---|---|
-| Spending | The Spending in the 7 days, by the rule for every total: net of Refunds and Reimbursements, with no Category below $0, on its purchase date ([Categorization](04-categorization.md#which-month-a-transaction-counts-in)). Then the direction against usual, such as "▲ $72 above usual". The usual is the median of the 12 Sunday-to-Saturday weeks before. As the dashboard's usual counts the month the history starts in, the usual counts the week the history starts in, and leaves out each week before it. With no such week, the part has no usual. | The Transactions page, for Spending posted on those dates |
+| Spending | The Spending posted in the 7 days, by the rule for every total: net of Refunds and Reimbursements, with no Category below $0 ([Categorization](04-categorization.md#which-month-a-transaction-counts-in)). Each part counts on the day it posted, and a linked Refund or Reimbursement on the day it came, not on its Spending's ([By posted date](#what-it-holds)). Then the direction against usual, such as "▲ $72 above usual". The usual is the median of the 12 Sunday-to-Saturday weeks before, counted the same way. As the dashboard's usual counts the month the history starts in, the usual counts the week the history starts in, and leaves out each week before it. With no such week, the part has no usual. | The Transactions page, for Spending posted on those dates |
 | Budgets | Each Budget that is Over Budget or On pace in the month of the last date, with its Spending and its Budget. With none, "Every Budget is on track." Before the first Budget draft, "No Budgets yet." | The Budgets page |
 | Alerts | How many Alerts were created in the 7 days: how many were sent, and how many were held back (weekly cap). A merged Alert counts once. An Alert found in history does not count. | The Alert list |
 | Review list | How many items are open in the Review list when it is built. | The Review list |
@@ -310,7 +310,7 @@ The subject is "Weekly summary: {first date} to {last date}", such as "Weekly su
 
 - A last line says how to turn the summary off: the Settings, Alerts page, with its link.
 - **Posted only:** the Spending part counts posted Transactions only, as every total does.
-- **The link's dates:** the Transactions page filters dates by the posted date. A purchase made late in the week that posts after it counts in the summary, but its link lists it in the next week. Reason: the Spending part must match the Budgets part and the dashboard, which count by purchase date. The page has no filter by purchase date.
+- **By posted date:** the Spending part counts what posted in the 7 days, not what was bought in them. A purchase still pending at the send counts in the next week's summary. Reason: each part counts in exactly one summary, each of the usual's weeks reads as its own summary did, and the link lists the same purchases. A month's total counts by purchase date, so near a week's edge the Budgets part and the dashboard can count a purchase in another week. A Transaction the bank sends after its week's summary went out, posted in that week, counts in no summary.
 - **One build a run:** the app builds the summary's text once for each week. Every Member who gets it gets the same text. A Household with 5 years of history builds it in less than 1 s.
 
 **Example:**
