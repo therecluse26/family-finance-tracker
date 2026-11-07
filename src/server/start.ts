@@ -64,6 +64,7 @@ import {
   tailorFirstDraft,
 } from "../tailoring/index.ts";
 import { startUpdateCheck } from "../updates/index.ts";
+import { startWeeklySummary } from "../weekly-summary/index.ts";
 import { takeAppLock } from "./running-lock.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
@@ -274,8 +275,10 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     const redo = startRedo({ database, ai });
     const cpiFetch = startCpiFetch({ database, timeZone });
     const updateCheck = startUpdateCheck({ database });
+    const weeklySummary = startWeeklySummary({ database });
     const stopModules = () => {
       backups?.stop();
+      weeklySummary.stop();
       monthlyReview.stop();
       updateCheck.stop();
       cpiFetch.stop();

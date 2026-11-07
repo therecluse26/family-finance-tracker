@@ -411,14 +411,38 @@ export const smtpSettings = sqliteTable(
 );
 
 // Each Member's own channels for Alerts and System notices: push, email, both, or none (spec 06,
-// Recipients and channels). A Member with no row has both, so a new Member starts with both.
+// Recipients and channels). A Member with no row has both, so a new Member starts with both. The
+// row also holds the Member's own weekly summary email switch, which is off until they turn it on
+// (spec 06, Weekly summary email).
 export const alertChannels = sqliteTable("alert_channels", {
   memberId: text("member_id")
     .primaryKey()
     .references(() => members.id, { onDelete: "cascade" }),
   push: integer("push", { mode: "boolean" }).notNull(),
   email: integer("email", { mode: "boolean" }).notNull(),
+  weeklySummary: integer("weekly_summary", { mode: "boolean" }).notNull().default(false),
 });
+
+// One weekly summary email for one Member and one week (spec 06, Weekly summary email). The run
+// takes the row before it sends, in the same write as the check, so a Member gets at most one
+// summary a week. Deleting the Member deletes their rows.
+export const weeklySummarySends = sqliteTable(
+  "weekly_summary_sends",
+  {
+    memberId: text("member_id")
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    // The Sunday the summary's 7 days start on, Household time.
+    weekStart: calendarDate("week_start").notNull(),
+    // "sending" while a run holds it, "failed" after a failed try with tries left, "sent", or
+    // "gave up" after the last try.
+    state: text("state", { enum: ["sending", "failed", "sent", "gave up"] }).notNull(),
+    // The failed tries so far.
+    tries: integer("tries").notNull().default(0),
+    updatedAt: moment("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.memberId, table.weekStart] })],
+);
 
 // The app's VAPID keys for web push (spec 09, Encryption at rest). It has at most one row, whose ID
 // is 1. Both keys are Master-key secrets, encrypted and bound to this row and column. The app makes

@@ -1,12 +1,14 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { Channels, ChannelsView, SmtpFields, SmtpView } from "../../../notify/email-view.ts";
 import type { PushView } from "../../../notify/push-view.ts";
+import type { WeeklySummaryView } from "../../../weekly-summary/view.ts";
 import { api } from "../../api.ts";
 import { Button } from "../../components/Button.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
 import { homeScreenFirstHere, PushPart } from "./AlertPush.tsx";
 import { BUTTONS, CHOICE, DoneLine, Field, HINT, SettingCard } from "./settings-ui.tsx";
+import { WeeklySummaryRow } from "./WeeklySummary.tsx";
 
 // Settings, Alerts: how Alerts and System notices reach each Member (spec 06, Recipients and
 // channels). Each Member picks their own channels, and turns push on for each device
@@ -257,6 +259,7 @@ export function AlertEmail() {
   const [channels, setChannels] = useState<ChannelsView | undefined>();
   const [smtp, setSmtp] = useState<SmtpView | null | undefined>();
   const [push, setPush] = useState<PushView | undefined>();
+  const [weeklySummary, setWeeklySummary] = useState<WeeklySummaryView | undefined>();
   const [homeScreenFirst, setHomeScreenFirst] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [channelsDone, setChannelsDone] = useState<string | undefined>();
@@ -264,14 +267,22 @@ export function AlertEmail() {
 
   useEffect(() => {
     setHomeScreenFirst(homeScreenFirstHere());
-    Promise.all([api["alert-channels"].$get(), api.smtp.settings.$get(), api.push.$get()])
-      .then(async ([channelsRes, smtpRes, pushRes]) => {
-        if (!channelsRes.ok || !smtpRes.ok || !pushRes.ok) {
+    Promise.all([
+      api["alert-channels"].$get(),
+      api.smtp.settings.$get(),
+      api.push.$get(),
+      api["weekly-summary"].$get(),
+    ])
+      .then(async ([channelsRes, smtpRes, pushRes, weeklyRes]) => {
+        if (!channelsRes.ok || !smtpRes.ok || !pushRes.ok || !weeklyRes.ok) {
           return setError("The channel settings did not load.");
         }
         setPush(((await pushRes.json()) as { push: PushView }).push);
         setChannels(((await channelsRes.json()) as { channels: ChannelsView }).channels);
         setSmtp(((await smtpRes.json()) as { smtp: SmtpView | null }).smtp);
+        setWeeklySummary(
+          ((await weeklyRes.json()) as { weeklySummary: WeeklySummaryView }).weeklySummary,
+        );
       })
       .catch(() => setError("The server did not answer."));
   }, []);
@@ -292,6 +303,7 @@ export function AlertEmail() {
         )}
         <DoneLine done={channelsDone} />
         {push === undefined ? null : <PushPart push={push} homeScreenFirst={homeScreenFirst} />}
+        {weeklySummary === undefined ? null : <WeeklySummaryRow initial={weeklySummary} />}
       </SettingCard>
       <SettingCard
         id="email-server"
@@ -310,6 +322,9 @@ export function AlertEmail() {
             onSaved={(saved) => {
               setSmtp(saved);
               if (channels !== undefined) setChannels({ ...channels, emailSetUp: true });
+              if (weeklySummary !== undefined) {
+                setWeeklySummary({ ...weeklySummary, emailSetUp: true });
+              }
               setSmtpDone("The email server is saved.");
             }}
           >

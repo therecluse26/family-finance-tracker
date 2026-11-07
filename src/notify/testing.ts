@@ -30,6 +30,8 @@ export class StubSmtp {
   failWith: Error | undefined;
   // When set, only sends whose subject is in it fail.
   failSubjects: Set<string> | undefined;
+  // When set, only sends to an address in it fail.
+  failRecipients: Set<string> | undefined;
 
   readonly makeTransport: TransportMaker = (server) => {
     this.servers.push(server);
@@ -38,8 +40,11 @@ export class StubSmtp {
       version: "1",
       send: (mail, callback) => {
         const subject = String(mail.data.subject ?? "");
+        const recipients = mail.message.getEnvelope().to;
         const failure =
-          this.failSubjects === undefined || this.failSubjects.has(subject)
+          (this.failSubjects === undefined || this.failSubjects.has(subject)) &&
+          (this.failRecipients === undefined ||
+            recipients.some((each) => this.failRecipients?.has(each)))
             ? this.failWith
             : undefined;
         if (failure !== undefined) return callback(failure, undefined);
