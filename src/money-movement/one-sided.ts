@@ -186,7 +186,9 @@ export function oneSidedKind(database: Database): ReviewKind {
       // Only the Transactions still on the card, read inside the answer's transaction: one a
       // Member changed on its row, or one that left since the card's last update, keeps what it
       // has, in either order.
-      const { key, ids } = stillOnCard(await readCardFacts(tx, item.subject.transactionIds));
+      const { key, ids, others } = stillOnCard(
+        await readCardFacts(tx, item.subject.transactionIds),
+      );
       if (ids.length === 0) {
         log.info("A one-sided Transfer card's answer found none of its Transactions still on it");
         return;
@@ -216,7 +218,7 @@ export function oneSidedKind(database: Database): ReviewKind {
           madeBy: answering.memberId,
         });
       }
-      await followUpAgain(tx, ids);
+      await followUpAgain(tx, [...ids, ...others]);
     },
     afterAnswer: () => askForFollowUp(),
   };

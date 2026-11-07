@@ -62,6 +62,7 @@ export type CardFacts = {
   merchantName: string | null;
   merchantCleanName: string | null;
   providerCategory: string | null;
+  counterparties: { name: string; type: string }[];
   hidden: boolean;
   handSet: Record<string, unknown>;
   step: string | null;
@@ -76,6 +77,7 @@ const factColumns = {
   merchantName: transactions.merchantName,
   merchantCleanName: transactions.merchantCleanName,
   providerCategory: transactions.providerCategory,
+  counterparties: transactions.counterparties,
   hiddenReason: transactions.hiddenReason,
   handSet: transactions.handSet,
   step: transactionDecisions.step,

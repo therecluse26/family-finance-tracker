@@ -11,7 +11,7 @@ import {
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain } from "../follow-up/index.ts";
 import { log } from "../log.ts";
-import { accountLastFours, merchantKey } from "../merchants/index.ts";
+import { accountLastFours, cleanMerchant, merchantKey, plainForms } from "../merchants/index.ts";
 import {
   type CardMember,
   cardsByKey,
@@ -31,18 +31,36 @@ export const ONE_SIDED_KIND = "one-sided Transfer";
 // The steps whose result goes to one Unconnected account, by the case table in one-sided.ts.
 export const ONE_SIDED_STEPS = ["5.4", "5.6", "6.3", "6.6", "6.7"] as const;
 
-// A card's key: the clean name as Merchant identity compares it, with the last 4 digits of each
-// account number the line holds, found on its plain forms (K13). The name is what the list shows.
+// A card's key: the line's name by the cleanup rules alone, as Merchant identity compares it,
+// with the last 4 digits of each account number the line holds, found on its plain forms (K13).
+// The name is what the list shows.
 export type OneSidedKey = { merchantKey: string; merchantName: string; lastFours: string };
 
-// The key of a one-sided Transfer, or null when its line has no clean Merchant name, so it keeps
-// an item of its own and its answer is not remembered.
+// A word that holds a digit, such as a reference code or a date, in any script.
+const HAS_DIGIT = /\p{Nd}/u;
+
+// The key of a one-sided Transfer, or null when its line has no rules name, so it keeps an item of
+// its own and its answer is not remembered. The key reads only what the provider sent, never the
+// stored clean name, which AI cleanup rewrites after Matching has decided: so the key is the same
+// when Matching decides, when a Member answers, and when a later Transaction looks the answer up.
+// A word with a digit leaves the name, so a line's own reference code never splits a card.
 export function oneSidedKeyOf(txn: {
-  merchantCleanName: string | null;
   description: string;
+  merchantName: string | null;
+  providerCategory: string | null;
+  counterparties?: readonly { name: string; type: string }[];
 }): OneSidedKey | null {
-  const name = txn.merchantCleanName;
-  if (name === null) return null;
+  const { merchant } = cleanMerchant({
+    description: txn.description,
+    merchantName: txn.merchantName,
+    merchantId: null,
+    counterparties: txn.counterparties ?? [],
+    category: txn.providerCategory === null ? null : { name: txn.providerCategory },
+  });
+  const name = plainForms(merchant?.name ?? "")
+    .split(/\s+/)
+    .filter((word) => word !== "" && !HAS_DIGIT.test(word))
+    .join(" ");
   const key = merchantKey(name);
   if (key === "") return null;
   return {
@@ -166,10 +184,14 @@ const stillAsks = (facts: CardFacts) =>
   facts.handSet.unconnectedAccount === undefined;
 
 // The card's Transactions an answer writes, with the card's key: those still on the card, with the
-// key most of them share. Null as the key for a card of a line with no clean Merchant name.
+// key most of them share. Null as the key for a card of a line with no rules name. `others` are the
+// card's Transactions that still ask under another key, such as after a provider change to the
+// line: the answer leaves them as they are and sends them back through the follow-up job, so each
+// joins its own key's card and none drops off the list undecided.
 export function stillOnCard(facts: readonly CardFacts[]): {
   key: OneSidedKey | null;
   ids: string[];
+  others: string[];
 } {
   const byKey = new Map<string, { key: OneSidedKey | null; ids: string[] }>();
   for (const each of facts) {
@@ -184,7 +206,9 @@ export function stillOnCard(facts: readonly CardFacts[]): {
   for (const group of byKey.values()) {
     if (largest === undefined || group.ids.length > largest.ids.length) largest = group;
   }
-  return largest ?? { key: null, ids: [] };
+  if (largest === undefined) return { key: null, ids: [], others: [] };
+  const others = [...byKey.values()].flatMap((group) => (group === largest ? [] : group.ids));
+  return { ...largest, others };
 }
 
 // The remembered answers, as Settings → Categories lists them, by Merchant name.

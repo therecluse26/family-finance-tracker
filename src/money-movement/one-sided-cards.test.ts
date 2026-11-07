@@ -224,7 +224,9 @@ describe("one-sided Transfer cards", () => {
     expect(await unhandled()).toEqual(new Set());
 
     expect(await answer(card, "not a transfer")).toBe("answered");
-    expect(await unhandled()).toEqual(new Set(await idsOf(["a", "a2"])));
+    // The other key's Transaction goes back through the follow-up job too, so it joins its own
+    // key's card and never drops off the list, but the answer does not cover it.
+    expect(await unhandled()).toEqual(new Set(await idsOf(["a", "a2", "other"])));
     expect(await transferAnswerViews(bank.database)).toEqual([
       expect.objectContaining({
         merchantName: "Online Transfer Ref",
@@ -236,6 +238,7 @@ describe("one-sided Transfer cards", () => {
     expect(await decisionOf("a")).toMatchObject({ step: "5.6", parts: [{ type: "Spending" }] });
     // The other key still asks.
     expect(await cardOf("other")).toBeDefined();
+    expect(await decisionOf("other")).toMatchObject({ parts: [{ type: "Transfer" }] });
   });
 
   it("deletes a remembered answer, and only its key's Transactions not set by hand ask again", async () => {
@@ -363,5 +366,121 @@ describe("one-sided Transfer cards", () => {
     await switchExclude(bank.database, accountId, false);
     await runFollowUp(NOW);
     expect((await cardOf("a"))?.bestAnswer.value).toBe("keep");
+  });
+
+  // Each Transaction's Unconnected account, or undefined.
+  const assignedTo = async (providerId: string) =>
+    (
+      await sql("SELECT account_id FROM unconnected_assignments WHERE transaction_id = ?", [
+        await idOf(providerId),
+      ])
+    ).rows[0]?.account_id;
+  const typeOf = async (providerId: string) => (await decisionOf(providerId))?.parts[0]?.type;
+  const saver = (id: string, postedDate: string, description: string) =>
+    fakeTxn({
+      id,
+      accountId: CHECKING.id,
+      amount: -4_000,
+      postedDate,
+      description,
+      category: {
+        name: "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS",
+        confidence: "VERY_HIGH",
+        version: null,
+        mcc: null,
+      },
+    });
+
+  it("puts a remembered answer after an account a Member picked and an account the line names, and before a Saving code", async () => {
+    const line = "ONLINE TRANSFER TO BROKERAGE XXXX4821";
+    await sync([out("a", -1_000, "2026-10-01", line), saver("coded", "2026-10-02", line)]);
+    expect(await answer(await cardOf("a"), "not a transfer")).toBe("answered");
+    await runFollowUp(NOW);
+    expect(await typeOf("a")).toBe("Spending");
+    // A remembered answer beats a Saving code: decided again, the coded line is Spending.
+    expect(await typeOf("coded")).toBe("Saving");
+    await runMatching(bank.database, [await idOf("coded")]);
+    expect(await typeOf("coded")).toBe("Spending");
+
+    // A Member picks an account by hand on one Transaction: the account wins.
+    const picked = await addUnconnectedAccount(bank.database, {
+      name: "Credit union savings",
+      kind: "savings",
+      institutionName: "Credit union",
+      mask: "1111",
+    });
+    await setHandSetFields(bank.database, await idOf("a"), { unconnectedAccount: picked.id });
+    await runMatching(bank.database, [await idOf("a")]);
+    expect(await typeOf("a")).toBe("Transfer");
+    expect(await assignedTo("a")).toBe(picked.id);
+
+    // The line names a new account by its last 4: the account wins over the remembered answer.
+    const named = await addUnconnectedAccount(bank.database, {
+      name: "Brokerage cash",
+      kind: "savings",
+      institutionName: "Brokerage",
+      mask: "4821",
+    });
+    await sync([out("b", -2_000, "2026-10-03", line)]);
+    expect(await typeOf("b")).toBe("Transfer");
+    expect(await assignedTo("b")).toBe(named.id);
+    expect(await cardOf("b")).toBeUndefined();
+  });
+
+  it("keys a card on the line's rules name, so an AI rename after Matching neither splits the card nor misses the answer", async () => {
+    const line = (code: string, date: string) =>
+      `ONLINE TRANSFER REF #${code} TO PINECREST SAVINGS XXXXXX4821 ON ${date}`;
+    const rename = (name: string) =>
+      sql("UPDATE transactions SET merchant_clean_name = ?, merchant_needs_ai = 0", [name]);
+    // Each line holds its own reference code and date, which never split the card.
+    await sync([
+      out("a", -1_000, "2026-10-01", line("IB0QQ7XWZ4", "10/01/26")),
+      out("b", -2_000, "2026-10-02", line("K22MZP09QA", "10/02/26")),
+    ]);
+    // AI cleanup renames the lines after Matching decided them, as categorization does.
+    await rename("Pinecrest Savings");
+    const card = await cardOf("a");
+    expect(transactionsOf(card)).toEqual(await idsOf(["b", "a"]));
+    expect(await answer(card, "not a transfer")).toBe("answered");
+    await runFollowUp(NOW);
+    expect(await typeOf("a")).toBe("Spending");
+    expect(await typeOf("b")).toBe("Spending");
+    expect(await transferAnswerViews(bank.database)).toEqual([
+      expect.objectContaining({
+        merchantName: "Online Transfer Ref To Pinecrest Savings On",
+        lastFours: ["4821"],
+      }),
+    ]);
+
+    // A later line with the same key takes the answer, renamed before Matching or after.
+    bank.fake.addPages(BANK, {
+      added: [out("c", -3_000, "2026-10-05", line("ZZ81QK7710", "10/05/26"))],
+    });
+    await syncConnection(connectionId, NOW);
+    await rename("Savings Transfer");
+    await runFollowUp(NOW);
+    expect(await typeOf("c")).toBe("Spending");
+    expect(await cardOf("c")).toBeUndefined();
+    expect(await cards()).toEqual([]);
+  });
+
+  it("sends a card's Transaction of another key back through the follow-up job, so it asks on its own card", async () => {
+    await sync([
+      out("a", -1_000, "2026-10-01", "ONLINE TRANSFER TO SAV XXXX5678"),
+      out("b", -2_000, "2026-10-02", "ONLINE TRANSFER TO SAV XXXX5678"),
+      out("d", -2_500, "2026-10-03", "ONLINE TRANSFER TO SAV XXXX5678"),
+    ]);
+    const card = await cardOf("a");
+    // A provider change gives b another key after the card's last update.
+    await sql("UPDATE transactions SET description = ? WHERE id = ?", [
+      "ONLINE TRANSFER TO CHK XXXX9012",
+      await idOf("b"),
+    ]);
+    expect(await answer(card, "not a transfer")).toBe("answered");
+    await runFollowUp(NOW);
+    expect(await typeOf("a")).toBe("Spending");
+    expect(await typeOf("d")).toBe("Spending");
+    expect(await typeOf("b")).toBe("Transfer");
+    expect(transactionsOf(await cardOf("b"))).toEqual([await idOf("b")]);
   });
 });
