@@ -17,6 +17,7 @@ export {
   type AiRequestFailure,
   type AiRequestLogEntry,
   type AiRequestLogKeepDays,
+  type AiRequestLogKeeping,
   type AiRequestLogListed,
   type AiRequestLogSettingsRow,
   addAiRequestLogEntry,
@@ -28,6 +29,7 @@ export {
   type NewAiRequestLogEntry,
   readAiRequestLogEntry,
   readAiRequestLogSettings,
+  stopAiRequestLogCleanup,
   storeAiRequestLogSettings,
 } from "./ai-request-log.ts";
 export {

@@ -21,6 +21,9 @@ export const AI_REQUEST_FAILURES = [
 
 export type AiRequestFailure = (typeof AI_REQUEST_FAILURES)[number];
 
+// What the page says when a Member's retry of a stopped cleanup failed too.
+export const CLEANUP_FAILED_AGAIN = "The cleanup failed again.";
+
 // The words the page shows for each failure.
 export const AI_REQUEST_FAILURE_WORDS: Record<AiRequestFailure, string> = {
   network: "no answer from the AI provider",
@@ -89,6 +92,8 @@ export type AiRequestLogEntryView = AiRequestLogItem & {
 // The log's routes (src/server/api.ts).
 export type AiRequestLogRoutes = {
   page(options: { before?: number }): Promise<AiRequestLogPage>;
+  // The switch and the kept days alone, for the AI usage page.
+  settings(): Promise<AiRequestLogSettingsView>;
   entry(id: number): Promise<AiRequestLogEntryView | undefined>;
   // Stores the switch and the kept days. Off deletes every kept text. Fewer kept days runs the
   // cleanup at once.

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1be30ae1-1dac-47ba-a57f-54313993c85f",
+  "id": "5264fd40-ec3b-41c6-87cc-022f1f014704",
   "prevId": "6af59c69-888c-4105-b35c-57b9c547cdd6",
   "tables": {
     "accounts": {
@@ -524,6 +524,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "bytes": {
+          "name": "bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "request": {
           "name": "request",
           "type": "text",
@@ -589,6 +596,13 @@
             "chat_thread_id"
           ],
           "isUnique": false
+        },
+        "ai_request_log_bytes": {
+          "name": "ai_request_log_bytes",
+          "columns": [
+            "bytes"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -649,6 +663,14 @@
         },
         "cleanup_failures": {
           "name": "cleanup_failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "switch_offs": {
+          "name": "switch_offs",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,

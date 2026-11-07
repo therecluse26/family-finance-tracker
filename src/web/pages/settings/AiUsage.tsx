@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { AI_USE_LABELS, type AiUsageView } from "../../../ai/ai-view.ts";
-import type { AiRequestLogPage, AiRequestLogSettingsView } from "../../../ai/request-log-view.ts";
+import type { AiRequestLogSettingsView } from "../../../ai/request-log-view.ts";
 import { callCost, capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import { api } from "../../api.ts";
@@ -14,7 +14,7 @@ import {
   AI_REQUEST_LOG_PATH,
   AiRequestLogCard,
   aiRequestPath,
-  readAiRequestLog,
+  readAiRequestLogSettings,
 } from "./AiRequestLog.tsx";
 import { TEXT_LINK } from "./settings-ui.tsx";
 
@@ -157,10 +157,10 @@ export function AiUsage() {
         setUsage(((await res.json()) as { usage: AiUsageView }).usage);
       })
       .catch(() => setError("The server did not answer."));
-    readAiRequestLog()
+    readAiRequestLogSettings()
       .then(async (res) => {
         if (!res.ok) return setError("The AI request log did not load.");
-        setLog(((await res.json()) as { log: AiRequestLogPage }).log.settings);
+        setLog(((await res.json()) as { settings: AiRequestLogSettingsView }).settings);
       })
       .catch(() => setError("The server did not answer."));
   }, []);

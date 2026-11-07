@@ -4,7 +4,9 @@ import {
   addAiRequestLogEntry,
   addUnconnectedAccount,
   deleteChatThread,
+  deleteRemovedConnection,
   loginTables,
+  readAiRequestLogSettings,
   storeChatThread,
 } from "../db/index.ts";
 import {
@@ -23,6 +25,7 @@ import {
   AI_REQUEST_LOG_CLEANUP_BATCH,
   AI_REQUEST_LOG_CLEANUP_CAP,
   AI_REQUEST_LOG_CLEANUP_STOPPED,
+  AI_REQUEST_LOG_MAX_BYTES,
   AI_REQUEST_LOG_PAGE,
   AiRequestLogCleanupJob,
   aiRequestLogRoutes,
@@ -157,8 +160,18 @@ describe("the AI request log", () => {
     return entry;
   };
 
+  // What a call that starts now notes: the cap, the switch-offs so far, and the size cap.
+  const keeping = async (maxBytes = AI_REQUEST_LOG_MAX_BYTES) => ({
+    cleanupCap: AI_REQUEST_LOG_CLEANUP_CAP,
+    switchOffs: (await readAiRequestLogSettings(test.database)).switchOffs,
+    maxBytes,
+  });
+
   // A kept call, written straight to app.db, at `at`.
-  async function keep(at: Date, extra: { chatThreadId?: string } = {}): Promise<boolean> {
+  async function keep(
+    at: Date,
+    extra: { chatThreadId?: string; request?: string; maxBytes?: number } = {},
+  ): Promise<boolean> {
     return addAiRequestLogEntry(
       test.database,
       {
@@ -167,14 +180,14 @@ describe("the AI request log", () => {
         chatThreadId: extra.chatThreadId ?? null,
         use: "category fix",
         model: "quick-model",
-        request: "{}",
+        request: extra.request ?? "{}",
         requestCut: false,
         response: "Groceries",
         responseCut: false,
         failure: null,
         failureStatus: null,
       },
-      AI_REQUEST_LOG_CLEANUP_CAP,
+      await keeping(extra.maxBytes),
     );
   }
 
@@ -182,9 +195,9 @@ describe("the AI request log", () => {
   async function keepMany(count: number, newest: Date): Promise<void> {
     await test.database.$client.execute({
       sql: `WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < ?)
-        INSERT INTO ai_request_log (at, use, model, request, request_cut, response, response_cut)
+        INSERT INTO ai_request_log (at, use, model, bytes, request, request_cut, response, response_cut)
         SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-' || i || ' minutes'), 'category fix',
-          'quick-model', '{}', 0, 'Groceries', 0
+          'quick-model', 11, '{}', 0, 'Groceries', 0
         FROM n ORDER BY i DESC`,
       args: [count, newest.toISOString()],
     });
@@ -230,6 +243,8 @@ describe("the AI request log", () => {
     expect(request.prompt.length).toBeGreaterThan(1);
     expect(entry.request).toContain("VENMO *Member A");
     expect(entry.request).toContain("Bluebird Books");
+    // Compact JSON: the page indents it for reading.
+    expect(entry.request).toBe(JSON.stringify(request));
     for (const hidden of ["Dana", "Whitfield", "4821", "10001", apiKey]) {
       expect(entry.request).not.toContain(hidden);
     }
@@ -357,7 +372,7 @@ describe("the AI request log", () => {
         ["chat", threadId, "Member A spent $480 on Restaurants."],
       ]);
       expect(kept.every((row) => typeof row.ai_call_id === "number")).toBe(true);
-      expect(String(kept[1]?.request)).toContain('"total": 480');
+      expect(String(kept[1]?.request)).toContain('"total":480');
     });
 
     it("goes with its thread: deleting the thread deletes its kept text and keeps the AI usage rows", async () => {
@@ -418,6 +433,29 @@ describe("the AI request log", () => {
       expect(await rows()).toEqual([]);
     });
 
+    it("keeps nothing when a Member turns the log off and on again while the call runs", async () => {
+      const ai = await connect();
+      await turn(true);
+      stub.beforeAnswer = async () => {
+        await turn(false);
+        await turn(true);
+      };
+
+      expect(await ai.generate(categoryFix)).toMatchObject({ ready: true });
+      expect(await rows()).toEqual([]);
+
+      // The next call, which starts with the log on, keeps its text.
+      stub.beforeAnswer = async () => {};
+      await ai.generate(categoryFix);
+      expect(await rows()).toHaveLength(1);
+      // Only a switch-off counts: on again, or other kept days, leaves a running call's text kept.
+      stub.beforeAnswer = async () => {
+        await turn(true, 90);
+      };
+      await ai.generate(categoryFix);
+      expect(await rows()).toHaveLength(2);
+    });
+
     it("keeps nothing when the cleanup stops at its cap while the call runs", async () => {
       const ai = await connect();
       await turn(true);
@@ -458,7 +496,7 @@ describe("the AI request log", () => {
             failure: null,
             failureStatus: null,
           },
-          AI_REQUEST_LOG_CLEANUP_CAP,
+          await keeping(),
         ),
       ).toBe(false);
       expect(await keep(NOW)).toBe(true);
@@ -474,6 +512,75 @@ describe("the AI request log", () => {
       await test.database.$client.execute("DELETE FROM ai_calls");
 
       expect(await rows()).toEqual([]);
+    });
+
+    it("deletes every kept call with a removed Connection's history, and keeps the switch", async () => {
+      const ai = await connect();
+      await turn(true, 7);
+      await ai.generate(categoryFix);
+      expect(await keep(NOW)).toBe(true);
+      const calls = await aiCallCount();
+      await test.database.$client.execute({
+        sql: `INSERT INTO connections (id, provider, bank_id, bank_name, sync_minute, origin, created_at, removed_at)
+          VALUES ('c1', 'fake', 'fake-bank', 'Fake Bank', 7, 'linked', ?, ?)`,
+        args: [NOW.toISOString(), NOW.toISOString()],
+      });
+
+      expect(await deleteRemovedConnection(test.database, "c1", NOW)).toBeDefined();
+
+      expect(await rows()).toEqual([]);
+      expect(await aiCallCount()).toBe(calls);
+      expect(await routes().settings()).toEqual({ on: true, keepDays: 7, stopped: false });
+    });
+  });
+
+  describe("its size cap", () => {
+    // `bytes` of request text, all ASCII, so each kept call holds bytes + 9 ("Groceries").
+    const sized = (bytes: number) => "x".repeat(bytes);
+
+    it("deletes the oldest kept calls first when a new one passes the cap, in the same write", async () => {
+      await turn(true);
+      const cap = 3 * 109;
+      for (const each of [0, 1, 2]) {
+        expect(
+          await keep(new Date(NOW.getTime() + each), { request: sized(100), maxBytes: cap }),
+        ).toBe(true);
+      }
+      expect((await rows()).map((row) => row.bytes)).toEqual([109, 109, 109]);
+
+      // One more call at 109 bytes passes the cap by one call: the oldest goes.
+      expect(await keep(NOW, { request: sized(100), maxBytes: cap })).toBe(true);
+      expect((await rows()).map((row) => row.id)).toEqual([2, 3, 4]);
+
+      // A bigger call takes as many of the oldest as it must, and no more.
+      expect(await keep(NOW, { request: sized(191), maxBytes: cap })).toBe(true);
+      expect((await rows()).map((row) => [row.id, row.bytes])).toEqual([
+        [4, 109],
+        [5, 200],
+      ]);
+      // Under the cap, nothing goes.
+      expect(await keep(NOW, { request: "{}", maxBytes: cap })).toBe(true);
+      expect((await rows()).map((row) => row.id)).toEqual([4, 5, 6]);
+    });
+
+    it("adds up 20,000 kept calls and trims the oldest within a second", async () => {
+      await turn(true);
+      await keepMany(20_000, NOW);
+      const started = performance.now();
+      expect(await keep(NOW, { request: sized(100), maxBytes: 20_000 * 11 })).toBe(true);
+      expect(performance.now() - started).toBeLessThan(1000);
+      // The new call's 109 bytes pushed out the 10 oldest, at 11 bytes each.
+      const left = await test.database.$client.execute(
+        "SELECT count(*) AS n, sum(bytes) AS bytes FROM ai_request_log",
+      );
+      expect({ ...left.rows[0] }).toEqual({ n: 20_000 - 10 + 1, bytes: (20_000 - 10) * 11 + 109 });
+    });
+
+    it("counts bytes of UTF-8, and holds 100 MB", async () => {
+      await turn(true);
+      expect(AI_REQUEST_LOG_MAX_BYTES).toBe(100 * 1024 * 1024);
+      expect(await keep(NOW, { request: "é😀" })).toBe(true);
+      expect((await rows())[0]?.bytes).toBe(2 + 4 + 9);
     });
   });
 
@@ -592,6 +699,16 @@ describe("the AI request log", () => {
       // While it is stopped, the log keeps no new text.
       await ai.generate(categoryFix);
       expect(await rows()).toHaveLength(1);
+
+      // A Member's retry that fails again leaves it stopped: still no new text, and no new notice.
+      expect(await turn(true, 30)).toEqual({ on: true, keepDays: 30, stopped: true });
+      expect((await readAiRequestLogSettings(test.database)).cleanupFailures).toBe(
+        AI_REQUEST_LOG_CLEANUP_CAP,
+      );
+      await ai.generate(categoryFix);
+      expect(await rows()).toHaveLength(1);
+      expect(raised).toEqual([AI_REQUEST_LOG_CLEANUP_STOPPED]);
+      expect(ended).toEqual([]);
 
       // A Member's change starts it again at once, and the run that works ends the notice.
       await test.database.$client.execute("DROP TRIGGER no_delete");

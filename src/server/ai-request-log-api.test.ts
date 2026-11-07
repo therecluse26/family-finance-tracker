@@ -2,9 +2,15 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { AI_REQUEST_LOG_PAGE, type AiRequestLogPage, aiRequestLogRoutes } from "../ai/index.ts";
+import {
+  AI_REQUEST_LOG_CLEANUP_CAP,
+  AI_REQUEST_LOG_MAX_BYTES,
+  AI_REQUEST_LOG_PAGE,
+  type AiRequestLogPage,
+  aiRequestLogRoutes,
+} from "../ai/index.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
-import { addAiRequestLogEntry, markSetupStep } from "../db/index.ts";
+import { addAiRequestLogEntry, markSetupStep, readAiRequestLogSettings } from "../db/index.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
@@ -48,7 +54,7 @@ describe("the AI request log routes", () => {
   const pageOf = async (tab: TestBrowser, query = "") =>
     ((await (await tab.get(`/api/ai-request-log${query}`)).json()) as { log: AiRequestLogPage })
       .log;
-  const keep = (at: Date, request = "the request") =>
+  const keep = async (at: Date, request = "the request") =>
     addAiRequestLogEntry(
       test.database,
       {
@@ -64,7 +70,11 @@ describe("the AI request log routes", () => {
         failure: "rate limit",
         failureStatus: 429,
       },
-      3,
+      {
+        cleanupCap: AI_REQUEST_LOG_CLEANUP_CAP,
+        switchOffs: (await readAiRequestLogSettings(test.database)).switchOffs,
+        maxBytes: AI_REQUEST_LOG_MAX_BYTES,
+      },
     );
 
   async function signedIn(member: TestMember): Promise<TestBrowser> {
@@ -138,6 +148,12 @@ describe("the AI request log routes", () => {
     const off = await tab.send("PUT", SETTINGS, { on: false, keepDays: 7 });
     expect(off.status).toBe(200);
     expect(await entryCount()).toBe(0);
+    // The AI usage page reads the switch and the kept days alone.
+    const settings = await tab.get(SETTINGS);
+    expect(settings.status).toBe(200);
+    expect(await settings.json()).toEqual({
+      settings: { on: false, keepDays: 7, stopped: false },
+    });
     expect((await tab.get(`/api/ai-request-log/${id}`)).status).toBe(404);
     expect(await settingsRow()).toEqual([{ on: 0, keepDays: 7, cleanupFailures: 0 }]);
   });
@@ -183,7 +199,7 @@ describe("the AI request log routes", () => {
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "Ask for the page before a kept call's ID." });
     }
-    for (const id of ["0", "abc", "1.0", "settings", "9".repeat(16), "999999"]) {
+    for (const id of ["0", "abc", "1.0", "9".repeat(16), "999999"]) {
       const res = await tab.get(`/api/ai-request-log/${id}`);
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ error: "No kept AI request has this ID." });
@@ -229,6 +245,7 @@ describe("the AI request log routes", () => {
       415,
     );
     expect((await signedOut.get("/api/ai-request-log")).status).toBe(401);
+    expect((await signedOut.get(SETTINGS)).status).toBe(401);
     expect((await signedOut.get(`/api/ai-request-log/${id}`)).status).toBe(401);
     expect(await settingsRow()).toEqual([{ on: 1, keepDays: 30, cleanupFailures: 0 }]);
     expect(await entryCount()).toBe(1);

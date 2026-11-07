@@ -14,7 +14,10 @@ import {
   AiRequestLogList,
   readAiRequestLog,
   readAiRequestLogEntry,
+  readAiRequestLogSettings,
+  readableRequest,
   saveAiRequestLog,
+  savedLine,
   TURN_OFF_QUESTION,
 } from "./AiRequestLog.tsx";
 import { AiUsageReport } from "./AiUsage.tsx";
@@ -82,7 +85,7 @@ describe("Settings → AI usage: the AI request log card", () => {
   it("asks before turning off, saying it deletes every kept text, and holds the switch meanwhile", () => {
     const html = routed(<AiRequestLogCard initial={ON} confirming />);
     expect(TURN_OFF_QUESTION).toBe(
-      "Turn off the AI request log? This deletes all kept AI request text now.",
+      "Turn off the AI request log? This deletes all kept AI request text now. Backups made before keep their copies until they roll off.",
     );
     expect(text(html)).toContain(TURN_OFF_QUESTION);
     expect(text(html)).toContain("Turn off and delete");
@@ -97,6 +100,19 @@ describe("Settings → AI usage: the AI request log card", () => {
     );
     expect(text(html)).toContain("Try the cleanup again");
     expect(text(routed(<AiRequestLogCard initial={ON} />))).not.toContain("Try the cleanup");
+  });
+
+  it("says so when a retry of the stopped cleanup fails again, and says what was saved otherwise", () => {
+    const stopped = { ...ON, stopped: true };
+    expect(savedLine(stopped, stopped, "The cleanup ran again.")).toEqual({
+      error: "The cleanup failed again.",
+    });
+    expect(savedLine(stopped, ON, "The cleanup ran again.")).toEqual({
+      done: "The cleanup ran again.",
+    });
+    expect(savedLine(ON, { ...ON, keepDays: 7 }, "Text is kept 7 days.")).toEqual({
+      done: "Text is kept 7 days.",
+    });
   });
 });
 
@@ -202,7 +218,8 @@ describe("Settings → AI usage → AI request log", () => {
 describe("Settings → AI usage → one kept call", () => {
   const ENTRY: AiRequestLogEntryView = {
     ...CHAT,
-    request: '{\n  "prompt": "<b>Member A</b> asked **how much**"\n}',
+    // Kept as compact JSON.
+    request: '{"prompt":"<b>Member A</b> asked **how much**"}',
     requestCut: false,
     response: "<script>alert(1)</script>\n\n# Not a heading",
     responseCut: true,
@@ -235,12 +252,23 @@ describe("Settings → AI usage → one kept call", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<strong>");
     expect(html).not.toContain("<h1");
-    expect(html).toContain("&lt;b&gt;Member A&lt;/b&gt; asked **how much**");
+    // Indented for reading, as plain text.
+    expect(html).toContain(
+      "{\n  &quot;prompt&quot;: &quot;&lt;b&gt;Member A&lt;/b&gt; asked **how much**&quot;\n}",
+    );
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;\n\n# Not a heading");
     expect(html.match(/<pre[^>]*whitespace-pre-wrap/g)).toHaveLength(2);
     // Only the cut text says so.
     expect(text(html).match(/Cut at 256 KB/g)).toHaveLength(1);
     expect(text(html).indexOf("Cut at 256 KB")).toBeGreaterThan(text(html).indexOf("Reply"));
+  });
+
+  it("shows a request cut at 256 KB as it was kept, since it is no longer whole JSON", () => {
+    const cut = '{"prompt":[{"role":"user","content":"How much';
+    expect(readableRequest(cut)).toBe(cut);
+    expect(readableRequest('{"a":[1,{"b":"c"}]}')).toBe(
+      '{\n  "a": [\n    1,\n    {\n      "b": "c"\n    }\n  ]\n}',
+    );
   });
 
   it("shows a failed call with no usage row as such", () => {
@@ -281,6 +309,7 @@ describe("Settings → AI usage: the AI request log's requests", () => {
     await readAiRequestLog();
     await readAiRequestLog(41);
     await readAiRequestLogEntry("41");
+    await readAiRequestLogSettings();
     expect(requests).toEqual([
       {
         method: "PUT",
@@ -291,6 +320,7 @@ describe("Settings → AI usage: the AI request log's requests", () => {
       { method: "GET", path: "/api/ai-request-log", type: null, body: undefined },
       { method: "GET", path: "/api/ai-request-log?before=41", type: null, body: undefined },
       { method: "GET", path: "/api/ai-request-log/41", type: null, body: undefined },
+      { method: "GET", path: "/api/ai-request-log/settings", type: null, body: undefined },
     ]);
   });
 });

@@ -237,7 +237,11 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   exported(schema.aiCostCap, ["capCents"], ["id", "warnedMonth", "reachedMonth"]),
   exported(schema.aiModelPrices, "every column"),
   // The AI request log's switch and kept days. Its kept text never goes in.
-  exported(schema.aiRequestLogSettings, ["on", "keepDays"], ["id", "cleanupFailures"]),
+  exported(
+    schema.aiRequestLogSettings,
+    ["on", "keepDays"],
+    ["id", "cleanupFailures", "switchOffs"],
+  ),
   // The SMTP password is a Master-key secret, and the sign-in name is the other half of it.
   exported(schema.smtpSettings, ["host", "port", "sender"], ["id", "username", "password"]),
   // The Plaid client ID and secret are the Plaid keys.

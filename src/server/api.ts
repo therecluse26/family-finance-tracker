@@ -1676,6 +1676,11 @@ export const api = new Hono<ServerEnv>()
     );
     return c.json({ log: page });
   })
+  // The switch and the kept days alone. Before the kept call's route, which would take "settings"
+  // for an ID.
+  .get("/ai-request-log/settings", async (c) =>
+    c.json({ settings: await c.var.aiRequestLog.settings() }),
+  )
   // One kept call's request and reply.
   .get("/ai-request-log/:id", async (c) => {
     const id = c.req.param("id");

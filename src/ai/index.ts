@@ -44,6 +44,7 @@ export type { AiConnection, AiModelMaker } from "./providers.ts";
 export {
   AI_REQUEST_LOG_CLEANUP_CAP,
   AI_REQUEST_LOG_CLEANUP_STOPPED,
+  AI_REQUEST_LOG_MAX_BYTES,
   AI_REQUEST_LOG_PAGE,
   AiRequestLogCleanupJob,
   type AiRequestLogOptions,

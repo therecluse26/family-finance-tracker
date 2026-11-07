@@ -20,6 +20,8 @@ export type AiRequestLogSettingsRow = {
   on: boolean;
   keepDays: AiRequestLogKeepDays;
   cleanupFailures: number;
+  // Times a Member turned the log off.
+  switchOffs: number;
 };
 
 // The ID of ai_request_log_settings' one row.
@@ -30,6 +32,7 @@ export const DEFAULT_AI_REQUEST_LOG: AiRequestLogSettingsRow = {
   on: false,
   keepDays: 30,
   cleanupFailures: 0,
+  switchOffs: 0,
 };
 
 const keepDaysOf = (days: number): AiRequestLogKeepDays =>
@@ -43,6 +46,7 @@ export async function readAiRequestLogSettings(
       on: aiRequestLogSettings.on,
       keepDays: aiRequestLogSettings.keepDays,
       cleanupFailures: aiRequestLogSettings.cleanupFailures,
+      switchOffs: aiRequestLogSettings.switchOffs,
     })
     .from(aiRequestLogSettings)
     .where(eq(aiRequestLogSettings.id, SETTINGS_ROW));
@@ -52,8 +56,9 @@ export async function readAiRequestLogSettings(
 }
 
 // Stores a Member's switch and kept days, and starts the cleanup's count of failed runs again. Off
-// deletes every kept text in the same transaction, so no entry outlives the switch. Returns the
-// settings from before the change.
+// deletes every kept text in the same transaction, so no entry outlives the switch, and counts a
+// switch-off, so no call that started before it keeps text. Returns the settings from before the
+// change.
 export async function storeAiRequestLogSettings(
   database: Database,
   settings: { on: boolean; keepDays: AiRequestLogKeepDays },
@@ -64,14 +69,19 @@ export async function storeAiRequestLogSettings(
         on: aiRequestLogSettings.on,
         keepDays: aiRequestLogSettings.keepDays,
         cleanupFailures: aiRequestLogSettings.cleanupFailures,
+        switchOffs: aiRequestLogSettings.switchOffs,
       })
       .from(aiRequestLogSettings)
       .where(eq(aiRequestLogSettings.id, SETTINGS_ROW));
     const row = { ...settings, cleanupFailures: 0 };
+    const offs = settings.on ? 0 : 1;
     await tx
       .insert(aiRequestLogSettings)
-      .values({ id: SETTINGS_ROW, ...row })
-      .onConflictDoUpdate({ target: aiRequestLogSettings.id, set: row });
+      .values({ id: SETTINGS_ROW, ...row, switchOffs: offs })
+      .onConflictDoUpdate({
+        target: aiRequestLogSettings.id,
+        set: { ...row, switchOffs: sql`${aiRequestLogSettings.switchOffs} + ${offs}` },
+      });
     if (!settings.on) await tx.delete(aiRequestLog);
     return before === undefined
       ? DEFAULT_AI_REQUEST_LOG
@@ -93,34 +103,62 @@ export type NewAiRequestLogEntry = {
   failureStatus: number | null;
 };
 
-// Keeps one call's text, in one statement that checks, as it writes, that the log is on and its
-// cleanup has not stopped at `cleanupCap`, and that the call's Chat thread and AI usage row still
-// exist. So a call that ends after a Member turned the log off, or deleted its thread, keeps
-// nothing. True when it kept the text.
+// What a kept call must still find as it writes: the cleanup's cap, the count of switch-offs the
+// call noted when it started, and the most bytes all kept text may hold.
+export type AiRequestLogKeeping = { cleanupCap: number; switchOffs: number; maxBytes: number };
+
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+
+// Keeps one call's text, in one transaction. Its insert checks, as it writes, that the log is on,
+// that no Member turned it off since the call started, that its cleanup has not stopped, and that
+// the call's Chat thread and AI usage row still exist. So a call that ends after a Member turned
+// the log off, even when it is on again, or deleted its thread, keeps nothing. Then, when all kept
+// text passes `maxBytes`, the oldest kept calls go until it fits. True when it kept the text.
 export async function addAiRequestLogEntry(
   database: Database,
   entry: NewAiRequestLogEntry,
-  cleanupCap: number,
+  keeping: AiRequestLogKeeping,
 ): Promise<boolean> {
-  const result = await database.run(sql`
-    INSERT INTO ai_request_log (
-      at, ai_call_id, chat_thread_id, use, model, request, request_cut, response, response_cut,
-      failure, failure_status
-    )
-    SELECT
-      ${entry.at.toISOString()}, ${entry.aiCallId}, ${entry.chatThreadId}, ${entry.use},
-      ${entry.model}, ${entry.request}, ${entry.requestCut ? 1 : 0}, ${entry.response},
-      ${entry.responseCut ? 1 : 0}, ${entry.failure}, ${entry.failureStatus}
-    FROM ai_request_log_settings
-    WHERE id = ${SETTINGS_ROW}
-      AND "on" = 1
-      AND cleanup_failures < ${cleanupCap}
-      AND (${entry.chatThreadId} IS NULL
-        OR EXISTS (SELECT 1 FROM chat_threads WHERE id = ${entry.chatThreadId}))
-      AND (${entry.aiCallId} IS NULL
-        OR EXISTS (SELECT 1 FROM ai_calls WHERE id = ${entry.aiCallId}))
-  `);
-  return result.rowsAffected === 1;
+  const bytes = utf8Bytes(entry.request) + utf8Bytes(entry.response);
+  return database.transaction(async (tx) => {
+    const result = await tx.run(sql`
+      INSERT INTO ai_request_log (
+        at, ai_call_id, chat_thread_id, use, model, bytes, request, request_cut, response,
+        response_cut, failure, failure_status
+      )
+      SELECT
+        ${entry.at.toISOString()}, ${entry.aiCallId}, ${entry.chatThreadId}, ${entry.use},
+        ${entry.model}, ${bytes}, ${entry.request}, ${entry.requestCut ? 1 : 0}, ${entry.response},
+        ${entry.responseCut ? 1 : 0}, ${entry.failure}, ${entry.failureStatus}
+      FROM ai_request_log_settings
+      WHERE id = ${SETTINGS_ROW}
+        AND "on" = 1
+        AND switch_offs = ${keeping.switchOffs}
+        AND cleanup_failures < ${keeping.cleanupCap}
+        AND (${entry.chatThreadId} IS NULL
+          OR EXISTS (SELECT 1 FROM chat_threads WHERE id = ${entry.chatThreadId}))
+        AND (${entry.aiCallId} IS NULL
+          OR EXISTS (SELECT 1 FROM ai_calls WHERE id = ${entry.aiCallId}))
+    `);
+    if (result.rowsAffected !== 1) return false;
+    // The sum reads only the bytes index. Past the cap, one statement deletes each kept call whose
+    // bytes, added to those of every newer one, pass it: the oldest go first.
+    const [total] = await tx
+      .select({ bytes: sql<number | null>`sum(${aiRequestLog.bytes})` })
+      .from(aiRequestLog);
+    if ((total?.bytes ?? 0) > keeping.maxBytes) {
+      await tx.run(sql`
+        DELETE FROM ai_request_log
+        WHERE id IN (
+          SELECT id FROM (
+            SELECT id, sum(bytes) OVER (ORDER BY id DESC) AS newer FROM ai_request_log
+          )
+          WHERE newer > ${keeping.maxBytes}
+        )
+      `);
+    }
+    return true;
+  });
 }
 
 // One kept call as the log page lists it: its own facts, and its AI usage row's tokens and cost
@@ -267,6 +305,15 @@ export async function countAiRequestLogCleanupFailure(database: Database): Promi
     .where(eq(aiRequestLogSettings.id, SETTINGS_ROW))
     .returning({ cleanupFailures: aiRequestLogSettings.cleanupFailures });
   return row?.cleanupFailures ?? 1;
+}
+
+// A Member's retry of a stopped cleanup failed again: the cleanup stays stopped at `cap`, so the log
+// still keeps no new text.
+export async function stopAiRequestLogCleanup(database: Database, cap: number): Promise<void> {
+  await database
+    .update(aiRequestLogSettings)
+    .set({ cleanupFailures: cap })
+    .where(eq(aiRequestLogSettings.id, SETTINGS_ROW));
 }
 
 // A cleanup run worked: its count of failed runs starts again.

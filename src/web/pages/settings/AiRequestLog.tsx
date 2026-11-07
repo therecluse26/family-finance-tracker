@@ -9,6 +9,7 @@ import {
   type AiRequestLogPage,
   type AiRequestLogSettingsView,
   type AiRequestUsage,
+  CLEANUP_FAILED_AGAIN,
   failureLine,
 } from "../../../ai/request-log-view.ts";
 import { callCost } from "../../../ai/usage-view.ts";
@@ -43,6 +44,7 @@ export const aiRequestPath = (id: number) => `${AI_REQUEST_LOG_PATH}/${id}`;
 // 415 to a write without one.
 export const readAiRequestLog = (before?: number) =>
   api["ai-request-log"].$get({ query: before === undefined ? {} : { before: String(before) } });
+export const readAiRequestLogSettings = () => api["ai-request-log"].settings.$get();
 export const readAiRequestLogEntry = (id: string) =>
   api["ai-request-log"][":id"].$get({ param: { id } });
 export const saveAiRequestLog = (settings: { on: boolean; keepDays: AiRequestLogKeepDays }) =>
@@ -50,7 +52,27 @@ export const saveAiRequestLog = (settings: { on: boolean; keepDays: AiRequestLog
 
 // What the confirm step says before the switch goes off.
 export const TURN_OFF_QUESTION =
-  "Turn off the AI request log? This deletes all kept AI request text now.";
+  "Turn off the AI request log? This deletes all kept AI request text now. Backups made before keep their copies until they roll off.";
+
+// What the card says after a save: `said`, or, when the cleanup was stopped and still is, that the
+// retry failed too.
+export function savedLine(
+  before: AiRequestLogSettingsView,
+  after: AiRequestLogSettingsView,
+  said: string,
+): { done: string } | { error: string } {
+  return before.stopped && after.stopped ? { error: CLEANUP_FAILED_AGAIN } : { done: said };
+}
+
+// The request, kept as compact JSON, indented for reading. A request cut at 256 KB is no longer
+// whole JSON, so it shows as kept.
+export function readableRequest(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
 
 // The words to show for a refused request: the server's own.
 async function refusal(res: Response): Promise<string> {
@@ -91,9 +113,12 @@ export function AiRequestLogCard(props: {
     try {
       const res = await saveAiRequestLog(settings);
       if (!res.ok) return setError(await refusal(res));
-      setView(((await res.json()) as { settings: AiRequestLogSettingsView }).settings);
+      const after = ((await res.json()) as { settings: AiRequestLogSettingsView }).settings;
+      const line = savedLine(view, after, said);
+      setView(after);
       setConfirming(false);
-      setDone(said);
+      if ("error" in line) setError(line.error);
+      else setDone(line.done);
     } catch {
       setError("The server did not answer.");
     } finally {
@@ -458,7 +483,7 @@ export function AiRequestLogEntryReport(props: {
       <TextBox
         id="ai-request-sent"
         title="Request"
-        text={entry.request}
+        text={readableRequest(entry.request)}
         cut={entry.requestCut}
         empty="No request text."
       />

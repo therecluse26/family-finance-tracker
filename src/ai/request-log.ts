@@ -7,6 +7,7 @@ import {
   listAiRequestLog,
   readAiRequestLogEntry,
   readAiRequestLogSettings,
+  stopAiRequestLogCleanup,
   storeAiRequestLogSettings,
 } from "../db/index.ts";
 import { Job } from "../jobs/index.ts";
@@ -40,6 +41,9 @@ export const AI_REQUEST_LOG_CLEANUP_BATCH = 500;
 // The most statements one cleanup run makes, so one run always ends: 1,000,000 kept calls.
 const MAX_CLEANUP_BATCHES = 2_000;
 
+// The most bytes of UTF-8 all kept text may hold. Past it, the oldest kept calls go first.
+export const AI_REQUEST_LOG_MAX_BYTES = 100 * 1024 * 1024;
+
 // Kept calls on each page of the log page.
 export const AI_REQUEST_LOG_PAGE = 50;
 
@@ -58,21 +62,18 @@ export function cutText(text: string): { text: string; cut: boolean } {
   return { text: new TextDecoder().decode(bytes.subarray(0, end)), cut: true };
 }
 
-// The request as the AI provider gets it, written as JSON: the messages, the tools the AI may call,
-// the tool choice, and the reply's schema, after the privacy filter. The JSON writes each text
-// with the very characters the request sends. It leaves out the headers, which may hold a key,
-// and the provider options, which the AI does not read.
+// The request as the app hands it to the AI provider, after the privacy filter, written as compact
+// JSON: the messages, the tools the AI may call, the tool choice, and the reply's schema. The
+// provider's own request has a different layout, but the JSON writes each text with the very
+// characters it sends. It leaves out the headers, which may hold a key, and the provider options,
+// which the AI does not read. The call's page indents it for reading.
 export function requestText(params: CallOptions): string {
-  return JSON.stringify(
-    {
-      prompt: params.prompt,
-      tools: params.tools,
-      toolChoice: params.toolChoice,
-      responseFormat: params.responseFormat,
-    },
-    null,
-    2,
-  );
+  return JSON.stringify({
+    prompt: params.prompt,
+    tools: params.tools,
+    toolChoice: params.toolChoice,
+    responseFormat: params.responseFormat,
+  });
 }
 
 // The reply as the AI wrote it: each text, each piece of reasoning, and each tool call, with a
@@ -89,8 +90,9 @@ export function replyText(reply: readonly ReplyPart[]): string {
 const errorName = (error: unknown) => (error instanceof Error ? error.name : "unknown");
 
 // The log's part of one model call: undefined while the log is off or its cleanup has stopped, so
-// a call then builds no text. The write checks both again, so a call that ends after a Member
-// turned the log off keeps nothing. A failure here is logged and never fails the call.
+// a call then builds no text. It notes how many times a Member has turned the log off, and the
+// write checks all three again, so a call that ends after a Member turned the log off keeps
+// nothing, even when the log is on again. A failure here is logged and never fails the call.
 export function callLog(
   database: Database,
   call: { use: AiUse; model: string; chatThreadId?: string },
@@ -100,10 +102,12 @@ export function callLog(
   return {
     async start(params) {
       let request: { text: string; cut: boolean };
+      let switchOffs: number;
       try {
         const settings = await readAiRequestLogSettings(database);
         if (!settings.on || settings.cleanupFailures >= AI_REQUEST_LOG_CLEANUP_CAP)
           return undefined;
+        switchOffs = settings.switchOffs;
         request = cutText(requestText(params));
       } catch (error) {
         logger.warn("The AI request log could not read a call", { error: errorName(error) });
@@ -129,7 +133,11 @@ export function callLog(
                 failure: failed?.failure ?? null,
                 failureStatus: failed?.status ?? null,
               },
-              AI_REQUEST_LOG_CLEANUP_CAP,
+              {
+                cleanupCap: AI_REQUEST_LOG_CLEANUP_CAP,
+                switchOffs,
+                maxBytes: AI_REQUEST_LOG_MAX_BYTES,
+              },
             );
           } catch (failure) {
             logger.warn("The AI request log could not keep a call", { error: errorName(failure) });
@@ -246,19 +254,25 @@ export function aiRequestLogRoutes(options: AiRequestLogOptions): AiRequestLogRo
       };
     },
 
+    async settings() {
+      return settingsView(await readAiRequestLogSettings(database));
+    },
+
     async entry(id) {
       const row = await readAiRequestLogEntry(database, id);
       return row === undefined ? undefined : { ...row, at: row.at.toISOString() };
     },
 
-    // Fewer kept days, or a cleanup stopped at its cap, runs the cleanup at once.
+    // Fewer kept days, or a cleanup stopped at its cap, runs the cleanup at once. A stopped cleanup
+    // that fails again stays stopped, so the log still keeps no new text.
     async set(settings) {
       const before = await storeAiRequestLogSettings(database, settings);
-      if (
-        settings.keepDays < before.keepDays ||
-        before.cleanupFailures >= AI_REQUEST_LOG_CLEANUP_CAP
-      ) {
-        await cleanUpAiRequestLog(options);
+      const stopped = before.cleanupFailures >= AI_REQUEST_LOG_CLEANUP_CAP;
+      if (settings.keepDays < before.keepDays || stopped) {
+        const ran = await cleanUpAiRequestLog(options);
+        if (stopped && ran !== "done") {
+          await stopAiRequestLogCleanup(database, AI_REQUEST_LOG_CLEANUP_CAP);
+        }
       }
       return settingsView(await readAiRequestLogSettings(database));
     },
