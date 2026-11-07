@@ -197,6 +197,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
     // The clean name as identity compares it, made from merchant_name.
     ["merchantKey"],
   ),
+  exported(schema.transferAnswers, "every column"),
   exported(schema.recurringCharges, "every column"),
   exported(schema.incomeSeries, "every column"),
   exported(schema.typedSteadyIncome, "every column"),

@@ -146,6 +146,7 @@ export {
   setAccountExcluded,
   setHandSetCategory,
   setHandSetFields,
+  setHandSetType,
   storeSyncPage,
   type TransactionFilter,
   type TransactionPage,
@@ -200,6 +201,16 @@ export {
   type StoredCategoryRule,
   storeCategoryRule,
 } from "./category-rules.ts";
+export {
+  listCardFactsAt,
+  listTransferAnswers,
+  type NewTransferAnswer,
+  type CardFacts,
+  readCardFacts,
+  removeTransferAnswer,
+  type StoredTransferAnswer,
+  storeTransferAnswer,
+} from "./transfer-answers.ts";
 export {
   type ChatAuthor,
   type ChatMessageRow,

@@ -3,16 +3,32 @@ import {
   type Database,
   type DecisionAccount,
   listDecisionAccounts,
+  readCardFacts,
   setHandSetFields,
+  storeTransferAnswer,
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain } from "../follow-up/index.ts";
+import { log } from "../log.ts";
 import { paymentAppLine } from "../merchants/index.ts";
-import type { ReviewChoice, ReviewKind } from "../review/index.ts";
+import { NotAChoice, type ReviewKind } from "../review/index.ts";
 import { addBusinessDays } from "./business-days.ts";
+import {
+  askedText,
+  KEEP,
+  keyText,
+  NOT_A_TRANSFER,
+  ONE_SIDED_KIND,
+  ONE_SIDED_STEPS,
+  oneSidedKeyOf,
+  PICK,
+  stillOnCard,
+} from "./one-sided-cards.ts";
 import type { Decision, DecisionInput } from "./order.ts";
 import { isInvestment } from "./pairs.ts";
 import { namesInstitutionIn, namesMask } from "./transfers.ts";
 import type { TransactionType } from "./types.ts";
+
+export { ONE_SIDED_KIND, ONE_SIDED_STEPS };
 
 // One-sided Transfers and Saving, steps 5.6 and 6.7 (spec 03, One side missing, Unconnected
 // accounts, Saving). A Transaction with no pair that has transfer wording or a Plaid transfer
@@ -25,9 +41,6 @@ import type { TransactionType } from "./types.ts";
 // TRANSFER_IN_* or TRANSFER_OUT_* code.
 const TRANSFER_WORDING = /transfer|xfer/i;
 const TRANSFER_CODE = /^TRANSFER_(IN|OUT)_/;
-
-// The steps whose result goes to one Unconnected account, by the case table below.
-export const ONE_SIDED_STEPS = ["5.4", "5.6", "6.3", "6.6", "6.7"] as const;
 
 // With no account named, these codes make Saving with no account. Money in under the last one
 // reduces Saving.
@@ -82,14 +95,6 @@ function namedIn(description: string, accounts: readonly DecisionAccount[]) {
   return byName.length === 1 ? byName[0] : undefined;
 }
 
-// The Review list kind for a one-sided Transfer not tied to an account by its name or last 4
-// digits (spec 03, Review list items). It may be Spending, such as rent paid by transfer.
-export const ONE_SIDED_KIND = "one-sided Transfer";
-
-const PICK = "account ";
-const KEEP: ReviewChoice = { value: "keep", label: "Keep it as a Transfer" };
-const NOT_A_TRANSFER: ReviewChoice = { value: "not a transfer", label: "Not a Transfer" };
-
 // Steps 5.6 and 6.7: transfer wording or a Plaid transfer category, on a line that is no
 // payment-app line.
 export function oneSidedTransfer(txn: DecisionInput): Decision | undefined {
@@ -102,9 +107,11 @@ export function oneSidedTransfer(txn: DecisionInput): Decision | undefined {
 // Ties a one-sided Transfer to one account. The first case that fits wins:
 // 1. The account a Member picked on the Review list.
 // 2. The account the description names.
-// 3. Saving with no account, for an investment or crypto code.
-// 4. The Household's only Unconnected account, with a Review list item to confirm it.
-// 5. A Transfer with no account, with the item "Which account is this?".
+// 3. The answer a Member gave a card with the same key, remembered (spec 03, Review list items):
+//    its account, while it may still be picked, a Transfer with no account, or Spending.
+// 4. Saving with no account, for an investment or crypto code.
+// 5. The Household's only Unconnected account, with a Review list item to confirm it.
+// 6. A Transfer with no account, with the item "Which account is this?".
 // A Closed account can still be named or picked, but is never the only one. A synced investment
 // Account or an excluded Account can be named or picked too, but is never the only one: it syncs,
 // so money to it shows on its own side as well.
@@ -128,25 +135,31 @@ export function toUnconnectedAccount(txn: DecisionInput, window = ONE_SIDED_WIND
   if (picked !== undefined) return result(typeFor(picked), picked);
   const named = namedIn(txn.description, accounts);
   if (named !== undefined) return result(typeFor(named), named);
+  const key = oneSidedKeyOf(txn);
+  const remembered = key === null ? undefined : txn.transferAnswers?.get(keyText(key));
+  if (remembered?.answer === "keep") return result("Transfer");
+  if (remembered?.answer === "not a transfer") return result("Spending");
+  if (remembered?.answer === "account") {
+    const kept = accounts.find((account) => account.id === remembered.accountId);
+    if (kept !== undefined) return result(typeFor(kept), kept);
+  }
   if (SAVING_CODES.has(code)) return result("Saving");
   const open = accounts.filter((account) => !account.closed && isUnconnected(account));
   const [only] = open;
   if (open.length === 1 && only !== undefined) {
-    return result(typeFor(only), only, {
-      decided: `It names no account, so the app put it in ${only.name}, the only one.`,
-      bestAnswer: { value: `${PICK}${only.id}`, label: `Yes, ${only.name}` },
-    });
+    const bestAnswer = { value: `${PICK}${only.id}`, label: `Yes, ${only.name}` };
+    return result(typeFor(only), only, { decided: askedText(bestAnswer, 1), bestAnswer });
   }
-  return result("Transfer", undefined, {
-    decided: "It names no account, so it counts as a Transfer. Which account is this?",
-    bestAnswer: KEEP,
-  });
+  return result("Transfer", undefined, { decided: askedText(KEEP, 1), bestAnswer: KEEP });
 }
 
-// A Member answers: picks an account, or adds one and then picks it, or chooses "Not a
-// Transfer", which sets the type to Spending by hand. Keeping it as a Transfer sets that type by
-// hand. The choices are read when the Member opens them, so an account added since is among them.
-// The follow-up job then decides the Transaction again.
+// A Member answers a card: picks an account, or adds one and then picks it, keeps it as a
+// Transfer, or chooses "Not a Transfer", which makes it Spending. The answer is remembered for the
+// card's key, so it covers every Transaction still on the card and each later one with that key,
+// and the follow-up job decides those on the card again. A card of a line with no clean Merchant
+// name has no key: the answer sets that Transaction's hand-set fields, as a type or account a
+// Member sets by hand. The choices are read when the Member opens them, so an account added since
+// is among them; an account that may no longer be picked is no choice.
 export function oneSidedKind(database: Database): ReviewKind {
   return {
     async otherChoices() {
@@ -160,16 +173,50 @@ export function oneSidedKind(database: Database): ReviewKind {
       if (item.subject.type !== "transactions") {
         throw new Error("A one-sided Transfer item is about a Transaction.");
       }
-      const fields =
-        choice.value === NOT_A_TRANSFER.value
-          ? { type: "Spending" }
-          : choice.value === KEEP.value
-            ? { type: "Transfer" }
-            : { unconnectedAccount: choice.value.slice(PICK.length) };
-      for (const id of item.subject.transactionIds) {
-        await setHandSetFields(answering.database, id, fields);
+      const tx = answering.database;
+      const accountId = choice.value.startsWith(PICK) ? choice.value.slice(PICK.length) : null;
+      if (
+        accountId !== null &&
+        !(await listDecisionAccounts(tx)).some(
+          (account) => account.id === accountId && standsIn(account),
+        )
+      ) {
+        throw new NotAChoice("This account can no longer be picked.");
       }
-      await followUpAgain(answering.database, item.subject.transactionIds);
+      // Only the Transactions still on the card, read inside the answer's transaction: one a
+      // Member changed on its row, or one that left since the card's last update, keeps what it
+      // has, in either order.
+      const { key, ids } = stillOnCard(await readCardFacts(tx, item.subject.transactionIds));
+      if (ids.length === 0) {
+        log.info("A one-sided Transfer card's answer found none of its Transactions still on it");
+        return;
+      }
+      const answer =
+        choice.value === NOT_A_TRANSFER.value
+          ? "not a transfer"
+          : choice.value === KEEP.value
+            ? "keep"
+            : "account";
+      if (key === null) {
+        const fields =
+          answer === "not a transfer"
+            ? { type: "Spending" }
+            : answer === "keep"
+              ? { type: "Transfer" }
+              : { unconnectedAccount: accountId };
+        for (const id of ids) await setHandSetFields(tx, id, fields);
+      } else {
+        await storeTransferAnswer(tx, {
+          merchantKey: key.merchantKey,
+          merchantName: key.merchantName,
+          lastFours: key.lastFours,
+          answer,
+          accountId,
+          madeAt: new Date(),
+          madeBy: answering.memberId,
+        });
+      }
+      await followUpAgain(tx, ids);
     },
     afterAnswer: () => askForFollowUp(),
   };

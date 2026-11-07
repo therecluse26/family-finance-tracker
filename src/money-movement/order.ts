@@ -11,6 +11,7 @@ import {
   paymentToPerson,
   zelleWithMember,
 } from "./payment-apps.ts";
+import type { RememberedAnswer } from "./one-sided-cards.ts";
 import { linkedTreatment, refundLink, unlinkedRefund } from "./refunds.ts";
 import { withSplit } from "./splits.ts";
 import { HAND_SET_TYPES, type HandSetType, type TransactionType } from "./types.ts";
@@ -105,6 +106,8 @@ export type DecisionContext = {
   // How much each linked Refund or Reimbursement among the Transactions decided reduces its
   // Spending, by the money in's ID (spec 03, Link shapes).
   spendingAllocations: ReadonlyMap<string, number>;
+  // The remembered one-sided Transfer answers, by key (spec 03, Review list items).
+  transferAnswers?: ReadonlyMap<string, RememberedAnswer>;
 };
 
 // What a rule reads: the Transaction, and its context.

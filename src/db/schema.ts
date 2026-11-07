@@ -1321,6 +1321,29 @@ export const categoryRules = sqliteTable(
   ],
 );
 
+// Remembered one-sided Transfer answers (spec 03, Review list items). A Member's answer to a
+// one-sided Transfer card is kept for the card's key, and each later one-sided Transfer with that key
+// takes it. Each key has at most one answer. The key's digits stay in the app and never go to the
+// AI.
+export const transferAnswers = sqliteTable(
+  "transfer_answers",
+  {
+    id: text("id").primaryKey(),
+    // The clean name as Merchant identity compares it, and the clean name the list shows.
+    merchantKey: text("merchant_key").notNull(),
+    merchantName: text("merchant_name").notNull(),
+    // The last 4 digits of each account number the line holds, joined by ",", or "" for none.
+    lastFours: text("last_fours").notNull(),
+    // "keep", "not a transfer", or "account".
+    answer: text("answer").notNull(),
+    // The account picked, for "account". The answer goes with its account.
+    accountId: text("account_id").references(() => householdAccounts.id, { onDelete: "cascade" }),
+    madeAt: moment("made_at").notNull(),
+    madeBy: text("made_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [uniqueIndex("transfer_answers_key").on(table.merchantKey, table.lastFours)],
+);
+
 // AI cleanup's Merchant names (spec 04, Names): each answer by the bank description text it
 // cleaned. The app reuses an answer for every Transaction with the same description, so the AI
 // sees each description once.

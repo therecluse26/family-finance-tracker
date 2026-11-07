@@ -745,6 +745,21 @@ export async function setHandSetFields(
     .where(eq(transactions.id, transactionId));
 }
 
+// Gives several Transactions one hand-set type, in one statement for each 500, as setHandSetFields
+// does for one.
+export async function setHandSetType(
+  database: Queries,
+  transactionIds: readonly string[],
+  type: string,
+): Promise<void> {
+  for (let start = 0; start < transactionIds.length; start += 500) {
+    await database
+      .update(transactions)
+      .set({ handSet: sql`json_set(${transactions.handSet}, '$.type', ${type})` })
+      .where(inArray(transactions.id, transactionIds.slice(start, start + 500)));
+  }
+}
+
 // Gives several Transactions one hand-set Category and ends any split by hand, in one statement for
 // each 500, as setHandSetFields does for one.
 export async function setHandSetCategory(

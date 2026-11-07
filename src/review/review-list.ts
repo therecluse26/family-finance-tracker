@@ -298,11 +298,13 @@ export function regroupReviewItems(
   database: Database,
   regroup: {
     close: readonly { id: string; reason: string }[];
+    // A revised item keeps its no-AI mark unless the revision gives one.
     revise: readonly {
       id: string;
       subject: ReviewSubject;
       decided: string;
       bestAnswer: ReviewChoice;
+      needsAi?: boolean;
     }[];
     open: readonly NewItem[];
   },
@@ -310,10 +312,10 @@ export function regroupReviewItems(
   if (regroup.close.some(({ reason }) => reason.trim() === "" || reason === "answered")) {
     throw new Error("Say which event settled the Review list item.");
   }
-  const revise = regroup.revise.map(({ id, subject, decided, bestAnswer }) => {
+  const revise = regroup.revise.map(({ id, subject, decided, bestAnswer, needsAi }) => {
     const subjectIds = subjectIdsOf(subject);
     if (subjectIds.length === 0) throw new Error("A Review list item needs its Transactions.");
-    return { id, subjectIds, decided, bestAnswer };
+    return { id, subjectIds, decided, bestAnswer, ...(needsAi === undefined ? {} : { needsAi }) };
   });
   const open = regroup.open.map(storedItem);
   return oneAtATime(() =>

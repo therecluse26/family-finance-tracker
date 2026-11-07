@@ -211,6 +211,8 @@ export type ReviewItemRegroup = {
     subjectIds: string[];
     decided: string;
     bestAnswer: Choice;
+    // Kept as it is when absent.
+    needsAi?: boolean;
   }[];
   open: readonly NewReviewItem[];
 };
@@ -241,10 +243,10 @@ export async function regroupOpenReviewItems(
           );
       }
     }
-    for (const { id, subjectIds, decided, bestAnswer } of revise) {
+    for (const { id, subjectIds, decided, bestAnswer, needsAi } of revise) {
       await tx
         .update(reviewItems)
-        .set({ subjectIds, decided, bestAnswer })
+        .set({ subjectIds, decided, bestAnswer, ...(needsAi === undefined ? {} : { needsAi }) })
         .where(and(eq(reviewItems.id, id), isNull(reviewItems.closedAt)));
     }
     return addReviewItems(tx, open, at);

@@ -183,7 +183,17 @@ describe("one-sided Transfers and Saving", () => {
       decided: expect.stringContaining("Which account is this?"),
       bestAnswer: { value: "keep", label: "Keep it as a Transfer" },
     });
-    expect(await oneSidedItems()).toHaveLength(TO_PINECREST.length);
+    // One card holds them all: they share a clean name and hold no account number.
+    const cards = await oneSidedItems();
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.subject).toMatchObject({
+      transactionIds: expect.arrayContaining(
+        await Promise.all(TO_PINECREST.map((record) => idOf(record.id))),
+      ),
+    });
+    expect(cards[0]?.decided).toBe(
+      "They name no account, so they count as Transfers. Which account is this?",
+    );
 
     // "Add one": the Member adds it; the transfers name it, so each goes to it and its item closes.
     const pinecrest = await addAccount(PINECREST);
@@ -300,7 +310,7 @@ describe("one-sided Transfers and Saving", () => {
     expect(await itemOf("plain")).toBeUndefined();
   });
 
-  it("asks which account with two Unconnected accounts, and takes a Member's pick or Not a Transfer", async () => {
+  it("asks which account with two Unconnected accounts on one card, and remembers a Member's pick for the key", async () => {
     await addAccount(PINECREST);
     const hsa = await addAccount(HSA);
     await syncMore("fake-ally", {
@@ -315,36 +325,78 @@ describe("one-sided Transfers and Saving", () => {
         { type: "Transfer", amount: id === "rent" ? -180_000 : -15_000, category: null },
       ]);
       expect(await assignedTo(id)).toBeNull();
-      expect((await itemOf(id))?.decided).toContain("Which account is this?");
     }
+    // One card, newest first: the reference numbers are no account number.
+    const [card, ...others] = await oneSidedItems();
+    expect(others).toEqual([]);
+    expect(card?.subject).toEqual({
+      type: "transactions",
+      transactionIds: [await idOf("to-hsa"), await idOf("rent")],
+    });
 
-    await answerReviewItem(
-      bank.database,
-      (await itemOf("to-hsa"))?.id ?? "",
-      `account ${hsa}`,
-      "member-1",
-    );
-    await answerReviewItem(
-      bank.database,
-      (await itemOf("rent"))?.id ?? "",
-      "not a transfer",
-      "member-1",
+    expect(await answerReviewItem(bank.database, card?.id ?? "", `account ${hsa}`, "member-1")).toBe(
+      "answered",
     );
     await runFollowUp(NOW);
 
-    expect(await decisionOf("to-hsa")).toEqual({
-      step: "5.6",
-      provisionalUntil: null,
-      parts: [{ type: "Transfer", amount: -15_000, category: null }],
-    });
-    expect(await assignedTo("to-hsa")).toBe(hsa);
-    // Not a Transfer sets the type to Spending by hand.
-    expect(await decisionOf("rent")).toMatchObject({
-      step: "1",
-      parts: [{ type: "Spending", amount: -180_000 }],
-    });
-    expect(await assignedTo("rent")).toBeNull();
+    for (const id of ["rent", "to-hsa"]) {
+      expect(await decisionOf(id)).toMatchObject({ step: "5.6" });
+      expect(await assignedTo(id)).toBe(hsa);
+    }
     expect(await oneSidedItems()).toEqual([]);
+
+    // A later transfer with the same key takes the remembered answer, with no card.
+    await syncMore("fake-ally", {
+      added: [inChecking("later", -20_000, "2026-10-20", "ONLINE TRANSFER REF 1003")],
+    });
+    expect(await assignedTo("later")).toBe(hsa);
+    expect(await oneSidedItems()).toEqual([]);
+  });
+
+  it("makes a card Spending with Not a Transfer, keeps two last 4 digits apart, and leaves a line with no clean name its own item", async () => {
+    await addAccount(PINECREST);
+    await addAccount(HSA);
+    await syncMore("fake-ally", {
+      added: [
+        inChecking("sav-1", -10_000, "2026-10-01", "ONLINE TRANSFER TO SAV XXXX5678"),
+        // Other digit scripts and separators: the same last 4 on its skeleton (K13).
+        inChecking("sav-2", -11_000, "2026-10-02", "ONLINE TRANSFER TO SAV ＸＸＸＸ-٥٦٧٨"),
+        inChecking("sav-3", -12_000, "2026-10-03", "Online Transfer to Sav x\u200B5678"),
+        inChecking("other", -13_000, "2026-10-04", "ONLINE TRANSFER TO SAV XXXX9012"),
+        // No clean name: each keeps an item of its own.
+        inChecking("bare-1", -14_000, "2026-10-05", "0042 9917", "TRANSFER_OUT_ACCOUNT_TRANSFER"),
+        inChecking("bare-2", -15_000, "2026-10-06", "0042 9917", "TRANSFER_OUT_ACCOUNT_TRANSFER"),
+      ],
+    });
+    const cardOf = async (id: string) => (await itemOf(id))?.id;
+    const same = await cardOf("sav-1");
+    expect(await cardOf("sav-2")).toBe(same);
+    expect(await cardOf("sav-3")).toBe(same);
+    expect(await cardOf("other")).not.toBe(same);
+    expect(await cardOf("bare-1")).not.toBe(await cardOf("bare-2"));
+    expect(await oneSidedItems()).toHaveLength(4);
+
+    expect(await answerReviewItem(bank.database, same ?? "", "not a transfer", "member-1")).toBe(
+      "answered",
+    );
+    await runFollowUp(NOW);
+    // Not a Transfer makes each Spending, not by hand: the remembered answer decides at step 5.6.
+    for (const id of ["sav-1", "sav-2", "sav-3"]) {
+      expect(await decisionOf(id)).toMatchObject({ step: "5.6", parts: [{ type: "Spending" }] });
+    }
+    // The other last 4 still asks, on its own card.
+    expect((await decisionOf("other"))?.parts).toMatchObject([{ type: "Transfer" }]);
+    expect(await itemOf("other")).toBeDefined();
+    expect(await oneSidedItems()).toHaveLength(3);
+
+    // A line with no clean name has no key: its answer sets that Transaction by hand, and nothing
+    // is remembered.
+    expect(
+      await answerReviewItem(bank.database, (await cardOf("bare-1")) ?? "", "keep", "member-1"),
+    ).toBe("answered");
+    await runFollowUp(NOW);
+    expect(await decisionOf("bare-1")).toMatchObject({ step: "1", parts: [{ type: "Transfer" }] });
+    expect(await itemOf("bare-2")).toBeDefined();
   });
 
   it("keeps a one-sided result provisional for 5 business days, and a pair found on day 3 replaces it", async () => {

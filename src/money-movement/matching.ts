@@ -62,7 +62,8 @@ import {
 } from "./loan-payments.ts";
 import { isLoan, type LoanSettings, loanFactsReader, readLoanSettings } from "./loans.ts";
 import { linkManualLoanPayouts, manualLoanFactsReader } from "./manual-loans.ts";
-import { ONE_SIDED_KIND, ONE_SIDED_STEPS, oneSidedKind } from "./one-sided.ts";
+import { ONE_SIDED_STEPS, oneSidedKind } from "./one-sided.ts";
+import { ONE_SIDED_KIND, readRememberedAnswers, updateOneSidedCards } from "./one-sided-cards.ts";
 import {
   type Decision,
   type DecisionContext,
@@ -149,6 +150,7 @@ async function decisionContext(
     loanPayouts: loanPayoutsReader(database),
     unclearLoanPayments: await unclearLoanPayments(database, accounts, pairing),
     spendingAllocations: await readSpendingAllocations(database, records),
+    transferAnswers: await readRememberedAnswers(database),
   };
 }
 
@@ -191,40 +193,16 @@ async function decideAll(
   return decided;
 }
 
-// Opens a one-sided Transfer item for each result that asks for one, and settles each open item
-// whose Transaction no longer asks for it, or now asks with another best answer. `gone` are
-// Transactions that no longer show. The open items are read once, and settled in one batch.
+// Keeps the one-sided Transfer cards in step with what each result asks now. `gone` are
+// Transactions that no longer show.
 async function updateOneSidedItems(
   database: Database,
   decided: readonly Decided[],
   gone: readonly string[],
 ): Promise<void> {
-  const open = new Map<string, ReviewItem>();
-  for (const item of await openReviewItems(database)) {
-    if (item.kind !== ONE_SIDED_KIND || item.subject.type !== "transactions") continue;
-    open.set(item.subject.transactionIds[0] ?? "", item);
-  }
-  const settled = gone.filter((id) => open.has(id));
-  const asked: { id: string; asks: NonNullable<Decision["asks"]> }[] = [];
-  for (const { stored, asks } of decided) {
-    const id = stored.transactionId;
-    const item = open.get(id);
-    if (item !== undefined && item.bestAnswer.value === asks?.bestAnswer.value) continue;
-    if (item !== undefined) settled.push(id);
-    if (asks !== undefined) asked.push({ id, asks });
-  }
-  await settleReviewItems(database, { kind: ONE_SIDED_KIND, subjectIds: settled }, "decided again");
-  await openReviewItemBatch(
-    database,
-    asked.map(({ id, asks }) => ({
-      kind: ONE_SIDED_KIND,
-      subject: { type: "transactions", transactionIds: [id] },
-      ...asks,
-    })),
-  );
-  if (asked.length > 0) {
-    log.info("One-sided Transfers went on the Review list", { opened: asked.length });
-  }
+  const asked = new Map<string, ReviewChoice | null>(gone.map((id) => [id, null]));
+  for (const { stored, asks } of decided) asked.set(stored.transactionId, asks?.bestAnswer ?? null);
+  await updateOneSidedCards(database, asked);
 }
 
 // Stores each result in place of the Transaction's earlier one, with the Unconnected account it
