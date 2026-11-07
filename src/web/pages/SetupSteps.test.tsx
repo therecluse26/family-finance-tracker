@@ -1,5 +1,6 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlaidView } from "../../bank/plaid-view.ts";
 import type { AccountView, ConnectionView } from "../../server/bank-views.ts";
@@ -9,6 +10,7 @@ import { skippedWizardSteps } from "../setup-gate.ts";
 import {
   BANKS_STEP_UNREAD,
   BanksButtons,
+  BanksStep,
   type BanksStepReads,
   type BanksStepState,
   BanksStepView,
@@ -17,9 +19,12 @@ import {
   FinishStepView,
   finishLines,
   finishWizard,
+  LinkedBankList,
   linkedBanks,
   openBanksStep,
   STEP_LABELS,
+  STEP_TITLES,
+  StepCard,
   Stepper,
   skipBanks,
   stepAfter,
@@ -95,7 +100,7 @@ describe("the wizard's frame", () => {
     const html = renderToString(<Stepper shown="master key" reached="household facts" />);
 
     expect(text(html)).toBe(
-      "Step 3 of 6 ✓ Setup link ✓ Your login ✓ Master key 4. Household 5. Banks 6. Finish",
+      "Step 3 of 6 ✓ Setup link ✓ Your login ✓ Master key 4 Household 5 Banks 6 Finish",
     );
     expect(html).toContain('aria-current="step"');
   });
@@ -113,13 +118,13 @@ describe("the wizard's frame", () => {
     const html = renderToString(<Stepper shown="finish" reached="finish" skipped={skipped} />);
 
     expect(text(html)).toBe(
-      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5. Banks (skipped) 6. Finish",
+      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5 Banks (skipped) 6 Finish",
     );
     expect(text(html)).not.toContain("✓ Banks");
     // Back to Banks from Finish: still skipped, not done.
     expect(
       text(renderToString(<Stepper shown="banks" reached="finish" skipped={skipped} />)),
-    ).toContain("5. Banks (skipped)");
+    ).toContain("5 Banks (skipped)");
     // Once a bank is linked, Banks is done.
     const linked = skippedWizardSteps({
       ...afterSkip,
@@ -127,7 +132,47 @@ describe("the wizard's frame", () => {
     });
     expect(
       text(renderToString(<Stepper shown="finish" reached="finish" skipped={linked} />)),
-    ).toContain("✓ Household ✓ Banks 6. Finish");
+    ).toContain("✓ Household ✓ Banks 6 Finish");
+  });
+
+  it("names each step in the page's one h1, before the step's own reads answer", () => {
+    const h1s = (html: string) => [...html.matchAll(/<h1[^>]*>(.*?)<\/h1>/g)].map((m) => m[1]);
+
+    // The page reads which step to open.
+    expect(h1s(renderToString(<StepCard step={undefined} />))).toEqual([
+      "Set up Family Finance Tracker",
+    ]);
+    // Step 5 before its Plaid keys read answers.
+    const banks = renderToString(
+      <MemoryRouter>
+        <BanksStep onBack={() => {}} onProgress={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(h1s(banks)).toEqual(["Connect your banks"]);
+    expect(text(banks)).toContain("Back Skip for now Continue to Finish");
+    // Step 6, with its extras in a card of their own.
+    const finish = renderToString(
+      <FinishStepView
+        connections={1}
+        extras={["ai"]}
+        busy={false}
+        error={undefined}
+        onBack={() => {}}
+        onOpen={() => {}}
+        onExtra={() => {}}
+      />,
+    );
+    expect(h1s(finish)).toEqual(["You are set up"]);
+    // A step already done keeps its step's heading.
+    expect(
+      h1s(
+        renderToString(
+          <DoneStepView step="master key" lines={["Saved."]} next="Go" onNext={() => {}} />,
+        ),
+      ),
+    ).toEqual(["Save your Master key"]);
+    // Each step's heading differs.
+    expect(new Set(WIZARD_STEPS.map((step) => STEP_TITLES[step])).size).toBe(WIZARD_STEPS.length);
   });
 
   it("opens the step before with Back, and the step after with Continue", () => {
@@ -142,6 +187,7 @@ describe("the wizard's frame", () => {
     const html = text(
       renderToString(
         <DoneStepView
+          step="first member"
           lines={["Your login is made, and you are signed in."]}
           next="Continue to the Master key"
           onNext={() => {}}
@@ -149,7 +195,9 @@ describe("the wizard's frame", () => {
       ),
     );
 
-    expect(html).toBe("Your login is made, and you are signed in. Continue to the Master key");
+    expect(html).toBe(
+      "Make your login Your login is made, and you are signed in. Continue to the Master key",
+    );
   });
 });
 
@@ -203,12 +251,47 @@ describe("step 5, Banks", () => {
     expect(view(KEYS_SAVED, false)).not.toContain("Link a fake bank");
   });
 
-  it("lists the banks linked so far, with their Accounts", () => {
-    const shown = view(KEYS_SAVED, true, [CONNECTION]);
-
-    expect(shown).toContain("First Fake Bank");
-    expect(shown).toContain("Checking ··1234");
+  it("lists the banks linked so far, each with its count of Accounts, and no Account twice", () => {
+    // The first sync has not run: no Account is stored yet.
+    expect(view(KEYS_SAVED, true, [CONNECTION])).toContain(
+      "First Fake Bank ✓ Linked First sync running: getting the Accounts",
+    );
+    // The Link panel lists a new bank's Accounts as they arrive, so the bank's card counts them.
+    const synced = { ...CONNECTION, lastSyncedAt: "2026-11-06T14:00:00.000Z" };
+    const shown = view(KEYS_SAVED, true, [synced]);
+    expect(shown).toContain("First Fake Bank ✓ Linked 1 Account · loading history");
+    expect(shown).not.toContain("Checking ··1234");
+    // Only the bank's own Accounts count.
+    const other = { ...ACCOUNT, id: "a2", connectionId: "c2" };
+    expect(
+      text(renderToString(<LinkedBankList connections={[synced]} accounts={[ACCOUNT, other]} />)),
+    ).toBe("First Fake Bank ✓ Linked 1 Account · loading history");
+    expect(view(KEYS_SAVED, true, [{ ...synced, historyLoaded: true }])).toContain(
+      "First Fake Bank ✓ Linked 1 Account · history loaded",
+    );
     expect(view(KEYS_SAVED, true)).toContain("No bank is connected yet.");
+  });
+
+  it("marks each bank with an icon, a color, and a word, and says what a bank needs", () => {
+    const html = (connection: ConnectionView) =>
+      renderToString(<LinkedBankList connections={[connection]} accounts={[ACCOUNT]} />);
+
+    expect(html(CONNECTION)).toContain(
+      '<span class="text-good"><span aria-hidden="true">✓ </span>Linked</span>',
+    );
+    const broken = html({ ...CONNECTION, health: "broken" });
+    expect(broken).toContain('<span class="text-critical"><span aria-hidden="true">▲ </span>');
+    expect(text(broken)).toBe(
+      "First Fake Bank ▲ Disconnected Fix it in Settings, Banks after setup.",
+    );
+    const signIn = html({ ...CONNECTION, health: "needs a member" });
+    expect(signIn).toContain('<span class="text-serious"><span aria-hidden="true">◆ </span>');
+    expect(text(signIn)).toBe(
+      "First Fake Bank ◆ Needs a sign-in Fix it in Settings, Banks after setup.",
+    );
+    expect(text(html({ ...CONNECTION, held: true }))).toBe(
+      "First Fake Bank ● Not in use Another Connection already covers this bank, so it never syncs.",
+    );
   });
 
   it("offers no Account by hand, no Manual loan, no import, and no sandbox dry run", () => {
@@ -344,7 +427,7 @@ describe("step 5, Banks: a new bank's first sync, with no reload", () => {
         />,
       ),
     );
-    expect(shown).toContain("First Fake Bank Checking ··1234");
+    expect(shown).toContain("First Fake Bank ✓ Linked 1 Account · loading history");
 
     // History loaded: the step stops reading.
     server.connections = [{ ...synced, historyLoaded: true }];

@@ -358,9 +358,11 @@ export function LinkProgress(props: {
   return (
     <div className={PANEL} role="status">
       <p className="font-semibold">
-        {found === 0
-          ? `The first sync found no Accounts at ${name}`
-          : `${found} ${found === 1 ? "Account" : "Accounts"} found`}
+        {found === 0 ? (
+          `The first sync found no Accounts at ${name}`
+        ) : (
+          <StatusText tone="good">{`${found} ${found === 1 ? "Account" : "Accounts"} found`}</StatusText>
+        )}
       </p>
       <ul className={ACCOUNT_LIST}>
         {props.accounts.map((account) => (

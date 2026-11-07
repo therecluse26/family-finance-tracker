@@ -372,7 +372,20 @@ describe("Settings → Banks: a new bank's first sync, with no reload", () => {
   it("shows the Accounts with their balances and the history progress once the first sync stored them", () => {
     const shown = progress(SYNCED, "polling");
 
-    expect(shown).toContain("2 Accounts found");
+    // A status: its icon, its color, and its words.
+    expect(shown).toContain("✓ 2 Accounts found");
+    const html = renderToString(
+      <LinkProgress
+        bankName="Harbor Savings Bank"
+        connection={SYNCED}
+        accounts={HARBOR}
+        loading={LOADING}
+        poll="polling"
+      />,
+    );
+    expect(html).toContain(
+      '<span class="text-good"><span aria-hidden="true">✓ </span>2 Accounts found',
+    );
     expect(shown).toContain("Harbor Checking ··2290$1,902.45");
     expect(shown).toContain("Harbor Mortgage ··8813−$214,880.10");
     expect(shown).toContain("History is loading: 312 Transactions so far, back to Aug 2025.");

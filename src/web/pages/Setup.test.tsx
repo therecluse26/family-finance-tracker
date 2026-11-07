@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SetupProgressView } from "../../server/setup-views.ts";
 import { TextField } from "../components/Fields.tsx";
 import { savedFirstMemberDraft, saveFirstMemberDraft, saveSetupCode } from "../setup-gate.ts";
-import { FirstMember, WizardHeader } from "./Setup.tsx";
+import { CopiedLine, FirstMember, SetupLinkWorked, WizardHeader } from "./Setup.tsx";
 
 // The setup page's header, as the browser first paints it (spec 12, Order and resume rules). The page
 // renders it with the step on the screen, the furthest step reached, and the server's progress, which
@@ -31,7 +31,7 @@ describe("the setup page's header", () => {
     );
 
     expect(text(html)).toBe(
-      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5. Banks (skipped) 6. Finish Finish",
+      "Step 6 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5 Banks (skipped) 6 Finish",
     );
   });
 
@@ -42,12 +42,10 @@ describe("the setup page's header", () => {
           <WizardHeader shown="finish" reached="finish" progress={progress("done")} />,
         ),
       ),
-    ).toContain("✓ Household ✓ Banks 6. Finish");
+    ).toContain("✓ Household ✓ Banks 6 Finish");
     expect(
       text(renderToString(<WizardHeader shown="banks" reached="banks" progress={undefined} />)),
-    ).toBe(
-      "Step 5 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5. Banks 6. Finish Banks",
-    );
+    ).toBe("Step 5 of 6 ✓ Setup link ✓ Your login ✓ Master key ✓ Household 5 Banks 6 Finish");
   });
 });
 
@@ -119,5 +117,33 @@ describe("step 2, Your login, across a reload", () => {
 
     shown.get("Password, at least 12 characters")?.props.onChange("a-long-password-1");
     expect([...storage.items.values()].join("")).not.toContain("a-long-password-1");
+  });
+});
+
+// Step 1's and step 3's answers are statuses: an icon, a color, and words, in a region that screen
+// readers hear as it changes.
+describe("the setup page's status lines", () => {
+  it("says the setup link worked with a ✓ in green, in a status region that is always there", () => {
+    const worked = renderToString(<SetupLinkWorked worked={true} />);
+    expect(worked).toMatch(/^<div role="status">/);
+    expect(worked).toContain(
+      '<span class="text-good"><span aria-hidden="true">✓ </span>Your setup link worked. The code is filled in.</span>',
+    );
+    expect(renderToString(<SetupLinkWorked worked={false} />)).toBe('<div role="status"></div>');
+  });
+
+  it("says what Copy did with an icon and a color, in a status region that is always there", () => {
+    const copied = renderToString(<CopiedLine copied="copied" />);
+    expect(copied).toContain('role="status"');
+    expect(copied).toContain(
+      '<span class="text-good"><span aria-hidden="true">✓ </span>Copied. Paste it into your password manager now.</span>',
+    );
+    const cannot = renderToString(<CopiedLine copied="cannot copy" />);
+    expect(cannot).toContain('role="status"');
+    expect(cannot).toContain('<span class="text-serious"><span aria-hidden="true">◆ </span>');
+    expect(text(cannot)).toBe("◆ This browser cannot copy here. Select the key and copy it.");
+    const before = renderToString(<CopiedLine copied={undefined} />);
+    expect(before).toContain('role="status"');
+    expect(text(before)).toBe("");
   });
 });
