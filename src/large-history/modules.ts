@@ -272,7 +272,8 @@ export const APP_MODULES: readonly AppModule[] = [
   },
   {
     name: "startRedo",
-    // A case runs the redo itself: no job queue runs in the bench.
+    // A case runs the redo itself, and a Member's run with runRedoJob: no job queue runs in the
+    // bench.
     start: ({ database, secrets, makeModels = noAiProvider }) =>
       startRedo({
         database,
@@ -284,6 +285,8 @@ export const APP_MODULES: readonly AppModule[] = [
         }),
         now: HISTORY_NOW,
         startJob: async () => {},
+        // A Member's press waits for its case to run runRedoJob.
+        startWork: async () => {},
       }),
   },
   {
