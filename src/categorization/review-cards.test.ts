@@ -5,7 +5,11 @@ import { newTestBank, type TestBank } from "../bank/testing.ts";
 import type { CategoryRecord } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { K7_LINES } from "../large-history/index.ts";
-import { startMoneyMovement } from "../money-movement/index.ts";
+import {
+  setTransactionType,
+  splitTransaction,
+  startMoneyMovement,
+} from "../money-movement/index.ts";
 import {
   answerReviewItem,
   openReviewItem,
@@ -13,6 +17,7 @@ import {
   openReviewItems,
   type ReviewItem,
   registerReviewKind,
+  regroupReviewItems,
   settleReviewItems,
 } from "../review/index.ts";
 import {
@@ -22,7 +27,7 @@ import {
   correctCategory,
   startCategorization,
 } from "./index.ts";
-import { groupByMerchant, mostChosen } from "./review-cards.ts";
+import { GROUPED, groupByMerchant, mostChosen } from "./review-cards.ts";
 
 // The Category cards on the Review list (spec 04, Review list items): one open item per Merchant
 // for each Category kind, through the categorization module. Transactions arrive through the fake
@@ -88,6 +93,14 @@ describe("the Category cards on the Review list", () => {
         "SELECT id, kind, subject_ids, decided, best_answer, closed_at, closed_reason FROM review_items ORDER BY id",
       )
     ).rows.map((row) => ({ ...row }));
+  // The Transaction's hand-set fields, hidden or not.
+  const handSetOf = async (providerId: string) => {
+    const rows = await bank.database.$client.execute({
+      sql: "SELECT hand_set FROM transactions WHERE provider_transaction_id = ?",
+      args: [providerId],
+    });
+    return JSON.parse(String(rows.rows[0]?.hand_set)) as Record<string, unknown>;
+  };
   // The AI's answer for a part, as the AI step stores it.
   const answeredByAi = (providerId: string, category: string, confidence: string) =>
     bank.database.$client.execute({
@@ -408,6 +421,152 @@ describe("the Category cards on the Review list", () => {
     });
   });
 
+  describe("an answer on a card", () => {
+    // "Change" on m2's row, only this Transaction.
+    const changeRow = async () =>
+      correctCategory(bank.database, await idOf("m2"), "Groceries", {
+        onlyThisTransaction: true,
+        memberId: MEMBER,
+      });
+    const yes = async (card: ReviewItem | undefined) =>
+      answerReviewItem(bank.database, card?.id ?? "", "Gas", MEMBER);
+
+    it("keeps a row's Change when the card's Yes comes at the same time, in either order", async () => {
+      await sync({ added: [guessed("m1", "2026-10-01"), guessed("m2", "2026-10-02")] });
+      const card = await cardOf("m1");
+
+      const [changed, answered] = await Promise.all([changeRow(), yes(card)]);
+
+      expect(changed.result).toBe("corrected");
+      expect(answered).toBe("answered");
+      await runFollowUp(NOW);
+      expect(await chosen("m2")).toEqual(["Groceries", "hand-set"]);
+      expect(await chosen("m1")).toEqual(["Gas", "hand-set"]);
+    });
+
+    it("keeps a row's Change when the card's Yes is fired first", async () => {
+      await sync({ added: [guessed("m1", "2026-10-01"), guessed("m2", "2026-10-02")] });
+      const card = await cardOf("m1");
+
+      const [answered, changed] = await Promise.all([yes(card), changeRow()]);
+
+      expect(answered).toBe("answered");
+      expect(changed.result).toBe("corrected");
+      await runFollowUp(NOW);
+      expect(await chosen("m2")).toEqual(["Groceries", "hand-set"]);
+      expect(await chosen("m1")).toEqual(["Gas", "hand-set"]);
+    });
+
+    // A card whose last update did not run, such as one that failed: its list still holds m2.
+    const staleCard = async (change: () => Promise<unknown>) => {
+      await sync({ added: [guessed("m1", "2026-10-01"), guessed("m2", "2026-10-02")] });
+      const card = await cardOf("m1");
+      const m2 = await idOf("m2");
+      await change();
+      expect(idsOf(await cardOf("m1"))).toContain(m2);
+      expect(await yes(card)).toBe("answered");
+      expect((await handSetOf("m1")).category).toBe("Gas");
+    };
+
+    it("writes no Transaction a Member set by hand since the card's last update", async () => {
+      await staleCard(() =>
+        bank.database.$client.execute(
+          `UPDATE transactions SET hand_set = '{"category":"Groceries"}' WHERE provider_transaction_id = 'm2'`,
+        ),
+      );
+      expect(await handSetOf("m2")).toEqual({ category: "Groceries" });
+    });
+
+    it("writes no Transaction the provider removed, before the follow-up job", async () => {
+      await staleCard(() =>
+        bank.database.$client.execute(
+          "UPDATE transactions SET hidden_reason = 'removed by the provider' WHERE provider_transaction_id = 'm2'",
+        ),
+      );
+      expect(await handSetOf("m2")).toEqual({});
+    });
+
+    it("writes no Transaction that became a Transfer, and leaves its type alone", async () => {
+      await staleCard(() =>
+        bank.database.$client.execute(
+          `UPDATE transaction_parts SET type = 'Transfer' WHERE transaction_id =
+             (SELECT id FROM transactions WHERE provider_transaction_id = 'm2')`,
+        ),
+      );
+      expect(await handSetOf("m2")).toEqual({});
+    });
+
+    it("writes no Transaction a Member made a Transfer by hand", async () => {
+      await staleCard(async () => setTransactionType(bank.database, await idOf("m2"), "Transfer"));
+      expect(await handSetOf("m2")).toEqual({ type: "Transfer" });
+    });
+
+    it("keeps a split a Member made by hand", async () => {
+      const split = [
+        { amount: 1_500, category: "Gas" as const },
+        { amount: 1_000, category: "Groceries" as const },
+      ];
+      await staleCard(async () =>
+        expect(await splitTransaction(bank.database, await idOf("m2"), split)).toMatchObject({
+          outcome: "split",
+        }),
+      );
+      expect(await handSetOf("m2")).toEqual({ split });
+    });
+
+    it("writes only the card's Merchant: another Merchant's Transaction on its list keeps its guess", async () => {
+      await sync({
+        added: [
+          guessed("m1", "2026-10-01"),
+          guessed("m2", "2026-10-02"),
+          guessed("f1", "2026-10-03", "Firelands Vending"),
+        ],
+      });
+      const card = await cardOf("m1");
+      await bank.database.$client.execute({
+        sql: "UPDATE review_items SET subject_ids = ? WHERE id = ?",
+        args: [
+          JSON.stringify([await idOf("f1"), await idOf("m2"), await idOf("m1")]),
+          card?.id ?? "",
+        ],
+      });
+
+      expect(await yes(card)).toBe("answered");
+
+      expect((await handSetOf("m1")).category).toBe("Gas");
+      expect((await handSetOf("m2")).category).toBe("Gas");
+      expect(await handSetOf("f1")).toEqual({});
+    });
+
+    it("answers a card of 2,500 Transactions in a few statements, within a second", {
+      timeout: 120_000,
+    }, async () => {
+      const day = (index: number) =>
+        new Date(Date.UTC(2021, 0, 1 + index)).toISOString().slice(0, 10);
+      await sync({
+        added: Array.from({ length: 2_500 }, (_, index) => guessed(`m${index}`, day(index))),
+      });
+      const [card] = await cards();
+      expect(idsOf(card)).toHaveLength(2_500);
+
+      // CPU time, which a busy host does not stretch.
+      const started = process.cpuUsage();
+      expect(await yes(card)).toBe("answered");
+      const used = process.cpuUsage(started);
+      expect((used.user + used.system) / 1_000).toBeLessThan(1_000);
+
+      const written = await bank.database.$client.execute(
+        `SELECT count(*) AS n FROM transactions WHERE json_extract(hand_set, '$.category') = 'Gas'`,
+      );
+      expect(Number(written.rows[0]?.n)).toBe(2_500);
+      const rules = await bank.database.$client.execute("SELECT count(*) AS n FROM category_rules");
+      expect(Number(rules.rows[0]?.n)).toBe(1);
+      await runFollowUp(NOW);
+      expect(await chosen("m0")).toEqual(["Gas", "hand-set"]);
+      expect(await cards()).toEqual([]);
+    });
+  });
+
   describe("each filter on the write", () => {
     it("reads only the Category kinds: another kind's item about the Transaction stays open", async () => {
       const other = "test kind";
@@ -457,6 +616,92 @@ describe("the Category cards on the Review list", () => {
       const [row] = (await stored()).filter((item) => item.id === closed?.id);
       expect(row?.subject_ids).toBe(JSON.stringify([await idOf("m1")]));
       expect(row?.closed_reason).toBe("test");
+    });
+
+    it("takes a Transaction a Member split by hand off its card at once", async () => {
+      await sync({ added: [guessed("m1", "2026-10-01"), guessed("m2", "2026-10-02")] });
+      const card = await cardOf("m1");
+      const m2 = await idOf("m2");
+      await splitTransaction(bank.database, m2, [
+        { amount: 1_500, category: "Gas" },
+        { amount: 1_000, category: "Groceries" },
+      ]);
+
+      // Before the follow-up job stores the split on the parts.
+      await categorize(bank.database, []);
+
+      expect(await cards()).toEqual([
+        expect.objectContaining({ id: card?.id, subject: expect.anything() }),
+      ]);
+      expect(idsOf((await cards())[0])).toEqual([await idOf("m1")]);
+    });
+
+    it("takes a Transaction that became Money movement off its card", async () => {
+      await sync({ added: [guessed("m1", "2026-10-01"), guessed("m2", "2026-10-02")] });
+      const card = await cardOf("m1");
+      // Matching made m2 a Transfer; the part keeps its old Category until the cascade runs.
+      await bank.database.$client.execute(
+        `UPDATE transaction_parts SET type = 'Transfer' WHERE transaction_id =
+           (SELECT id FROM transactions WHERE provider_transaction_id = 'm2')`,
+      );
+
+      await categorize(bank.database, []);
+
+      expect((await cards()).map((item) => [item.id, idsOf(item)])).toEqual([
+        [card?.id, [await idOf("m1")]],
+      ]);
+    });
+
+    it("changes only open cards: a regroup worked out before an answer leaves the answer as it is", async () => {
+      await sync({ added: [guessed("m1", "2026-10-01"), guessed("m2", "2026-10-02")] });
+      const card = await cardOf("m1");
+      await answerReviewItem(bank.database, card?.id ?? "", "Gas", MEMBER);
+      const [answered] = (await stored()).filter((item) => item.id === card?.id);
+      expect(answered?.closed_reason).toBe("answered");
+
+      await regroupReviewItems(bank.database, {
+        close: [{ id: card?.id ?? "", reason: GROUPED }],
+        revise: [
+          {
+            id: card?.id ?? "",
+            subject: { type: "transactions", transactionIds: [await idOf("m1")] },
+            decided: "Something else.",
+            bestAnswer: { value: "Groceries", label: "Yes, Groceries" },
+          },
+        ],
+        open: [],
+      });
+
+      const [row] = (await stored()).filter((item) => item.id === card?.id);
+      expect(row).toEqual(answered);
+      const answer = await bank.database.$client.execute({
+        sql: "SELECT answer, answered_by FROM review_items WHERE id = ?",
+        args: [card?.id ?? ""],
+      });
+      expect(answer.rows[0]?.answered_by).toBe(MEMBER);
+    });
+
+    it("gives each Merchant its own card when one old item holds two Merchants", async () => {
+      await sync({
+        added: [guessed("m1", "2026-10-01"), guessed("f1", "2026-10-02", "Firelands Vending")],
+      });
+      await bank.database.$client.execute(
+        "UPDATE review_items SET closed_at = '2026-10-01T00:00:00.000Z', closed_reason = 'test'",
+      );
+      const [old] = await openReviewItemBatch(bank.database, [
+        {
+          kind: BEST_GUESS_KIND,
+          subject: { type: "transactions", transactionIds: [await idOf("m1"), await idOf("f1")] },
+          decided: "Before cards.",
+          bestAnswer: { value: "Gas", label: "Yes, Gas" },
+        },
+      ]);
+
+      await categorize(bank.database, []);
+
+      const open = await cards();
+      expect(open.map(idsOf).sort()).toEqual([[await idOf("f1")], [await idOf("m1")]].sort());
+      expect(open.map((item) => item.id)).toContain(old);
     });
   });
 });

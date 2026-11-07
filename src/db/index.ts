@@ -144,6 +144,7 @@ export {
   type SyncState,
   saveSyncState,
   setAccountExcluded,
+  setHandSetCategory,
   setHandSetFields,
   storeSyncPage,
   type TransactionFilter,

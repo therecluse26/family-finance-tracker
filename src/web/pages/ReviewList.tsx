@@ -117,12 +117,19 @@ export type ItemActions = {
 };
 
 // The folded list under a Category card: each Transaction, with "Change" to set its Category
-// alone. A changed row leaves the card.
-function CardRows(props: { item: ReviewItemView; today: string; actions: ItemActions }) {
+// alone. A changed row leaves the card. While the card's answer is saving, no row changes, and the
+// other way round.
+function CardRows(props: {
+  item: ReviewItemView;
+  today: string;
+  actions: ItemActions;
+  busy: boolean;
+}) {
   const { item } = props;
   const [changing, setChanging] = useState<string | undefined>();
   const [category, setCategory] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [saving, setBusy] = useState(false);
+  const busy = saving || props.busy;
   const [error, setError] = useState<string | undefined>();
   const start = (id: string | undefined) => {
     setChanging(id);
@@ -194,6 +201,7 @@ function CardRows(props: { item: ReviewItemView; today: string; actions: ItemAct
                   type="button"
                   className={buttonClass("outlined", "small")}
                   aria-label={`Change the Category of ${line}`}
+                  disabled={busy}
                   onClick={() => start(txn.id)}
                 >
                   Change
@@ -369,6 +377,15 @@ function CategoryPicker(props: {
   );
 }
 
+// The items' states with one item busy, or no longer busy, keeping its choices and error.
+export function withBusy(
+  states: Readonly<Record<string, ItemState>>,
+  id: string,
+  busy: boolean,
+): Record<string, ItemState> {
+  return { ...states, [id]: { ...states[id], busy } };
+}
+
 export function ReviewListItem(props: {
   item: ReviewItemView;
   state: ItemState;
@@ -419,7 +436,7 @@ export function ReviewListItem(props: {
         </button>
       </div>
       {cardTitle(item) === undefined ? null : (
-        <CardRows item={item} today={props.today} actions={actions} />
+        <CardRows item={item} today={props.today} actions={actions} busy={state.busy === true} />
       )}
       {picker === undefined ? null : (
         <CategoryPicker
@@ -526,7 +543,10 @@ export function ReviewList() {
       if (!outcome.stillOpen) await load();
     },
     async changeOne(item, transactionId, category) {
+      // The card's own answer waits while a row saves, so the two never cross.
+      setStates((all) => withBusy(all, item.id, true));
       const refused = await changeOneCategory(transactionId, category);
+      setStates((all) => withBusy(all, item.id, false));
       if (refused !== undefined) return refused;
       // The row leaves the card at once; the list read again shows what the server holds.
       setItems((all) =>

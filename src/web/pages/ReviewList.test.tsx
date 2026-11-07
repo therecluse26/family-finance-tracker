@@ -35,6 +35,7 @@ import {
   pickedCategoryValue,
   ReviewItems,
   ReviewListItem,
+  withBusy,
 } from "./ReviewList.tsx";
 
 // The Review list page (spec 07, Review list page), with an item of every kind the app opens.
@@ -519,6 +520,29 @@ describe("the Review list page", () => {
       expect(html).not.toContain("Change");
       const pair = EVERY_KIND.find((each) => each.kind === UNCLEAR_PAIR_KIND);
       expect(pair === undefined ? "missing" : cardTitle(pair)).toBeUndefined();
+    });
+
+    it("holds the card's answers while a row saves, and the rows while the card answers", () => {
+      const raw = inRouter(
+        <ReviewListItem item={card} state={{ busy: true }} today={TODAY} actions={noActions} />,
+      );
+
+      expect(raw.match(/<button[^>]*disabled=""[^>]*>Change<\/button>/g)).toHaveLength(3);
+      expect(raw).toMatch(/<button[^>]*disabled=""[^>]*>Yes, Gas<\/button>/);
+      expect(raw).toMatch(/<button[^>]*disabled=""[^>]*>Not this<\/button>/);
+      const idle = inRouter(
+        <ReviewListItem item={card} state={{}} today={TODAY} actions={noActions} />,
+      );
+      expect(idle).not.toContain('disabled=""');
+
+      // A row's save marks its card busy, and clears it after, keeping the card's other state.
+      const before = { card: { error: "Earlier." }, other: {} };
+      const saving = withBusy(before, "card", true);
+      expect(saving).toEqual({ card: { error: "Earlier.", busy: true }, other: {} });
+      expect(withBusy(saving, "card", false)).toEqual({
+        card: { error: "Earlier.", busy: false },
+        other: {},
+      });
     });
 
     it("sets one row's Category alone, with only this Transaction", async () => {

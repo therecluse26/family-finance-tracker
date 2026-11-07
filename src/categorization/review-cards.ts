@@ -36,11 +36,18 @@ type CardKind = {
 
 // The parts whose Category may put the Transaction on a card. A Category or split a Member set by
 // hand wins at step 1 even before the follow-up job stores it on the parts, so the Transaction
-// leaves its card at once.
+// leaves its card at once, and so does one a Member made Money movement by hand.
 const coveredParts = (record: CategoryRecord) =>
-  record.hidden || record.handSet.category !== undefined || record.handSet.split !== undefined
+  record.hidden ||
+  record.handSet.category !== undefined ||
+  record.handSet.split !== undefined ||
+  movedByHand(record)
     ? []
     : record.parts.filter(coveredByCascade);
+
+// A type set by hand that has no Category of the cascade's, such as a Transfer.
+const movedByHand = ({ handSet }: CategoryRecord) =>
+  handSet.type !== undefined && handSet.type !== "Spending" && handSet.type !== "Refund";
 
 const chosenBy = (part: CategoryRecord["parts"][number]) =>
   part.categorySource === "AI" || part.categorySource === "Web lookup";
@@ -140,6 +147,21 @@ export function mostChosen(members: readonly Member[]): { category: Category; of
   }
   if (best === undefined) throw new Error("A Category card needs a Transaction.");
   return best;
+}
+
+// The card's Transactions an answer writes, read inside the answer's transaction: those still of
+// the card's kind, so not hidden, not set by hand and not Money movement, and still with the card's
+// Merchant, the one most of them share. The card's list is only as fresh as its last update.
+export function stillOnCard(kind: string, records: readonly CategoryRecord[]): CategoryRecord[] {
+  const card = KINDS.find((each) => each.kind === kind);
+  if (card === undefined) return [];
+  const members: Member[] = [];
+  for (const record of records) {
+    const category = card.of(record);
+    if (category !== null) members.push({ record, category });
+  }
+  const [largest] = groupByMerchant(members).sort((a, b) => b.length - a.length);
+  return (largest ?? []).map(({ record }) => record);
 }
 
 const transactionIdsOf = (item: ReviewItem) =>

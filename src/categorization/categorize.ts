@@ -11,9 +11,11 @@ import {
   type PartCategory,
   readCategoryFixFacts,
   readCategoryRecords,
+  setHandSetCategory,
   storePartCategories,
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
+import { log } from "../log.ts";
 import { registerDecidedAgain } from "../money-movement/index.ts";
 import { registerRedoStep } from "../redo/index.ts";
 import { type ReviewItem, type ReviewKind, registerReviewKind } from "../review/index.ts";
@@ -35,7 +37,12 @@ import {
   fixCategories,
   type QuickAnswer,
 } from "./quick-tier.ts";
-import { AI_UNSURE_KIND, BEST_GUESS_KIND, updateCategoryCards } from "./review-cards.ts";
+import {
+  AI_UNSURE_KIND,
+  BEST_GUESS_KIND,
+  stillOnCard,
+  updateCategoryCards,
+} from "./review-cards.ts";
 import {
   applyCorrection,
   categoryChoices,
@@ -521,7 +528,7 @@ const transactionIdsOf = (item: ReviewItem) =>
   item.subject.type === "transactions" ? item.subject.transactionIds : [];
 
 // Each answer counts as hand-set: the Category becomes the hand-set Category of every Transaction
-// on the card. Accepting the guess makes one Category rule with it for the card's Merchant (spec
+// still on the card. Accepting the guess makes one Category rule with it for the card's Merchant (spec
 // 04, Review list items). Picking another Category is a correction, and makes a rule unless the
 // Member picks "only this Transaction", which a card of one Transaction offers. The follow-up job
 // then runs the cascade again, so Categorization never runs beside a sync.
@@ -542,22 +549,28 @@ function categoryReviewKind(database: Database): ReviewKind {
         throw new Error("A Category item is about a Transaction, and its answer is a Category.");
       }
       const at = new Date();
+      // Only the Transactions still on the card, read inside the answer's transaction: one a
+      // Member changed on its row, or one that left since the card's last update, keeps what it
+      // has, in either order.
       const records = await readCategoryRecords(answering.database, transactionIdsOf(item));
+      const onCard = stillOnCard(item.kind, records);
       // One rule for the card's Merchant, made with a Transaction that has the provider's Merchant
-      // ID when one does. The others are hand-set only.
-      const maker = records.find((record) => record.merchantId !== null) ?? records[0];
-      for (const record of records) {
-        await applyCorrection(
-          answering.database,
-          { id: record.id, merchant: merchantOf(record), takesCategory: takesCategory(record) },
-          answer.category,
-          {
-            onlyThisTransaction: answer.onlyThisTransaction || record !== maker,
-            memberId: answering.memberId,
-            at,
-          },
-        );
+      // ID when one does. The others are hand-set only, in one statement for each 500. Each is
+      // Spending or a Refund the cascade covers, so its type stays.
+      const maker = onCard.find((record) => record.merchantId !== null) ?? onCard[0];
+      if (maker === undefined) {
+        log.info("A Category card's answer found none of its Transactions still on it");
+        return;
       }
+      const others = onCard.filter((record) => record !== maker).map((record) => record.id);
+      await setHandSetCategory(answering.database, others, answer.category);
+      await followUpAgain(answering.database, others);
+      await applyCorrection(
+        answering.database,
+        { id: maker.id, merchant: merchantOf(maker), takesCategory: takesCategory(maker) },
+        answer.category,
+        { onlyThisTransaction: answer.onlyThisTransaction, memberId: answering.memberId, at },
+      );
     },
     afterAnswer: () => askForFollowUp(),
   };
