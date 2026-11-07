@@ -1,17 +1,22 @@
 import { Link } from "react-router";
-import { useAiActivityLine } from "./ai-activity.ts";
+import { useAiActivityAnnouncement, useAiActivityLine } from "./ai-activity.ts";
 import { StatusText } from "./components/Status.tsx";
 
 // The live AI status in the main menu (spec 07, Main menu; spec 08, Live AI status): "● AI
-// working: Categories" while background AI works, linked to Settings, AI. The live region is always
-// there, so a screen reader reads each new line; with no work it is empty and takes no room.
+// working: Categories" while background AI works, linked to Settings, AI. With no work it is empty
+// and takes no room. A polite live region, seen by screen readers only, says "AI working" when the
+// sign shows and "AI work finished" when it hides, and not each step: the link has the full line.
 // From 900 px wide it sits in the menu column under the app's name. At phone width it is a thin
 // line at the top of the bar at the foot of the screen; the open menu shows it under the app's name.
 export function AiActivitySign(props: { line?: string | undefined }) {
   const live = useAiActivityLine();
   const line = props.line ?? live;
+  const said = useAiActivityAnnouncement(line);
   return (
-    <div aria-live="polite" data-slot="ai-activity" className="min-w-0">
+    <div data-slot="ai-activity" className="min-w-0">
+      <span aria-live="polite" className="sr-only">
+        {said}
+      </span>
       {line === undefined ? null : (
         <Link
           to="/settings/ai"

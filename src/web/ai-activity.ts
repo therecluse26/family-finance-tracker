@@ -339,3 +339,23 @@ export function useAiActivityLine(): string | undefined {
   useEffect(() => () => held.stop(), [held]);
   return shown;
 }
+
+// What the sign's live region says (spec 08, Live AI status, Screen readers): only that AI work
+// started, and that it finished, never each step or use, which the sign's link shows. Empty until
+// the sign first shows, so a page that loads with no work says nothing.
+export const AI_WORKING = "AI working";
+export const AI_WORK_FINISHED = "AI work finished";
+
+export function aiActivityAnnouncement(line: string | undefined, shownBefore: boolean): string {
+  if (line !== undefined) return AI_WORKING;
+  return shownBefore ? AI_WORK_FINISHED : "";
+}
+
+// The live region's words for the sign's line as it shows and hides.
+export function useAiActivityAnnouncement(line: string | undefined): string {
+  const [shownBefore, setShownBefore] = useState(false);
+  useEffect(() => {
+    if (line !== undefined) setShownBefore(true);
+  }, [line]);
+  return aiActivityAnnouncement(line, shownBefore);
+}
