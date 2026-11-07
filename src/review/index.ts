@@ -16,6 +16,7 @@ export {
   type ReviewKind,
   type ReviewSubject,
   registerReviewKind,
+  regroupReviewItems,
   reviewListItems,
   reviseReviewItems,
   settleReviewItems,

@@ -5,8 +5,8 @@ import { newTestBank, type TestBank } from "../bank/testing.ts";
 import type { Category } from "../categories/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { setTransactionType, startMoneyMovement } from "../money-movement/index.ts";
-import { answerReviewItem, openReviewItems } from "../review/index.ts";
-import { categoryChoiceValue } from "./category-choice.ts";
+import { answerReviewItem, openReviewItems, otherReviewChoices } from "../review/index.ts";
+import { categoryChoiceValue, readCategoryChoice } from "./category-choice.ts";
 import {
   BEST_GUESS_KIND,
   categoryRules,
@@ -373,9 +373,10 @@ describe("Category rules", () => {
       );
     };
 
-    it("makes a rule with the guess when a Member accepts it", async () => {
+    it("makes one rule with the guess when a Member accepts the Merchant's card", async () => {
       await sync({ added: [guessed("a", "2026-10-01"), guessed("b", "2026-10-02")] });
       const item = await itemAbout("a");
+      expect(item).toEqual(await itemAbout("b"));
 
       expect(await answerReviewItem(bank.database, item?.id ?? "", "Restaurants", MEMBER)).toBe(
         "answered",
@@ -383,10 +384,13 @@ describe("Category rules", () => {
       await runFollowUp(NOW);
 
       expect(await rules()).toEqual([[null, "Corner Bistro", "Restaurants"]]);
+      // The answer covers every Transaction on the card.
       expect(await chosen("a")).toEqual(["Spending", "Restaurants", "hand-set"]);
-      expect(await chosen("b")).toEqual(["Spending", "Restaurants", "Category rule"]);
-      // The rule settled the other best guess.
-      expect(await itemAbout("b")).toBeUndefined();
+      expect(await chosen("b")).toEqual(["Spending", "Restaurants", "hand-set"]);
+      expect(await openReviewItems(bank.database)).toEqual([]);
+      // The rule answers the Merchant's next Transaction.
+      await sync({ added: [guessed("c", "2026-10-03")] });
+      expect(await chosen("c")).toEqual(["Spending", "Restaurants", "Category rule"]);
     });
 
     it("makes a rule for another Category, unless the Member picks only this Transaction", async () => {
@@ -395,7 +399,6 @@ describe("Category rules", () => {
           guessed("a", "2026-10-01"),
           guessed("b", "2026-10-02"),
           guessed("c", "2026-10-03", "Green Grocer"),
-          guessed("d", "2026-10-04", "Green Grocer"),
         ],
       });
 
@@ -419,11 +422,41 @@ describe("Category rules", () => {
         ),
       ).toBe("answered");
       await runFollowUp(NOW);
+      await sync({
+        added: [guessed("b2", "2026-10-04"), guessed("d", "2026-10-04", "Green Grocer")],
+      });
 
       expect(await rules()).toEqual([[null, "Corner Bistro", "Hobbies"]]);
-      expect(await chosen("b")).toEqual(["Spending", "Hobbies", "Category rule"]);
+      expect(await chosen("b")).toEqual(["Spending", "Hobbies", "hand-set"]);
+      expect(await chosen("b2")).toEqual(["Spending", "Hobbies", "Category rule"]);
       expect(await chosen("c")).toEqual(["Spending", "Groceries", "hand-set"]);
       expect(await chosen("d")).toEqual(["Spending", "Restaurants", "best guess"]);
+    });
+
+    it("offers only this Transaction on a card of one Transaction, never on a card of several", async () => {
+      await sync({
+        added: [
+          guessed("a", "2026-10-01"),
+          guessed("b", "2026-10-02"),
+          guessed("c", "2026-10-03", "Green Grocer"),
+        ],
+      });
+      const several = await itemAbout("a");
+      const one = await itemAbout("c");
+      const onlyThis = (choices: { value: string }[] | undefined) =>
+        (choices ?? []).filter((choice) => readCategoryChoice(choice.value)?.onlyThisTransaction);
+
+      expect(onlyThis(await otherReviewChoices(bank.database, several?.id ?? ""))).toEqual([]);
+      expect(onlyThis(await otherReviewChoices(bank.database, one?.id ?? ""))).not.toEqual([]);
+      expect(
+        await answerReviewItem(
+          bank.database,
+          several?.id ?? "",
+          categoryChoiceValue("Groceries", true),
+          MEMBER,
+        ),
+      ).toBe("not a choice");
+      expect(await chosen("a")).toEqual(["Spending", "Restaurants", "best guess"]);
     });
 
     it("settles 2,500 best guesses in one quick follow-up job", { timeout: 120_000 }, async () => {
@@ -434,18 +467,23 @@ describe("Category rules", () => {
         guessed(`g${index}`, day(index), index < 2_500 ? "Corner Bistro" : "Green Grocer"),
       );
       await sync({ added });
-      expect((await openReviewItems(bank.database)).length).toBe(5_000);
+      // One card for each Merchant.
+      expect((await openReviewItems(bank.database)).length).toBe(2);
       const first = await itemAbout("g0");
-      await answerReviewItem(bank.database, first?.id ?? "", "Restaurants", MEMBER);
+      expect(first?.subject).toMatchObject({ transactionIds: expect.any(Array) });
+      expect(first?.subject.type === "transactions" && first.subject.transactionIds).toHaveLength(
+        2_500,
+      );
 
       // CPU time, which a busy host does not stretch.
       const started = process.cpuUsage();
+      await answerReviewItem(bank.database, first?.id ?? "", "Restaurants", MEMBER);
       await runFollowUp(NOW);
       const used = process.cpuUsage(started);
       const took = (used.user + used.system) / 1_000;
 
-      expect((await openReviewItems(bank.database)).length).toBe(2_500);
-      expect(await chosen("g2499")).toEqual(["Spending", "Restaurants", "Category rule"]);
+      expect((await openReviewItems(bank.database)).length).toBe(1);
+      expect(await chosen("g2499")).toEqual(["Spending", "Restaurants", "hand-set"]);
       // Settling one at a time, each reading every open item, took minutes.
       expect(took).toBeLessThan(5_000);
     });

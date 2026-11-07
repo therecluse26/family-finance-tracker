@@ -18,9 +18,16 @@ import { ONE_SIDED_KIND } from "../../money-movement/one-sided.ts";
 import { UNTRACKED_LOAN_KIND as SERVER_UNTRACKED_LOAN_KIND } from "../../money-movement/untracked-loans.ts";
 import type { ReviewItemView, ReviewTransactionView } from "../../server/review-views.ts";
 import { MAIN_MENU } from "../menu.ts";
-import { acceptOf, answerItem, reviewListRequests, UNTRACKED_LOAN_KIND } from "../review-list.ts";
+import {
+  acceptOf,
+  answerItem,
+  changeOneCategory,
+  reviewListRequests,
+  UNTRACKED_LOAN_KIND,
+} from "../review-list.ts";
 import { routes } from "../routes.tsx";
 import {
+  cardTitle,
   categoryPickerOf,
   type ItemActions,
   KIND_LABEL,
@@ -42,6 +49,7 @@ const txn = (id: string, fields: Partial<ReviewTransactionView> = {}): ReviewTra
   description: "CORNER BISTRO",
   merchantName: "Corner Bistro",
   accountName: "Everyday Checking",
+  categories: [],
   ...fields,
 });
 
@@ -196,7 +204,11 @@ const text = (html: string) =>
     .replace(/\s+/g, " ")
     .trim();
 const inRouter = (node: ReactNode) => renderToString(<MemoryRouter>{node}</MemoryRouter>);
-const noActions: ItemActions = { answer: () => {}, notThis: () => {} };
+const noActions: ItemActions = {
+  answer: () => {},
+  notThis: () => {},
+  changeOne: async () => undefined,
+};
 
 // The buttons in an item, by their words, with what each does when tapped. The item component has
 // no state of its own, so the tree it returns holds each button's onClick.
@@ -461,6 +473,69 @@ describe("the Review list page", () => {
     });
   });
 
+  describe("a Category card", () => {
+    const card = item(
+      "card",
+      AI_UNSURE_KIND,
+      { value: "Gas", label: "Yes, Gas" },
+      {
+        subject: { type: "transactions", transactionIds: ["m1", "m2", "m3"] },
+        transactions: [
+          txn("m1", { merchantName: "Marathon", postedDate: "2026-11-02", categories: ["Gas"] }),
+          txn("m2", { merchantName: "Marathon", postedDate: "2026-10-30", categories: ["Gas"] }),
+          txn("m3", {
+            merchantName: "Marathon",
+            postedDate: "2026-10-12",
+            accountName: null,
+            categories: ["Groceries"],
+          }),
+        ],
+        decided: "The AI chose Gas for 2 of 3, but it was unsure.",
+      },
+    );
+
+    it("reads as the Merchant and its count, with a folded row for each Transaction", () => {
+      const raw = inRouter(
+        <ReviewListItem item={card} state={{}} today={TODAY} actions={noActions} />,
+      );
+      const html = text(raw);
+
+      expect(html).toContain("Category guess Marathon · 3 Transactions");
+      expect(html).toContain("The AI chose Gas for 2 of 3, but it was unsure.");
+      expect(html).toContain("Show the 3 Transactions");
+      expect(html).toContain("Nov 2 · −$42.50 · Everyday Checking · Gas");
+      expect(html).toContain("Oct 12 · −$42.50 · Groceries");
+      expect(raw.match(/>Change<\/button>/g)).toHaveLength(3);
+      expect(cardTitle(card)).toBe("Marathon · 3 Transactions");
+    });
+
+    it("shows a card of one Transaction, and every other kind, as each Transaction's line", () => {
+      const one = { ...card, transactions: card.transactions.slice(0, 1) };
+      expect(cardTitle(one)).toBeUndefined();
+      const html = text(
+        inRouter(<ReviewListItem item={one} state={{}} today={TODAY} actions={noActions} />),
+      );
+      expect(html).toContain("Nov 2 · Marathon · −$42.50 · Everyday Checking");
+      expect(html).not.toContain("Change");
+      const pair = EVERY_KIND.find((each) => each.kind === UNCLEAR_PAIR_KIND);
+      expect(pair === undefined ? "missing" : cardTitle(pair)).toBeUndefined();
+    });
+
+    it("sets one row's Category alone, with only this Transaction", async () => {
+      const sent = recordRequests();
+
+      expect(await changeOneCategory("m3", "Gas")).toBeUndefined();
+
+      expect(sent).toEqual([
+        {
+          method: "PUT",
+          path: "/api/transactions/m3/category",
+          body: { category: "Gas", onlyThisTransaction: true },
+        },
+      ]);
+    });
+  });
+
   it('says "Nothing to check." with no items', () => {
     const html = inRouter(<ReviewItems items={[]} states={{}} today={TODAY} actions={noActions} />);
 
@@ -472,6 +547,7 @@ describe("the Review list page", () => {
     const actions: ItemActions = {
       answer: (each, value) => void answerItem(each.id, value),
       notThis: (each) => void reviewListRequests.choices(each.id),
+      changeOne: async () => undefined,
     };
 
     for (const each of EVERY_KIND) {

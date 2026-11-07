@@ -305,18 +305,33 @@ describe("the Web lookup in the categorization step", () => {
     expect(await partOf("second")).toMatchObject({ category: "Pets", source: "Web lookup" });
   });
 
-  it("puts a below-high lookup on the Review list as Web lookup, unsure", async () => {
+  it("counts a medium lookup as decided, off the Review list, and shows it as Web lookup, unsure", async () => {
     await connectAi();
     answerLookup = () => found("Pets", "medium");
-    await sync({ added: [buy("unsure", "2026-10-05", "Corner Shop")] });
+    await sync({ added: [buy("medium", "2026-10-05", "Corner Shop")] });
 
-    expect(await partOf("unsure")).toEqual({
+    expect(await partOf("medium")).toEqual({
       category: "Pets",
       source: "Web lookup",
       confidence: "medium",
       needsAi: 0,
     });
     expect(provenance({ source: "Web lookup", confidence: "medium" })).toBe("Web lookup, unsure");
+    expect(await itemsOf(AI_UNSURE_KIND)).toEqual([]);
+  });
+
+  it("puts a low lookup on the Review list as Web lookup, unsure", async () => {
+    await connectAi();
+    answerLookup = () => found("Pets", "low");
+    await sync({ added: [buy("unsure", "2026-10-05", "Corner Shop")] });
+
+    expect(await partOf("unsure")).toEqual({
+      category: "Pets",
+      source: "Web lookup",
+      confidence: "low",
+      needsAi: 0,
+    });
+    expect(provenance({ source: "Web lookup", confidence: "low" })).toBe("Web lookup, unsure");
     expect(await itemsOf(AI_UNSURE_KIND)).toMatchObject([
       {
         subject: { type: "transactions", transactionIds: [await idOf("unsure")] },
@@ -345,7 +360,7 @@ describe("the Web lookup in the categorization step", () => {
   it("takes a Member's correction over a Web lookup, as a Category rule the next Transaction uses", async () => {
     await addMorgan();
     await connectAi();
-    answerLookup = () => found("Pets", "medium");
+    answerLookup = () => found("Pets", "low");
     await sync({ added: [buy("corrected", "2026-10-05", "Corner Shop")] });
     const [item] = await itemsOf(AI_UNSURE_KIND);
 

@@ -13,9 +13,10 @@ import { buttonClass } from "../components/Button.tsx";
 import { Card } from "../components/Card.tsx";
 import { ErrorLine, FIELD } from "../components/Fields.tsx";
 import { Page, PageHeading } from "../components/Page.tsx";
-import { acceptOf, answerItem, reviewListRequests } from "../review-list.ts";
+import { acceptOf, answerItem, changeOneCategory, reviewListRequests } from "../review-list.ts";
 import type { ShellContext } from "../Shell.tsx";
 import { browserZone } from "./Accounts.tsx";
+import { CategoryOptions } from "./TransactionDetail.tsx";
 
 // The Review list page (spec 07, Review list page): the app's uncertain decisions, newest first,
 // each with a one-tap answer. Each item already has a result that counts, so nothing waits for it,
@@ -52,11 +53,39 @@ export function transactionLine(txn: ReviewTransactionView, today: string): stri
   ].join(" · ");
 }
 
+// The Category kinds, whose items are one card per Merchant (spec 04, Review list items).
+const CATEGORY_KINDS: ReadonlySet<string> = new Set([
+  "best guess made without AI",
+  "Category the AI was unsure of",
+]);
+
+// A Category card of several Transactions: "Marathon · 14 Transactions". Undefined for any other
+// item, which shows each Transaction's line.
+export function cardTitle(item: ReviewItemView): string | undefined {
+  const [first] = item.transactions;
+  if (!CATEGORY_KINDS.has(item.kind) || first === undefined || item.transactions.length < 2) {
+    return undefined;
+  }
+  return `${first.merchantName ?? first.description} · ${item.transactions.length} Transactions`;
+}
+
+// One row of a card: "Oct 9 · −$42.50 · Everyday Checking · Gas".
+export function cardRowLine(txn: ReviewTransactionView, today: string): string {
+  return [
+    dateLabel(txn.authorizedDate ?? txn.postedDate, today),
+    dollarsAndCents(txn.amount, { signed: true }),
+    ...(txn.accountName === null ? [] : [txn.accountName]),
+    txn.categories.length === 0 ? "No Category yet" : txn.categories.join(", "),
+  ].join(" · ");
+}
+
 // What the item is about: its Transactions, or its loan.
 function Subject(props: { item: ReviewItemView; today: string }) {
   const { item } = props;
   if (item.subject.type === "loan")
     return <p className="mt-1 font-semibold">{item.loanName ?? "A loan"}</p>;
+  const title = cardTitle(item);
+  if (title !== undefined) return <p className="mt-1 font-semibold">{title}</p>;
   return (
     <ul className="mt-1">
       {item.transactions.map((txn) => (
@@ -78,7 +107,108 @@ export type ItemState = {
 export type ItemActions = {
   answer(item: ReviewItemView, value: string): void;
   notThis(item: ReviewItemView): void;
+  // Sets one Transaction's Category alone, as "only this Transaction" does. Resolves with the
+  // server's words when it did not work.
+  changeOne(
+    item: ReviewItemView,
+    transactionId: string,
+    category: string,
+  ): Promise<string | undefined>;
 };
+
+// The folded list under a Category card: each Transaction, with "Change" to set its Category
+// alone. A changed row leaves the card.
+function CardRows(props: { item: ReviewItemView; today: string; actions: ItemActions }) {
+  const { item } = props;
+  const [changing, setChanging] = useState<string | undefined>();
+  const [category, setCategory] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const start = (id: string | undefined) => {
+    setChanging(id);
+    setCategory("");
+    setError(undefined);
+  };
+  const save = async (id: string) => {
+    if (category === "") return setError("Pick a Category.");
+    setBusy(true);
+    const refused = await props.actions.changeOne(item, id, category);
+    setBusy(false);
+    if (refused === undefined) start(undefined);
+    else setError(refused);
+  };
+  return (
+    <details className="basis-full border-t border-line-soft pt-2">
+      <summary className="cursor-pointer py-1 text-small font-semibold">
+        Show the {item.transactions.length} Transactions
+      </summary>
+      <ul className="mt-1">
+        {item.transactions.map((txn) => {
+          const line = cardRowLine(txn, props.today);
+          const selectId = `change-${item.id}-${txn.id}`;
+          return (
+            <li
+              key={txn.id}
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line-soft py-2 text-sm first:border-t-0"
+            >
+              <span className="min-w-0">{keepAmountsWhole(line)}</span>
+              {changing === txn.id ? (
+                <form
+                  className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void save(txn.id);
+                  }}
+                >
+                  <label htmlFor={selectId} className="sr-only">
+                    {`Category for ${line}, only this Transaction`}
+                  </label>
+                  <select
+                    id={selectId}
+                    className="block h-8 w-full rounded-control border border-field bg-white px-2 text-small text-ink sm:w-52"
+                    value={category}
+                    disabled={busy}
+                    onChange={(event) => setCategory(event.target.value)}
+                  >
+                    <CategoryOptions />
+                  </select>
+                  <button type="submit" className={buttonClass("primary", "small")} disabled={busy}>
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className={buttonClass("outlined", "small")}
+                    disabled={busy}
+                    onClick={() => start(undefined)}
+                  >
+                    Cancel
+                  </button>
+                  {error === undefined ? null : (
+                    <div className="basis-full">
+                      <ErrorLine error={error} />
+                    </div>
+                  )}
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className={buttonClass("outlined", "small")}
+                  aria-label={`Change the Category of ${line}`}
+                  onClick={() => start(txn.id)}
+                >
+                  Change
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-1 text-small text-muted">
+        Change sets only that Transaction, with no Category rule.
+      </p>
+    </details>
+  );
+}
 
 // A Category item's choices as one Category list, and whether "only this Transaction" is offered.
 // Undefined when a choice is not a Category answer, so other kinds keep their round choices.
@@ -288,6 +418,9 @@ export function ReviewListItem(props: {
           Not this
         </button>
       </div>
+      {cardTitle(item) === undefined ? null : (
+        <CardRows item={item} today={props.today} actions={actions} />
+      )}
       {picker === undefined ? null : (
         <CategoryPicker
           key={item.id}
@@ -391,6 +524,21 @@ export function ReviewList() {
       }
       setState(item.id, { ...before, busy: false, error: outcome.error });
       if (!outcome.stillOpen) await load();
+    },
+    async changeOne(item, transactionId, category) {
+      const refused = await changeOneCategory(transactionId, category);
+      if (refused !== undefined) return refused;
+      // The row leaves the card at once; the list read again shows what the server holds.
+      setItems((all) =>
+        all?.flatMap((each) => {
+          if (each.id !== item.id) return [each];
+          const left = each.transactions.filter((txn) => txn.id !== transactionId);
+          return left.length === 0 ? [] : [{ ...each, transactions: left }];
+        }),
+      );
+      // Reading the list again sets the main menu's count.
+      await load();
+      return undefined;
     },
     async notThis(item) {
       const before = states[item.id] ?? {};

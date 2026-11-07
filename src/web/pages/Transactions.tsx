@@ -336,7 +336,7 @@ function TransactionRow(props: { txn: TransactionRowView; account: string; today
         {byAi ? (
           <>
             {" "}
-            <ChosenByAiMark />
+            <ChosenByAiMark unsure={chosenUnsure(parts)} />
           </>
         ) : null}
         <CellLink to={path} />
@@ -368,19 +368,32 @@ function CellLink(props: { to: string }) {
   );
 }
 
-// The boards' purple AI tag beside a Category the AI chose. Screen readers hear what it means, so
-// it does not rest on a tooltip. The shared AiMark says "Written by AI", which suits AI text, not a
-// Category.
-function ChosenByAiMark() {
+// Whether the AI, or a Web lookup, was unsure of a part's Category: below high (spec 04, The
+// categorization cascade). A medium answer counts as decided and is not on the Review list.
+export function chosenUnsure(parts: readonly { categoryChosenBy: CategoryChosenBy | null }[]) {
+  return parts.some(
+    (part) =>
+      part.categoryChosenBy === "AI, unsure" || part.categoryChosenBy === "Web lookup, unsure",
+  );
+}
+
+// The boards' purple AI tag beside a Category the AI chose, "AI unsure" when it was unsure (spec
+// 07, Transactions page). Screen readers hear what it means, so it does not rest on a tooltip. The
+// shared AiMark says "Written by AI", which suits AI text, not a Category.
+export function ChosenByAiMark(props: { unsure?: boolean }) {
   return (
     <>
       <span
         aria-hidden="true"
-        className="inline-block rounded-tag bg-ai-soft px-1.5 py-px align-middle text-[10px] font-bold tracking-[.05em] text-ai"
+        className="inline-block rounded-tag bg-ai-soft px-1.5 py-px align-middle text-[10px] font-bold tracking-[.05em] whitespace-nowrap text-ai"
       >
-        AI
+        {props.unsure === true ? "AI unsure" : "AI"}
       </span>
-      <span className="sr-only">(Category chosen by the AI)</span>
+      <span className="sr-only">
+        {props.unsure === true
+          ? "(Category chosen by the AI, which was unsure)"
+          : "(Category chosen by the AI)"}
+      </span>
     </>
   );
 }

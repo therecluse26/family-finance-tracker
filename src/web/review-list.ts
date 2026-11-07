@@ -1,5 +1,6 @@
 import type { ReviewItemView } from "../server/review-views.ts";
 import { api } from "./api.ts";
+import { transactionRequests } from "./transactions.ts";
 
 // The Review list page's requests (spec 07, Review list page). Every kind answers through the same
 // route: its best answer's value, or one of the other choices' values. The answer route reads its
@@ -71,4 +72,21 @@ export async function answerItem(id: string, value: string): Promise<AnswerOutco
     error: typeof body.error === "string" ? body.error : "That did not work.",
     stillOpen: res.status !== 404,
   };
+}
+
+// "Change" on a row of a Category card: sets that Transaction's Category alone, with no Category
+// rule, so it leaves the card (spec 04, Review list items). Resolves with the server's words when
+// it did not work.
+export async function changeOneCategory(
+  transactionId: string,
+  category: string,
+): Promise<string | undefined> {
+  try {
+    const res = await transactionRequests.setCategory(transactionId, category, true);
+    if (res.ok) return undefined;
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : "That did not work.";
+  } catch {
+    return "The server did not answer.";
+  }
 }

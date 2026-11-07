@@ -512,8 +512,9 @@ describe("the Transactions page", () => {
         today={TODAY}
       />,
     );
+    // A Category the AI was unsure of, at medium or low, carries "AI unsure".
     expect(cellsOf("td", aiRows).filter((cell) => cell.startsWith("Restaurants"))).toEqual([
-      "Restaurants AI (Category chosen by the AI)",
+      "Restaurants AI unsure (Category chosen by the AI, which was unsure)",
       "Restaurants",
       "Restaurants AI (Category chosen by the AI)",
     ]);
@@ -652,6 +653,13 @@ describe("the Transaction detail view", () => {
 
     for (const by of chosen)
       expect(html).toContain(`Restaurants · −$1.00 · Category chosen by: ${by} `);
+    // The detail view shows the "AI unsure" tag beside an unsure Category, and only there.
+    expect(html.match(/AI unsure \(Category chosen by the AI, which was unsure\)/g)).toHaveLength(
+      2,
+    );
+    expect(html).toContain(
+      "Category chosen by: AI, unsure AI unsure (Category chosen by the AI, which was unsure)",
+    );
     expect(text(inRouter(body(detailOf(row("new"), { decision: null }))))).toContain(
       "The app has not decided this Transaction yet.",
     );

@@ -18,6 +18,7 @@ import { log } from "../log.ts";
 import { isPaymentApp, type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
 import { merchantOf } from "./cascade.ts";
 import { categoryChoiceValue, readCategoryChoice } from "./category-choice.ts";
+import { updateCategoryCards } from "./review-cards.ts";
 
 // Category rules (spec 04, Category rules, Re-runs). A Member's correction makes a rule for the
 // Transaction's Merchant, and the changed Transaction itself counts as hand-set. The rule covers
@@ -203,6 +204,13 @@ export async function correctCategory(
     );
   });
   if (typeof applied === "string") return { result: applied };
+  // A hand-set Transaction leaves its Category card on the Review list at once (spec 04, Review
+  // list items). If that fails, the follow-up job takes it off.
+  try {
+    await updateCategoryCards(database, [transactionId]);
+  } catch (error) {
+    log.error("Could not take a hand-set Transaction off its Review list card", { error });
+  }
   await followUpSoon();
   log.info("A Member set a Transaction's Category by hand", {
     rule: applied.ruleId !== null,

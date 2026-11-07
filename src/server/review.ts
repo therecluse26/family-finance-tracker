@@ -1,4 +1,4 @@
-import { type Database, listAccounts, readShownTransactions } from "../db/index.ts";
+import { type Database, listAccounts, readShownParts, readShownTransactions } from "../db/index.ts";
 import {
   answerReviewItem,
   countReviewItems,
@@ -8,21 +8,18 @@ import {
 import type { ReviewItemView, ReviewRoutes, ReviewTransactionView } from "./review-views.ts";
 
 // The Review list routes, through the review module. Each item comes with the Transactions or the
-// loan it is about, read once for the whole list.
+// loan it is about, and each Transaction's Categories, read once for the whole list.
 export function reviewRoutes(database: Database): ReviewRoutes {
   return {
     async open() {
       const items = await reviewListItems(database);
-      const shown = new Map(
-        (
-          await readShownTransactions(
-            database,
-            items.flatMap((item) =>
-              item.subject.type === "transactions" ? item.subject.transactionIds : [],
-            ),
-          )
-        ).map((txn) => [txn.id, txn]),
+      const ids = items.flatMap((item) =>
+        item.subject.type === "transactions" ? item.subject.transactionIds : [],
       );
+      const shown = new Map(
+        (await readShownTransactions(database, ids)).map((txn) => [txn.id, txn]),
+      );
+      const parts = await readShownParts(database, ids);
       const accountNames = new Map(
         (await listAccounts(database)).map((account) => [account.id, account.name]),
       );
@@ -41,6 +38,13 @@ export function reviewRoutes(database: Database): ReviewRoutes {
                     description: txn.description,
                     merchantName: txn.merchantName,
                     accountName: accountNames.get(txn.accountId) ?? null,
+                    categories: [
+                      ...new Set(
+                        (parts.get(txn.id) ?? []).flatMap((part) =>
+                          part.category === null ? [] : [part.category],
+                        ),
+                      ),
+                    ],
                   },
                 ];
               })

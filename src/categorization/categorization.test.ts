@@ -161,8 +161,12 @@ describe("the categorization cascade", () => {
         if (row.source === "Merchant history") expect(row.confidence).toBe("high");
         if (row.source === "best guess") expect([row.confidence, row.needsAi]).toEqual(["low", 1]);
       }
-      // Each best guess is on the Review list once.
-      expect((await guesses()).length).toBe(bySource.get("best guess"));
+      // Each best guess is on the Review list once, on its Merchant's card.
+      const onCards = (await guesses()).flatMap((item) =>
+        item.subject.type === "transactions" ? item.subject.transactionIds : [],
+      );
+      expect(onCards.length).toBe(bySource.get("best guess"));
+      expect(new Set(onCards).size).toBe(onCards.length);
     });
   });
 

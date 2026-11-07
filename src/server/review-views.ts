@@ -14,6 +14,9 @@ export type ReviewTransactionView = {
   merchantName: string | null;
   // Its Account's name, or null when the Account is gone.
   accountName: string | null;
+  // The Category of each of its parts that has one, in part order, with no repeat. Empty when it
+  // has none, such as a Transfer.
+  categories: string[];
 };
 
 export type ReviewItemView = {

@@ -11,6 +11,7 @@ import {
   listReviewListItems,
   type Queries,
   readReviewItem,
+  regroupOpenReviewItems,
   reviseOpenReviewItems,
   type StoredReviewItem,
 } from "../db/index.ts";
@@ -288,6 +289,36 @@ export function reviseReviewItems(
 ): Promise<void> {
   if (revisions.length === 0) return Promise.resolve();
   return oneAtATime(() => reviseOpenReviewItems(database, revisions));
+}
+
+// Closes, revises and opens items of registered kinds in one write, such as when a kind groups its
+// items again (spec 04, Review list items). A revised item keeps its ID, so a Member's open answer
+// still reaches it. Each closing needs the event that settled it. Returns the new items' IDs.
+export function regroupReviewItems(
+  database: Database,
+  regroup: {
+    close: readonly { id: string; reason: string }[];
+    revise: readonly {
+      id: string;
+      subject: ReviewSubject;
+      decided: string;
+      bestAnswer: ReviewChoice;
+    }[];
+    open: readonly NewItem[];
+  },
+): Promise<string[]> {
+  if (regroup.close.some(({ reason }) => reason.trim() === "" || reason === "answered")) {
+    throw new Error("Say which event settled the Review list item.");
+  }
+  const revise = regroup.revise.map(({ id, subject, decided, bestAnswer }) => {
+    const subjectIds = subjectIdsOf(subject);
+    if (subjectIds.length === 0) throw new Error("A Review list item needs its Transactions.");
+    return { id, subjectIds, decided, bestAnswer };
+  });
+  const open = regroup.open.map(storedItem);
+  return oneAtATime(() =>
+    regroupOpenReviewItems(database, { close: regroup.close, revise, open }, new Date()),
+  );
 }
 
 // Whether an item of the kind was ever opened about each subject, open or closed now. A kind that

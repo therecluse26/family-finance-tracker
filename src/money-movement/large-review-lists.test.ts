@@ -104,7 +104,10 @@ describe("Review list items on a large history", () => {
         }),
       ),
     );
-    const guesses = (await ofKind(BEST_GUESS_KIND)).length;
+    // The Transactions on the best-guess cards.
+    const guesses = (await ofKind(BEST_GUESS_KIND)).flatMap((item) =>
+      item.subject.type === "transactions" ? item.subject.transactionIds : [],
+    ).length;
     expect(guesses).toBeGreaterThan(ITEMS / 2);
 
     const [card] = (
