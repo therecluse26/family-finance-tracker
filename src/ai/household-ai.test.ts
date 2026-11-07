@@ -352,9 +352,10 @@ describe("an AI call", () => {
 
   describe("reply limits", () => {
     it.each([
-      [{ use: "category fix", task: TASK, batch: [{ amount: 1 }] }, 6_000],
-      [{ use: "merchant cleanup", task: TASK, batch: [{ amount: 1 }] }, 6_000],
+      [{ use: "category fix", task: TASK, batch: [{ amount: 1 }] }, 12_000],
+      [{ use: "merchant cleanup", task: TASK, batch: [{ amount: 1 }] }, 12_000],
       [{ use: "reading a goal", task: "Read." }, 300],
+      [{ use: "merchant lookup", task: "Look up." }, 2_000],
       [{ use: "alert advice", task: "Advise.", alerts: 1 }, 300],
       [{ use: "alert advice", task: "Advise.", alerts: 3 }, 900],
       [{ use: "alert advice", task: "Advise.", alerts: 4 }, 1_200],

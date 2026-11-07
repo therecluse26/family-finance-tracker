@@ -102,14 +102,16 @@ export function aiTool<Shape extends z.ZodRawShape>(tool: {
 }
 
 // Spec 08, Limits on each call: the most reply tokens each use may take.
-const QUICK_BATCH_TOKENS = 6_000;
+// At 6,000, Category fix replies for 100 rows ran past the limit on real data.
+const QUICK_BATCH_TOKENS = 12_000;
 const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
   "category fix": QUICK_BATCH_TOKENS,
   "merchant cleanup": QUICK_BATCH_TOKENS,
   "unclear transfer": QUICK_BATCH_TOKENS,
   "reimbursement linking": QUICK_BATCH_TOKENS,
   "reading a goal": 300,
-  "merchant lookup": 300,
+  // The searches' own turns count as reply tokens, before the answer.
+  "merchant lookup": 2_000,
   "insight cards": 1_000,
   "monthly review": 4_000,
   "budget tailoring": 1_500,
