@@ -3,6 +3,7 @@ import {
   aiCost,
   FOLLOW_UP_AI_USES,
   householdAi,
+  startAiRequestLogCleanup,
   startAiRetries,
 } from "../ai/index.ts";
 import {
@@ -99,6 +100,12 @@ export const APP_MODULES: readonly AppModule[] = [
         database,
         runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
       }),
+  },
+  {
+    name: "startAiRequestLogCleanup",
+    // Its job runs once a day, never in a follow-up step. The AI request log is off, so no case
+    // keeps text.
+    start: ({ database }) => ({ stop: startAiRequestLogCleanup({ database }) }),
   },
   {
     name: "startMoneyMovement",

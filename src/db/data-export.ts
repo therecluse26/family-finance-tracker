@@ -236,6 +236,12 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   exported(schema.aiCalls, "every column"),
   exported(schema.aiCostCap, ["capCents"], ["id", "warnedMonth", "reachedMonth"]),
   exported(schema.aiModelPrices, "every column"),
+  // The AI request log's switch and kept days. Its kept text never goes in.
+  exported(
+    schema.aiRequestLogSettings,
+    ["on", "keepDays"],
+    ["id", "cleanupFailures", "switchOffs"],
+  ),
   // The SMTP password is a Master-key secret, and the sign-in name is the other half of it.
   exported(schema.smtpSettings, ["host", "port", "sender"], ["id", "username", "password"]),
   // The Plaid client ID and secret are the Plaid keys.
@@ -275,6 +281,10 @@ export const NEVER_EXPORTED_TABLES: ReadonlyMap<string, string> = new Map([
   [getTableName(schema.updateCheck), "Work state: the Update check."],
   [getTableName(schema.historyWait), "Work state: the first history load."],
   [getTableName(schema.aiRetries), "Work state: AI retries."],
+  [
+    getTableName(schema.aiRequestLog),
+    "The AI request log: a copy of what the AI provider got, kept a few days at most.",
+  ],
   [getTableName(schema.aiRedo), "Work state: when AI went away, for the redo."],
   [getTableName(schema.followUpMarks), "Work state: the follow-up pipeline."],
   [getTableName(schema.followUpChanges), "Work state: the follow-up pipeline."],

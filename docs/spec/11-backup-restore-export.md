@@ -141,7 +141,8 @@ Any Member can download one ZIP file from settings, at any time. The export asks
 
 - every Master-key secret ([Members, login, and security](09-members-login-security.md#encryption-at-rest));
 - passkeys, TOTP secrets, backup codes, and password hashes;
-- sessions, and open invite and reset links.
+- sessions, and open invite and reset links;
+- the AI request log's kept text, a copy of what the AI provider got that the app keeps for a few days at most ([AI](08-ai.md#ai-request-log)).
 
 **Not encrypted.** The page says so before the download.
 

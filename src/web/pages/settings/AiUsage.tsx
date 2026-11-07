@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { AI_USE_LABELS, type AiUsageView } from "../../../ai/ai-view.ts";
+import type { AiRequestLogSettingsView } from "../../../ai/request-log-view.ts";
 import { callCost, capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel, timeLabel } from "../../../format.ts";
 import { api } from "../../api.ts";
@@ -9,11 +10,18 @@ import { ErrorLine } from "../../components/Fields.tsx";
 import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
 import { todayHere } from "./Ai.tsx";
+import {
+  AI_REQUEST_LOG_PATH,
+  AiRequestLogCard,
+  aiRequestPath,
+  readAiRequestLogSettings,
+} from "./AiRequestLog.tsx";
 import { TEXT_LINK } from "./settings-ui.tsx";
 
 // Settings → AI → AI usage (spec 08, AI usage page): each AI call this month, the month's total
-// against the AI cost cap, and the month's total per use. It shows metadata only: the app keeps no
-// prompt text or reply text.
+// against the AI cost cap, and the month's total per use. The metadata is kept always. Prompt and
+// reply text is kept only while a Member keeps the AI request log on (spec 08, AI request log):
+// its card sits under the month's total, and each call with kept text has an "Open" link.
 
 const count = (tokens: number) => tokens.toLocaleString("en-US");
 
@@ -23,9 +31,17 @@ const CELL = "border-b border-line-soft px-3 py-[11px] tabular-nums";
 const NUMBER = `${CELL} text-right`;
 const NUMBER_HEAD = `${HEAD} text-right`;
 
-// The page once the usage has loaded. Times show in `zone`, the Household time zone.
-export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: string }) {
+// The page once the usage has loaded. Times show in `zone`, the Household time zone. `children`
+// go under the month's total.
+export function AiUsageReport(props: {
+  usage: AiUsageView;
+  zone: string;
+  today: string;
+  children?: ReactNode;
+}) {
   const { usage, zone, today } = props;
+  // The "Text" column shows only while a call this month has kept text.
+  const kept = usage.calls.some((call) => call.logEntryId !== undefined);
   return (
     <>
       <Card>
@@ -43,6 +59,7 @@ export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: 
           <p className="mt-1.5 text-muted">No AI calls this month.</p>
         ) : null}
       </Card>
+      {props.children}
       {usage.calls.length === 0 ? null : (
         <>
           <Card aria-labelledby="ai-usage-by-use">
@@ -86,6 +103,7 @@ export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: 
                     <th className={NUMBER_HEAD}>Cache write</th>
                     <th className={NUMBER_HEAD}>Output</th>
                     <th className={NUMBER_HEAD}>Cost</th>
+                    {kept ? <th className={HEAD}>Text</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -103,6 +121,15 @@ export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: 
                         <td className={NUMBER}>{count(call.cacheWriteTokens)}</td>
                         <td className={NUMBER}>{count(call.outputTokens)}</td>
                         <td className={NUMBER}>{callCost(call.costNanos)}</td>
+                        {kept ? (
+                          <td className={CELL}>
+                            {call.logEntryId === undefined ? null : (
+                              <Link className={TEXT_LINK} to={aiRequestPath(call.logEntryId)}>
+                                Open
+                              </Link>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
@@ -118,6 +145,7 @@ export function AiUsageReport(props: { usage: AiUsageView; zone: string; today: 
 
 export function AiUsage() {
   const [usage, setUsage] = useState<AiUsageView | undefined>();
+  const [log, setLog] = useState<AiRequestLogSettingsView | undefined>();
   const [error, setError] = useState<string | undefined>();
   const zone = useHouseholdZone();
 
@@ -129,7 +157,15 @@ export function AiUsage() {
         setUsage(((await res.json()) as { usage: AiUsageView }).usage);
       })
       .catch(() => setError("The server did not answer."));
+    readAiRequestLogSettings()
+      .then(async (res) => {
+        if (!res.ok) return setError("The AI request log did not load.");
+        setLog(((await res.json()) as { settings: AiRequestLogSettingsView }).settings);
+      })
+      .catch(() => setError("The server did not answer."));
   }, []);
+
+  const logCard = log === undefined ? null : <AiRequestLogCard initial={log} />;
 
   return (
     <>
@@ -139,11 +175,19 @@ export function AiUsage() {
           <Link className={TEXT_LINK} to="/settings/ai">
             Back to AI settings
           </Link>
+          {" · "}
+          <Link className={TEXT_LINK} to={AI_REQUEST_LOG_PATH}>
+            AI request log
+          </Link>
         </p>
       </div>
       <ErrorLine error={error} />
-      {usage === undefined || zone === undefined ? null : (
-        <AiUsageReport usage={usage} zone={zone} today={todayHere(new Date(), zone)} />
+      {zone === undefined ? null : usage === undefined ? (
+        logCard
+      ) : (
+        <AiUsageReport usage={usage} zone={zone} today={todayHere(new Date(), zone)}>
+          {logCard}
+        </AiUsageReport>
       )}
     </>
   );

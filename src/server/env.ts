@@ -1,4 +1,5 @@
 import type { AiSettings } from "../ai/ai-view.ts";
+import type { AiRequestLogRoutes } from "../ai/request-log-view.ts";
 import type {
   BankConnecting,
   ConnectionRemoving,
@@ -111,6 +112,8 @@ export type ServerEnv = {
     // AI work on your Transactions, for the routes under /api/ai/work. Undefined when the app
     // runs no redo of no-AI work, as in a test.
     aiWork: AiWork | undefined;
+    // The AI request log's switch, kept days, and kept text (spec 08, AI request log).
+    aiRequestLog: AiRequestLogRoutes;
     // The Household's SMTP server and the test email, for the routes under /api/smtp/.
     smtp: SmtpSettings;
     // Each Member's own channels for Alerts and System notices.

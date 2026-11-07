@@ -37,16 +37,20 @@ const SETTINGS_READER = "src/db/testing.ts";
 const READS = ["mmap_size", "temp_store_directory", "wal_autocheckpoint"].map(
   (name) => `${name}: "${WORD} ${name}",`,
 );
+const START_TEST = "src/server/start.test.ts";
+const CHECKPOINT = `await database.$client.execute("${WORD} wal_checkpoint(TRUNCATE)");`;
 
 // The driver setup applies WAL mode when it opens app.db. The driver applies the busy timeout
 // itself. A generated migration may hold drizzle-kit's pair around a table rebuild, as drizzle-kit
 // writes it: OFF, then ON. The pair sets nothing, because the driver's migrate() already turns
 // foreign keys off outside the migration's transaction, and SQLite ignores the pair inside one.
 // The tests' settings reader reads three settings that have no table-valued function, each by its
-// name with no value, which only reads.
+// name with no value, which only reads. The start test writes app.db's WAL into its main file
+// before it compares the main file's bytes. A checkpoint changes no setting.
 function allowedLines(path: string): string[] {
   if (path === DRIVER_SETUP) return [WAL];
   if (path === SETTINGS_READER) return READS;
+  if (path === START_TEST) return [CHECKPOINT];
   if (MIGRATION_FILE.test(path)) {
     return [PAIR_OFF, PAIR_ON].flatMap((line) => [line, `${line}${BREAKPOINT}`]);
   }
@@ -60,6 +64,7 @@ const RULE = [
   `- in drizzle/*.sql, drizzle-kit's pair, OFF then ON: ${PAIR_OFF} and ${PAIR_ON}`,
   `  each alone on its line or followed by ${BREAKPOINT}`,
   `- in ${SETTINGS_READER}, the tests' reads with no value: ${READS.join(" ")}`,
+  `- in ${START_TEST}, the checkpoint before it compares app.db's bytes: ${CHECKPOINT}`,
   "To read a setting, use its table-valued function, such as",
   'SELECT * FROM pragma_integrity_check(). See "Database files" in',
   "docs/spec/10-stack-and-architecture.md.",

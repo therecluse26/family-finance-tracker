@@ -37,6 +37,7 @@ import { endRefusalsWithNoCopy, listHandLinkedOldOf } from "./link-carry-over.ts
 import { carryLinks } from "./links.ts";
 import { countPlaidItem } from "./plaid-settings.ts";
 import {
+  aiRequestLog,
   alerts,
   alertTransactions,
   connectionCarryOvers,
@@ -970,6 +971,9 @@ export async function deleteRemovedConnection(
     // The Insight cards can hold the same, so they go too, with their Done marks. The AI box shows
     // none until the next run.
     await tx.delete(insightCards);
+    // The AI request log's kept text can name these Transactions, so all of it goes (spec 08, AI
+    // request log). The switch and the kept days stay.
+    await tx.delete(aiRequestLog);
     const [carried] = await tx
       .select({ id: transactions.id })
       .from(transactions)

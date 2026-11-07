@@ -277,6 +277,7 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
     const answerId = crypto.randomUUID();
     const streamed = await ai.stream(await callFor(threadId, rows, note, answerId), {
       sendAnyway,
+      chatThreadId: threadId,
       async ended(end) {
         try {
           if (!("answered" in end)) return failureWords(end);

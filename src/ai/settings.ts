@@ -461,8 +461,12 @@ export type AiCalls = {
   // Checks the AI status first. No AI provider, a rejected key, history still loading, the AI
   // cost cap, and a model with no price each give a pause. At the cap, a background use pauses,
   // and Chat and reading a Goal pause with "send anyway?" until the Member says yes. The model
-  // passes the same gate again before each call it makes, and counts each call's cost.
-  modelFor(use: ModelUse, options?: { sendAnyway?: boolean }): Promise<ModelFor>;
+  // passes the same gate again before each call it makes, and counts each call's cost. A Chat
+  // answer's model names its thread, which the AI request log links each call's text to.
+  modelFor(
+    use: ModelUse,
+    options?: { sendAnyway?: boolean; chatThreadId?: string },
+  ): Promise<ModelFor>;
 };
 
 // Every AI use gets its model here, and nowhere else, behind the privacy filter and the cost gate
@@ -486,7 +490,7 @@ export function aiCalls(options: AiOptions): AiCalls {
   }
 
   return {
-    async modelFor(use, { sendAnyway = false } = {}) {
+    async modelFor(use, { sendAnyway = false, chatThreadId } = {}) {
       const pause = await gate(use, sendAnyway);
       if (pause !== undefined) return { ready: false, pause };
       const { settings: stored, generation } = await readAiSettingsVersion(database);
@@ -507,6 +511,7 @@ export function aiCalls(options: AiOptions): AiCalls {
           price,
           gate: () => gate(use, sendAnyway),
           cost,
+          ...(chatThreadId === undefined ? {} : { chatThreadId }),
         }),
       );
       return { ready: true, model: models[tier], generation };

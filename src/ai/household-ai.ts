@@ -65,11 +65,13 @@ export type HouseholdAi = {
   // reads it. A pause makes no call, as for generate. `ended` runs once when the answer ends,
   // before the browser hears that it ended: with the AI's whole text, with "Member A" labels, or
   // with why it failed. A failure never retries by itself, and the browser shows `ended`'s words
-  // for it with "Try again".
+  // for it with "Try again". `chatThreadId` names the answer's thread, which the AI request log
+  // links each call's text to, so deleting the thread deletes it.
   stream(
     call: AiCall,
     options: {
       sendAnyway?: boolean;
+      chatThreadId?: string;
       ended: (end: StreamEnd) => Promise<string | undefined>;
     },
   ): Promise<{ ready: true; response: Response } | { ready: false; pause: AiPause }>;
@@ -158,10 +160,13 @@ export function householdAi(options: AiOptions): HouseholdAi {
 
   return {
     generate,
-    async stream(call, { sendAnyway = false, ended }) {
+    async stream(call, { sendAnyway = false, chatThreadId, ended }) {
       const { use } = call;
       if (isBackground(use)) throw new TypeError("Only Chat streams its answer.");
-      const found = await calls.modelFor(use, { sendAnyway });
+      const found = await calls.modelFor(use, {
+        sendAnyway,
+        ...(chatThreadId === undefined ? {} : { chatThreadId }),
+      });
       if (!found.ready) return found;
       // The names the screen shows, read once for the whole answer.
       const shown = await filter();
