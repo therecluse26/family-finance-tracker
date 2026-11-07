@@ -934,19 +934,16 @@ describe("the first AI run and the redo of no-AI work", () => {
         "unclear transfer",
         "reimbursement linking",
         "category fix",
-      ] as const)(
-        "a press during the retry wait of %s ends it and starts the run",
-        async (use) => {
-          await atTheCap();
-          pausedUntil = undefined;
-          await storeAiFailure(bank.database, use, 1, new Date(NOW().getTime() + 60_000));
-          expect(await view()).toMatchObject({ waits: "retry wait" });
+      ] as const)("a press during the retry wait of %s ends it and starts the run", async (use) => {
+        await atTheCap();
+        pausedUntil = undefined;
+        await storeAiFailure(bank.database, use, 1, new Date(NOW().getTime() + 60_000));
+        expect(await view()).toMatchObject({ waits: "retry wait" });
 
-          expect(await pressAiWork("finish")).toMatchObject({ started: true });
-          expect(works).toEqual(["finish"]);
-          expect(await readAiRetry(bank.database, use)).toBeUndefined();
-        },
-      );
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        expect(works).toEqual(["finish"]);
+        expect(await readAiRetry(bank.database, use)).toBeUndefined();
+      });
 
       // The owner's case: "Finish AI work now", and one bad reply to the Category fix.
       it("goes on after a bad reply: its rows go again in halves, and the run finishes with no retry wait", async () => {
