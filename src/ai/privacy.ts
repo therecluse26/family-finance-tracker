@@ -1380,14 +1380,15 @@ export function privacyFilter(facts: PrivacyFacts): PrivacyFilter {
 
   // A tool result the filter refuses on its own, such as one with a store number it cannot cut
   // from a typed amount, is held back: the AI reads HELD_BACK in its place, and the rest of the
-  // call goes out. A part that carries the filter's mark is an app bug, so it still refuses the
-  // call. Each held-back result is logged by its tool's name and the rule, never its value.
+  // call goes out. A part that carries the filter's mark is an app bug: it keeps its mark when held
+  // back, so it still refuses the call. Each held-back result is logged by its tool's name and the
+  // rule, never its value.
   function withHeldBack(messages: Prompt): Prompt {
     return messages.map((message): Prompt[number] => {
       if (message.role !== "tool" && message.role !== "assistant") return message;
       let changed = false;
       const content = message.content.map((part) => {
-        if (part.type !== "tool-result" || isMarked(part)) return part;
+        if (part.type !== "tool-result") return part;
         try {
           filterParams({ prompt: [{ role: message.role, content: [part] }] as Prompt });
           return part;
