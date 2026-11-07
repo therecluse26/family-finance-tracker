@@ -606,6 +606,81 @@ export const aiModelPrices = sqliteTable(
   (table) => [primaryKey({ columns: [table.provider, table.model] })],
 );
 
+// The days a Member may keep AI request text (spec 08, AI request log).
+export const AI_REQUEST_LOG_KEEP_DAYS = [7, 30, 90] as const;
+
+// The AI request log's switch and kept days (spec 08, AI request log). It has at most one row,
+// whose ID is 1. With no row, the log is off and keeps 30 days.
+export const aiRequestLogSettings = sqliteTable(
+  "ai_request_log_settings",
+  {
+    id: integer("id").primaryKey(),
+    on: integer("on", { mode: "boolean" }).notNull(),
+    keepDays: integer("keep_days").notNull(),
+    // Daily cleanup runs that failed in a row. At the cap, the cleanup stops and the log keeps no
+    // new text, until a Member changes the switch or the kept days.
+    cleanupFailures: integer("cleanup_failures").notNull().default(0),
+    // Times a Member turned the log off. A call notes it when it starts, and keeps its text only
+    // while it is unchanged: a call that runs while the log goes off and on again keeps nothing.
+    switchOffs: integer("switch_offs").notNull().default(0),
+  },
+  (table) => [
+    check("ai_request_log_settings_one_row", sql`${table.id} = 1`),
+    check("ai_request_log_settings_keep_days", sql`${table.keepDays} IN (7, 30, 90)`),
+  ],
+);
+
+// What went wrong with a call the AI request log kept: an AI failure, or "stopped" for a call cut
+// off before its reply ended, or "app error" for a failure in the app. Never the error's own text.
+export const AI_REQUEST_FAILURES = [
+  "network",
+  "timeout",
+  "rate limit",
+  "server error",
+  "bad reply",
+  "key rejected",
+  "stopped",
+  "app error",
+] as const;
+
+// The text of one AI call, kept only while the AI request log is on (spec 08, AI request log): the
+// request after the privacy filter, as the app hands it to the AI provider, and the reply as the
+// AI wrote it. It never holds a key, a token, a header, or the base URL. Each text is cut at
+// 256 KB, and all rows together hold at most 100 MB. A call counted on the AI usage page links its
+// ai_calls row; a failed call that counted nothing has none. Deleting the call's Chat thread
+// deletes its row.
+export const aiRequestLog = sqliteTable(
+  "ai_request_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    at: moment("at").notNull(),
+    aiCallId: integer("ai_call_id").references(() => aiCalls.id, { onDelete: "cascade" }),
+    chatThreadId: text("chat_thread_id").references(() => chatThreads.id, {
+      onDelete: "cascade",
+    }),
+    use: text("use", { enum: AI_USE_NAMES }).notNull(),
+    model: text("model").notNull(),
+    // The UTF-8 bytes of the request and the reply together, for the size cap. Its index lets the
+    // cap add them up without reading the text.
+    bytes: integer("bytes").notNull(),
+    request: text("request").notNull(),
+    requestCut: integer("request_cut", { mode: "boolean" }).notNull(),
+    // Empty for a call that failed before any reply.
+    response: text("response").notNull(),
+    responseCut: integer("response_cut", { mode: "boolean" }).notNull(),
+    failure: text("failure", { enum: AI_REQUEST_FAILURES }),
+    // The AI provider's HTTP status for a failed call, when it answered with one.
+    failureStatus: integer("failure_status"),
+  },
+  (table) => [
+    // Newest first, for the log page's pages and the cleanup.
+    index("ai_request_log_at").on(table.at, table.id),
+    uniqueIndex("ai_request_log_ai_call_id").on(table.aiCallId),
+    index("ai_request_log_chat_thread_id").on(table.chatThreadId),
+    index("ai_request_log_bytes").on(table.bytes),
+  ],
+);
+
 // The AI retry of each background AI use whose last call failed (spec 08, Failures): how many
 // calls in a row failed, and when the next try is due. A use has a row only while it waits for a
 // retry. The AI retry job asks for the use's work again once retry_at has passed, and notes that
@@ -1893,6 +1968,13 @@ export const aiRedo = sqliteTable(
     failures: integer("failures").notNull().default(0),
     // When the first AI run finished, with its Insight card run.
     firstRunDoneAt: moment("first_run_done_at"),
+    // The last redo that ended (spec 08, AI work on your Transactions): when it ended, how many
+    // marked items it decided, how many Transactions' Categories the AI answered, and whether it
+    // finished or stopped.
+    lastRunAt: moment("last_run_at"),
+    lastRunItems: integer("last_run_items").notNull().default(0),
+    lastRunAiCategories: integer("last_run_ai_categories").notNull().default(0),
+    lastRunOutcome: text("last_run_outcome", { enum: ["finished", "stopped"] }),
   },
   (table) => [check("ai_redo_one_row", sql`${table.id} = 1`)],
 );

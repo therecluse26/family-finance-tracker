@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { AiActivitySign } from "./AiActivitySign.tsx";
 import { api } from "./api.ts";
 import { MAIN_MENU, type MenuItem, MORE_MENU, PHONE_TABS } from "./menu.ts";
 import { openWizardIfNeeded, resumeWizardIfNeeded } from "./setup-gate.ts";
@@ -218,6 +219,7 @@ export function Shell(props: { reviewListOpenCount?: number }) {
             </button>
           ) : null}
         </div>
+        <AiActivitySign />
         <ul
           className={
             open ? "flex flex-col gap-0.5" : "flex min-[900px]:flex-col min-[900px]:gap-0.5"

@@ -7,6 +7,7 @@ import type { Database } from "../db/index.ts";
 import type { GoalWriting } from "../goals/index.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
+import type { AiWork } from "../redo/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { createApp } from "./app.ts";
 import type { Security } from "./security-mode.ts";
@@ -29,6 +30,7 @@ export function startServer(options: {
   push?: PushSettings;
   chat?: Chat;
   goalWriting?: GoalWriting;
+  aiWork?: AiWork;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
@@ -46,6 +48,7 @@ export function startServer(options: {
             ...(options.push === undefined ? {} : { push: options.push }),
             ...(options.chat === undefined ? {} : { chat: options.chat }),
             ...(options.goalWriting === undefined ? {} : { goalWriting: options.goalWriting }),
+            ...(options.aiWork === undefined ? {} : { aiWork: options.aiWork }),
           },
         ).fetch,
         port: options.port,
@@ -55,6 +58,8 @@ export function startServer(options: {
           port: info.port,
           close: () =>
             new Promise((done, fail) => {
+              // An open live AI status stream would hold up the close (spec 10, HTTP routes).
+              options.aiWork?.activity.stop();
               server.close((error) => (error ? fail(error) : done()));
             }),
         });

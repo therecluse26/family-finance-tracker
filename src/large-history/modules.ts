@@ -3,6 +3,7 @@ import {
   aiCost,
   FOLLOW_UP_AI_USES,
   householdAi,
+  startAiRequestLogCleanup,
   startAiRetries,
 } from "../ai/index.ts";
 import {
@@ -99,6 +100,12 @@ export const APP_MODULES: readonly AppModule[] = [
         database,
         runners: Object.fromEntries(FOLLOW_UP_AI_USES.map((use) => [use, askForFollowUp])),
       }),
+  },
+  {
+    name: "startAiRequestLogCleanup",
+    // Its job runs once a day, never in a follow-up step. The AI request log is off, so no case
+    // keeps text.
+    start: ({ database }) => ({ stop: startAiRequestLogCleanup({ database }) }),
   },
   {
     name: "startMoneyMovement",
@@ -272,7 +279,8 @@ export const APP_MODULES: readonly AppModule[] = [
   },
   {
     name: "startRedo",
-    // A case runs the redo itself: no job queue runs in the bench.
+    // A case runs the redo itself, and a Member's run with runRedoJob: no job queue runs in the
+    // bench.
     start: ({ database, secrets, makeModels = noAiProvider }) =>
       startRedo({
         database,
@@ -284,6 +292,8 @@ export const APP_MODULES: readonly AppModule[] = [
         }),
         now: HISTORY_NOW,
         startJob: async () => {},
+        // A Member's press waits for its case to run runRedoJob.
+        startWork: async () => {},
       }),
   },
   {

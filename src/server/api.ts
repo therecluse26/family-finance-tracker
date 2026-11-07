@@ -1,6 +1,7 @@
 import { type Context, Hono, type MiddlewareHandler } from "hono";
 import * as z from "zod";
 import { AI_PROVIDERS, baseUrlProblem, MAX_COST_CAP_CENTS, onGateway } from "../ai/ai-view.ts";
+import { AI_REQUEST_LOG_KEEP_DAYS } from "../ai/request-log-view.ts";
 import type {
   CoveringConnection,
   LinkRefusal,
@@ -11,10 +12,13 @@ import type {
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { CATEGORIES } from "../categories/list.ts";
+import { timeLabel } from "../format.ts";
 import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
 import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
+import { AI_WORK_REFUSALS, type AiWorkKind, retryWaitRefusal } from "../redo/work-view.ts";
+import { aiActivityStream } from "./ai-activity.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -555,6 +559,23 @@ const jsonOnly: MiddlewareHandler<ServerEnv> = async (c, next) => {
   await next();
 };
 
+// A press of "Finish AI work now" or "Run AI on all history", with an empty JSON body. A refusal
+// starts no run and makes no AI call.
+async function pressAiWork(c: Context<ServerEnv>, kind: AiWorkKind) {
+  if (c.var.aiWork === undefined) return c.json({ error: "Not found" }, 404);
+  if (!emptyBody.safeParse(await jsonBody(c)).success) {
+    return c.json({ error: "Send an empty body." }, 400);
+  }
+  const pressed = await c.var.aiWork.press(kind);
+  if (!pressed.started && pressed.refusal === "retry wait") {
+    // The time the AI tries again, in Household time (spec 08, AI work on your Transactions).
+    const zone = (await c.var.household.timeZone()) ?? "UTC";
+    return c.json({ error: retryWaitRefusal(timeLabel(new Date(pressed.retryAt), zone)) }, 409);
+  }
+  if (!pressed.started) return c.json({ error: AI_WORK_REFUSALS[pressed.refusal] }, 409);
+  return c.json({ work: pressed.work }, 202);
+}
+
 // The Member signed in, as Chat stores them on a message: their ID and name, never their email.
 const chatMember = (c: Context<ServerEnv>) => ({ id: c.var.member.id, name: c.var.member.name });
 
@@ -617,6 +638,17 @@ const channelsBody = z.object({ push: z.boolean(), email: z.boolean() }).strict(
 
 // A Member's own weekly summary email switch: on or off, for the signed-in Member only.
 const weeklySummaryBody = z.object({ on: z.boolean() }).strict();
+
+// The AI request log's switch and kept days (spec 08, AI request log).
+const aiRequestLogBody = z
+  .object({
+    on: z.boolean(),
+    keepDays: z.union(AI_REQUEST_LOG_KEEP_DAYS.map((days) => z.literal(days))),
+  })
+  .strict();
+
+// A kept call's ID, and the cursor of the log page's next page: the last ID of the page before.
+const AI_REQUEST_LOG_ID = /^[1-9]\d{0,14}$/;
 
 // A browser's push subscription (spec 06, Recipients and channels). Its keys are base64url: the
 // browser's P-256 public key, 65 bytes, and its auth secret, 16 bytes.
@@ -1651,6 +1683,54 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: "Enter the AI cost cap in dollars, from $0 to $10,000." }, 400);
     }
     return c.json({ usage: await c.var.ai.setCostCap(body.data.capCents) }, 200);
+  })
+  // AI work on your Transactions (spec 08): the status line, "Finish AI work now", and "Run AI on
+  // all history". Reading the line and a refused press make no AI call. A press answers 202: its
+  // run goes on in a job, and the page reads the line again.
+  .get("/ai/work", async (c) => {
+    if (c.var.aiWork === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json({ work: await c.var.aiWork.view() }, 200);
+  })
+  .post("/ai/work/finish", (c) => pressAiWork(c, "finish"))
+  .post("/ai/work/all-history", (c) => pressAiWork(c, "all history"))
+  // The live AI status (spec 08, Live AI status): server-sent events of the background AI work.
+  .get("/ai/activity/stream", aiActivityStream)
+  // The AI request log (spec 08, AI request log): its switch and kept days, and a page of kept
+  // calls, newest first, older than the call `before` when given. Any Member may read and change it.
+  .get("/ai-request-log", async (c) => {
+    const before = c.req.query("before");
+    if (before !== undefined && !AI_REQUEST_LOG_ID.test(before)) {
+      return c.json({ error: "Ask for the page before a kept call's ID." }, 400);
+    }
+    const page = await c.var.aiRequestLog.page(
+      before === undefined ? {} : { before: Number(before) },
+    );
+    return c.json({ log: page });
+  })
+  // The switch and the kept days alone. Before the kept call's route, which would take "settings"
+  // for an ID.
+  .get("/ai-request-log/settings", async (c) =>
+    c.json({ settings: await c.var.aiRequestLog.settings() }),
+  )
+  // One kept call's request and reply.
+  .get("/ai-request-log/:id", async (c) => {
+    const id = c.req.param("id");
+    const entry = AI_REQUEST_LOG_ID.test(id)
+      ? await c.var.aiRequestLog.entry(Number(id))
+      : undefined;
+    if (entry === undefined) return c.json({ error: "No kept AI request has this ID." }, 404);
+    return c.json({ entry });
+  })
+  // Off deletes every kept text. Fewer kept days deletes the text older than them at once.
+  .put("/ai-request-log/settings", async (c) => {
+    const body = aiRequestLogBody.safeParse(await jsonBody(c));
+    if (!body.success) {
+      return c.json(
+        { error: "Turn the AI request log on or off, and keep 7, 30, or 90 days." },
+        400,
+      );
+    }
+    return c.json({ settings: await c.var.aiRequestLog.set(body.data) }, 200);
   })
   // Settings, Alerts: the Household's SMTP server. The password is never in an answer.
   .get("/smtp/settings", async (c) => c.json({ smtp: await c.var.smtp.view() }))

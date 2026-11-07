@@ -78,6 +78,7 @@ At every start, the app runs these steps in order:
 - The web app calls the API through Hono's typed client (`hc` from `hono/client`), so route types reach the browser.
 - The security mode, trusted proxies, and `Host` checks run before every route ([Members, login, and security](09-members-login-security.md)).
 - A Chat answer streams from its route with `streamText`. It is not a job.
+- The live AI status streams from `GET /api/ai/activity/stream` as server-sent events, with Hono's `streamSSE` ([AI](08-ai.md#live-ai-status)). The server ends each open stream when it stops, before it waits for open requests, so a stream never holds up the shutdown.
 
 ### Module seams
 
@@ -104,6 +105,7 @@ The `ai` module also follows these library rules:
 
 - The app logs to stdout. Docker keeps the log.
 - Logs never hold secrets, the setup code, prompt text, or Transaction details.
+- The AI request log is not a log. It is a table in app.db, off by default, that keeps each AI call's request and reply for a few days ([AI](08-ai.md#ai-request-log)). No log line holds its text.
 
 ## Jobs
 
@@ -137,7 +139,7 @@ Sidequest keeps schedules in memory and skips runs missed while the app is down.
 | Insight card check | Daily at 6 AM Household time. It starts a run only when a new posted Transaction has arrived since the last run | [AI](08-ai.md#when-ai-does-not-run) |
 | Household summary | Once a day | [AI](08-ai.md) |
 | AI retry | After an AI call fails | [AI](08-ai.md) |
-| Redo no-AI work | When AI works again after the AI cost cap or an outage | [AI](08-ai.md) |
+| Redo no-AI work | When AI works again after the AI cost cap or an outage, and when a Member presses "Finish AI work now" or "Run AI on all history" | [AI](08-ai.md#ai-work-on-your-transactions) |
 | Delivery | When an Alert or System notice goes out; push waits out quiet hours | [Anomalies and Alerts](06-anomalies-and-alerts.md) |
 | Backup | Daily at 3:00 AM Household time, on Back up now, and on its retry | [Backup, restore, and export](11-backup-restore-export.md) |
 | CPI fetch | Monthly | [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md) |

@@ -1,10 +1,10 @@
 import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { type AI_USE_NAMES, aiCalls, aiCostCap, aiModelPrices } from "./schema.ts";
+import { type AI_USE_NAMES, aiCalls, aiCostCap, aiModelPrices, aiRequestLog } from "./schema.ts";
 
 // AI calls, the AI cost cap, and Member-entered prices in app.db (spec 08, Counting cost and The
 // AI cost cap). The ai module decides and counts; these functions store and read. Nothing here
-// holds prompt text or reply text.
+// holds prompt text or reply text: the AI request log keeps that, in its own table.
 
 export type AiUseName = (typeof AI_USE_NAMES)[number];
 
@@ -15,8 +15,11 @@ export type NewAiCall = Omit<StoredAiCall, "id">;
 // The ID of ai_cost_cap's one row.
 const COST_CAP_ROW = 1;
 
-export async function addAiCall(database: Database, call: NewAiCall): Promise<void> {
-  await database.insert(aiCalls).values(call);
+// Stores one call. Returns its ID, which the AI request log links its text to.
+export async function addAiCall(database: Database, call: NewAiCall): Promise<number> {
+  const [row] = await database.insert(aiCalls).values(call).returning({ id: aiCalls.id });
+  if (row === undefined) throw new Error("The AI call was not stored.");
+  return row.id;
 }
 
 // The month's cost, in billionths of a dollar.
@@ -49,18 +52,21 @@ export async function readMonthCostByUse(database: Database, month: string): Pro
   }));
 }
 
-// The month's calls, newest first, at most `limit`.
+// The month's calls, newest first, at most `limit`, each with the ID of its kept text in the AI
+// request log, or null.
 export async function listMonthAiCalls(
   database: Database,
   month: string,
   limit: number,
-): Promise<StoredAiCall[]> {
-  return database
-    .select()
+): Promise<(StoredAiCall & { logEntryId: number | null })[]> {
+  const rows = await database
+    .select({ call: aiCalls, logEntryId: aiRequestLog.id })
     .from(aiCalls)
+    .leftJoin(aiRequestLog, eq(aiRequestLog.aiCallId, aiCalls.id))
     .where(eq(aiCalls.month, month))
     .orderBy(desc(aiCalls.at), desc(aiCalls.id))
     .limit(limit);
+  return rows.map(({ call, logEntryId }) => ({ ...call, logEntryId }));
 }
 
 // The cap a Member set, in cents, or undefined while it is the default.

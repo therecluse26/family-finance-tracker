@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { aiCost, aiSettings } from "../ai/index.ts";
 import { StubModels } from "../ai/testing.ts";
 import { createAuth } from "../auth/auth.ts";
 import { addMember, type TestMember } from "../auth/testing.ts";
@@ -12,7 +13,9 @@ import {
   markSetupStep,
   openDatabase,
 } from "../db/index.ts";
+import { householdTimeZone } from "../household/index.ts";
 import { createLogger } from "../log.ts";
+import { aiWork } from "../redo/index.ts";
 import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
 import { createApp } from "../server/app.ts";
@@ -95,6 +98,16 @@ export async function openLargeHistory(): Promise<LargeHistory> {
       auth,
       database,
       secrets,
+      // Settings → AI's routes, on the same test models.
+      {
+        ai: aiSettings({
+          database,
+          secrets,
+          makeModels: ai.makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+        aiWork,
+      },
     );
     const member = await addMember(auth, { name: "Riley Park", email: "riley@example.com" });
     await markSetupStep(database, "master key", "done");

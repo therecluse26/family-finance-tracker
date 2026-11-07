@@ -28,7 +28,13 @@ import {
 import { readHouseholdFacts } from "../household/index.ts";
 import type { Logger } from "../log.ts";
 import type { AiTier, ModelCheck, TierModels } from "./ai-view.ts";
-import { type AiPause, AiPausedError, costMiddleware, type OutboundCall } from "./outbound.ts";
+import {
+  type AiPause,
+  AiPausedError,
+  costMiddleware,
+  type OutboundCall,
+  STREAM_CUT,
+} from "./outbound.ts";
 import { type PrivacyFacts, PrivacyRefusal, privacyFilter } from "./privacy.ts";
 import { type AiCall, type AiTools, buildPrompt, plainData } from "./prompt.ts";
 import {
@@ -37,6 +43,7 @@ import {
   type AiModels,
   makeFetchModels,
 } from "./providers.ts";
+import { callLog, type KeptFailure } from "./request-log.ts";
 
 // The one AI call path (spec 08, Privacy filter; spec 10, Module seams: `ai`). Every model the app
 // calls is made here, and each one sends every request first through the privacy filter, then
@@ -87,8 +94,8 @@ export async function readPrivacyFacts(database: Database): Promise<PrivacyFacts
 
 // The privacy filter as the outer middleware, then the cost gate and count (src/ai/outbound.ts).
 // The AI SDK runs the first middleware's transformParams first, so a request the filter refuses
-// never reaches the gate, the AI provider, or the count, and the count sees only the filtered
-// request that really goes out.
+// never reaches the gate, the AI provider, the count, or the AI request log, and the count and the
+// log see only the filtered request that really goes out.
 function privateModel(
   model: LanguageModel,
   database: Database,
@@ -102,7 +109,7 @@ function privateModel(
         transformParams: async ({ params }) =>
           privacyFilter(await readPrivacyFacts(database)).params(params),
       },
-      costMiddleware(counted),
+      costMiddleware(counted, callLog(database, counted, keptFailureOf)),
     ],
   });
 }
@@ -222,6 +229,19 @@ function callErrorOf(error: unknown): AiCallError | undefined {
     return new AiCallError("bad reply");
   }
   return networkCode(last) ? new AiCallError("network") : undefined;
+}
+
+// What the AI request log keeps for a failed model call: the kind of failure and the AI provider's
+// HTTP status, never the error, which can hold the prompt, the reply, the headers, and the key.
+// The app's 120-second timeout aborts the call with a TimeoutError.
+function keptFailureOf(error: unknown): KeptFailure {
+  if (error === STREAM_CUT) return { failure: "stopped", status: null };
+  const failed = callErrorOf(error);
+  if (failed !== undefined) return { failure: failed.failure, status: failed.status ?? null };
+  const name = error instanceof Error || error instanceof DOMException ? error.name : undefined;
+  if (name === "TimeoutError") return { failure: "timeout", status: null };
+  if (name === "AbortError") return { failure: "stopped", status: null };
+  return { failure: "app error", status: null };
 }
 
 // "Test the key" (spec 08, Test the key): one call with the fixed prompt and a 1-token reply, no

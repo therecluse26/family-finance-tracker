@@ -1,6 +1,13 @@
 // The ai module's interface. Other modules import from here. It is the only module that imports
 // the AI SDK and the AI provider packages. householdAi is the one way to call the AI: no model
 // leaves this module, and every call passes the privacy filter, then the cost gate.
+
+export {
+  aiActivity,
+  aiActivityWatchers,
+  showRunActivity,
+  startAiActivity,
+} from "./activity.ts";
 export {
   AI_PROVIDERS,
   AI_USES,
@@ -41,6 +48,18 @@ export {
   type SummaryPart,
 } from "./prompt.ts";
 export type { AiConnection, AiModelMaker } from "./providers.ts";
+export {
+  AI_REQUEST_LOG_CLEANUP_CAP,
+  AI_REQUEST_LOG_CLEANUP_STOPPED,
+  AI_REQUEST_LOG_MAX_BYTES,
+  AI_REQUEST_LOG_PAGE,
+  AiRequestLogCleanupJob,
+  type AiRequestLogOptions,
+  aiRequestLogRoutes,
+  cleanUpAiRequestLog,
+  startAiRequestLogCleanup,
+} from "./request-log.ts";
+export type { AiRequestLogPage, AiRequestLogRoutes } from "./request-log-view.ts";
 export {
   AiRetryJob,
   type AiRetryRunner,

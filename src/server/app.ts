@@ -2,7 +2,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { type Context, type ErrorHandler, Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
-import type { AiSettings } from "../ai/index.ts";
+import { type AiRequestLogRoutes, type AiSettings, aiRequestLogRoutes } from "../ai/index.ts";
 import type { Auth } from "../auth/index.ts";
 import {
   bankConnecting,
@@ -17,6 +17,7 @@ import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import { channelSettings } from "../notify/index.ts";
 import type { PushSettings } from "../notify/push-view.ts";
+import type { AiWork } from "../redo/work-view.ts";
 import type { Secrets } from "../secrets/index.ts";
 import { weeklySummarySettings } from "../weekly-summary/index.ts";
 import { aboutRoutes } from "./about.ts";
@@ -191,12 +192,16 @@ export function createApp(
   services: {
     plaid?: PlaidSettings;
     ai?: AiSettings;
+    // The AI request log's routes: app.db's own, unless a test gives its own.
+    aiRequestLog?: AiRequestLogRoutes;
     smtp?: SmtpSettings;
     push?: PushSettings;
     // Chat's answers. Without it, Chat says AI is not set up.
     chat?: Chat;
     // Adding a Goal and editing its words, with the AI's reading. Without it, no Goal is added.
     goalWriting?: GoalWriting;
+    // AI work on your Transactions, under /api/ai/work. Without it, those routes answer 404.
+    aiWork?: AiWork;
     // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
     devRoutes?: Hono<ServerEnv>;
   } = {},
@@ -220,6 +225,7 @@ export function createApp(
   const comingUp = comingUpRoutes(database);
   const channels = channelSettings(database);
   const weeklySummary = weeklySummarySettings(database);
+  const aiRequestLog = services.aiRequestLog ?? aiRequestLogRoutes({ database });
   const topMerchants = topMerchantRoutes(database);
   const aiBox = aiBoxRoutes(database, services.ai);
   const proposals = proposalRoutes(database);
@@ -281,6 +287,7 @@ export function createApp(
         c.set("comingUp", comingUp);
         c.set("channels", channels);
         c.set("weeklySummary", weeklySummary);
+        c.set("aiRequestLog", aiRequestLog);
         c.set("topMerchants", topMerchants);
         c.set("aiBox", aiBox);
         c.set("proposals", proposals);
@@ -292,6 +299,7 @@ export function createApp(
         c.set("dataExport", dataExport);
         c.set("members", members);
         c.set("devices", devices);
+        c.set("aiWork", services.aiWork);
         await next();
       })
       .use("/api/*", masterKeyFirst)
@@ -307,6 +315,8 @@ export function createApp(
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .use("/api/weekly-summary", jsonOnly)
+      // So does the AI request log's switch.
+      .use("/api/ai-request-log/settings", jsonOnly)
       .route("/api", api)
       .route("/api/dev", services.devRoutes ?? new Hono<ServerEnv>())
       .all("/api/*", (c) => c.json({ error: "Not found" }, 404))

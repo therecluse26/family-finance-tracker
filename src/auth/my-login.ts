@@ -12,6 +12,7 @@ import * as z from "zod";
 import { claimTotpStep, type Database } from "../db/index.ts";
 import { registerSecretValue } from "../log.ts";
 import type { Secrets } from "../secrets/index.ts";
+import { tellSessionsEnded } from "./session-ends.ts";
 import type { HookContext } from "./sign-in-limit.ts";
 import { TOTP_DIGITS, TOTP_PERIOD_SECONDS, totpStepOf } from "./totp-once.ts";
 
@@ -121,7 +122,10 @@ export async function endOtherSignIns(
 ): Promise<void> {
   const sessions = await context.internalAdapter.listSessions(memberId);
   const others = sessions.filter((one) => one.id !== keptSessionId).map((one) => one.token);
-  if (others.length > 0) await context.internalAdapter.deleteSessions(others);
+  if (others.length > 0) {
+    await context.internalAdapter.deleteSessions(others);
+    tellSessionsEnded();
+  }
   const waiting = await context.adapter.findMany<{ identifier: string }>({
     model: "verification",
     where: [

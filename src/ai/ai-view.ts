@@ -223,7 +223,8 @@ export const MAX_COST_CAP_CENTS = 1_000_000;
 
 // The AI usage page (spec 08, AI usage page): metadata only, never prompt or reply text. Costs
 // are in billionths of a dollar. `month` is the calendar month in the Household time zone,
-// YYYY-MM, and `at` is a moment in UTC.
+// YYYY-MM, and `at` is a moment in UTC. `logEntryId` is the ID of the call's text in the AI
+// request log, only while the log keeps it.
 export type AiCallView = {
   id: number;
   use: AiUse;
@@ -234,6 +235,7 @@ export type AiCallView = {
   outputTokens: number;
   costNanos: number;
   at: string;
+  logEntryId?: number;
 };
 
 export type AiUsageView = {

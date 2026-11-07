@@ -266,7 +266,7 @@ The Plaid adapter declares `minSyncGapHours: 0` and all three actions: `repairIn
 - Any Member may remove a Connection in settings.
 - First the app says that the Plaid Trial slot stays spent. The Member confirms.
 - The app calls `/item/remove` and deletes the access token. The Connection's Accounts become Closed. Their history stays.
-- "Delete history" is a separate action with its own confirmation. It deletes the Connection's Accounts and their Transactions. Links that used those Transactions are undone, and matching runs again.
+- "Delete history" is a separate action with its own confirmation. It deletes the Connection's Accounts and their Transactions. Links that used those Transactions are undone, and matching runs again. In the same write it deletes every kept text in the [AI request log](08-ai.md#ai-request-log), since that text can name these Transactions.
 
 ### Carrying Accounts over
 

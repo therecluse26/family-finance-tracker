@@ -20,6 +20,7 @@ import {
 } from "./my-login.ts";
 import { passkeyAnswer, passkeys, removeOtherHostPasskeys } from "./passkeys.ts";
 import { sealedAdapter } from "./sealed-adapter.ts";
+import { tellSessionsEnded } from "./session-ends.ts";
 import { CLIENT_ADDRESS_HEADER, signInLimit } from "./sign-in-limit.ts";
 import { totpOnce } from "./totp-once.ts";
 
@@ -270,6 +271,8 @@ export function createAuth(options: AuthOptions): Auth {
       const res = await auth.handler(
         new Request(request, { headers, duplex: "half" } as RequestInit),
       );
+      // Sign out ended this session: its open streams end too (spec 09, Signing in).
+      if (path === "/sign-out") tellSessionsEnded();
       return passkeyAnswer(path, res);
     },
 
@@ -305,6 +308,7 @@ export function createAuth(options: AuthOptions): Auth {
     async signOutDevice(memberId, sessionId, deviceId, at) {
       if (deviceId === sessionId) return "this device";
       const ended = await endOpenSession(options.database, memberId, deviceId, at);
+      if (ended) tellSessionsEnded();
       return ended ? "signed out" : "already signed out";
     },
 
@@ -317,6 +321,8 @@ export function createAuth(options: AuthOptions): Auth {
     async removeLogin(memberId) {
       const context = await auth.$context;
       await context.internalAdapter.deleteUserSessions(memberId);
+      // Login reset and the Member's removal: the Member's open streams end at once.
+      tellSessionsEnded();
       await context.internalAdapter.deleteAccounts(memberId);
       await context.adapter.deleteMany({
         model: "passkey",

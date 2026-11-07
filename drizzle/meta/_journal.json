@@ -470,6 +470,20 @@
       "when": 1794005223423,
       "tag": "0066_weekly_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1794028210197,
+      "tag": "0067_ai_work_last_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "6",
+      "when": 1794061603523,
+      "tag": "0068_ai_request_log",
+      "breakpoints": true
     }
   ]
 }

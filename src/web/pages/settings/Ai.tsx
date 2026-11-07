@@ -25,6 +25,7 @@ import { ErrorLine } from "../../components/Fields.tsx";
 import { Meter } from "../../components/Meter.tsx";
 import { StatusText } from "../../components/Status.tsx";
 import { useHouseholdZone } from "../../household-zone.ts";
+import { AiWorkCard } from "./AiWork.tsx";
 import {
   BUTTONS,
   CHOICE,
@@ -688,6 +689,7 @@ export function AiSettingsFields() {
               }}
             />
           </SettingCard>
+          <AiWorkCard ai={ai} usage={usage} />
           {usage === undefined || today === undefined ? null : (
             <CostCapForm usage={usage} today={today} onSaved={setUsage} />
           )}

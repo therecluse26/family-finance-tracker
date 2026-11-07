@@ -167,6 +167,10 @@ Four tiles in a row (two by two on a phone):
 
 The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with its open count), and Settings. A "More" section holds Budgets, Goals, Accounts, Alert list, Recurring charges, and Top Merchants.
 
+- **Live AI status:** while background AI works, a small sign shows in the main menu, such as "● AI working: Categories", in the accent color. It links to Settings, AI. With no work, it is not there. Its words, when it shows, and its feed are in [AI](08-ai.md#live-ai-status).
+  - From 900 px wide, it sits in the menu column, under the app's name.
+  - At phone width, it is a thin line at the top of the bar at the foot of the screen, over the tabs. The shell has no header bar at phone width, and the line never covers the page. The open menu shows it under the app's name.
+
 ### Transactions page
 
 Using this page is never required.
@@ -271,7 +275,7 @@ Settings has one section per area. Each owner file holds the rules.
 | Banks | Plaid keys, Connections, Repair, Remove, "Import Plaid Connection", "at least N of 10 used", Unconnected accounts, Manual loans | [02](02-accounts-and-bank-sync.md) |
 | Categories | Category rules, with Delete | [04](04-categorization.md) |
 | Alerts | Weekly cap, my channels, the weekly summary email, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
-| AI | AI provider, key, models, prices, AI cost cap, base URL, and the AI usage page | [08](08-ai.md#ai-settings-page) |
+| AI | AI provider, key, models, prices, AI cost cap, base URL, the AI usage page, and the AI request log | [08](08-ai.md#ai-settings-page) |
 | Backups and data | "Back up now", last backup, "Check my Master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |
 | About | Version, "Source code" link, "Data sources" page, "Update available", the update-check switch | [12](12-install-and-first-run.md) |
 

@@ -37,8 +37,8 @@ export type AiCost = {
   // The date background AI starts again, YYYY-MM-DD, while the month's total is at the cap.
   pausedUntil(): Promise<string | undefined>;
   // Stores the call, then sends the 80% and 100% System notices, each once a month. A notice that
-  // fails is logged, and the call's own result stands.
-  record(call: CountedCall): Promise<void>;
+  // fails is logged, and the call's own result stands. Returns the stored call's ID.
+  record(call: CountedCall): Promise<number>;
   // A cap above the month's total starts background AI again at once.
   setCap(capCents: number): Promise<void>;
   usage(): Promise<AiUsageView>;
@@ -114,12 +114,13 @@ export function aiCost(options: {
     },
 
     async record(call) {
-      await addAiCall(database, {
+      const id = await addAiCall(database, {
         ...call,
         at: new Date(),
         month: monthOf(await today()),
       });
       await trySendNotices();
+      return id;
     },
 
     async setCap(capCents) {
@@ -142,9 +143,10 @@ export function aiCost(options: {
         capCents: now.capCents,
         pausedUntil: atCap(now.totalNanos, now.capCents) ? firstOfNextMonth(now.month) : null,
         byUse,
-        calls: calls.map(({ month: _month, provider: _provider, at, ...call }) => ({
+        calls: calls.map(({ month: _month, provider: _provider, at, logEntryId, ...call }) => ({
           ...call,
           at: at.toISOString(),
+          ...(logEntryId === null ? {} : { logEntryId }),
         })),
       };
     },
