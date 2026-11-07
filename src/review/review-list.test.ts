@@ -13,6 +13,7 @@ import { loadSecurity } from "../server/security-mode.ts";
 import { type App, TestBrowser } from "../server/testing.ts";
 import {
   openReviewItem,
+  openReviewItemBatch,
   type ReviewChoice,
   type ReviewItem,
   type ReviewKind,
@@ -242,6 +243,50 @@ describe("the Review list", () => {
 
     expect((await openItems()).map((item) => item.id)).toEqual([third, second, first]);
     expect(await openCount()).toBe(3);
+  });
+
+  it("runs items made at the same moment by their Transaction's shown date, newest first, with a loan item after them", async () => {
+    unregister();
+    const loanItems: ReviewKind = { otherChoices: async () => [], answer: async () => {} };
+    const unregisterLoan = registerReviewKind("link to this loan", loanItems);
+    unregister = registerReviewKind(KIND, categoryGuess);
+    // t2 posts last but shows its purchase date, the oldest of the three.
+    await query(
+      "UPDATE transactions SET posted_date = '2026-10-01' WHERE provider_transaction_id = 't1'",
+    );
+    await query(
+      "UPDATE transactions SET posted_date = '2026-10-20', authorized_date = '2026-09-28' WHERE provider_transaction_id = 't2'",
+    );
+    await query(
+      "UPDATE transactions SET posted_date = '2026-10-15' WHERE provider_transaction_id = 't3'",
+    );
+    const item = (transactionIds: string[]) => ({
+      kind: KIND,
+      subject: { type: "transactions" as const, transactionIds },
+      decided: "The AI guessed Restaurants, with medium confidence.",
+      bestAnswer: { value: "restaurants", label: "Yes, Restaurants" },
+    });
+    const [onlyT2, loan, onlyT1, t2AndT3] = await openReviewItemBatch(test.database, [
+      item([txns.t2 ?? ""]),
+      {
+        kind: "link to this loan",
+        subject: { type: "loan", accountId: "loan-account" },
+        decided: "This payment may belong to the Car Loan.",
+        bestAnswer: { value: "link", label: "Yes, link it" },
+      },
+      item([txns.t1 ?? ""]),
+      // An item about two Transactions runs by the newer one, t3.
+      item([txns.t2 ?? "", txns.t3 ?? ""]),
+    ]);
+    // An item made later comes first, whatever its Transaction's date.
+    vi.setSystemTime(new Date("2026-11-03T15:00:00.000Z"));
+    const later = await guess("t2");
+
+    const order = [later, t2AndT3, onlyT1, onlyT2, loan];
+    expect((await openItems()).map((open) => open.id)).toEqual(order);
+    // The same order on every read.
+    expect((await openItems()).map((open) => open.id)).toEqual(order);
+    unregisterLoan();
   });
 
   it("accepts the best answer: the kind sets the hand-set marks, and the item closes", async () => {
