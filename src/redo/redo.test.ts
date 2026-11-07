@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AiGates,
   type AiOptions,
+  aiActivity,
   aiCost,
   aiSettings,
   householdAi,
@@ -46,10 +47,12 @@ import {
 import { answerReviewItem, openReviewItems } from "../review/index.ts";
 import {
   type AiWorkKind,
+  type AiWorkRun,
   type AiWorkView,
   aiWorkView,
   checkAiBack,
   monthsBefore,
+  PROGRESS_MS,
   pressAiWork,
   REDO_ATTEMPTS,
   REDO_STOPPED,
@@ -871,8 +874,12 @@ describe("the first AI run and the redo of no-AI work", () => {
         };
         await runRedoJob("finish");
 
-        expect(steps).toContainEqual({ kind: "finish", step: "Money movement" });
-        expect(steps).toContainEqual({ kind: "finish", step: "Categories" });
+        expect(steps).toContainEqual(
+          expect.objectContaining({ kind: "finish", step: "Money movement" }),
+        );
+        expect(steps).toContainEqual(
+          expect.objectContaining({ kind: "finish", step: "Categories" }),
+        );
         expect(fixedRows().sort()).toEqual(["CARD PURCHASE GUESS-1", "CARD PURCHASE GUESS-2"]);
         expect(asked.map((call) => call.use).sort()).toEqual(["category fix", "pairs", "picks"]);
         expect(await partOf("hand")).toMatchObject({ category: "Groceries", source: "hand-set" });
@@ -892,6 +899,92 @@ describe("the first AI run and the redo of no-AI work", () => {
         expect(await pressAiWork("finish")).toEqual({ started: false, refusal: "nothing waits" });
         expect(works).toEqual(["finish"]);
         expect(stub.calls).toHaveLength(calls);
+      });
+
+      // The progress bar (spec 08, AI work on your Transactions, Progress bar): the status line and
+      // the live AI status carry the run's items, its step's place and the time left as it goes.
+      it("shows a run's progress in the status line and the live AI status as it goes, and none once it ends", async () => {
+        await atTheCap();
+        pausedUntil = undefined;
+        const marked = (await view()).waiting;
+        // The run counts its items every 5 ms here, and every second in the app.
+        expect(PROGRESS_MS).toBe(1_000);
+        redo.stop();
+        let clock = NOW().getTime();
+        const counting = startRedo({
+          database: bank.database,
+          ai: householdAi(options),
+          now: () => new Date(clock),
+          startJob: async () => undefined,
+          startWork: async (kind) => {
+            works.push(kind);
+          },
+          progressMs: 5,
+        });
+        stops.push(counting.stop);
+        const live: AiWorkRun[] = [];
+        const stopWatching = aiActivity.watch(
+          (next) => {
+            if (next.run !== null) live.push(next.run);
+          },
+          () => undefined,
+        );
+        const shown: (AiWorkRun | null)[] = [];
+        stub.beforeAnswer = async () => {
+          shown.push((await view()).running);
+          // 20 seconds pass during each call, while the run counts its items.
+          clock += 20_000;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        };
+
+        expect(await pressAiWork("finish")).toMatchObject({ started: true });
+        // Before the run counts its items, it has no progress.
+        expect((await view()).running).toEqual({ kind: "finish", step: "starting" });
+        await runRedoJob("finish");
+        stopWatching();
+
+        const steps = ["Merchant names", "Money movement", "Categories"];
+        const counted = [...shown, ...live].flatMap((run) =>
+          run?.progress === undefined ? [] : [{ step: run.step, ...run.progress }],
+        );
+        expect(counted.length).toBeGreaterThan(0);
+        for (const each of counted) {
+          expect(each).toMatchObject({ before: marked, steps: 3 });
+          expect(each.place).toBe(steps.includes(each.step) ? steps.indexOf(each.step) + 1 : null);
+          expect(each.done).toBeLessThanOrEqual(marked);
+          // No time left before 30 seconds of work, or before an item is decided.
+          if (each.done === 0) expect(each.minutesLeft).toBeNull();
+        }
+        // The first call goes before any item is decided or 30 seconds pass.
+        expect(shown[0]?.progress).toMatchObject({ done: 0, place: 2, minutesLeft: null });
+        // The live AI status gets the counts between steps, with the time left once known.
+        expect(live).toContainEqual(
+          expect.objectContaining({
+            step: "Categories",
+            progress: expect.objectContaining({
+              place: 3,
+              done: expect.any(Number),
+              minutesLeft: expect.any(Number),
+            }),
+          }),
+        );
+        expect(Math.max(...live.map((run) => run.progress?.done ?? 0))).toBeGreaterThan(0);
+        // Once it ends, no run shows, and the status line shows the last run.
+        expect(aiActivity.now().run).toBeNull();
+        expect(await view()).toMatchObject({
+          running: null,
+          lastRun: { items: marked, outcome: "finished" },
+        });
+
+        // A follow-up job after a sync is not a run: its calls show no run and no progress.
+        const followUp: unknown[] = [];
+        stub.beforeAnswer = async () => {
+          followUp.push(aiActivity.now().run);
+        };
+        await sync([buy("after", "2026-10-07")]);
+        expect(followUp.length).toBeGreaterThan(0);
+        expect(followUp.every((run) => run === null)).toBe(true);
+        expect((await view()).running).toBeNull();
       });
 
       // A use the run calls waits for its retry after a failed call (spec 08, Failures). The status

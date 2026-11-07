@@ -320,16 +320,21 @@ describe("the live AI status's feed", () => {
     expect(stepCalls).toBe(1);
     // The press waits as "starting" from its press until its job's run starts, and again from the
     // run's end until its job ends the press, as the status line of Settings, AI says.
+    // Once the run counts its items, it carries its progress: here no marked item, and two steps,
+    // Categories and the first AI run's Insight cards.
     const starting = { run: { kind: "finish", step: "starting" }, uses: [] };
+    const counted = (step: string, place: number | null) => ({
+      kind: "finish",
+      step,
+      progress: { before: 0, done: 0, place, steps: 2, minutesLeft: null },
+    });
     expect(told).toEqual([
       starting,
-      { run: { kind: "finish", step: "Categories" }, uses: [] },
-      { run: { kind: "finish", step: "Insight cards" }, uses: [] },
-      {
-        run: { kind: "finish", step: "Insight cards" },
-        uses: [{ use: "insight cards", calls: 1 }],
-      },
-      { run: { kind: "finish", step: "Insight cards" }, uses: [] },
+      { run: counted("starting", null), uses: [] },
+      { run: counted("Categories", 1), uses: [] },
+      { run: counted("Insight cards", 2), uses: [] },
+      { run: counted("Insight cards", 2), uses: [{ use: "insight cards", calls: 1 }] },
+      { run: counted("Insight cards", 2), uses: [] },
       starting,
       IDLE,
     ]);
@@ -368,14 +373,42 @@ describe("the live AI status's feed", () => {
     const unregister = registerRedoStep("Money movement", async () => {
       throw new Error("The step failed.");
     });
+    const told: AiActivityView[] = [];
+    const stopWatching = aiActivity.watch(
+      (view) => told.push(view),
+      () => {},
+    );
     try {
       await expect(runRedoJob()).rejects.toThrow("The step failed.");
     } finally {
       unregister();
+      stopWatching();
     }
-    expect(await reader.next()).toEqual({ run: { kind: null, step: "starting" }, uses: [] });
-    expect(await reader.next()).toEqual({ run: { kind: null, step: "Money movement" }, uses: [] });
-    expect(await reader.next()).toEqual(IDLE);
+    // Here no marked item, and two steps: Money movement and the first AI run's Insight cards.
+    const progress = (place: number | null) => ({
+      before: 0,
+      done: 0,
+      place,
+      steps: 2,
+      minutesLeft: null,
+    });
+    expect(told).toEqual([
+      { run: { kind: null, step: "starting" }, uses: [] },
+      { run: { kind: null, step: "starting", progress: progress(null) }, uses: [] },
+      { run: { kind: null, step: "Money movement", progress: progress(1) }, uses: [] },
+      IDLE,
+    ]);
+    // The stream may skip a view, in order, and always gets the last.
+    let from = 0;
+    for (;;) {
+      const view = await reader.next();
+      if (view === undefined) break;
+      const at = told.findIndex((each, index) => index >= from && isEqual(each, view));
+      expect(at).toBeGreaterThanOrEqual(from);
+      from = at + 1;
+      if (view.run === null) break;
+    }
+    expect(from).toBe(told.length);
     expect(aiActivity.now()).toEqual(IDLE);
   });
 

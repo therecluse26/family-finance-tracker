@@ -4,6 +4,7 @@ import { AI_WORK_WAIT_LINES, type AiWorkView } from "../../../redo/work-view.ts"
 import {
   AiWorkCard,
   AiWorkLine,
+  AiWorkProgress,
   ALL_HISTORY_CONFIRM,
   AllHistoryConfirm,
   aiWorkLine,
@@ -97,6 +98,48 @@ describe("Settings → AI: the AI work status line", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("text-critical");
     expect(html).toContain("AI work waits: the AI provider rejected the key");
+  });
+});
+
+describe("Settings → AI: the AI work progress bar", () => {
+  it("shows the items, the step and its place, and the time left, on a progress bar", () => {
+    const html = renderToString(
+      <AiWorkProgress
+        run={{
+          kind: "finish",
+          step: "Categories",
+          progress: { before: 2_654, done: 1_240, place: 2, steps: 3, minutesLeft: 4 },
+        }}
+      />,
+    );
+    expect(html).toContain("1,240 of 2,654 items · Step 2 of 3: Categories · about 4 min left");
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-valuenow="46"');
+    expect(html).toContain('aria-valuemin="0"');
+    expect(html).toContain('aria-valuemax="100"');
+    expect(html).toContain('aria-label="AI work"');
+    expect(html).toContain("width:46%");
+  });
+
+  it("says less than a minute below one minute, and no time before the run knows it", () => {
+    const run = (minutesLeft: number | null) =>
+      renderToString(
+        <AiWorkProgress
+          run={{
+            kind: null,
+            step: "Money movement",
+            progress: { before: 100, done: 90, place: 2, steps: 3, minutesLeft },
+          }}
+        />,
+      );
+    expect(run(0)).toContain(
+      "90 of 100 items · Step 2 of 3: Money movement · less than a minute left",
+    );
+    expect(run(null)).toContain("90 of 100 items · Step 2 of 3: Money movement</p>");
+  });
+
+  it("shows nothing before the run counts its items", () => {
+    expect(renderToString(<AiWorkProgress run={{ kind: "finish", step: "starting" }} />)).toBe("");
   });
 });
 

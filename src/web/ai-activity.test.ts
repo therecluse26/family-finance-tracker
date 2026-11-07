@@ -23,6 +23,15 @@ import {
 
 const IDLE: AiActivityView = { run: null, uses: [] };
 const CATEGORIES: AiActivityView = { run: { kind: "finish", step: "Categories" }, uses: [] };
+// A run that has counted its items: 1,240 of 2,654 decided, on step 3 of 3.
+const COUNTED = (done: number): AiActivityView => ({
+  run: {
+    kind: "finish",
+    step: "Categories",
+    progress: { before: 2_654, done, place: 3, steps: 3, minutesLeft: 4 },
+  },
+  uses: [],
+});
 
 class FakeStream implements EventStream {
   onopen: ((event: Event) => void) | null = null;
@@ -98,6 +107,22 @@ describe("the live AI status's words", () => {
     );
   });
 
+  it("adds a run's percent once it has counted its items, rounded down", () => {
+    expect(aiActivityLine(COUNTED(1_240))).toBe("AI working: Categories · 46%");
+    expect(aiActivityLine(COUNTED(2_653))).toBe("AI working: Categories · 99%");
+    expect(aiActivityLine(COUNTED(0))).toBe("AI working: Categories · 0%");
+    expect(
+      aiActivityLine({
+        run: {
+          kind: null,
+          step: "starting",
+          progress: { before: 10, done: 0, place: null, steps: 3, minutesLeft: null },
+        },
+        uses: [],
+      }),
+    ).toBe("AI working · 0%");
+  });
+
   it("puts a run before its own calls", () => {
     expect(
       aiActivityLine({
@@ -145,6 +170,17 @@ describe("the live AI status's words", () => {
       undefined,
     );
     expect(readView(JSON.stringify({ run: { kind: "finish" }, uses: [] }))).toBeUndefined();
+    expect(readView(JSON.stringify(COUNTED(1_240)))).toEqual(COUNTED(1_240));
+    for (const progress of [
+      null,
+      "46%",
+      { before: 10, done: "5", place: 1, steps: 3, minutesLeft: null },
+      { before: 10, done: 5, place: 1, steps: 3 },
+      { before: 10, done: 5, place: 1, steps: 3, minutesLeft: "soon" },
+    ]) {
+      const run = { kind: "finish", step: "Categories", progress };
+      expect(readView(JSON.stringify({ run, uses: [] }))).toBeUndefined();
+    }
     expect(readView(42)).toBeUndefined();
   });
 });
@@ -221,6 +257,24 @@ describe("the live AI status's feed in the browser", () => {
     expect(page.open).toHaveLength(0);
     expect(page.visibilityWatchers).toBe(0);
     expect(page.reads).toBe(0);
+  });
+
+  // The progress bar moves without a reload (spec 08, Progress bar): each event with new counts
+  // reaches every watcher, and the same counts twice go once.
+  it("tells each watcher each new progress of a run from the stream", () => {
+    const feed = createAiActivityFeed(page);
+    const seen: AiActivityView[] = [];
+    const stop = feed.watch((view) => seen.push(view));
+    page.last.open();
+    page.last.send(CATEGORIES);
+    page.last.send(COUNTED(1_000));
+    page.last.send(COUNTED(1_000));
+    page.last.send(COUNTED(1_240));
+    page.last.send(IDLE);
+
+    expect(seen).toEqual([CATEGORIES, COUNTED(1_000), COUNTED(1_240), IDLE]);
+    expect(page.reads).toBe(0);
+    stop();
   });
 
   it("tries again after 2, 4, 8, 16, 32 and 60 seconds, then stops trying", () => {

@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { AI_USE_LABELS } from "../ai/ai-view.ts";
-import type { AiActivityView, AiWorkView } from "../redo/work-view.ts";
+import {
+  type AiActivityView,
+  type AiWorkProgress,
+  type AiWorkView,
+  progressPercent,
+} from "../redo/work-view.ts";
 import { api } from "./api.ts";
 
 // The live AI status (spec 08, Live AI status): the background AI work running now, as the page
@@ -53,6 +58,25 @@ export type AiActivityFeedView = {
 
 const IDLE: AiActivityView = { run: null, uses: [] };
 
+const isCount = (value: unknown) => typeof value === "number" && Number.isFinite(value);
+const isCountOrNull = (value: unknown) => value === null || isCount(value);
+
+// A run's progress of the shape the page knows: absent, or its counts.
+function progressOk(progress: unknown): boolean {
+  if (progress === undefined) return true;
+  if (typeof progress !== "object" || progress === null) return false;
+  const { before, done, place, steps, minutesLeft } = progress as Partial<
+    Record<keyof AiWorkProgress, unknown>
+  >;
+  return (
+    isCount(before) &&
+    isCount(done) &&
+    isCountOrNull(place) &&
+    isCount(steps) &&
+    isCountOrNull(minutesLeft)
+  );
+}
+
 // A view from the stream, or undefined for anything else. The page trusts only the shape it knows.
 export function readView(data: unknown): AiActivityView | undefined {
   if (typeof data !== "string") return undefined;
@@ -68,7 +92,8 @@ export function readView(data: unknown): AiActivityView | undefined {
     run === null ||
     (typeof run === "object" &&
       run !== null &&
-      typeof (run as { step?: unknown }).step === "string");
+      typeof (run as { step?: unknown }).step === "string" &&
+      progressOk((run as { progress?: unknown }).progress));
   const usesOk =
     Array.isArray(uses) &&
     uses.every(
@@ -283,11 +308,14 @@ export function useAiActivity(): AiActivityView | undefined {
   return view;
 }
 
-// The sign's line (spec 08, Live AI status), or undefined when no background AI works.
+// The sign's line (spec 08, Live AI status), or undefined when no background AI works. A run that
+// has counted its items adds its percent, such as "AI working: Categories · 47%".
 export function aiActivityLine(view: AiActivityView | undefined): string | undefined {
   if (view === undefined) return undefined;
   if (view.run !== null) {
-    return view.run.step === "starting" ? "AI working" : `AI working: ${view.run.step}`;
+    const line = view.run.step === "starting" ? "AI working" : `AI working: ${view.run.step}`;
+    const { progress } = view.run;
+    return progress === undefined ? line : `${line} · ${progressPercent(progress)}%`;
   }
   const [first, ...more] = view.uses;
   if (first === undefined) return undefined;

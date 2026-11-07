@@ -69,10 +69,14 @@ export function startAiActivity(use: AiActivityUse): () => void {
 }
 
 // The run of the redo of no-AI work now, or null when none runs. The redo module sets it at each
-// change of its press, its step, and its end.
+// change of its press, its step, its progress, and its end.
 export function showRunActivity(next: Run): void {
   const same =
-    next === null || run === null ? next === run : next.kind === run.kind && next.step === run.step;
+    next === null || run === null
+      ? next === run
+      : next.kind === run.kind &&
+        next.step === run.step &&
+        JSON.stringify(next.progress) === JSON.stringify(run.progress);
   if (same) return;
   run = next === null ? null : { ...next };
   tell();
