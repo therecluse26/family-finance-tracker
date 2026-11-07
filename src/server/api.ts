@@ -11,11 +11,13 @@ import type {
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
 import { CATEGORIES } from "../categories/list.ts";
+import { timeLabel } from "../format.ts";
 import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
 import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
-import { AI_WORK_REFUSALS, type AiWorkKind } from "../redo/work-view.ts";
+import { AI_WORK_REFUSALS, type AiWorkKind, retryWaitRefusal } from "../redo/work-view.ts";
+import { aiActivityStream } from "./ai-activity.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -564,6 +566,11 @@ async function pressAiWork(c: Context<ServerEnv>, kind: AiWorkKind) {
     return c.json({ error: "Send an empty body." }, 400);
   }
   const pressed = await c.var.aiWork.press(kind);
+  if (!pressed.started && pressed.refusal === "retry wait") {
+    // The time the AI tries again, in Household time (spec 08, AI work on your Transactions).
+    const zone = (await c.var.household.timeZone()) ?? "UTC";
+    return c.json({ error: retryWaitRefusal(timeLabel(new Date(pressed.retryAt), zone)) }, 409);
+  }
   if (!pressed.started) return c.json({ error: AI_WORK_REFUSALS[pressed.refusal] }, 409);
   return c.json({ work: pressed.work }, 202);
 }
@@ -1674,6 +1681,8 @@ export const api = new Hono<ServerEnv>()
   })
   .post("/ai/work/finish", (c) => pressAiWork(c, "finish"))
   .post("/ai/work/all-history", (c) => pressAiWork(c, "all history"))
+  // The live AI status (spec 08, Live AI status): server-sent events of the background AI work.
+  .get("/ai/activity/stream", aiActivityStream)
   // Settings, Alerts: the Household's SMTP server. The password is never in an answer.
   .get("/smtp/settings", async (c) => c.json({ smtp: await c.var.smtp.view() }))
   .post("/smtp/settings", async (c) => {

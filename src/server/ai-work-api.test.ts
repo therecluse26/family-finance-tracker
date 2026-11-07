@@ -5,7 +5,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { type AiOptions, aiCost, aiSettings, householdAi } from "../ai/index.ts";
 import { newAiKey, StubModels } from "../ai/testing.ts";
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
-import { claimHistoryWaitEnd, markSetupStep } from "../db/index.ts";
+import { claimHistoryWaitEnd, markSetupStep, storeAiFailure } from "../db/index.ts";
+import { saveHouseholdFacts } from "../household/index.ts";
 import { createLogger } from "../log.ts";
 import { startNotify } from "../notify/index.ts";
 import {
@@ -194,6 +195,7 @@ describe("the AI work routes", () => {
     expect(await workOf(line)).toEqual({
       running: null,
       waits: "no AI provider",
+      retryAt: null,
       waiting: 0,
       lastRun: null,
     });
@@ -211,6 +213,42 @@ describe("the AI work routes", () => {
       409,
       { error: "The AI cost cap is reached. Raise the cap, or wait for the 1st." },
     ]);
+    expect(works).toEqual([]);
+    expect(stub.calls).toHaveLength(calls);
+  });
+
+  it("refuses a press while a use the run calls waits for its retry, with the time in Household time, and shows it on the status line", async () => {
+    await finishWizard();
+    await connectAi();
+    // ZIP 10001: America/New_York, on Eastern Standard Time on Nov 6, 2026.
+    await saveHouseholdFacts(
+      test.database,
+      { zipCode: "10001", ages: [40], rentOrOwn: "rent" },
+      alice.id,
+      new Date("2026-11-06T14:00:00.000Z"),
+    );
+    await storeAiFailure(
+      test.database,
+      "merchant cleanup",
+      1,
+      new Date("2026-11-06T15:01:00.000Z"),
+    );
+    await storeAiFailure(test.database, "category fix", 2, new Date("2026-11-06T15:05:00.000Z"));
+    const tab = await signedIn();
+    const calls = stub.calls.length;
+
+    expect(await workOf(await tab.get("/api/ai/work"))).toMatchObject({
+      running: null,
+      waits: "retry wait",
+      retryAt: "2026-11-06T15:05:00.000Z",
+    });
+    for (const path of PRESSES) {
+      const refused = await tab.post(path);
+      expect([refused.status, await refused.json()]).toEqual([
+        409,
+        { error: "AI tries again at 10:05 AM. Press again after that." },
+      ]);
+    }
     expect(works).toEqual([]);
     expect(stub.calls).toHaveLength(calls);
   });

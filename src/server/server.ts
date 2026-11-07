@@ -58,6 +58,8 @@ export function startServer(options: {
           port: info.port,
           close: () =>
             new Promise((done, fail) => {
+              // An open live AI status stream would hold up the close (spec 10, HTTP routes).
+              options.aiWork?.activity.stop();
               server.close((error) => (error ? fail(error) : done()));
             }),
         });

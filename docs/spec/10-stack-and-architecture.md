@@ -78,6 +78,7 @@ At every start, the app runs these steps in order:
 - The web app calls the API through Hono's typed client (`hc` from `hono/client`), so route types reach the browser.
 - The security mode, trusted proxies, and `Host` checks run before every route ([Members, login, and security](09-members-login-security.md)).
 - A Chat answer streams from its route with `streamText`. It is not a job.
+- The live AI status streams from `GET /api/ai/activity/stream` as server-sent events, with Hono's `streamSSE` ([AI](08-ai.md#live-ai-status)). The server ends each open stream when it stops, before it waits for open requests, so a stream never holds up the shutdown.
 
 ### Module seams
 
