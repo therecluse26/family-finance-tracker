@@ -73,6 +73,7 @@ export type OtherLinkView = {
 export type CategoryChosenBy =
   | "hand-set"
   | "Category rule"
+  | "Recurring charge"
   | "Plaid"
   | "Merchant history"
   | "AI"
@@ -105,6 +106,8 @@ export type TransactionRowView = {
   merchantName: string | null;
   // The Merchant's clean name, or null when it has none, such as a paper check.
   merchant: string | null;
+  // The name a Member gave the Recurring charge it is in, or null (spec 06, Member edits).
+  recurringChargeName: string | null;
   // Empty before Matching has decided it.
   parts: ShownPartView[];
 };

@@ -4,8 +4,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecurringChargeView } from "../../server/recurring-views.ts";
 import { Button } from "../components/Button.tsx";
 import {
+  draftOf,
+  editsOf,
+  priceLines,
+  RecurringChargeEdit,
+  recurringChargeEditRequests,
+} from "./RecurringChargeEdit.tsx";
+import {
   type ChargeActions,
   chargeFacts,
+  chargeName,
   RecurringChargeList,
   RecurringChargeRow,
   recurringChargeRequests,
@@ -23,15 +31,20 @@ const charge = (
   fields: Partial<RecurringChargeView> = {},
 ): RecurringChargeView => ({
   id,
+  name: null,
   merchantName,
   category: "Subscriptions",
+  categoryByHand: false,
+  priceBand: null,
+  defaultPriceBand: 7.5,
   schedule: "monthly",
   nextExpectedDate,
   latestAmount: 1_549,
   priceHistory: [
-    { date: "2026-09-03", amount: 1_399 },
-    { date: "2026-10-03", amount: 1_549 },
+    { transactionId: "t-sep", date: "2026-09-03", amount: 1_399, addedByHand: false },
+    { transactionId: "t-oct", date: "2026-10-03", amount: 1_549, addedByHand: false },
   ],
+  priceChanges: [],
   accountId: "acc-checking",
   onCard: false,
   status: "active",
@@ -58,6 +71,7 @@ const noActions: ChargeActions = {
   askEnd: () => {},
   end: () => {},
   keep: () => {},
+  changed: () => {},
 };
 
 // The buttons in a row, by their words, with what each does when tapped.
@@ -148,6 +162,117 @@ describe("the Recurring charges page", () => {
     expect(text(old)).toContain("next Dec 30, 2025 Old Co monthly · Subscriptions −$15.49");
   });
 
+  it("shows a name a Member gave, with the Merchant under it", () => {
+    const named = charge("visible", "Privacy.com", "2026-11-08", {
+      name: "Visible Wireless",
+      category: "Phone and internet",
+      categoryByHand: true,
+    });
+    const row = text(
+      renderToString(
+        <RecurringChargeRow charge={named} state={{}} today={TODAY} actions={noActions} />,
+      ),
+    );
+
+    expect(row).toContain("next Nov 8 Visible Wireless Privacy.com monthly · Phone and internet");
+    expect(chargeName(named)).toBe("Visible Wireless");
+    expect(chargeName(charge("streamly", "Streamly", "2026-11-08"))).toBe("Streamly");
+  });
+
+  it("marks each price change in the price history, and each Transaction a Member added", () => {
+    const visible = charge("visible", "Privacy.com", "2026-12-03", {
+      latestAmount: 4_500,
+      priceHistory: [
+        { transactionId: "t1", date: "2026-09-03", amount: 2_500, addedByHand: false },
+        { transactionId: "t2", date: "2026-10-03", amount: 2_500, addedByHand: true },
+        { transactionId: "t3", date: "2026-11-03", amount: 4_500, addedByHand: false },
+      ],
+      priceChanges: [
+        { id: "pc-found", fromDate: "2026-11-03", amount: 4_500, byHand: false },
+        { id: "pc-member", fromDate: "2026-11-01", amount: 4_500, byHand: true },
+      ],
+    });
+
+    expect(
+      priceLines(visible).map((line) =>
+        line.kind === "charge" ? line.transactionId : `change ${line.id}`,
+      ),
+    ).toEqual(["change pc-found", "t3", "change pc-member", "t2", "t1"]);
+    const html = renderToString(
+      <RecurringChargeEdit charge={visible} today={TODAY} onChange={() => {}} />,
+    );
+    const history = /<ul[^>]*aria-label="Price history"[^>]*>(.*?)<\/ul>/s.exec(html)?.[1] ?? "";
+    expect([...history.matchAll(/<li[^>]*>(.*?)<\/li>/gs)].map((m) => text(m[1] ?? ""))).toEqual([
+      "price change −$45.00 from Nov 3",
+      "Nov 3 · −$45.00 Remove",
+      "price change −$45.00 from Nov 1 (set by a Member) Delete",
+      "Oct 3 · −$25.00 added Remove",
+      "Sep 3 · −$25.00 Remove",
+    ]);
+    // An ended one shows its history, with no edits.
+    const ended = text(
+      renderToString(
+        <RecurringChargeEdit
+          charge={{ ...visible, status: "ended" }}
+          today={TODAY}
+          onChange={() => {}}
+        />,
+      ),
+    );
+    expect(ended).not.toMatch(/Save|Remove|Delete|Add a charge|Set price change/);
+  });
+
+  it("sends only what the edit form changed, and refuses a bad name or band", () => {
+    const streamly = charge("streamly", "Streamly", "2026-11-08", {
+      name: "Movies",
+      priceBand: 10,
+    });
+    const draft = draftOf(streamly);
+    expect(draft).toEqual({ name: "Movies", category: "", priceBand: "10" });
+
+    expect(editsOf(streamly, draft)).toEqual({});
+    expect(editsOf(streamly, { ...draft, name: "  Film night " })).toEqual({ name: "Film night" });
+    expect(editsOf(streamly, { ...draft, name: "" })).toEqual({ name: null });
+    expect(editsOf(streamly, { ...draft, category: "Phone and internet" })).toEqual({
+      category: "Phone and internet",
+    });
+    expect(editsOf(streamly, { ...draft, priceBand: "12.5%" })).toEqual({ priceBand: 12.5 });
+    expect(editsOf(streamly, { ...draft, priceBand: "" })).toEqual({ priceBand: null });
+    expect(editsOf(streamly, { ...draft, name: "x".repeat(61) })).toMatch(/at most 60/);
+    for (const band of ["12.55", "101", "-1", "abc"]) {
+      expect(editsOf(streamly, { ...draft, priceBand: band })).toMatch(/price band/);
+    }
+  });
+
+  it("sends each edit to its route", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), "http://app.test");
+      const body = typeof init?.body === "string" ? init.body : "";
+      sent.push(`${init?.method ?? "GET"} ${url.pathname} ${body}`.trim());
+      return Response.json({});
+    });
+
+    await recurringChargeEditRequests.edit("c1", { name: "Visible Wireless" });
+    await recurringChargeEditRequests.setPriceChange("c1", {
+      fromDate: "2026-11-01",
+      amount: 4_500,
+    });
+    await recurringChargeEditRequests.deletePriceChange("c1", "pc1");
+    await recurringChargeEditRequests.add("c1", "t1");
+    await recurringChargeEditRequests.remove("c1", "t2");
+    await recurringChargeEditRequests.candidates("c1");
+
+    expect(sent).toEqual([
+      'PUT /api/recurring-charges/c1 {"name":"Visible Wireless"}',
+      'POST /api/recurring-charges/c1/price-changes {"fromDate":"2026-11-01","amount":4500}',
+      "DELETE /api/recurring-charges/c1/price-changes/pc1",
+      'POST /api/recurring-charges/c1/transactions {"transactionId":"t1"}',
+      "DELETE /api/recurring-charges/c1/transactions/t2",
+      "GET /api/recurring-charges/c1/candidates",
+    ]);
+  });
+
   it("opens the price history on a tap: each Transaction's date and amount, newest first", () => {
     const streamly = charge("streamly", "Streamly", "2026-11-08");
     const toggle = vi.fn();
@@ -171,8 +296,8 @@ describe("the Recurring charges page", () => {
     );
     const history = /<ul[^>]*aria-label="Price history"[^>]*>(.*?)<\/ul>/s.exec(html)?.[1] ?? "";
     expect([...history.matchAll(/<li[^>]*>(.*?)<\/li>/gs)].map((m) => text(m[1] ?? ""))).toEqual([
-      "Oct 3 · −$15.49",
-      "Sep 3 · −$13.99",
+      "Oct 3 · −$15.49 Remove",
+      "Sep 3 · −$13.99 Remove",
     ]);
     expect(html).toContain('aria-expanded="true"');
   });
