@@ -61,6 +61,9 @@ Small items left open after the T107 notes triage, for after the first release (
 - N289 (S, polish) Spec 08's Expected cost totals were written before thinking tokens counted and before Sonnet 5.5's cache read rose to $0.20; recompute them from measured calls. In: docs/spec/08-ai.md.
 - N290 (S, polish) On OpenRouter, Reading a Goal at `low` effort may get Anthropic's 1,024-token minimum thinking budget, which leaves about half of its 2,000-token limit for the answer. In: src/ai/prompt.ts.
 - N291 (S, polish) The AI request log's Request view turns `\n` into line breaks but shows `\r` as written. In: src/web/pages/settings/AiRequestLog.tsx.
+- N292 (S, polish) The `ai_settings_whole` check does not cover `chat_model` (nullable by design, D44); a later generated table rebuild can add it. In: src/db/schema.ts.
+- N293 (S, polish) `enteredFor` in `src/ai/settings.ts` uses the first tier's price when a hand-made save sends different prices for two tiers with the same model; it does not refuse. In: src/ai/settings.ts.
+- N294 (S, polish) The large-history cases do not set `chatModel`; they rely on the Writer fallback. In: src/large-history/cases/.
 
 ## Bank data and sync
 
