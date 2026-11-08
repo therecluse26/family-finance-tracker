@@ -123,6 +123,11 @@ Small items left open after the T107 notes triage, for after the first release (
 - N262 (S, polish) A `PAYPAL *ETSY SHOP` line whose provider Merchant name is "PayPal" gets PayPal as its Merchant, so it never gets a Duplicate charge (cleanup takes the provider name first). In: src/merchants/.
 - N263 (S, polish) `isPaymentApp`'s fallback treats "Payment", "Transfer", "Received", "Pmt" and "Web Id" as a payment app, so a non-app line that cleans to "Payment" gets no Duplicate charge. In: src/anomalies/checks.ts.
 - N264 (S, polish) Card payment Merchant names keep noise ("St National Bank card payment" from 1ST, city words, "Target Srvcs", full-width payment words, a person's name on the line; no last 4 survives), and a card payment keeps the provider's Merchant ID, so it may share a Merchant with that brand's purchases. In: src/merchants/.
+- N284 (S, polish) Jobs start even when the start-up move of old price histories fails; an ended Recurring charge then looks empty, and its Transactions can form a new series and later leave it. In: src/recurring/, start-up.
+- N285 (S, polish) After an edit, the Merchant-only find may name a Transaction wrongly in the set sent back through the cascade when that Transaction's Merchant changed. In: src/recurring/charges.ts.
+- N286 (S, polish) "Show older" on "Add a charge" gets 404 when the cursor Transaction is hidden between pages. In: src/server/, src/web/pages/RecurringCharges.tsx.
+- N287 (S, polish) A Transaction that leaves a Recurring charge with a Member Category and needs the AI shows no Category until the next follow-up job (seconds), and so does each one after it by date. In: src/recurring/charges.ts.
+- N288 (S, polish) The bench has no case for the find on a kept masked Recurring charge (a review probe shows it is fast). In: src/large-history/cases/.
 
 ## Budgets, Benchmarks and Goals
 
