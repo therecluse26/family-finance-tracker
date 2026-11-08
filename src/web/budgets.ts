@@ -1,5 +1,6 @@
-import { CATEGORY_GROUPS } from "../categories/list.ts";
-import type { StatusWord } from "../format.ts";
+import { YEARLY_CATEGORIES } from "../budgets/periods.ts";
+import { CATEGORY_GROUPS, type Category } from "../categories/list.ts";
+import { type StatusWord, wholeDollars } from "../format.ts";
 import type { BudgetStatusView, BudgetsView, MonthBudgetView } from "../server/budgets-views.ts";
 import { api } from "./api.ts";
 import { centsOf } from "./pages/settings/UnconnectedAccounts.tsx";
@@ -28,8 +29,14 @@ export const budgetRequests = {
   },
 };
 
-// A Category's row: this month's Spending, and its Budget, or undefined with no Budget.
-export type BudgetRow = { category: string; spending: number; budget: MonthBudgetView | undefined };
+// A Category's row: this month's Spending, its Budget, or undefined with no Budget, and its average
+// Spending per month, or undefined with no complete month of history.
+export type BudgetRow = {
+  category: string;
+  spending: number;
+  budget: MonthBudgetView | undefined;
+  average?: number | undefined;
+};
 
 export type BudgetRows = {
   // Every Category with no yearly Budget, by Category group, in Category list order.
@@ -38,7 +45,9 @@ export type BudgetRows = {
   yearly: MonthBudgetView[];
 };
 
-export function budgetRows(view: Pick<BudgetsView, "budgets" | "unbudgeted">): BudgetRows {
+export function budgetRows(
+  view: Pick<BudgetsView, "budgets" | "unbudgeted" | "averages">,
+): BudgetRows {
   const budgets = new Map(view.budgets.map((budget) => [budget.category, budget]));
   const unbudgeted = new Map(view.unbudgeted.map((each) => [each.category, each.spending]));
   const groups = CATEGORY_GROUPS.map((group) => ({
@@ -46,7 +55,12 @@ export function budgetRows(view: Pick<BudgetsView, "budgets" | "unbudgeted">): B
     rows: group.categories
       .map(({ name }): BudgetRow => {
         const budget = budgets.get(name);
-        return { category: name, spending: budget?.spending ?? unbudgeted.get(name) ?? 0, budget };
+        return {
+          category: name,
+          spending: budget?.spending ?? unbudgeted.get(name) ?? 0,
+          budget,
+          average: view.averages?.[name],
+        };
       })
       .filter((row) => row.budget?.period !== "yearly"),
   })).filter((group) => group.rows.length > 0);
@@ -65,6 +79,15 @@ export const STATUS_SHOWN: Record<BudgetStatusView, BudgetStatusShown> = {
   "On pace": { tone: "serious", word: "On pace to go over" },
   "on track": { tone: "good", word: "On track" },
 };
+
+// A Category's average Spending, per the period of its Budget box: "averages $612 a month", or for
+// a yearly Category 12 times its monthly average, "averages $1,800 a year". Undefined with none.
+export function averageLine(category: string, perMonth: number | undefined): string | undefined {
+  if (perMonth === undefined) return undefined;
+  return YEARLY_CATEGORIES.includes(category as Category)
+    ? `averages ${wholeDollars(perMonth * 12)} a year`
+    : `averages ${wholeDollars(perMonth)} a month`;
+}
 
 // The Budget as a Member types it: "150", or "150.50" when it has cents.
 export function typedBudget(cents: number): string {

@@ -7,7 +7,7 @@ import { seedDemoHousehold } from "../bank/demo.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
 import { draftFirstBudgets, YEARLY_CATEGORIES } from "../budgets/index.ts";
-import { CATEGORY_GROUPS, type Category } from "../categories/index.ts";
+import { CATEGORIES, CATEGORY_GROUPS, type Category } from "../categories/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import {
   addConnection,
@@ -42,6 +42,7 @@ import {
 import { transactionRequests } from "../web/transactions.ts";
 import { createApp } from "./app.ts";
 import type { AccountView, TransactionListView } from "./bank-views.ts";
+import type { BudgetsView } from "./budgets-views.ts";
 import type { MonthTotalsView } from "./money-movement-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { TestBrowser } from "./testing.ts";
@@ -347,6 +348,30 @@ describe("the dashboard on the demo household", () => {
       estimatedUsual,
     };
   }
+
+  it("gives each Category's average Spending per month over the 12 complete months, for the Budgets page", async () => {
+    const months = (await totals()).filter((each) => YEAR.includes(each.month));
+    const average = (category: string) =>
+      Math.max(
+        0,
+        Math.round(
+          months.reduce(
+            (sum, each) => sum + ((each.byCategory as Record<string, number>)[category] ?? 0),
+            0,
+          ) / 12,
+        ),
+      );
+    const view = (await (await browser.get("/api/budgets?month=2026-10")).json()) as BudgetsView;
+
+    expect(Object.keys(view.averages ?? {}).sort()).toEqual(
+      CATEGORIES.map(({ name }) => name as string).sort(),
+    );
+    for (const category of ["Groceries", "Restaurants", "Housing", "Travel", "Pets"]) {
+      expect(view.averages?.[category], category).toBe(average(category));
+    }
+    // October's own Spending stays out: the window ends with September.
+    expect(view.averages?.Groceries).toBeGreaterThan(0);
+  });
 
   it("shows September's Spending and Income against the median of the 12 complete months", async () => {
     const { numberTiles: view } = await loadDashboard();
