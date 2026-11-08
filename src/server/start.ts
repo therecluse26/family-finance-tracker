@@ -322,6 +322,17 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
       bank.stop();
       notify.stop();
     };
+    // The Review list cards follow the code that groups them: the open items regroup once, before
+    // any job runs, so a release that changes the grouping applies with no sync. A failure leaves
+    // the items as they are until the next run and never stops the start.
+    try {
+      await categorization.atStart();
+      await moneyMovement.atStart();
+    } catch (error) {
+      log.error("The Review list cards could not regroup at start-up", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
     let jobs: Awaited<ReturnType<typeof startJobs>>;
     try {
       jobs = await startJobs({ ...options.jobs, database, timeZone });

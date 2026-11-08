@@ -592,6 +592,29 @@ describe("starting the app", () => {
     });
   });
 
+  it("brings the Review list cards in step with the code that groups them at start, before any job runs", async () => {
+    const first = await start(shipped);
+    // Open items of each card kind about Transactions that no longer show, as an older release
+    // could leave them: the start-up update finds none of them on a card, and closes each.
+    const kinds = ["Category the AI was unsure of", "one-sided Transfer", "money from a person"];
+    for (const [index, kind] of kinds.entries()) {
+      await first.database.$client.execute({
+        sql: `INSERT INTO review_items (id, kind, subject_type, subject_ids, decided, best_answer,
+          created_at) VALUES (?, ?, 'transactions', ?, 'Older text.', '{"value":"keep","label":"Keep"}',
+          '2026-10-01T00:00:00.000Z')`,
+        args: [`item-${index}`, kind, JSON.stringify([`gone-${index}`])],
+      });
+    }
+    await stop(first);
+
+    const second = await start(shipped);
+
+    const rows = await second.database.$client.execute(
+      "SELECT kind FROM review_items WHERE closed_at IS NULL",
+    );
+    expect(rows.rows).toEqual([]);
+  });
+
   it("makes the VAPID keys at start over HTTPS when none are stored, as after a restore without the Master key", async () => {
     const first = await start(shipped);
     await markSetupStep(first.database, "master key", "done");
