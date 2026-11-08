@@ -76,14 +76,15 @@ export function rowChangeOf(kind: string): RowChange | undefined {
   return CARD_KINDS.get(kind);
 }
 
-// A card of several Transactions: "Marathon · 14 Transactions". Undefined for any other item,
+// A card of several Transactions: "Marathon · 14 Transactions", or the card's own name, such as
+// "Taylor Brooks · Zelle · 3 Transactions". Undefined for any other item,
 // which shows each Transaction's line.
 export function cardTitle(item: ReviewItemView): string | undefined {
   const [first] = item.transactions;
   if (!CARD_KINDS.has(item.kind) || first === undefined || item.transactions.length < 2) {
     return undefined;
   }
-  return `${first.merchantName ?? first.description} · ${item.transactions.length} Transactions`;
+  return `${item.cardName ?? first.merchantName ?? first.description} · ${item.transactions.length} Transactions`;
 }
 
 // One row of a card: "Oct 9 · −$42.50 · Everyday Checking · Gas". A Money movement card's row

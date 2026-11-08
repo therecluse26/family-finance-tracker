@@ -122,6 +122,19 @@ export function personKeyOf(txn: {
   return skeleton === "" ? null : `${line.app ?? ""} ${skeleton}`;
 }
 
+// The name a card of one person's money shows: the person the line names, with the payment app,
+// such as "Taylor Brooks · Zelle". Never the line itself, which can hold a reference code. Undefined
+// for a line that names no person. The name shows on the page only and never goes to the AI.
+export function personCardName(txn: {
+  description: string;
+  merchantName: string | null;
+  providerCategory: string | null;
+}): string | undefined {
+  const line = paymentAppLine(txn);
+  if (line === undefined || typeof line.party !== "object") return undefined;
+  return line.app === null ? line.party.person : `${line.party.person} · ${line.app}`;
+}
+
 const spendingLabel = (spending: ReimbursableSpending, moneyDate: string) =>
   `${spending.merchantCleanName ?? spending.description}, ${dollarsAndCents(-spending.amount)}, ${dateLabel(purchaseDate(spending), moneyDate)}`;
 

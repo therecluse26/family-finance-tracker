@@ -1,4 +1,11 @@
-import { type Database, listAccounts, readShownParts, readShownTransactions } from "../db/index.ts";
+import {
+  type Database,
+  listAccounts,
+  readProviderCategories,
+  readShownParts,
+  readShownTransactions,
+} from "../db/index.ts";
+import { MONEY_FROM_PERSON_KIND, personCardName } from "../money-movement/index.ts";
 import {
   answerReviewItem,
   countReviewItems,
@@ -36,6 +43,25 @@ export function reviewRoutes(database: Database): ReviewRoutes {
         if (accounts.length !== 2) return null;
         return `accounts ${kind} ${accounts.sort().join(" ")}`;
       };
+      // A money from a person card names its person, never a line, which can hold a reference code.
+      const firstShown = (ids: readonly string[]) =>
+        ids.map((id) => shown.get(id)).find((txn) => txn !== undefined);
+      const categories = await readProviderCategories(
+        database,
+        items.flatMap((item) => {
+          if (item.kind !== MONEY_FROM_PERSON_KIND || item.subject.type !== "transactions")
+            return [];
+          const first = firstShown(item.subject.transactionIds);
+          return first === undefined ? [] : [first.id];
+        }),
+      );
+      const cardNameOf = (kind: string, ids: readonly string[]) => {
+        const first = firstShown(ids);
+        if (kind !== MONEY_FROM_PERSON_KIND || first === undefined) return null;
+        return (
+          personCardName({ ...first, providerCategory: categories.get(first.id) ?? null }) ?? null
+        );
+      };
       return items.map((item): ReviewItemView => {
         const transactions =
           item.subject.type === "transactions"
@@ -70,6 +96,10 @@ export function reviewRoutes(database: Database): ReviewRoutes {
               ? (accountNames.get(item.subject.accountId) ?? null)
               : null,
           createdAt: item.createdAt.toISOString(),
+          cardName:
+            item.subject.type === "transactions"
+              ? cardNameOf(item.kind, item.subject.transactionIds)
+              : null,
           group:
             item.subject.type === "transactions"
               ? groupOf(item.kind, item.subject.transactionIds)
