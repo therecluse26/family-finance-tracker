@@ -1096,6 +1096,24 @@ export async function readShownTransactions(database: Database, ids: readonly st
   return rows;
 }
 
+// The provider's category of each Transaction with these IDs, 500 IDs a statement. An unknown ID is
+// left out.
+export async function readProviderCategories(
+  database: Database,
+  ids: readonly string[],
+): Promise<Map<string, string | null>> {
+  const unique = [...new Set(ids)];
+  const found = new Map<string, string | null>();
+  for (let start = 0; start < unique.length; start += 500) {
+    const rows = await database
+      .select({ id: transactions.id, providerCategory: transactions.providerCategory })
+      .from(transactions)
+      .where(inArray(transactions.id, unique.slice(start, start + 500)));
+    for (const row of rows) found.set(row.id, row.providerCategory);
+  }
+  return found;
+}
+
 export type TransactionFilter = {
   accountId?: string;
   // Posted dates, YYYY-MM-DD. Both ends are included.

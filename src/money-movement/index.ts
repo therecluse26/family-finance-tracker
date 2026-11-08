@@ -59,6 +59,7 @@ export {
 export {
   MONEY_FROM_PERSON_KIND,
   type MoneyToPick,
+  personCardName,
   type ReimbursementPick,
   type ReimbursementPicker,
   registerReimbursementPicker,

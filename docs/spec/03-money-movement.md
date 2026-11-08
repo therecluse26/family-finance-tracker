@@ -396,6 +396,7 @@ The Review list is optional. Each item below already has a result that counts, s
   - Settings → Categories lists the remembered answers, with Delete ([Dashboard and pages](07-dashboard-and-pages.md#settings-overview)). Deleting one sends the Transactions it decided back through the follow-up job, so they ask again. When its account is deleted, the answer goes too.
   - The digits stay in the app. The key and the remembered answers never go to the AI.
 - **Money from a person cards.** One open item per person on one payment app holds that person's money with no link. The key is the app with the person's name as a letter-only, case-folded skeleton, so "JOHN SMITH" and "John  Smith" are one card. A line that names no person, such as `VENMO CASHOUT` or a check deposit, keeps an item of its own.
+  - The card reads like "Taylor Brooks · Zelle · 3 Transactions": the person's name as the line gives it, with the app. It never shows a line itself, which can hold a reference code such as `Conf# 7f3k2`.
   - A card of one Transaction works as before: its best answer is the AI's pick, and "Not this" offers Keep as Income and each Spending it may pay back.
   - A card of more has "Keep all as Income", which sets each one still on the card to Income by hand. A row opens its Transaction, where a Member links it as a Reimbursement.
   - The answer is not remembered: later money from the same person may pay back Spending, so the AI still gets to pick for it.
