@@ -237,7 +237,7 @@ describe("the lookup tools", () => {
       expect(unknown.accountNames).toEqual([...new Set(names)].sort());
     });
 
-    it("finds a Merchant by any part of its name, in any case, where % and _ match only themselves", async () => {
+    it("finds a Merchant by the start of a word in its name, in any case, where % and _ match only themselves", async () => {
       const bakeries = await search({ merchant: "bAKERY" });
       const merchants = new Set(bakeries.transactions.map((txn) => String(txn.merchant)));
 
@@ -245,7 +245,7 @@ describe("the lookup tools", () => {
         expect(merchants).toContain(shop);
       }
       for (const merchant of merchants) expect(merchant.toLowerCase()).toContain("bakery");
-      for (const pattern of ["%", "_", "Amber%", "Amber_Bakery"]) {
+      for (const pattern of ["%", "_", "akery", '"Amber"%']) {
         expect((await search({ merchant: pattern })).count).toBe(0);
       }
     });

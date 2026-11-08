@@ -224,16 +224,24 @@ describe("the Transactions page's routes", () => {
     expect(await listed("?account=&category=&type=&month=")).toHaveLength(6);
   });
 
-  it("finds a Merchant by any part of the name its row shows, in any case, where %, _ and \\ match only themselves", async () => {
+  it("finds a Merchant by word starts in the name its row shows, exact words in quotes, and text inside a word after *", async () => {
     expect(await listed("?merchant=bIsT")).toEqual(["tonight", "lunch", "dinner"]);
     expect(await listed("?merchant=TARG")).toEqual(["refund", "purchase"]);
-    expect(await listed("?merchant=corner%20b")).toEqual(["tonight", "lunch", "dinner"]);
+    expect(await listed("?merchant=bistro%20corn")).toEqual(["tonight", "lunch", "dinner"]);
+    expect(await listed("?merchant=bistro%20target")).toEqual([]);
+    expect(await listed("?merchant=%22corner%20bistro%22")).toEqual(["tonight", "lunch", "dinner"]);
+    expect(await listed("?merchant=%22bist%22")).toEqual([]);
+    expect(await listed("?merchant=istro")).toEqual([]);
+    expect(await listed("?merchant=*istro")).toEqual(["tonight", "lunch", "dinner"]);
     // A Transaction with no Merchant name is found by the bank's line its row shows.
     expect(await listed("?merchant=payroll")).toEqual(["paycheck"]);
     expect(await listed("?merchant=payroll&type=Spending")).toEqual([]);
-    for (const pattern of ["%25", "_", "Corner_Bistro", "Corner%25", "%5C", "Nowhere"]) {
-      expect(await listed(`?merchant=${pattern}`), pattern).toEqual([]);
+    // % and _ alone match only themselves; FTS5 syntax is only text.
+    for (const text of ["%25", "_", "%5C", "Nowhere", "NEAR(", "-corner%20OR"]) {
+      expect(await listed(`?merchant=${text}`), text).toEqual([]);
     }
+    // A lone quote holds no term, so it is no filter.
+    expect(await listed("?merchant=%22")).toHaveLength(6);
   });
 
   it("finds a Refund on a split purchase by each part's Category, and shows it per part in the detail", async () => {

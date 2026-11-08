@@ -18,6 +18,7 @@ These rules apply to every builder, reviewer and helper agent, whatever its brie
 - Before your first push, rebase on `origin/main` if it moved. After it, never rebase and never force-push.
 - Do not merge `main` into a pushed branch just to stay current. The orchestrator merges a branch that is behind `main` and runs every check on the merged tree. Merge `main` (with `git merge origin/main`) only when the orchestrator asks, because a code conflict needs your judgment.
 - Number new migrations after the last one on `main` when you start. Write them only with `pnpm db:generate`, never by hand, so they can be regenerated. If another branch takes your number first, do nothing: the orchestrator regenerates your migration after `main`'s last one when it merges.
+- One exception (owner decision, 2026-11-07): `drizzle/0072_merchant_search.sql` is hand-written, because drizzle-kit cannot describe an FTS5 table. Never regenerate it. A migration that rebuilds `transactions` drops its `transaction_search_*` triggers, and must create them again.
 - Never run host-wide Docker cleanup (`docker system prune`, `docker image prune`, and so on).
 
 ## Keep each agent small
