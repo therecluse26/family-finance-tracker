@@ -12,9 +12,10 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
-import { containsText, NEWEST_SHOWN_FIRST, shownDate } from "./bank-data.ts";
+import { NEWEST_SHOWN_FIRST, shownDate } from "./bank-data.ts";
 import type { Database } from "./client.ts";
 import type { PartType } from "./decisions.ts";
+import { merchantSearch } from "./merchant-search.ts";
 import { spendingLinks, transactionParts, transactions } from "./schema.ts";
 
 // Chat's Transaction search (spec 08, Lookup tools): every field that is set must match. Hidden
@@ -58,10 +59,8 @@ function conditions(database: Database, search: TransactionSearch): SQL[] {
   if (search.accountId !== undefined) where.push(eq(transactions.accountId, search.accountId));
   if (search.from !== undefined) where.push(gte(transactions.postedDate, search.from));
   if (search.to !== undefined) where.push(lte(transactions.postedDate, search.to));
-  // Any part of the Merchant's clean name, in any case.
-  if (search.merchant !== undefined) {
-    where.push(containsText(transactions.merchantCleanName, search.merchant));
-  }
+  // The Merchant search the Transactions page has.
+  if (search.merchant !== undefined) where.push(...merchantSearch(search.merchant));
   if (search.minAmount !== undefined) {
     where.push(sql`abs(${transactions.amount}) >= ${search.minAmount}`);
   }

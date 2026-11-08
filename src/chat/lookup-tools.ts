@@ -147,7 +147,9 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
           .min(1)
           .max(100)
           .nullable()
-          .describe("A part of the Merchant's name, in any case"),
+          .describe(
+            'Words that each start a word in the Merchant\'s name, in any case. "Exact words" in quotes; *text for text inside a word',
+          ),
         category: z.enum(CATEGORY_NAMES).nullable(),
         account: ACCOUNT_NAME.nullable().describe("An Account name"),
         type: z.enum(TRANSACTION_TYPES).nullable(),
