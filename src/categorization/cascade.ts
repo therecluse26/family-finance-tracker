@@ -183,12 +183,15 @@ function merchantHistory(
 // Step 6, when no AI answers: the Category the provider's code maps to, even when lossy or low;
 // with no provider category, the Merchant's most recent Category; with neither, Miscellaneous. A
 // provider category with no confidence level is only a hint to the AI, so it counts as none here.
+// A masked Merchant, such as Privacy.com, never takes its most recent Category: its Transactions are
+// many shops.
 export function bestGuess(txn: CascadeInput, history: MerchantHistory): Choice {
   const match =
     txn.providerCategory === null || txn.providerCategoryConfidence === null
       ? undefined
       : mapPlaidCategory(txn.providerCategory, txn.merchant);
-  const latest = history.before(txn).find((entry) => entry.category !== null);
+  const masked = txn.merchant !== null && isMaskedMerchant(txn.merchant);
+  const latest = masked ? undefined : history.before(txn).find((entry) => entry.category !== null);
   const category =
     match?.kind === "category" ? match.category : (latest?.category ?? "Miscellaneous");
   return { category, source: "best guess", confidence: "low" };

@@ -108,6 +108,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
   - Step 5 starts with the Web lookup's cache ([Web lookup](#web-lookup)). A Category kept for the Merchant decides at once, with no AI call and no search.
   - For a masked Merchant, the AI is told that the Merchant is masked, and its confidence is capped at "medium". A "high" answer counts as "medium", so it shows the "AI unsure" tag and stays off the Review list. A masked Merchant is never looked up.
 - **Step 6.** The best guess is the Category the provider's code maps to, even when lossy or at low confidence. With no provider category, it is the Merchant's most recent Category. With neither, it is Miscellaneous. The Transaction also goes on the Review list.
+  - A masked Merchant never takes its most recent Category at step 6. Its best guess is the provider's category, or Miscellaneous.
 - The cascade runs after matching ([Money movement](03-money-movement.md#order-of-decisions)). It works through Transactions oldest first, so Merchant history builds in date order.
 - An unlinked Refund goes through the cascade as if it were Spending. It takes the Category its Merchant would get.
 

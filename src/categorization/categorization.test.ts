@@ -253,8 +253,9 @@ describe("the categorization cascade", () => {
         ],
       });
 
-      // With no AI, the best guess still takes the Merchant's most recent Category.
-      expect(await chosen("fourth")).toEqual(["Restaurants", "best guess", "low"]);
+      // With no AI and no provider category, the best guess never takes the Merchant's most
+      // recent Category (spec 04, Step 6): it is Miscellaneous.
+      expect(await chosen("fourth")).toEqual(["Miscellaneous", "best guess", "low"]);
     });
 
     it("gives no answer from fewer than 3, from a best guess, or from Categories that differ", async () => {
