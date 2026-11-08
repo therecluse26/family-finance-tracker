@@ -3,7 +3,7 @@ import type { Merchant } from "./names.ts";
 // Masked Merchants (spec 04, Identity). A card service such as Privacy.com can show its own name on
 // the bank line in place of the shop's, so one Merchant hides many shops. A correction on one makes
 // no Category rule, Merchant history and the Web lookup skip it, the AI is told, and its
-// Recurring charges keep to their price (spec 06, Continuing a series).
+// Recurring charges match only exact cents (spec 06, A masked Merchant's series).
 
 export const MASKED_MERCHANTS = ["Privacy.com"] as const;
 export type MaskedMerchant = (typeof MASKED_MERCHANTS)[number];

@@ -78,7 +78,7 @@ Upkeep stays with what it maintains: home repairs in Home and garden, and car re
 - A masked Merchant is a card service whose bank line shows its own name, not the shop's. The app keeps a built-in list of them, which starts with Privacy.com.
   - A line that names one as whole words, in any case, has it as its Merchant, under its clean name, such as "Privacy.com". Examples: `PRIVACY.COM`, `PWP*PRIVACY.COM`, `PRIVACYCOM*SHOP`.
   - This holds when the provider sends no Merchant name, or sends the masked Merchant's name. A provider Merchant name of another shop wins, as usual.
-  - One masked Merchant holds many shops. So it makes no Category rule ([Category rules](#category-rules)), steps 4 and 5 treat it apart ([The categorization cascade](#the-categorization-cascade)), and its Recurring charges keep to their price ([Anomalies and Alerts](06-anomalies-and-alerts.md#continuing-a-series)).
+  - One masked Merchant holds many shops. So it makes no Category rule ([Category rules](#category-rules)), steps 4 and 5 treat it apart ([The categorization cascade](#the-categorization-cascade)), its best guess at step 6 skips its history, and its Recurring charges match only exact cents ([Anomalies and Alerts](06-anomalies-and-alerts.md#a-masked-merchants-series)).
 - v1 has no Merchant merge and no Merchant rename.
 
 ## The categorization cascade

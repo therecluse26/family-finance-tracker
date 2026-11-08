@@ -59,7 +59,8 @@ export type SeriesRule<S extends SeriesSchedule> = {
 };
 
 // Amounts within `percent` of each other: the largest is at most the smallest × (1 + percent).
-// Finding a Recurring charge uses 7.5%; a yearly one, and every Income series, uses 15%.
+// Finding a Recurring charge uses 7.5%; a yearly one, and every Income series, uses 15%. A masked
+// Merchant's uses 0%: the same amount to the cent.
 function withinPercent(amounts: readonly number[], tenthsOfPercent: number): boolean {
   const largest = Math.max(...amounts);
   const smallest = Math.min(...amounts);
@@ -67,6 +68,7 @@ function withinPercent(amounts: readonly number[], tenthsOfPercent: number): boo
 }
 const BAND = 75;
 const WIDE_BAND = 150;
+const EXACT = 0;
 
 // A frequent shop (spec 06, Finding a series): 3 or more other Transactions at the Merchant from 60
 // days before to 60 days after a new series' first Transaction, at any amount.
@@ -330,13 +332,30 @@ export const RECURRING_CHARGE_RULE: SeriesRule<ChargeSchedule> = {
   },
 };
 
-// A masked Merchant's Recurring charge, such as one at Privacy.com (spec 06, Continuing a series):
-// the Merchant hides many shops, so a Transaction continues the series only within 7.5% of its
-// latest amount, or as a price change that 2 charges in a row show.
+// A masked Merchant's Recurring charge, such as one at Privacy.com (spec 06, A masked Merchant's
+// series): the Merchant hides many shops, so it ignores the frequent-shop rule and matches only
+// exact cents. A new series needs its first 3 Transactions at the same amount to the cent, on any
+// schedule, the yearly one too. A Transaction then continues or revives it only at its latest
+// amount to the cent, or as a price change: 2 charges in a row at one new amount.
 export const MASKED_CHARGE_RULE: SeriesRule<ChargeSchedule> = {
-  ...RECURRING_CHARGE_RULE,
-  priceBand: BAND,
+  band: EXACT,
+  priceBand: EXACT,
+  skipsFrequentShops: false,
+  newSeries(txn, free) {
+    for (const schedule of ["weekly", "every 2 weeks"] as const) {
+      const chain = chainEndingAt(txn, free, schedule, EXACT);
+      if (chain.length >= FEWEST[schedule]) return { schedule, txns: chain, status: "active" };
+    }
+    const monthly = monthlyEndingAt(txn, free, EXACT);
+    if (monthly !== undefined) return monthly;
+    const yearly = chainEndingAt(txn, free, "yearly", EXACT);
+    if (yearly.length >= MASKED_FEWEST_YEARLY) {
+      return { schedule: "yearly", txns: yearly, status: "active" };
+    }
+    return undefined;
+  },
 };
+const MASKED_FEWEST_YEARLY = 3;
 
 // Amounts within 7.5% of each other, the band a new Recurring charge's amounts stay within.
 export const withinChargeBand = (amounts: readonly number[]) => withinPercent(amounts, BAND);
@@ -345,18 +364,21 @@ export const withinChargeBand = (amounts: readonly number[]) => withinPercent(am
 // one interval before it, within the margin, and within 7.5% of its amount. The yearly schedule
 // never counts here (spec 06, New Recurring charge). `earlier` is in date order. Each one comes
 // once, with the shortest schedule it fits. A monthly pair lands on one fixed day in two months in
-// a row, and takes the fixed day the two give.
+// a row, and takes the fixed day the two give. A masked Merchant's pair is at the same amount to the
+// cent, as its new series are (MASKED_CHARGE_RULE).
 export function earlierOnSchedule(
   txn: SeriesTxn,
   earlier: readonly SeriesTxn[],
+  options: { masked: boolean } = { masked: false },
 ): { txn: SeriesTxn; schedule: ChargeSchedule }[] {
+  const band = options.masked ? EXACT : BAND;
   const found: { txn: SeriesTxn; schedule: ChargeSchedule }[] = [];
   const earliest = addDays(txn.date, -DAYS_APART.monthly[1]);
   for (let at = earlier.length - 1; at >= 0; at -= 1) {
     const each = earlier[at];
     if (each === undefined || each.date < earliest) break;
     if (!isBefore(each, txn) || each.date === txn.date) continue;
-    if (!withinChargeBand([txn.amount, each.amount])) continue;
+    if (!withinPercent([txn.amount, each.amount], band)) continue;
     const schedule =
       (["weekly", "every 2 weeks"] as const).find((one) =>
         inWindow(window(one, each.date), txn.date),

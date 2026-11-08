@@ -45,12 +45,17 @@ A monthly series is measured from a fixed day of the month, not from the previou
 - The next expected date is the last Transaction's date plus one interval. For a monthly series, it is the fixed day in the month after the expected date the last Transaction met.
 - Once a Recurring charge exists, a Transaction from that Merchant continues it at any amount. It must land within the margin of the next expected date. The 7.5% band applies only to finding a new series. So a Price increase above 7.5% still continues the series.
 - If two Transactions fit, the one nearest the latest amount continues the series.
-- **A masked Merchant** ([Categorization](04-categorization.md#identity)), such as Privacy.com, hides many shops. One masked Merchant can hold several Recurring charges at different amounts and days.
-  - A Transaction continues a masked Merchant's Recurring charge only within 7.5% of its latest amount, and within the margin of the next expected date.
-  - **Price change.** A Transaction on the next expected date outside the 7.5% band joins only when the expected date after it has a Transaction within 7.5% of its amount, with no missed expected date between them. Then both join.
-  - A history load joins both in one pass. On a new sync, the first one waits until the next one arrives. So a price change in the series' last Transaction does not join yet.
-  - Example: $15.49 on the 12th for 8 months, then $17.99 on March 12 and April 12. March and April join. A $60 one-off on the 12th never joins.
 - The latest amount is the amount of the last Transaction in the series.
+
+### A masked Merchant's series
+
+A masked Merchant ([Categorization](04-categorization.md#identity)), such as Privacy.com, hides many shops. One masked Merchant can hold several Recurring charges at different amounts and days. Its one-off purchases come at many amounts, so its Recurring charges match only exact cents, in place of every band above.
+
+- **Finding.** The frequent-shop rule does not apply. A new series needs its first 3 Transactions at the same amount to the cent, on any schedule, the yearly one too.
+- **Continuing and reviving.** A Transaction continues or revives the series only at its latest amount to the cent, within the margin of the expected date.
+- **Price change.** A Transaction on the next expected date at another amount joins only when the expected date after it has a Transaction at the same new amount to the cent, with no missed expected date between them. Then both join.
+  - A history load joins both in one pass. On a new sync, the first one waits until the next one arrives. So a price change in the series' last Transaction does not join yet.
+- Example: $15.49 on the 12th for 8 months, then $17.99 on March 12 and April 12. March and April join. A $60 one-off on the 12th never joins, and neither does $15.50.
 
 ### Inactive and ended
 
@@ -98,7 +103,9 @@ An Anomaly is a Transaction, or a series of Transactions, that is unusual agains
   - For a Duplicate charge, they are in the 60 days before the earlier Transaction, at the same amount.
   - For a New Recurring charge, they are in the 60 days before or after the earlier Transaction, at any amount, as for a frequent shop ([Finding a series](#finding-a-series)). The later Transaction of the pair is not one of them. Transactions of the Merchant's Recurring charges do not count. The check counts the Transactions the app has when it runs, so a pair found in a history load sees all of its window.
 - **A payment app as the Merchant:** when a payment-app line names no person or shop, the payment app is the Merchant ([Categorization](04-categorization.md)). Two such lines for the same amount are often payments to different people, so they never fire a Duplicate charge. A line that names a person or a shop has that person or shop as its Merchant, and the Duplicate charge check applies as usual.
-- **A masked Merchant:** a masked Merchant, such as Privacy.com, hides the shop ([Categorization](04-categorization.md#identity)). Two of its lines for the same amount are often two shops, so they never fire a Duplicate charge.
+- **A masked Merchant:** a masked Merchant, such as Privacy.com, hides the shop ([Categorization](04-categorization.md#identity)).
+  - Two of its lines for the same amount are often two shops, so they never fire a Duplicate charge.
+  - For a New Recurring charge, it has no frequent purchase, and its pair must be at the same amount to the cent, as its series are ([A masked Merchant's series](#a-masked-merchants-series)).
 - **The base price:** the median of the previous 3 Transactions in the Recurring charge. It counts only Transactions from the last Price increase onward. Example: $15.49, $15.49, $15.49, then $17.99 fires. The next $17.99 compares against $17.99 and fires nothing.
 - **Large purchase's 98%:** the purchases are the Spending Transactions in the 365 days before, with the same exclusions. At least 98% of them must be smaller.
 - **Loan payments** are payments on tracked loans and untracked loans, as [Money movement](03-money-movement.md#loans) defines them.

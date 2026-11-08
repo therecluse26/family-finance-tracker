@@ -292,7 +292,9 @@ function priceFrom(increase: { base: number; recurringCharge: string }, facts: F
 // and fees, or a frequent purchase: 3 or more other Transactions at that Merchant, at any amount,
 // in the 60 days before or after the earlier one, outside its Recurring charges and the pair. The
 // window looks after the earlier one too, as for a frequent shop (spec 06, Finding a series), so a
-// shop's pair at the start of a history, where nothing comes before, fires nothing.
+// shop's pair at the start of a history, where nothing comes before, fires nothing. A masked
+// Merchant, such as Privacy.com, has no frequent purchase: its pair is at the same amount to the
+// cent instead, as its new series are (spec 06, A masked Merchant's series).
 function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: string } | undefined {
   if (txn.group === null || facts.inCharges.has(txn.id) || txn.category === INTEREST_AND_FEES) {
     return undefined;
@@ -314,7 +316,8 @@ function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: stri
   )
     .filter((other) => other.id !== txn.id && !facts.inCharges.has(other.id))
     .map((other) => ({ ...other, date: other.postedDate }));
-  const fits = earlierOnSchedule({ ...txn, date: txn.postedDate }, before);
+  const masked = txn.merchant !== null && isMaskedMerchant(txn.merchant);
+  const fits = earlierOnSchedule({ ...txn, date: txn.postedDate }, before, { masked });
   const [only] = fits;
   if (only === undefined || fits.length !== 1) return undefined;
   const earlier = facts.spent.get(only.txn.id);
@@ -325,7 +328,7 @@ function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: stri
     other.id !== earlier.id && other.id !== txn.id && !facts.inCharges.has(other.id);
   const from = addDays(earlier.postedDate, -FREQUENT_DAYS);
   const to = addDays(earlier.postedDate, FREQUENT_DAYS);
-  if (frequentWithin(merchantTxns, byPostedDate, from, to, visit)) return undefined;
+  if (!masked && frequentWithin(merchantTxns, byPostedDate, from, to, visit)) return undefined;
   return { earlier, nextDate: nextExpected(only.schedule, txn.postedDate) };
 }
 

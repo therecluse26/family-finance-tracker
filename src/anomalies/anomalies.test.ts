@@ -502,6 +502,31 @@ describe("the Anomaly checks", () => {
       expect((await laterTexts("New Recurring charge")).join()).not.toContain("Domain Host");
     });
 
+    it("fires for a masked Merchant's pair at exact cents among frequent one-offs, never 1 cent off", async () => {
+      const privacy = (id: string, date: string, spent: number) =>
+        purchase(id, CAPITAL_ONE, date, spent, "Privacy.com", { description: "PWP*PRIVACY.COM" });
+      await sync("fake-capital-one", {
+        added: [
+          privacy("exact-1", "2026-09-12", 1_549),
+          privacy("exact-2", "2026-10-12", 1_549),
+          privacy("off-1", "2026-09-20", 2_500),
+          privacy("off-2", "2026-10-20", 2_501),
+          // One-offs at many amounts, which would make a frequent purchase at another Merchant.
+          ...[811, 4_275, 1_390, 6_020, 2_288].map((spent, at) =>
+            privacy(`one-${at}`, `2026-09-${String(22 + at).padStart(2, "0")}`, spent),
+          ),
+        ],
+      });
+
+      expect(
+        (await ofKind("New Recurring charge"))
+          .filter((alert) => alert.state === null)
+          .map((alert) => alert.text),
+      ).toEqual([
+        "New Recurring charge? Privacy.com, $15.49 on Sep 12 and Oct 12. Next expected Nov 12.",
+      ]);
+    });
+
     it("fires nothing outside 7.5%, or when two earlier Transactions fit", async () => {
       await sync("fake-capital-one", {
         added: [

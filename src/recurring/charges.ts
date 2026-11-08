@@ -92,7 +92,7 @@ export async function findRecurringCharges(database: Database, now = new Date())
   const kept = new Set<string>();
   const charges: StoredRecurringCharge[] = [];
   for (const { merchant, txns } of merchants.values()) {
-    // A masked Merchant's series keep to their price (spec 06, Continuing a series).
+    // A masked Merchant's series match only exact cents (spec 06, A masked Merchant's series).
     const rule = isMaskedMerchant(merchant) ? MASKED_CHARGE_RULE : RECURRING_CHARGE_RULE;
     for (const series of replayMerchant(txns, claimed, today, rule)) {
       const previous = series.txns
