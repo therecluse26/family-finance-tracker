@@ -45,7 +45,8 @@ A monthly series is measured from a fixed day of the month, not from the previou
 - The next expected date is the last Transaction's date plus one interval. For a monthly series, it is the fixed day in the month after the expected date the last Transaction met.
 - Once a Recurring charge exists, a Transaction from that Merchant continues it at any amount. It must land within the margin of the next expected date. The 7.5% band applies only to finding a new series. So a Price increase above 7.5% still continues the series.
 - If two Transactions fit, the one nearest the latest amount continues the series.
-- The latest amount is the amount of the last Transaction in the series.
+- The latest amount is the amount of the last Transaction in the series. A Member's price change in force on the next expected date replaces it ([Member edits](#member-edits)).
+- A Transaction outside 7.5% of the amount it continued is a price change. The app records each one it finds, so the page marks it. A masked Merchant's price change is the pair below.
 
 ### A masked Merchant's series
 
@@ -63,7 +64,27 @@ A masked Merchant ([Categorization](04-categorization.md#identity)), such as Pri
 - A Recurring charge goes inactive after one missed Transaction. It is missed when the next expected date plus 2 days passes with none. For a monthly one, that is 2 days after the latest date the business-day shift allows. A yearly one is missed 13 months after its last Transaction.
 - An inactive Recurring charge leaves "Coming up", the projection, and the Budget formulas' known amounts.
 - A later Transaction can make it active again. It must come from the same Merchant, within 7.5% of the latest amount. Its date must be within the margin of the last date plus a whole number of intervals. For a monthly one, it must be within the margin of a later month's expected date. This fires no New Recurring charge Alert.
-- A Member may mark a Recurring charge ended. An ended one never comes back by itself. Later Transactions from that Merchant start a new series.
+- A Member may mark a Recurring charge ended. An ended one never comes back by itself. Later Transactions from that Merchant start a new series. An ended one takes no more edits.
+
+### Member edits
+
+A Member may edit a Recurring charge on the [Recurring charges page](07-dashboard-and-pages.md#recurring-charges-page):
+
+- **A name.** Plain text, trimmed, 1 to 60 characters. The pages show it in place of the Merchant's name. The Merchant does not change.
+- **A Category.** It covers every Transaction in the Recurring charge, past and future, except those with a hand-set Category. It comes before the Merchant's Category rule ([Categorization](04-categorization.md#the-categorization-cascade)). Clearing it sends each Transaction through the cascade again.
+- **A price band.** From 0 to 100% in steps of 0.1%, in place of the 7.5% default (exact cents for a masked Merchant). A Transaction continues or revives the Recurring charge only within the band of the amount it is judged against. A Transaction outside the band of the amount it continued is a price change.
+- **A price change.** A new amount from a start date. It counts as a charge at that amount on that date. Each Transaction from the start date is judged against the new amount, so it joins at once, a masked Merchant's too. A start date in the past joins the Transactions since then that fit. Earlier Transactions stay in the Recurring charge. Once it has a price change, each later Transaction is judged within the band. A Member may delete their price change.
+- **Add or remove a Transaction.** An added one is a posted Spending Transaction from the same Merchant. It leaves any other Recurring charge it was in. It sits off the schedule: it moves no expected date and no latest amount. A Transaction in an ended Recurring charge cannot be added. A removed one never joins it again by itself, though a Member may add it back. The last Transaction cannot be removed.
+
+**Kept by hand.** A Recurring charge with any Member edit keeps it through every check after:
+
+- The checks never delete, merge or split it, and never drop a Transaction in it. They never re-add a removed one.
+- They still add each new Transaction that fits, on an expected date that has none.
+- An added Transaction leaves only when it is hidden, such as removed by the bank.
+- Inactive and ended still apply.
+- A Transaction that leaves the Recurring charge, or joins one with a Member's Category, goes through the cascade again in the next follow-up job.
+
+Example: a $25 monthly Privacy.com Recurring charge, named "Visible Wireless", Category Phone and internet. Later the Member sets "$45 from Nov 5". The $45 charges join from Nov 5, and every $25 charge stays in it.
 
 ### What the app stores
 
@@ -72,6 +93,9 @@ Each Recurring charge holds:
 - the Merchant and the Category;
 - the schedule and the next expected date;
 - the latest amount, and the price history: each Transaction's date and amount;
+- its Transactions, each marked when a Member added or removed it;
+- its price changes: a Member's, and those the checks found;
+- a Member's name, Category and price band;
 - the Account it last landed on;
 - its status: active, inactive, or ended.
 

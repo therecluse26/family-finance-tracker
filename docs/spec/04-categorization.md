@@ -88,7 +88,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
 | Step | Source | It answers when |
 |---|---|---|
 | 1 | Hand-set | A Member set the Category by hand. |
-| 2 | Category rule | A Category rule matches its Merchant. |
+| 2 | Recurring charge, then Category rule | It is in a Recurring charge with a Category a Member set ([Anomalies and Alerts](06-anomalies-and-alerts.md#member-edits)). Otherwise a Category rule matches its Merchant. |
 | 3 | Provider category | The provider's category maps cleanly to one Category, and Plaid's `confidence_level` is `VERY_HIGH` or `HIGH`. |
 | 4 | Merchant history | The Merchant's last 3 Transactions all have the same Category. |
 | 5 | Web lookup, then AI | A Web lookup kept for the Merchant answers at once. Otherwise an AI provider is set up and available, and its answer always applies. When the AI is unsure of a Merchant it does not know, a Web lookup may answer in its place. |
@@ -127,6 +127,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
 
 - When the provider changes a Transaction, the cascade runs again, unless a Member set its Category by hand.
 - When a Category rule is made, changed, or deleted, the cascade runs again on that Merchant's Transactions. Hand-set Transactions keep their Category.
+- When a Member sets or clears a Recurring charge's Category, the cascade runs again on its Transactions. It runs again on a Transaction that leaves the Recurring charge, or joins one with a Member's Category. Hand-set Transactions keep their Category.
 - When a pending Transaction posts, its Category carries over ([Money movement](03-money-movement.md#pending-transactions)).
 
 ### Web lookup

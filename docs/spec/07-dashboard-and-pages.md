@@ -180,9 +180,10 @@ Using this page is never required.
   - Words in quotes match those exact words, in that order. A word that starts with * matches text inside a word, such as `*istro` for Bistro. % and _ match only themselves.
   - Filters apply as they change, with no button. A chosen filter applies at once. A typed one (the Merchant and the dates) applies 300 ms after the last change. Enter applies at once. "Clear the filters" clears them all.
 - **Each row:** the date, the Merchant, the amount, the Account, the Category or type, and a "pending" mark when pending. Newest first, by the date each row shows.
+- A row in a Recurring charge that a Member named shows the name next to the Merchant ([Anomalies and Alerts](06-anomalies-and-alerts.md#member-edits)).
 - A Category the AI or a Web lookup chose below "high" shows an "AI unsure" tag, in the row and on the detail view. At "medium" it counts as decided and is not on the Review list ([Categorization](04-categorization.md#the-categorization-cascade)).
 - **The detail view** shows:
-  - how the Category was chosen: "hand-set", "Category rule", "Plaid" (the Bank-data provider's category), "Merchant history", "AI", or "AI, unsure". A no-AI guess shows "best guess";
+  - how the Category was chosen: "hand-set", "Recurring charge", "Category rule", "Plaid" (the Bank-data provider's category), "Merchant history", "AI", or "AI, unsure". A no-AI guess shows "best guess";
   - the evidence for any link (Transfer, Refund, Reimbursement, or loan payment): the matched Transaction and each signal that matched ([Money movement](03-money-movement.md)), with **Undo**.
 - **Edits** (each rule lives in its owner file):
   - change the Category, with "only this Transaction" ([Categorization](04-categorization.md));
@@ -210,9 +211,15 @@ Using this page is never required.
 ### Recurring charges page
 
 - Off the main screen, like Top Merchants.
-- **Each row:** the Merchant, the amount, the interval, the next expected date, and the Category. The interval is weekly, every 2 weeks, monthly, or yearly.
+- **Each row:** the name, the amount, the interval, the next expected date, and the Category. The interval is weekly, every 2 weeks, monthly, or yearly.
+  - The name is the one a Member gave, with the Merchant under it. With none, it is the Merchant.
 - A row shows "on card" when the Recurring charge lands on a credit card.
-- Tapping a row opens its price history: each charge's date and amount.
+- Tapping a row opens its edits and its price history ([Anomalies and Alerts](06-anomalies-and-alerts.md#member-edits)):
+  - the name, the Category ("Each Transaction's own" clears it), and the price band, with **Save**;
+  - a new amount and its start date, with **Set price change**;
+  - the price history, newest first: each charge's date and amount, with **Remove**, and "added" on one a Member added. Each price change shows where it starts, with **Delete** on a Member's;
+  - **Add a charge**: the Merchant's other posted Spending, newest first, at most 50, each with **Add**. One a Member removed shows "removed".
+  - An ended Recurring charge shows its price history only.
 - Rows run by next date. Inactive Recurring charges sit in a collapsed "Inactive" section ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
 
 ### Top Merchants
