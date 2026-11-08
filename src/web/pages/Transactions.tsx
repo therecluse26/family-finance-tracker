@@ -207,7 +207,7 @@ export function TransactionFilterForm(props: {
       <input
         name={name}
         type={type}
-        placeholder={name === "merchant" ? 'shell, "exact words", *istro' : undefined}
+        placeholder={name === "merchant" ? "Search by name" : undefined}
         className={FILTER_FIELD}
         value={draft[name] ?? ""}
         onChange={(e) => set(name)(e.target.value)}
