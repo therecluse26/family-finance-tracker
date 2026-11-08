@@ -46,6 +46,10 @@ _Avoid_: Entry, activity, charge
 The business or person on the other side of a Transaction, under a clean name, such as Starbucks.
 _Avoid_: Payee, vendor, counterparty
 
+**Masked Merchant**:
+A Merchant whose bank line shows a card service, not the shop, such as Privacy.com.
+_Avoid_: Hidden merchant, proxy merchant
+
 **Transfer**:
 Money that moves between two of the Household's own Accounts, including a credit card bill payment. Never counts as Spending or Income.
 _Avoid_: Internal transfer, linked pair
