@@ -1,16 +1,13 @@
 import { CATEGORIES, type Category } from "../categories/index.ts";
+import { YEARLY_CATEGORIES } from "./periods.ts";
 
 // The draft formulas (spec 05, Drafting Budgets): fixed rules, with no AI, from the formula terms
 // (spec 05, Formula terms). Bills follow the Household's Recurring charges and tracked loans.
 // Flexible Budgets take the lower of the Benchmark and the Household's own figure, so history can
 // tighten a Budget, never loosen it. Every amount is in whole cents.
 
-// Travel and Gifts and donations have yearly Budgets, over the calendar year (spec 05, Yearly
-// Budgets). Every other Budget is monthly.
-export const YEARLY_CATEGORIES: readonly Category[] = Object.freeze([
-  "Travel",
-  "Gifts and donations",
-]);
+// The yearly Categories live in periods.ts, which the web app reads too.
+export { YEARLY_CATEGORIES };
 
 // A Category with no Benchmark gets no Budget until there are this many months of history.
 export const MIN_HISTORY_MONTHS = 3;

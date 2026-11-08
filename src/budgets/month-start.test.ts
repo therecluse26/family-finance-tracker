@@ -358,7 +358,7 @@ describe("the month's Budgets", () => {
     expect((await budgets("2026-12")).Utilities).toBe("200 Member edit");
   });
 
-  it("follows the bill only for a pinned Bills Budget, and edits only a Budget that exists", async () => {
+  it("follows the bill only for a pinned Bills Budget, and edits only a Category", async () => {
     const before = await bank.database.$client.execute("SELECT * FROM budgets");
     const follow = (category: string) =>
       followTheBill(bank.database, { category, memberId: MEMBER }, at("2026-11-10"));
@@ -367,12 +367,61 @@ describe("the month's Budgets", () => {
     expect(await follow("Miscellaneous")).toBe("not pinned");
     expect(await follow("Pets")).toBe("no Budget");
     expect(await follow("Not a Category")).toBe("no Budget");
-    for (const category of ["Pets", "Not a Category"]) {
+    expect(
+      await editBudget(
+        bank.database,
+        { category: "Not a Category", amount: $(10), memberId: MEMBER },
+        at("2026-11-10"),
+      ),
+    ).toBeUndefined();
+
+    expect((await bank.database.$client.execute("SELECT * FROM budgets")).rows).toEqual(
+      before.rows,
+    );
+  });
+
+  it("gives a Category with no Budget its first Budget by a Member's edit, in its own period, and the 1st keeps it", async () => {
+    const edit = (category: string, amount: number) =>
+      editBudget(
+        bank.database,
+        { category, amount: $(amount), memberId: MEMBER },
+        at("2026-11-10"),
+      );
+    expect((await budgets("2026-11")).Pets).toBeUndefined();
+
+    expect(await edit("Pets", 40)).toMatchObject({
+      category: "Pets",
+      amount: $(40),
+      period: "monthly",
+      takesEffect: "2026-11",
+      source: "Member edit",
+      setBy: MEMBER,
+      pinned: null,
+    });
+    expect(await edit("Gifts and donations", 600)).toMatchObject({
+      period: "yearly",
+      takesEffect: "2026",
+      pinned: null,
+    });
+
+    expect((await budgets("2026-10")).Pets).toBeUndefined();
+    await runMonthStart(bank.database, at("2026-12-01"));
+    expect((await budgets("2026-12")).Pets).toBe("40 Member edit");
+    await runMonthStart(bank.database, at("2027-01-01"));
+    expect((await budgets("2027-01"))["Gifts and donations"]).toBe("600 Member edit");
+  });
+
+  it("stores no edit in a Household month before the first draft's month", async () => {
+    const before = await bank.database.$client.execute("SELECT * FROM budgets");
+
+    // The first draft ran in November. A Household month that goes back to October, as when the
+    // time zone is set after a draft just past midnight UTC, has no Budget to edit or start.
+    for (const category of ["Pets", "Miscellaneous"]) {
       expect(
         await editBudget(
           bank.database,
-          { category, amount: $(10), memberId: MEMBER },
-          at("2026-11-10"),
+          { category, amount: $(40), memberId: MEMBER },
+          at("2026-10-31"),
         ),
       ).toBeUndefined();
     }

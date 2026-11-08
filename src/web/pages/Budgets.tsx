@@ -1,4 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
+import { YEARLY_CATEGORIES } from "../../budgets/periods.ts";
+import type { Category } from "../../categories/list.ts";
 import { calendarDateIn, percent, wholeDollars } from "../../format.ts";
 import type { BudgetsView, MonthBudgetView } from "../../server/budgets-views.ts";
 import type { HouseholdFactsView } from "../../server/household-views.ts";
@@ -39,10 +41,11 @@ const DRAFT_BOX = "rounded-card border border-[#C9D7F8] bg-[#EEF3FE] px-4 py-3.5
 // A row's edit box and the answer to its last change.
 export type RowState = { typed?: string; error?: string; busy?: boolean };
 
+// `type` and `save` take the Category, so a Category with no Budget can get its first one.
 export type BudgetActions = {
-  type(budget: MonthBudgetView, typed: string): void;
+  type(category: string, typed: string): void;
   // `keyboard` when the keyboard pressed "Save", so the focus goes back to the amount box after.
-  save(budget: MonthBudgetView, typed: string, how?: { keyboard: boolean }): void;
+  save(category: string, typed: string, how?: { keyboard: boolean }): void;
   followTheBill(budget: MonthBudgetView): void;
   acceptAll(): void;
 };
@@ -79,23 +82,34 @@ export function budgetStatus(budget: MonthBudgetView): BudgetStatusShown {
 
 // The Budget's box, always open: Enter or "Save" sends it. A yearly Budget is per year. As on the
 // board, the boxes stand alone at rest: "Save" shows once the box holds a new amount (or while it
-// saves, or after a refusal), and keeps its place while hidden so nothing moves as it appears.
-function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: BudgetActions }) {
-  const { budget, state, actions } = props;
-  const typed = state.typed ?? typedBudget(budget.amount);
-  const id = fieldId(budget.category);
-  const showSave =
-    typed !== typedBudget(budget.amount) || state.busy === true || state.error !== undefined;
+// saves, or after a refusal), and keeps its place while hidden so nothing moves as it appears. A
+// Category with no Budget has an empty box: what a Member saves there is its first Budget, per
+// year for a yearly Category.
+function BudgetEdit(props: {
+  category: string;
+  budget: MonthBudgetView | undefined;
+  state: RowState;
+  actions: BudgetActions;
+}) {
+  const { category, budget, state, actions } = props;
+  const shown = budget === undefined ? "" : typedBudget(budget.amount);
+  const typed = state.typed ?? shown;
+  const id = fieldId(category);
+  const yearly =
+    budget === undefined
+      ? YEARLY_CATEGORIES.includes(category as Category)
+      : budget.period === "yearly";
+  const showSave = typed !== shown || state.busy === true || state.error !== undefined;
   return (
     <form
       className="flex items-center gap-2 sm:justify-end"
       onSubmit={(e) => {
         e.preventDefault();
-        actions.save(budget, typed);
+        actions.save(category, typed);
       }}
     >
       <label className="sr-only" htmlFor={id}>
-        {`${budget.category} ${budget.period === "yearly" ? "Budget per year" : "Budget per month"}`}
+        {`${category} ${yearly ? "Budget per year" : "Budget per month"}`}
       </label>
       <span className="relative before:pointer-events-none before:absolute before:top-1/2 before:left-2.5 before:-translate-y-1/2 before:text-muted before:content-['$']">
         <input
@@ -104,7 +118,7 @@ function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: 
           inputMode="decimal"
           required
           value={typed}
-          onChange={(e) => actions.type(budget, e.target.value)}
+          onChange={(e) => actions.type(category, e.target.value)}
         />
       </span>
       <Button
@@ -115,7 +129,7 @@ function BudgetEdit(props: { budget: MonthBudgetView; state: RowState; actions: 
         className={showSave ? undefined : "invisible"}
         data-slot="budget-save"
         // A click from the keyboard, Enter or Space, has no pointer and a detail of 0.
-        onClick={(e) => actions.save(budget, typed, { keyboard: e.detail === 0 })}
+        onClick={(e) => actions.save(category, typed, { keyboard: e.detail === 0 })}
       >
         Save
       </Button>
@@ -154,7 +168,8 @@ function FollowTheBill(props: {
 
 // One row: the Category, its Spending and status, a meter of Spending against the Budget, and the
 // Budget's box. From 640 px the four sit in a line, as on the board; on a phone the meter and the
-// box each take a line under the Category, and a Category with no Budget drops its empty meter.
+// box each take a line under the Category, and a Category with no Budget drops its empty meter. A
+// Category with no Budget says "no Budget" under its Spending, and its box is empty.
 // The box's column has one width, so the meters line up down the card. `today` is where the meter's "today" tick goes: the
 // share of the month gone for a flexible Category, the share of the year for a yearly Budget, and
 // none for Bills.
@@ -186,7 +201,9 @@ function BudgetLine(props: {
       </div>
       <div className="col-start-2 row-start-1 flex flex-col items-end gap-1 text-right sm:col-start-4 sm:items-start sm:text-left">
         <span className="tabular-nums">{props.spent}</span>
-        {budget === undefined ? null : (
+        {budget === undefined ? (
+          <span className="text-small text-muted">no Budget</span>
+        ) : (
           <span className="text-small">
             <Status {...budgetStatus(budget)} />
           </span>
@@ -202,14 +219,8 @@ function BudgetLine(props: {
         {...(budget === undefined || props.today === undefined ? {} : { today: props.today })}
         className={`col-span-2 sm:col-span-1 sm:col-start-2 sm:row-start-1 ${budget === undefined ? "hidden sm:block" : ""}`}
       />
-      <div
-        className={`col-span-2 sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:mt-0 sm:text-right ${budget === undefined ? "-mt-1.5" : ""}`}
-      >
-        {budget === undefined ? (
-          <span className="text-small text-muted">no Budget</span>
-        ) : (
-          <BudgetEdit budget={budget} state={state} actions={actions} />
-        )}
+      <div className="col-span-2 sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:text-right">
+        <BudgetEdit category={props.category} budget={budget} state={state} actions={actions} />
       </div>
       {state.error === undefined ? null : (
         <div className="col-span-full">
@@ -310,8 +321,8 @@ function GroupHeading(props: { title: string; group: BudgetsView["groups"][numbe
 
 // A Category group with no monthly Budget, folded to one line: its name and its Spending, then
 // "no Budget", or "no monthly Budget" when it has a yearly one. Its name is a button that opens
-// its rows in place; the rows have no Budget box to edit. As on the board, folded groups that
-// follow each other share one box. The page holds which are open.
+// its rows in place; each row's empty box gives its Category a first Budget. As on the board,
+// folded groups that follow each other share one box. The page holds which are open.
 function FoldedGroup(props: {
   title: string;
   rows: BudgetRow[];
@@ -573,9 +584,8 @@ export function Budgets() {
   }
 
   const actions: BudgetActions = {
-    type: (budget, typed) => setState(budget.category, { typed }),
-    save: (budget, typed, how) =>
-      void change(budget.category, () => editBudget(budget.category, typed), how),
+    type: (category, typed) => setState(category, { typed }),
+    save: (category, typed, how) => void change(category, () => editBudget(category, typed), how),
     followTheBill: (budget) => void change(budget.category, () => followTheBill(budget.category)),
     async acceptAll() {
       setAccept({ busy: true });

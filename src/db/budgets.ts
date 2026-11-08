@@ -246,26 +246,39 @@ export async function storeMonthBudgets(
 // A Member's edit of the Budget in effect in `month` (spec 05, Changing Budgets): it takes effect in
 // that month, or for a yearly Budget in that whole year. An edited Bills Budget is pinned. A
 // Category whose first Budget a Member undid gets its Budget again this way, in the period it had
-// (spec 05, When the app drafts: an undone first Budget); `bills` says whether it is a Bills
-// Category. Returns the new Budget, or undefined when the Category has no Budget in effect and none
-// was undone.
+// (spec 05, When the app drafts: an undone first Budget). A Category that never had a Budget gets
+// its first one this way, in `period`, the Category's own (spec 05, Changing Budgets: a Member may
+// edit any Budget). `bills` says whether it is a Bills Category. Returns the new Budget, or
+// undefined before the first draft's month, when no month has a Budget.
 export async function storeBudgetEdit(
   database: Database,
   month: string,
-  edit: { category: string; amount: number; setBy: string; setAt: Date; bills: boolean },
+  edit: {
+    category: string;
+    amount: number;
+    setBy: string;
+    setAt: Date;
+    bills: boolean;
+    period: StoredBudget["period"];
+  },
 ): Promise<StoredBudget | undefined> {
-  const { bills, ...fields } = edit;
+  const { bills, period: ownPeriod, ...fields } = edit;
   return database.transaction(async (tx) => {
+    const [inputs] = await tx
+      .select({ firstDraftMonth: budgetInputs.firstDraftMonth })
+      .from(budgetInputs)
+      .where(eq(budgetInputs.id, BUDGET_INPUTS_ROW));
+    if (inputs === undefined || month < inputs.firstDraftMonth) return undefined;
     const current = (await newestRows(tx, month)).get(edit.category);
-    if (current === undefined) return undefined;
     // Only a Bills Budget has a pinned flag. A row that ends a Budget has none of its own.
-    const pinned = current.noBudget ? bills : current.pinned !== null;
+    const pinned = current === undefined || current.noBudget ? bills : current.pinned !== null;
+    const period = current?.period ?? ownPeriod;
     const [stored] = await tx
       .insert(budgets)
       .values({
         ...fields,
-        period: current.period,
-        takesEffect: current.period === "yearly" ? month.slice(0, 4) : month,
+        period,
+        takesEffect: period === "yearly" ? month.slice(0, 4) : month,
         source: "Member edit",
         pinned: pinned ? true : null,
       })
