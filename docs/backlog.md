@@ -58,6 +58,9 @@ Small items left open after the T107 notes triage, for after the first release (
 - N177 (S, polish) Emoji can make streamed Chat text differ slightly from reloaded text. In: src/chat/.
 - N214 (S, polish) The `FOLLOW_UP_AI_USES` comment in `src/ai/retries.ts` is stale (Insight cards now also run from the 6 AM check, not only the follow-up job). In: src/ai/retries.ts.
 - N251 (S, polish) The every-use test counts AI uses by name; a new path reusing a use name would not fail it. In: src/ai/every-use.test.ts.
+- N289 (S, polish) Spec 08's Expected cost totals were written before thinking tokens counted and before Sonnet 5.5's cache read rose to $0.20; recompute them from measured calls. In: docs/spec/08-ai.md.
+- N290 (S, polish) On OpenRouter, Reading a Goal at `low` effort may get Anthropic's 1,024-token minimum thinking budget, which leaves about half of its 2,000-token limit for the answer. In: src/ai/prompt.ts.
+- N291 (S, polish) The AI request log's Request view turns `\n` into line breaks but shows `\r` as written. In: src/web/pages/settings/AiRequestLog.tsx.
 
 ## Bank data and sync
 
