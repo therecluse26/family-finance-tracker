@@ -59,7 +59,10 @@ const PICTURE_ANSWER = z.object({
 // each call).
 const TEXT = z.string().trim().min(1);
 
+// Each card's fields. `check` comes first, so the AI writes out the figures it uses, and any math,
+// before the words that quote them. The app never stores, shows, or exports it.
 const CARD = z.object({
+  check: z.string(),
   group: z.enum(CARD_GROUPS),
   about: TEXT,
   figure: z.number().nullable(),
@@ -83,9 +86,12 @@ export const INSIGHT_CARDS_TASK = [
   `Write the Household's Insight cards for its dashboard: ${MIN_INSIGHT_CARDS} to ${MAX_INSIGHT_CARDS} cards, in the field "cards".`,
   "- Each card is one finding that matters now, with a concrete next step drawn from live facts in the summary, such as a balance, a due date, a Budget's pace, or a Goal's progress.",
   "- At least two cards are habit-based ideas to save: each names a habit the Habit counts show, the change, and the saving a month.",
-  "- Order the cards by importance, the most important first.",
+  "- Order the cards by importance, the most important first. Importance means dollars at stake this month. Start from the Biggest changes list: its first item gets its own card, unless the feedback rules it out.",
+  "- Use the app's numbers as they are. When you must compute a number, use only numbers from the summary, and show the math in check.",
+  "- A saving a month is a count times an average from the summary, such as 10 fewer meals out times the average meal out.",
   '- Read the feedback after this task. Do not repeat a card a Member marked Done unless something new happened since; then say what changed. Do not warn again about an Alert a Member marked "Not a problem".',
   "Each card's fields:",
+  "- check: written first, and never shown. Each figure the card uses, with its month and the summary heading it comes from, and any math, step by step.",
   '- group: "worth_acting_on" for something to act on now, "heads_up" for something to watch, or "good_news".',
   "- about: the Category or topic, 1 to 4 words.",
   "- figure: the key number, as a number, such as 180 or 12.5, or null. Amounts are dollars.",

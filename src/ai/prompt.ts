@@ -121,7 +121,7 @@ export const EFFORT: Record<ModelUse, Effort | undefined> = {
   "merchant lookup": undefined,
   "reading a goal": "low",
   "alert advice": "low",
-  "insight cards": "medium",
+  "insight cards": "low",
   "monthly review": "medium",
   "budget tailoring": "medium",
   chat: "low",

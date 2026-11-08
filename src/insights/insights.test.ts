@@ -67,6 +67,7 @@ const NEXT_DAY = at("2026-11-05T11:30:00.000Z");
 type ReplyCard = Record<string, unknown>;
 
 const card = (n: number, fields: ReplyCard = {}): ReplyCard => ({
+  check: `Topic ${n}: ${40 + n} a month, from the summary's Habit counts.`,
   group: "worth_acting_on",
   about: `Topic ${n}`,
   figure: 40 + n,
@@ -518,6 +519,52 @@ describe("Insight cards", () => {
     await sync();
     await sixAmCheck();
     expect(runs()).toBe(2);
+  });
+
+  it("asks for a hidden check first in each card, and never stores, shows, or exports it", async () => {
+    vi.setSystemTime(SIX);
+    const CHECK = "Restaurants, 2026-10, Per Category history: 256.15. 256.15 - 200.00 = 56.15.";
+    stub.reply = reply(cards(4).map((each) => ({ ...each, check: CHECK })));
+    await sync();
+
+    // The schema sent to the AI: check is the first field of each card, and required.
+    const schema = stub.schemas.at(-1) as {
+      properties: { cards: { items: { properties: object; required: string[] } } };
+    };
+    const { items } = schema.properties.cards;
+    expect(Object.keys(items.properties)[0]).toBe("check");
+    expect(items.required).toContain("check");
+    // insight_cards has no column for it, so the data export has none either; the AI box shows
+    // none.
+    expect(await cardRows()).toHaveLength(4);
+    const stored = await bank.database.$client.execute("SELECT * FROM insight_cards");
+    expect(stored.columns).not.toContain("check");
+    expect(JSON.stringify(stored.rows)).not.toContain(CHECK);
+    expect(JSON.stringify(await insightCards(bank.database))).not.toContain(CHECK);
+    expect(JSON.stringify(await insightCards(bank.database))).not.toContain("check");
+  });
+
+  it("asks for importance by dollars at stake, the app's numbers as they are, and the math in check; and lets the AI name the Household's own charges", async () => {
+    vi.setSystemTime(SIX);
+    await sync();
+
+    const prompt = stub.prompts.at(-1) ?? [];
+    expect(userTexts(prompt)[1]).toBe(INSIGHT_CARDS_TASK);
+    for (const rule of [
+      "Importance means dollars at stake this month. Start from the Biggest changes list: its first item gets its own card, unless the feedback rules it out.",
+      "Use the app's numbers as they are. When you must compute a number, use only numbers from the summary, and show the math in check.",
+      "A saving a month is a count times an average from the summary, such as 10 fewer meals out times the average meal out.",
+    ]) {
+      expect(INSIGHT_CARDS_TASK).toContain(rule);
+    }
+    // The fixed rules, as the prompt builder sent them (spec 08, The one plain voice).
+    const system = JSON.stringify(prompt.filter((message) => message.role === "system"));
+    expect(system).toContain(
+      "- Name the Household's own Accounts, Merchants, and Recurring charges as the data names them.",
+    );
+    expect(system).toContain(
+      "- Name a financial product you suggest by its kind only, never by company, lender, or card. Give each product idea a line that starts with",
+    );
   });
 
   it("sends one Writer call with at most 1,000 reply tokens and no cache mark: the summary, then the task, then the feedback", async () => {

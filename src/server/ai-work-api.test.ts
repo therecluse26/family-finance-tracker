@@ -30,6 +30,7 @@ const PRICE = { input: 1_000_000, output: 2_000_000 };
 const PRESSES = ["/api/ai/work/finish", "/api/ai/work/all-history"] as const;
 const INSIGHT_CARDS = JSON.stringify({
   cards: [1, 2, 3, 4].map((n) => ({
+    check: `Topic ${n}: ${n} this month.`,
     group: "heads_up",
     about: `Topic ${n}`,
     figure: n,

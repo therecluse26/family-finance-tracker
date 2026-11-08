@@ -30,11 +30,13 @@ import {
   recurringCharges,
   steadyIncome,
 } from "../recurring/index.ts";
-import { habitCounts } from "./habits.ts";
+import { categoryPurchases, habitCounts } from "./habits.ts";
 
-// The Household summary (spec 08, Household summary): one text of 3,000 tokens or fewer that feeds
+// The Household summary (spec 08, Household summary): one text of 4,000 tokens or fewer that feeds
 // every Writer use. It holds the month's numbers, history totals, balances, Coming up, Recurring
-// charges, Goals, Alerts, and the app's Habit counts, and no raw Transactions.
+// charges, Goals, Alerts, and the app's Habit counts, and no raw Transactions. The app computes
+// every figure the AI may quote, such as an average, a count, or the amount at stake, so the AI
+// chooses and writes, and never computes one itself.
 //
 // It names each Account by its name and last 4, such as "Everyday Checking ending 1234", and each
 // Member by name (HouseholdAi.accountNames, memberNames). Each number the app made, such as an
@@ -42,10 +44,21 @@ import { habitCounts } from "./habits.ts";
 // or a bank wrote is made plain first: a space for each control character, and well-formed.
 
 // The most tokens a summary may hold.
-export const SUMMARY_TOKENS = 3_000;
+export const SUMMARY_TOKENS = 4_000;
 
 // How many complete months the history parts cover.
 export const HISTORY_MONTHS = 12;
+
+// How many of the latest complete months each per-Category history row lists, each with its month.
+export const LABELED_MONTHS = 6;
+
+// How many Categories the Biggest changes list holds, and the fewest Transactions this month a
+// Category needs to be on it: one large payment alone is no change in a habit.
+export const BIGGEST_CHANGES = 8;
+export const MIN_CHANGE_TRANSACTIONS = 3;
+
+// How many complete months the average in the Biggest changes covers.
+const AVERAGE_MONTHS = 3;
 
 // How many months the Habit counts cover: the summary's month and the ones before it.
 export const HABIT_MONTHS = 3;
@@ -305,12 +318,24 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
       : line`Today is ${day(today)}. The month ${monthOf(month)} has ended, all ${count(days)} days of it.`,
   ];
 
-  // Per Category, this month.
+  // Per Category, this month. Each Spending part of the Habit months, this month among them, is
+  // read once here: the Habit counts, the Biggest changes, and the top Merchants all use it.
+  const habitMonths = [...monthsBefore(month, HABIT_MONTHS - 1), month];
+  const lastDay = `${month}-${String(days).padStart(2, "0")}`;
+  const habitSpending = await listHabitSpending(database, `${habitMonths[0]}-01`, lastDay);
+  const purchases = categoryPurchases(habitSpending, month);
   const { budgets } = await budgetsForMonth(database, month);
   const spending = await budgetSpending(database, month, budgets, now);
+  const totals = new Map(spending.totals.map((each) => [each.month, each]));
+  const spentIn = (category: Category, each: string) => totals.get(each)?.byCategory[category] ?? 0;
+  // Spending per day: so far on the current month's day, or over all its days for a month that
+  // has ended.
+  const perDay = (spent: number): Line =>
+    line`, ${money(Math.round(spent / dayOfMonth))} a day${current ? " so far" : ""}`;
   const named = new Set<Category>();
   const monthLines: Line[] = [];
   const yearLines: Line[] = [];
+  const changes: { category: Category; atStake: number; text: Line }[] = [];
   for (const { name: category } of CATEGORIES) {
     const budget = budgets.find((each) => each.category === category);
     const found = spending.budgets.get(category);
@@ -322,44 +347,64 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
       yearLines.push(
         line`- ${category}: ${money(found?.spending ?? 0)} this year of a yearly Budget of ${money(budget.amount)}, ${found?.status ?? "on track"}`,
       );
-    } else if (budget !== undefined) {
-      named.add(category);
-      monthLines.push(
-        line`- ${category}: ${money(found?.spending ?? 0)} of a Budget of ${money(budget.amount)}, ${found?.status ?? "on track"}${projection}`,
-      );
-    } else if (unbudgeted !== undefined) {
-      named.add(category);
-      monthLines.push(line`- ${category}: ${money(unbudgeted.spending)}, no Budget${projection}`);
+      continue;
     }
+    if (budget === undefined && unbudgeted === undefined) continue;
+    named.add(category);
+    const spent = found?.spending ?? unbudgeted?.spending ?? 0;
+    monthLines.push(
+      budget === undefined
+        ? line`- ${category}: ${money(spent)}, no Budget${projection}${perDay(spent)}`
+        : line`- ${category}: ${money(spent)} of a Budget of ${money(budget.amount)}, ${found?.status ?? "on track"}${projection}${perDay(spent)}`,
+    );
+    const change = biggestChange({
+      category,
+      budget: budget?.amount ?? null,
+      spent,
+      projected,
+      average: Math.round(
+        complete.slice(-AVERAGE_MONTHS).reduce((sum, each) => sum + spentIn(category, each), 0) /
+          AVERAGE_MONTHS,
+      ),
+      transactions: purchases.get(category)?.transactions ?? 0,
+      daysLeft: days - dayOfMonth,
+    });
+    if (change !== undefined) changes.push({ category, ...change });
   }
 
   // Per Category and money flow, the last 12 complete months.
-  const totals = new Map(spending.totals.map((each) => [each.month, each]));
   const historyCategories = CATEGORIES.map(({ name }) => name).filter((category) =>
-    complete.some((each) => (totals.get(each)?.byCategory[category] ?? 0) !== 0),
+    complete.some((each) => spentIn(category, each) !== 0),
   );
   for (const category of historyCategories) named.add(category);
+  // The last `months` complete months: the latest 6 with their months, then the average of all of
+  // them, and the lowest and highest, each with its month. A row that is 0.00 in every month goes.
   const history = (months: number): Line[] => {
     const shown = complete.slice(-months);
     const first = shown[0];
     const last = shown.at(-1);
-    if (months === 0 || historyCategories.length === 0 || first === undefined || !last) return [];
+    if (months === 0 || first === undefined || !last) return [];
+    const rows = historyCategories.filter((category) =>
+      shown.some((each) => spentIn(category, each) !== 0),
+    );
+    if (rows.length === 0) return [];
+    const labeled = shown.slice(-LABELED_MONTHS);
     return [
       [""],
-      line`## Per Category, Spending in each complete month, ${monthOf(first)} to ${monthOf(last)}`,
-      ...historyCategories.map(
-        (category) =>
-          line`- ${category}: ${joined(
-            shown.map((each) => [money(totals.get(each)?.byCategory[category] ?? 0)]),
-            ", ",
-          )}`,
-      ),
+      line`## Per Category, Spending in each complete month, ${monthOf(first)} to ${monthOf(last)}: the latest ${count(labeled.length)}, then the average, low, and high of all ${count(shown.length)}`,
+      ...rows.map((category) => {
+        const { average, low, high } = spread(shown, (each) => spentIn(category, each));
+        return line`- ${category}: ${joined(
+          labeled.map((each) => line`${monthOf(each)} ${money(spentIn(category, each))}`),
+          ", ",
+        )}; average ${money(average)}, low ${money(low.amount)} in ${monthOf(low.month)}, high ${money(high.amount)} in ${monthOf(high.month)}`;
+      }),
     ];
   };
 
   const categoryPart: Line[] = [
     [""],
-    line`## Per Category, ${monthOf(month)}: Spending, Budget, status, and projected month-end Spending`,
+    line`## Per Category, ${monthOf(month)}: Spending, Budget, status, projected month-end Spending, and Spending per day${current ? " so far" : ""}`,
     ...(monthLines.length === 0 ? [["- No Spending yet."]] : monthLines),
     ...(yearLines.length === 0
       ? []
@@ -372,29 +417,44 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     ]);
   }
 
+  // Biggest changes: the most dollars at stake first, then in Category list order.
+  const ranked = changes
+    .map((each, index) => ({ ...each, index }))
+    .sort((a, b) => b.atStake - a.atStake || a.index - b.index)
+    .slice(0, BIGGEST_CHANGES);
+  const changePart: Line[] = [
+    [""],
+    line`## Biggest changes, ${monthOf(month)}: the most dollars at stake first`,
+    line`At stake is the larger of projected Spending over Budget and projected Spending over the ${count(AVERAGE_MONTHS)}-month average. A Category with fewer than ${count(MIN_CHANGE_TRANSACTIONS)} Transactions this month is left out.`,
+    ...(ranked.length === 0 ? [["- None."]] : ranked.map((each) => each.text)),
+  ];
+
   const income = await steadyIncome(database, now);
+  const flow = complete.map((each) => ({
+    month: each,
+    income: totals.get(each)?.income ?? 0,
+    spending: totals.get(each)?.spending ?? 0,
+    saving: totals.get(each)?.saving ?? 0,
+  }));
+  const savingShown = flow.some((each) => each.saving !== 0);
   const flowPart: Line[] = [
     [""],
-    ["## Money flow in each complete month"],
-    ...complete.map((each) => {
-      const found = totals.get(each);
-      return line`- ${monthOf(each)}: Income ${money(found?.income ?? 0)}, Spending ${money(found?.spending ?? 0)}, Saving ${money(found?.saving ?? 0)}`;
-    }),
+    [`## Money flow in each complete month${savingShown ? "" : ": no Saving in any of them"}`],
+    ...flow.map(
+      (each) =>
+        line`- ${monthOf(each.month)}: Income ${money(each.income)}, Spending ${money(each.spending)}${savingShown ? line`, Saving ${money(each.saving)}` : []}`,
+    ),
+    line`Income was above Spending in ${count(flow.filter((each) => each.income > each.spending).length)} of these ${count(flow.length)} months. Average Spending a month: ${money(Math.round(flow.reduce((sum, each) => sum + each.spending, 0) / Math.max(1, flow.length)))}.`,
     line`Steady Income: ${money(income.amount)} a month${income.typed === null ? "" : ", as a Member typed it"}.`,
   ];
 
   // Habit counts.
-  const habitMonths = [...monthsBefore(month, HABIT_MONTHS - 1), month];
-  const lastDay = `${month}-${String(days).padStart(2, "0")}`;
-  const habits = habitCounts(
-    await listHabitSpending(database, `${habitMonths[0]}-01`, lastDay),
-    habitMonths,
-  );
+  const habits = habitCounts(habitSpending, habitMonths);
   const habitPart: Line[] = [
     [""],
     ["## Habit counts"],
     ...habits.flatMap((each) => [
-      line`In ${monthOf(each.month)}${each.month === today.slice(0, 7) ? ", so far" : ""}: meals out (Restaurants Transactions) ${count(each.mealsOut)}, delivery orders ${count(each.deliveryOrders)}.`,
+      line`In ${monthOf(each.month)}${each.month === today.slice(0, 7) ? ", so far" : ""}: meals out (Restaurants Transactions) ${count(each.mealsOut)}${each.averageMealOut === null ? "" : line`, average meal out ${money(each.averageMealOut)}`}, delivery orders ${count(each.deliveryOrders)}.`,
       line`- Share of Spending made Friday to Sunday: ${
         each.fridayToSunday.length === 0
           ? "none"
@@ -403,18 +463,39 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
               ", ",
             )
       }`,
-      line`- Most frequent Merchants, with Transactions and Spending: ${
+      line`- Most frequent Merchants, with Transactions, Spending, and the average Transaction: ${
         each.frequentMerchants.length === 0
           ? "none"
           : joined(
               each.frequentMerchants.map(
-                ({ name, count: txns, total }) =>
-                  line`${plain(name)} ${count(txns)} for ${money(total)}`,
+                ({ name, count: txns, total, average }) =>
+                  line`${plain(name)} ${count(txns)} for ${money(total)}, average ${money(average)}`,
               ),
               "; ",
             )
       }`,
     ]),
+  ];
+
+  // Top Merchants per Category, this month, in Category list order.
+  const topLines = CATEGORIES.flatMap(({ name: category }) => {
+    const top = purchases.get(category)?.topMerchants ?? [];
+    return top.length === 0
+      ? []
+      : [
+          line`- ${category}: ${joined(
+            top.map(
+              ({ name, count: txns, total }) =>
+                line`${plain(name)} ${count(txns)} for ${money(total)}`,
+            ),
+            "; ",
+          )}`,
+        ];
+  });
+  const topPart: Line[] = [
+    [""],
+    line`## Top Merchants per Category, ${monthOf(month)}: at most 3 each, with Transactions and Spending before Refunds`,
+    ...(topLines.length === 0 ? [["- None yet."]] : topLines),
   ];
 
   // Balances.
@@ -445,11 +526,14 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     ...(balanceLines.length === 0 ? [["- No Accounts."]] : balanceLines),
   ];
 
-  // Coming up.
+  // Coming up. A late item shows on today, before the window's first day: the window then starts on
+  // its first item.
   const due = await comingUp(database, now);
+  const [first] = due.rows.map((row) => row.date).sort();
+  const from = first !== undefined && first < due.from ? first : due.from;
   const comingUpPart: Line[] = [
     [""],
-    line`## Coming up, ${day(due.from)} to ${day(due.to)}`,
+    line`## Coming up, ${day(from)} to ${day(due.to)}`,
     ...(due.rows.length === 0
       ? [["- Nothing."]]
       : due.rows.map((row) => {
@@ -481,11 +565,13 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     ...(charges.length === 0
       ? [["- None."]]
       : charges.map((charge) => {
-          const changes = charge.priceHistory
-            .filter((entry, index, all) => index === 0 || entry.amount !== all[index - 1]?.amount)
+          const prices = charge.priceHistory.filter(
+            (entry, index, all) => index === 0 || entry.amount !== all[index - 1]?.amount,
+          );
+          const changes = prices
             .slice(-PRICE_CHANGES)
             .map((entry) => line`${money(entry.amount)} from ${day(entry.date)}`);
-          return line`- ${plain(charge.merchant.name)}: ${money(charge.latestAmount)} ${charge.schedule}, next ${day(charge.nextExpectedDate)}, ${charge.category ?? "no Category"}; prices: ${joined(changes, ", ")}`;
+          return line`- ${plain(charge.merchant.name)}: ${money(charge.latestAmount)} ${charge.schedule}, next ${day(charge.nextExpectedDate)}, ${charge.category ?? "no Category"}; prices: ${joined(changes, ", ")}${priceMoves(prices.map((entry) => entry.amount))}`;
         })),
   ];
 
@@ -526,11 +612,12 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
   ];
 
   return {
-    head: [...head, ...categoryPart],
+    head: [...head, ...categoryPart, ...changePart],
     history,
     rest: [
       ...flowPart,
       ...habitPart,
+      ...topPart,
       ...balancePart,
       ...comingUpPart,
       ...chargePart,
@@ -539,6 +626,69 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
       ...proposalPart,
     ],
   };
+}
+
+// The lowest and highest of `months`, each with its month, and their average, to the cent. On a
+// tie, the latest month.
+function spread(months: readonly string[], amountIn: (month: string) => number) {
+  const each = months.map((month) => ({ month, amount: amountIn(month) }));
+  const [first = { month: "", amount: 0 }] = each;
+  let low = first;
+  let high = first;
+  for (const entry of each) {
+    if (entry.amount <= low.amount) low = entry;
+    if (entry.amount >= high.amount) high = entry;
+  }
+  const sum = each.reduce((total, entry) => total + entry.amount, 0);
+  return { average: Math.round(sum / Math.max(1, each.length)), low, high };
+}
+
+// One Category's line in the Biggest changes, or undefined when it has none. The amount at stake
+// is the larger of P over the Budget and P over the 3-month average; only an amount above 0 is a
+// change. A Category with no projection, or with fewer than 3 Transactions this month, has none.
+// With a Budget, the line ends with the amount already over it, or the most a day that keeps it
+// in Budget for the days left, or, for a month that has ended, the amount under it.
+function biggestChange(facts: {
+  category: Category;
+  budget: number | null;
+  spent: number;
+  projected: number | null;
+  average: number;
+  transactions: number;
+  daysLeft: number;
+}): { atStake: number; text: Line } | undefined {
+  const { category, budget, spent, projected, average, transactions, daysLeft } = facts;
+  if (projected === null || transactions < MIN_CHANGE_TRANSACTIONS) return undefined;
+  const atStake = Math.max(projected - average, budget === null ? 0 : projected - budget);
+  if (atStake <= 0) return undefined;
+  let keep: Line = [];
+  if (budget !== null && spent > budget)
+    keep = line`; already ${money(spent - budget)} over Budget`;
+  else if (budget !== null && daysLeft > 0) {
+    keep = line`; ${money(Math.floor((budget - spent) / daysLeft))} a day for the ${count(daysLeft)} days left keeps it in Budget`;
+  } else if (budget !== null) keep = line`; ${money(budget - spent)} under Budget`;
+  const against: Line = budget === null ? ["no Budget"] : line`Budget ${money(budget)}`;
+  return {
+    atStake,
+    text: line`- ${category}: ${money(atStake)} at stake; projected ${money(projected)}, ${against}, ${count(AVERAGE_MONTHS)}-month average ${money(average)}${keep}`,
+  };
+}
+
+// A Recurring charge's price moves, from its prices in order with no repeats: how many times it
+// rose and fell, and how far its latest price is from its first, as a whole percent. Nothing with
+// one price.
+function priceMoves(prices: readonly number[]): Line {
+  const [first] = prices;
+  const latest = prices.at(-1);
+  if (prices.length < 2 || first === undefined || latest === undefined) return [];
+  const moves = prices.slice(1).map((price, index) => price - (prices[index] ?? price));
+  const rose = moves.filter((move) => move > 0).length;
+  const fell = moves.filter((move) => move < 0).length;
+  const moved: Line = line`; rose ${count(rose)} times, fell ${count(fell)} times`;
+  if (first === 0) return moved;
+  const share = Math.round(((latest - first) / Math.abs(first)) * 100);
+  const sign = share > 0 ? "+" : share < 0 ? "-" : "";
+  return line`${moved}; now ${sign}${count(Math.abs(share))}% from the first price`;
 }
 
 // One Proposal (spec 08, Proposals): its kind and source, the change, with each amount typed, and

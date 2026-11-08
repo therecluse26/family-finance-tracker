@@ -35,5 +35,7 @@ timedCase("the Household summary", async (history, time) => {
 
   const today = await build("the day's build", () => summary.today());
   expect(today.text).toContain("## Per Category, Spending in each complete month");
+  expect(today.text).toContain("## Biggest changes");
+  expect(today.text).toContain("## Top Merchants per Category");
   await build("the Monthly review's build", () => summary.monthJustEnded());
 });

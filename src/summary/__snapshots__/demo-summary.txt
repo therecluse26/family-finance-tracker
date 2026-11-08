@@ -3,64 +3,72 @@ Household summary. Amounts are dollars. The app counted every number; use them a
 ## The month
 Today is 2026-11-20, day 20 of the 30 days of 2026-11. Days left: 10.
 
-## Per Category, 2026-11: Spending, Budget, status, and projected month-end Spending
-- Housing: 0.00 of a Budget of 1850.00, on track, projected 0.00
-- Utilities: 0.00 of a Budget of 137.00, on track, projected 0.00
-- Phone and internet: 0.00 of a Budget of 90.00, on track, projected 0.00
-- Interest and fees: 0.00 of a Budget of 0.00, on track
-- Groceries: 0.00 of a Budget of 542.00, on track, projected 0.00
-- Home and garden: 0.00 of a Budget of 144.00, on track, projected 0.00
-- General goods: 0.00 of a Budget of 93.00, on track, projected 0.00
-- Gas: 0.00 of a Budget of 203.00, on track, projected 0.00
-- Fitness: 0.00 of a Budget of 55.00, on track, projected 0.00
-- Restaurants: 0.00 of a Budget of 319.00, on track, projected 0.00
-- Entertainment: 0.00 of a Budget of 32.00, on track, projected 11.99
-- Payments to people: 0.00 of a Budget of 209.00, on track, projected 120.00
-- Cash: 0.00 of a Budget of 33.00, on track, projected 0.00
-- Miscellaneous: 0.00 of a Budget of 4.00, on track, projected 0.00
+## Per Category, 2026-11: Spending, Budget, status, projected month-end Spending, and Spending per day so far
+- Housing: 0.00 of a Budget of 1850.00, on track, projected 0.00, 0.00 a day so far
+- Utilities: 0.00 of a Budget of 137.00, on track, projected 0.00, 0.00 a day so far
+- Phone and internet: 0.00 of a Budget of 90.00, on track, projected 0.00, 0.00 a day so far
+- Interest and fees: 0.00 of a Budget of 0.00, on track, 0.00 a day so far
+- Groceries: 0.00 of a Budget of 542.00, on track, projected 0.00, 0.00 a day so far
+- Home and garden: 0.00 of a Budget of 144.00, on track, projected 0.00, 0.00 a day so far
+- General goods: 0.00 of a Budget of 93.00, on track, projected 0.00, 0.00 a day so far
+- Gas: 0.00 of a Budget of 203.00, on track, projected 0.00, 0.00 a day so far
+- Fitness: 0.00 of a Budget of 55.00, on track, projected 0.00, 0.00 a day so far
+- Restaurants: 0.00 of a Budget of 319.00, on track, projected 0.00, 0.00 a day so far
+- Entertainment: 0.00 of a Budget of 32.00, on track, projected 11.99, 0.00 a day so far
+- Payments to people: 0.00 of a Budget of 209.00, on track, projected 120.00, 0.00 a day so far
+- Cash: 0.00 of a Budget of 33.00, on track, projected 0.00, 0.00 a day so far
+- Miscellaneous: 0.00 of a Budget of 4.00, on track, projected 0.00, 0.00 a day so far
 Note: the Benchmarks come from the BLS Consumer Expenditure Survey, which leaves mortgage principal out and counts a financed car at its full price in the year of purchase. Housing and Car Spending can sit above their Benchmarks for this reason alone.
 
-## Per Category, Spending in each complete month, 2025-11 to 2026-10
-- Housing: 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00, 1850.00
-- Utilities: 73.14, 79.32, 93.16, 80.56, 71.28, 70.37, 70.13, 103.24, 94.30, 94.63, 85.39, 109.81
-- Phone and internet: 86.45, 86.55, 85.10, 86.73, 85.12, 84.45, 84.59, 84.04, 85.65, 85.44, 87.53, 148.43
-- Interest and fees: 29.34, 27.47, 27.45, 32.27, 26.19, 25.22, 26.30, 23.47, 23.75, 25.00, 22.20, 19.95
-- Groceries: 426.62, 477.57, 522.18, 526.71, 506.72, 531.00, 494.93, 370.66, 508.20, 426.51, 553.53, 568.94
-- Home and garden: 114.50, 87.76, 171.27, 146.90, 97.57, 130.71, 222.52, 47.99, 189.07, 231.85, 50.32, 77.93
-- General goods: 135.83, 63.77, 93.08, 96.28, 29.63, 46.23, 60.01, 204.36, 4.71, 82.35, 196.75, 144.79
-- Gas: 182.61, 174.28, 194.01, 184.40, 189.31, 199.20, 183.48, 184.40, 183.53, 176.73, 147.76, 215.10
-- Fitness: 49.99, 49.99, 49.99, 49.99, 49.99, 49.99, 49.99, 49.99, 49.99, 49.99, 49.99, 49.99
-- Restaurants: 180.32, 264.97, 414.69, 204.90, 464.98, 337.83, 306.01, 390.73, 225.11, 244.57, 184.79, 256.15
-- Entertainment: 27.48, 27.48, 27.48, 29.98, 29.98, 29.98, 29.98, 29.98, 29.98, 29.98, 29.98, 29.98
-- Payments to people: 157.52, 187.74, 242.04, 154.01, 162.39, 187.03, 171.35, 271.27, 188.13, 164.75, 199.77, 198.92
-- Cash: 0.00, 200.00, 0.00, 0.00, 0.00, 0.00, 60.00, 0.00, 0.00, 0.00, 100.00, 0.00
-- Miscellaneous: 0.00, 0.00, 0.00, 40.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00
+## Biggest changes, 2026-11: the most dollars at stake first
+At stake is the larger of projected Spending over Budget and projected Spending over the 3-month average. A Category with fewer than 3 Transactions this month is left out.
+- None.
 
-## Money flow in each complete month
-- 2025-11: Income 5086.87, Spending 3313.80, Saving 0.00
-- 2025-12: Income 5066.85, Spending 3576.90, Saving 0.00
-- 2026-01: Income 5167.68, Spending 3770.45, Saving 0.00
-- 2026-02: Income 5169.33, Spending 3482.73, Saving 0.00
-- 2026-03: Income 5256.74, Spending 3563.16, Saving 0.00
-- 2026-04: Income 5207.61, Spending 3542.01, Saving 0.00
-- 2026-05: Income 7031.69, Spending 3609.29, Saving 0.00
-- 2026-06: Income 5170.72, Spending 3610.13, Saving 0.00
-- 2026-07: Income 5283.38, Spending 3432.42, Saving 0.00
-- 2026-08: Income 5170.40, Spending 3461.80, Saving 0.00
-- 2026-09: Income 5189.29, Spending 3558.01, Saving 0.00
-- 2026-10: Income 7031.39, Spending 3669.99, Saving 0.00
+## Per Category, Spending in each complete month, 2025-11 to 2026-10: the latest 6, then the average, low, and high of all 12
+- Housing: 2026-05 1850.00, 2026-06 1850.00, 2026-07 1850.00, 2026-08 1850.00, 2026-09 1850.00, 2026-10 1850.00; average 1850.00, low 1850.00 in 2026-10, high 1850.00 in 2026-10
+- Utilities: 2026-05 70.13, 2026-06 103.24, 2026-07 94.30, 2026-08 94.63, 2026-09 85.39, 2026-10 109.81; average 85.44, low 70.13 in 2026-05, high 109.81 in 2026-10
+- Phone and internet: 2026-05 84.59, 2026-06 84.04, 2026-07 85.65, 2026-08 85.44, 2026-09 87.53, 2026-10 148.43; average 90.84, low 84.04 in 2026-06, high 148.43 in 2026-10
+- Interest and fees: 2026-05 26.30, 2026-06 23.47, 2026-07 23.75, 2026-08 25.00, 2026-09 22.20, 2026-10 19.95; average 25.72, low 19.95 in 2026-10, high 32.27 in 2026-02
+- Groceries: 2026-05 494.93, 2026-06 370.66, 2026-07 508.20, 2026-08 426.51, 2026-09 553.53, 2026-10 568.94; average 492.80, low 370.66 in 2026-06, high 568.94 in 2026-10
+- Home and garden: 2026-05 222.52, 2026-06 47.99, 2026-07 189.07, 2026-08 231.85, 2026-09 50.32, 2026-10 77.93; average 130.70, low 47.99 in 2026-06, high 231.85 in 2026-08
+- General goods: 2026-05 60.01, 2026-06 204.36, 2026-07 4.71, 2026-08 82.35, 2026-09 196.75, 2026-10 144.79; average 96.48, low 4.71 in 2026-07, high 204.36 in 2026-06
+- Gas: 2026-05 183.48, 2026-06 184.40, 2026-07 183.53, 2026-08 176.73, 2026-09 147.76, 2026-10 215.10; average 184.57, low 147.76 in 2026-09, high 215.10 in 2026-10
+- Fitness: 2026-05 49.99, 2026-06 49.99, 2026-07 49.99, 2026-08 49.99, 2026-09 49.99, 2026-10 49.99; average 49.99, low 49.99 in 2026-10, high 49.99 in 2026-10
+- Restaurants: 2026-05 306.01, 2026-06 390.73, 2026-07 225.11, 2026-08 244.57, 2026-09 184.79, 2026-10 256.15; average 289.59, low 180.32 in 2025-11, high 464.98 in 2026-03
+- Entertainment: 2026-05 29.98, 2026-06 29.98, 2026-07 29.98, 2026-08 29.98, 2026-09 29.98, 2026-10 29.98; average 29.36, low 27.48 in 2026-01, high 29.98 in 2026-10
+- Payments to people: 2026-05 171.35, 2026-06 271.27, 2026-07 188.13, 2026-08 164.75, 2026-09 199.77, 2026-10 198.92; average 190.41, low 154.01 in 2026-02, high 271.27 in 2026-06
+- Cash: 2026-05 60.00, 2026-06 0.00, 2026-07 0.00, 2026-08 0.00, 2026-09 100.00, 2026-10 0.00; average 30.00, low 0.00 in 2026-10, high 200.00 in 2025-12
+- Miscellaneous: 2026-05 0.00, 2026-06 0.00, 2026-07 0.00, 2026-08 0.00, 2026-09 0.00, 2026-10 0.00; average 3.33, low 0.00 in 2026-10, high 40.00 in 2026-02
+
+## Money flow in each complete month: no Saving in any of them
+- 2025-11: Income 5086.87, Spending 3313.80
+- 2025-12: Income 5066.85, Spending 3576.90
+- 2026-01: Income 5167.68, Spending 3770.45
+- 2026-02: Income 5169.33, Spending 3482.73
+- 2026-03: Income 5256.74, Spending 3563.16
+- 2026-04: Income 5207.61, Spending 3542.01
+- 2026-05: Income 7031.69, Spending 3609.29
+- 2026-06: Income 5170.72, Spending 3610.13
+- 2026-07: Income 5283.38, Spending 3432.42
+- 2026-08: Income 5170.40, Spending 3461.80
+- 2026-09: Income 5189.29, Spending 3558.01
+- 2026-10: Income 7031.39, Spending 3669.99
+Income was above Spending in 12 of these 12 months. Average Spending a month: 3549.22.
 Steady Income: 5189.00 a month.
 
 ## Habit counts
-In 2026-09: meals out (Restaurants Transactions) 5, delivery orders 0.
+In 2026-09: meals out (Restaurants Transactions) 5, average meal out 36.96, delivery orders 0.
 - Share of Spending made Friday to Sunday: Cash 100%, Entertainment 40%, Fitness 0%, Gas 100%, General goods 0%, Groceries 0%, Home and garden 100%, Payments to people 0%, Restaurants 0%
-- Most frequent Merchants, with Transactions and Spending: Greenleaf Market 4 for 553.53; QuickFuel 4 for 147.76; ShopMart Marketplace 3 for 196.75; Noodle House 3 for 132.78; Oakwood Property Management 1 for 1850.00; Morgan Lee 1 for 120.00; Atm Withdrawal 5th Ave & Main St Mapleford 1 for 100.00; Brightwave Wireless 1 for 87.53; City of Mapleford Utilities 1 for 85.39; Venmo 1 for 79.77
-In 2026-10: meals out (Restaurants Transactions) 6, delivery orders 0.
+- Most frequent Merchants, with Transactions, Spending, and the average Transaction: Greenleaf Market 4 for 553.53, average 138.38; QuickFuel 4 for 147.76, average 36.94; ShopMart Marketplace 3 for 196.75, average 65.58; Noodle House 3 for 132.78, average 44.26; Oakwood Property Management 1 for 1850.00, average 1850.00; Morgan Lee 1 for 120.00, average 120.00; Atm Withdrawal 5th Ave & Main St Mapleford 1 for 100.00, average 100.00; Brightwave Wireless 1 for 87.53, average 87.53; City of Mapleford Utilities 1 for 85.39, average 85.39; Venmo 1 for 79.77, average 79.77
+In 2026-10: meals out (Restaurants Transactions) 6, average meal out 42.69, delivery orders 0.
 - Share of Spending made Friday to Sunday: Entertainment 40%, Fitness 100%, Gas 0%, General goods 52%, Groceries 79%, Home and garden 100%, Payments to people 100%, Restaurants 40%
-- Most frequent Merchants, with Transactions and Spending: Greenleaf Market 5 for 568.94; QuickFuel 4 for 215.10; Brightwave Wireless 2 for 148.43; ShopMart Marketplace 2 for 144.79; Pasta Corner 2 for 112.71; Taqueria Sol 2 for 60.41; Oakwood Property Management 1 for 1850.00; Morgan Lee 1 for 120.00; City of Mapleford Utilities 1 for 109.81; Venmo 1 for 78.92
+- Most frequent Merchants, with Transactions, Spending, and the average Transaction: Greenleaf Market 5 for 568.94, average 113.79; QuickFuel 4 for 215.10, average 53.78; Brightwave Wireless 2 for 148.43, average 74.22; ShopMart Marketplace 2 for 144.79, average 72.40; Pasta Corner 2 for 112.71, average 56.36; Taqueria Sol 2 for 60.41, average 30.21; Oakwood Property Management 1 for 1850.00, average 1850.00; Morgan Lee 1 for 120.00, average 120.00; City of Mapleford Utilities 1 for 109.81, average 109.81; Venmo 1 for 78.92, average 78.92
 In 2026-11, so far: meals out (Restaurants Transactions) 0, delivery orders 0.
 - Share of Spending made Friday to Sunday: none
-- Most frequent Merchants, with Transactions and Spending: none
+- Most frequent Merchants, with Transactions, Spending, and the average Transaction: none
+
+## Top Merchants per Category, 2026-11: at most 3 each, with Transactions and Spending before Refunds
+- None yet.
 
 ## Balances: money owed is negative
 - Interest Checking ending 4417: 18950.32
@@ -70,7 +78,7 @@ In 2026-11, so far: meals out (Restaurants Transactions) 0, delivery orders 0.
 - Personal Loan ending 0057: -10082.45
 - Home Store Card ending 5520: -906.95, APR 26.99%, statement balance -1009.07, minimum payment 61.00, due 2026-11-18
 
-## Coming up, 2026-11-21 to 2026-12-04
+## Coming up, 2026-11-20 to 2026-12-04
 - 2026-11-20: Tunebox, -11.99, Recurring charge, late
 - 2026-11-24: Morgan Lee, -120.00, Recurring charge
 Checking now: 18950.32. Lowest in the window: 18830.32 on 2026-11-24.

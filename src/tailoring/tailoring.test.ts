@@ -33,6 +33,7 @@ import {
   type TailoringReply,
   tailorFirstDraft,
 } from "./index.ts";
+import { tailoringFacts } from "./tailoring.ts";
 
 // Budget tailoring (spec 05, The AI's part in a draft; Which Proposals exist; spec 08, Budget
 // tailoring) on a small Household: 3 months of Spending through the fake adapter, Steady Income,
@@ -558,6 +559,13 @@ describe("Budget tailoring", () => {
 
       expect(await runWaitingTailoring()).toBe(1);
 
+      // The facts said so: Hobbies had no amount within both ranges.
+      const read = promptTheModelRead(stub);
+      expect(read).toMatch(
+        /- Hobbies: Budget [\d.]+; the formula's figure [\d.]+; no change allowed/,
+      );
+      expect(read).toMatch(/- Restaurants: Budget [\d.]+; the formula's figure [\d.]+; allowed /);
+
       expect(await proposals()).toEqual([
         expect.objectContaining({ kind: "Budget change", source: "Budget tailoring" }),
       ]);
@@ -795,5 +803,64 @@ describe("Budget tailoring", () => {
 
       expect(await listWaitingTailoringRuns(bank.database)).toEqual([]);
     });
+  });
+});
+
+describe("the allowed range in the tailoring facts", () => {
+  const lines = (...args: Parameters<typeof tailoringFacts>) =>
+    tailoringFacts(...args)
+      .join("")
+      .split("\n")
+      .filter((line) => line.startsWith("- "));
+  const figure = (
+    category: Category,
+    budget: number | null,
+    formula: number | null,
+    period: "monthly" | "yearly" = "monthly",
+  ) => ({ category, budget, formula, period });
+
+  it("gives each flexible Budget 50% to 150% of the formula's figure in whole dollars, and no range for a Bill", () => {
+    expect(
+      lines({
+        run: { kind: "first draft" },
+        figures: [
+          figure("Restaurants", null, 30_000),
+          // $101.01: half is $50.505, up to $51; 1.5 times is $151.515, down to $151.
+          figure("Clothing", null, 10_101),
+          figure("Travel", null, 120_000, "yearly"),
+          figure("Utilities", null, 13_700),
+        ],
+        benchmarks: new Map(),
+      }),
+    ).toEqual([
+      "- Restaurants: the formula's figure 300.00; allowed 150.00 to 450.00; no good Benchmark",
+      "- Clothing: the formula's figure 101.01; allowed 51.00 to 151.00; no good Benchmark",
+      "- Travel: the formula's figure 1200.00 a year; allowed 600.00 a year to 1800.00 a year; no good Benchmark",
+      "- Utilities: the formula's figure 137.00",
+    ]);
+  });
+
+  it("keeps a Proposal's range within 50% of the current Budget too, and says when no amount is within both", () => {
+    expect(
+      lines({
+        run: { kind: "Tailoring" },
+        figures: [
+          // $150 to $450 of the formula's figure, and $450 to $1,350 of the Budget: $450 only.
+          figure("Restaurants", 90_000, 30_000),
+          // $25 to $75, and $100 to $300: nothing in both.
+          figure("Hobbies", 20_000, 5_000),
+          // With no formula's figure, the Budget is the base.
+          figure("Groceries", 50_000, null),
+          // With no Budget, a Tailoring run cannot change it.
+          figure("Pets", null, 4_000),
+        ],
+        benchmarks: new Map(),
+      }),
+    ).toEqual([
+      "- Restaurants: Budget 900.00; the formula's figure 300.00; allowed 450.00 to 450.00; no good Benchmark",
+      "- Hobbies: Budget 200.00; the formula's figure 50.00; no change allowed; no good Benchmark",
+      "- Groceries: Budget 500.00; allowed 250.00 to 750.00; no good Benchmark",
+      "- Pets: no Budget; the formula's figure 40.00; no good Benchmark",
+    ]);
   });
 });

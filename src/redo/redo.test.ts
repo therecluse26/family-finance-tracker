@@ -105,6 +105,7 @@ function useOf(texts: readonly string[]): Use {
 
 const insightCards = JSON.stringify({
   cards: [1, 2, 3, 4].map((n) => ({
+    check: `Topic ${n}: ${40 + n} a month.`,
     group: "worth_acting_on",
     about: `Topic ${n}`,
     figure: 40 + n,

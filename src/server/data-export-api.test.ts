@@ -529,6 +529,8 @@ describe("Download my data", () => {
     expect(tables.insight_cards).toEqual([
       expect.objectContaining({ title: "Insight card title" }),
     ]);
+    // An Insight card's hidden check is never stored, so never exported.
+    expect(Object.keys(tables.insight_cards?.[0] ?? {})).not.toContain("check");
     expect(tables.chat_threads).toEqual([expect.objectContaining({ title: "Chat thread title" })]);
     expect(tables.chat_messages).toEqual([expect.objectContaining({ text: "A Chat question" })]);
     expect(tables.proposals).toEqual([expect.objectContaining({ reason: "Proposal reason" })]);
