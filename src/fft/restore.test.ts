@@ -29,6 +29,7 @@ import {
   markSetupStep,
   openDatabase,
   openDatabaseCopy,
+  readAiSettings,
   readDataKeys,
   SMTP_SETTINGS_ROW,
   storeAiSettings,
@@ -206,6 +207,8 @@ describe("fft restore", { timeout: 30_000 }, () => {
       },
       0,
     );
+    // Saved before Chat had its own tier: no Chat model of its own.
+    await database.$client.execute("UPDATE ai_settings SET chat_model = NULL");
     await storeSmtpSettings(database, {
       host: "smtp.example.com",
       port: 587,
@@ -619,9 +622,10 @@ describe("fft restore", { timeout: 30_000 }, () => {
           api_key: null,
           gateway_token: null,
           quick_model: "quick-model",
-          chat_model: "chat-model",
+          chat_model: null,
         },
       ]);
+      expect(await readAiSettings(database)).toMatchObject({ chatModel: "writer-model" });
       for (const table of [
         "smtp_settings",
         "push_devices",

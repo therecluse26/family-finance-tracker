@@ -18,6 +18,8 @@ export type StoredAiSettings = {
   gatewayToken: string | null;
   quickModel: string;
   writerModel: string;
+  // Always a model ID on read: the Writer model while the row stores none, as for settings saved
+  // before Chat had its own tier (spec 08, Model tiers).
   chatModel: string;
   keyRejectedAt: Date | null;
 };
@@ -32,10 +34,13 @@ export async function readAiSettingsVersion(database: Database): Promise<AiSetti
   const [row] = await database.select().from(aiSettings).where(eq(aiSettings.id, AI_SETTINGS_ROW));
   if (row === undefined) return { settings: undefined, generation: 0 };
   const { id: _id, generation, provider, quickModel, writerModel, chatModel, ...rest } = row;
-  if (provider === null || quickModel === null || writerModel === null || chatModel === null) {
+  if (provider === null || quickModel === null || writerModel === null) {
     return { settings: undefined, generation };
   }
-  return { settings: { provider, quickModel, writerModel, chatModel, ...rest }, generation };
+  return {
+    settings: { provider, quickModel, writerModel, chatModel: chatModel ?? writerModel, ...rest },
+    generation,
+  };
 }
 
 export async function readAiSettings(database: Database): Promise<StoredAiSettings | undefined> {

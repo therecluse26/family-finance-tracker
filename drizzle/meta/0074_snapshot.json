@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "90cbc43f-1878-447f-b870-4f4bdb75454f",
+  "id": "23a0b9ae-617b-4869-b836-c38e08b92395",
   "prevId": "88332456-8fcc-407e-ad27-5c7962bd20ef",
   "tables": {
     "accounts": {
@@ -862,7 +862,7 @@
         },
         "ai_settings_whole": {
           "name": "ai_settings_whole",
-          "value": "(\"ai_settings\".\"provider\" IS NULL) = (\"ai_settings\".\"quick_model\" IS NULL) AND (\"ai_settings\".\"provider\" IS NULL) = (\"ai_settings\".\"writer_model\" IS NULL) AND (\"ai_settings\".\"provider\" IS NULL) = (\"ai_settings\".\"chat_model\" IS NULL)"
+          "value": "(\"ai_settings\".\"provider\" IS NULL) = (\"ai_settings\".\"quick_model\" IS NULL) AND (\"ai_settings\".\"provider\" IS NULL) = (\"ai_settings\".\"writer_model\" IS NULL)"
         }
       }
     },

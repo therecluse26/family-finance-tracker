@@ -1,8 +1,9 @@
+import { generateText } from "ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addConnection } from "../db/index.ts";
 import { createLogger, holdsSecretValue } from "../log.ts";
 import { SecretDecryptError } from "../secrets/index.ts";
-import type { AiSettings, AiSettingsInput } from "./ai-view.ts";
+import type { AiSettings, AiSettingsInput, TierModels } from "./ai-view.ts";
 import { aiCost } from "./cost.ts";
 import { makeFetchModels } from "./providers.ts";
 import { type AiGates, aiCalls, aiSettings, defaultGates } from "./settings.ts";
@@ -120,6 +121,82 @@ describe("the AI settings", () => {
     expect(await ai.save(anthropic({ chatModel: "claude-opus-5-5" }))).toMatchObject({
       check: { quick: "worked", writer: "worked", chat: "key rejected" },
       ai: { chatModel: "claude-opus-5-5", status: { state: "key rejected" } },
+    });
+  });
+
+  describe("a row saved before Chat had its own tier", () => {
+    // Its chat_model is empty: Chat follows the Writer model on every path that uses tier models.
+    const saveThenEmptyChat = async (more: Partial<AiSettingsInput> = {}) => {
+      expect(await ai.save(anthropic({ chatModel: "claude-opus-5-5", ...more }))).toMatchObject({
+        saved: true,
+      });
+      await test.database.$client.execute("UPDATE ai_settings SET chat_model = NULL");
+      stub.calls.splice(0);
+    };
+    const calls = () =>
+      aiCalls({
+        database: test.database,
+        cost: aiCost({ database: test.database }),
+        secrets: test.secrets,
+        makeModels: stub.makeModels,
+        gates,
+      });
+
+    it("shows and calls the Writer model for Chat", async () => {
+      await saveThenEmptyChat();
+
+      expect(await ai.view()).toMatchObject({
+        writerModel: "claude-sonnet-5-5",
+        chatModel: "claude-sonnet-5-5",
+        prices: { chat: { source: "table" } },
+      });
+      const chat = await calls().modelFor("chat");
+      if (!chat.ready) throw new Error("Chat has no model.");
+      await generateText({ model: chat.model, prompt: "Hello", maxRetries: 0 });
+      expect(stub.calls.map(({ tier, modelId }) => [tier, modelId])).toEqual([
+        ["chat", "claude-sonnet-5-5"],
+      ]);
+    });
+
+    it("prices Chat as the Writer model", async () => {
+      const writer = { writerModel: "claude-writer-9" };
+      await saveThenEmptyChat({ ...writer, prices: { writer: { input: 1, output: 1 } } });
+      expect((await ai.view())?.prices.chat).toEqual({ source: "member", input: 1, output: 1 });
+      expect(await calls().modelFor("chat")).toMatchObject({ ready: true });
+
+      await test.database.$client.execute(
+        "UPDATE ai_settings SET writer_model = 'claude-writer-10'",
+      );
+      expect(await calls().modelFor("chat")).toEqual({ ready: false, pause: "no price" });
+      expect(stub.calls).toEqual([]);
+    });
+
+    it("gives the key test's model maker the Writer model for Chat", async () => {
+      await saveThenEmptyChat();
+      const tiers: TierModels[] = [];
+      const tested = aiSettings({
+        database: test.database,
+        cost: aiCost({ database: test.database }),
+        secrets: test.secrets,
+        makeModels: (connection, models) => {
+          tiers.push(models);
+          return stub.makeModels(connection, models);
+        },
+        gates,
+      });
+
+      expect(await tested.testKey()).toMatchObject({ tested: true, result: "works" });
+      expect(tiers).toEqual([
+        { quick: "claude-haiku-5-5", writer: "claude-sonnet-5-5", chat: "claude-sonnet-5-5" },
+      ]);
+    });
+
+    it("stores the Chat model the next save sends", async () => {
+      await saveThenEmptyChat();
+      await ai.save(anthropic({ chatModel: "claude-opus-5-5" }));
+      expect(await storedRow()).toMatchObject([{ chat_model: "claude-opus-5-5" }]);
+      await ai.save(anthropic());
+      expect(await storedRow()).toMatchObject([{ chat_model: "claude-sonnet-5-5" }]);
     });
   });
 
