@@ -27,6 +27,9 @@ export type ReviewItemView = {
   transactions: ReviewTransactionView[];
   // The loan's name, for an item about a loan; else null.
   loanName: string | null;
+  // The name a card of several Transactions shows in place of its first Transaction's Merchant,
+  // such as the person a money from a person card is about. Null when it has none.
+  cardName: string | null;
   decided: string;
   bestAnswer: ReviewChoiceView;
   createdAt: string;

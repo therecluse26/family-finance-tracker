@@ -69,6 +69,7 @@ const item = (
   subject: { type: "transactions", transactionIds: [`${id}-txn`] },
   transactions: [txn(`${id}-txn`)],
   loanName: null,
+  cardName: null,
   decided: "The app decided something.",
   bestAnswer,
   createdAt: "2026-11-03T14:00:00.000Z",
@@ -590,8 +591,13 @@ describe("the Review list page", () => {
       {
         subject: { type: "transactions", transactionIds: ["p1", "p2", "p3"] },
         transactions: ["p1", "p2", "p3"].map((id) =>
-          txn(id, { amount: 2_000, description: "ZELLE FROM JOHN SMITH", merchantName: null }),
+          txn(id, {
+            amount: 2_000,
+            description: `ZELLE PAYMENT FROM JOHN SMITH Conf# ${id}k2`,
+            merchantName: null,
+          }),
         ),
+        cardName: "John Smith · Zelle",
         decided: "3 payments from this person have no link, so they count as Income.",
       },
     );
@@ -616,7 +622,9 @@ describe("the Review list page", () => {
       );
       const html = text(raw);
 
-      expect(html).toContain("Money from a person ZELLE FROM JOHN SMITH · 3 Transactions");
+      expect(html).toContain("Money from a person John Smith · Zelle · 3 Transactions");
+      // The title is the card's name, never a line with its reference code.
+      expect(cardTitle(person)).toBe("John Smith · Zelle · 3 Transactions");
       expect(html).toContain("Keep all as Income");
       expect(raw).toContain('href="/transactions/p1"');
       expect(raw.match(/>Open<\/a>/g)).toHaveLength(3);

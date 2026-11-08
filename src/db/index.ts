@@ -137,6 +137,7 @@ export {
   type RemovedConnection,
   readAccount,
   readConnection,
+  readProviderCategories,
   readShownTransactions,
   reopenAccount,
   type StoredConnection,
