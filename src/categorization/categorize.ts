@@ -612,6 +612,7 @@ function registerRedoSteps(database: Database, ai: HouseholdAi): (() => void)[] 
 // start calls it before jobs run.
 export function startCategorization(options: { database: Database; ai?: HouseholdAi }): {
   stop(): void;
+  atStart(): Promise<void>;
 } {
   const { database, ai } = options;
   const stops = [
@@ -645,5 +646,9 @@ export function startCategorization(options: { database: Database; ai?: Househol
     stop() {
       for (const stop of stops.reverse()) stop();
     },
+    // The open Category items regroup by Merchant, and medium ones close as decided, with no AI
+    // call, so items from before cards group with no sync. The app calls it once at start-up,
+    // before any job runs.
+    atStart: () => updateCategoryCards(database, []),
   };
 }

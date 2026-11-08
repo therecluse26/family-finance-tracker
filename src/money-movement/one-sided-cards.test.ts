@@ -81,9 +81,12 @@ describe("one-sided Transfer cards", () => {
   const decisionOf = async (providerId: string) =>
     readTransactionDecision(bank.database, await idOf(providerId));
 
+  let moneyMovement: ReturnType<typeof startMoneyMovement>;
+
   beforeEach(async () => {
     bank = await newTestBank();
-    stops = [startMoneyMovement({ database: bank.database }).stop];
+    moneyMovement = startMoneyMovement({ database: bank.database });
+    stops = [moneyMovement.stop];
     await sql(
       `INSERT INTO members (id, name, email, created_at, updated_at)
        VALUES (?, 'Jamie', 'jamie@example.com', '2026-10-01T00:00:00.000Z',
@@ -124,6 +127,38 @@ describe("one-sided Transfer cards", () => {
     await runFollowUp(NOW);
     expect(await cards()).toEqual([]);
     expect(await closedReason(card?.id ?? "")).toBe("decided again");
+  });
+
+  it("regroups items from before cards at start-up with no sync, and changes nothing the second time", async () => {
+    await sync([
+      out("a", -1_000, "2026-10-01", "ONLINE TRANSFER REF 1001"),
+      out("b", -2_000, "2026-10-02", "ONLINE TRANSFER REF 1002"),
+      out("c", -3_000, "2026-10-03", "ONLINE TRANSFER REF 1003"),
+    ]);
+    // One item for each Transaction, as the Review list held them before cards.
+    await sql("UPDATE review_items SET closed_at = ?, closed_reason = 'test'", [
+      "2026-10-05T00:00:00.000Z",
+    ]);
+    const ids = await idsOf(["a", "b", "c"]);
+    await openReviewItemBatch(
+      bank.database,
+      ids.map((id) => ({
+        kind: ONE_SIDED_KIND,
+        subject: { type: "transactions" as const, transactionIds: [id] },
+        decided: "It names no account, so it counts as a Transfer. Which account is this?",
+        bestAnswer: { value: "keep", label: "Keep as a Transfer" },
+      })),
+    );
+    expect(await cards()).toHaveLength(3);
+
+    await moneyMovement.atStart();
+
+    const [card, ...others] = await cards();
+    expect(others).toEqual([]);
+    expect(transactionsOf(card)).toEqual(await idsOf(["c", "b", "a"]));
+    const once = await sql("SELECT * FROM review_items ORDER BY id");
+    await moneyMovement.atStart();
+    expect((await sql("SELECT * FROM review_items ORDER BY id")).rows).toEqual(once.rows);
   });
 
   it("takes the newest Transaction's best answer", async () => {

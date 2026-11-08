@@ -788,6 +788,7 @@ async function redoMarkedLinks(database: Database, ai: boolean): Promise<string[
 // (src/money-movement/ai-links.ts).
 export function startMoneyMovement(options: { database: Database; ai?: HouseholdAi }): {
   stop(): void;
+  atStart(): Promise<void>;
 } {
   if (running !== undefined) throw new Error("Money movement is already running.");
   const started = { database: options.database };
@@ -858,6 +859,13 @@ export function startMoneyMovement(options: { database: Database; ai?: Household
     stop() {
       for (const stop of stops.reverse()) stop();
       if (running === started) running = undefined;
+    },
+    // The open one-sided Transfer and money from a person items regroup by the card key, with no
+    // AI call, so items from before cards, or from an older key, group with no sync. The app calls
+    // it once at start-up, before any job runs.
+    async atStart() {
+      await updateOneSidedCards(started.database, new Map());
+      await updateMoneyFromPersonItems(started.database, [], [], undefined, new Date(), true);
     },
   };
 }

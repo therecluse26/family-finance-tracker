@@ -6,6 +6,7 @@ import { setHandSetFields } from "../db/index.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import {
   answerReviewItem,
+  openReviewItemBatch,
   openReviewItemsOfKind,
   otherReviewChoices,
   type ReviewItem,
@@ -52,9 +53,12 @@ describe("money from a person cards", () => {
   const decisionOf = async (providerId: string) =>
     readTransactionDecision(bank.database, await idOf(providerId));
 
+  let moneyMovement: ReturnType<typeof startMoneyMovement>;
+
   beforeEach(async () => {
     bank = await newTestBank();
-    stops = [startMoneyMovement({ database: bank.database }).stop];
+    moneyMovement = startMoneyMovement({ database: bank.database });
+    stops = [moneyMovement.stop];
     connectionId = await bank.connect(BANK);
     await sql(
       `INSERT INTO members (id, name, email, created_at, updated_at)
@@ -97,6 +101,41 @@ describe("money from a person cards", () => {
       value: "keep",
       label: "Keep as Income",
     });
+  });
+
+  it("regroups items from before cards at start-up with no sync and no AI, and changes nothing the second time", async () => {
+    await sync([
+      moneyIn("z1", 2_000, "2026-10-01", "ZELLE PAYMENT FROM JOHN SMITH Conf# 1a2b"),
+      moneyIn("z2", 2_100, "2026-10-02", "ZELLE PAYMENT FROM JOHN SMITH Conf# 3c4d"),
+      moneyIn("cashout", 2_500, "2026-10-06", "VENMO CASHOUT"),
+    ]);
+    // One item for each Transaction, as the Review list held them before cards.
+    await sql("UPDATE review_items SET closed_at = ?, closed_reason = 'test'", [
+      "2026-10-07T00:00:00.000Z",
+    ]);
+    const ids = await idsOf(["z1", "z2", "cashout"]);
+    await openReviewItemBatch(
+      bank.database,
+      ids.map((id) => ({
+        kind: MONEY_FROM_PERSON_KIND,
+        subject: { type: "transactions" as const, transactionIds: [id] },
+        decided: "Money from a person with no link counts as Income.",
+        bestAnswer: { value: "keep", label: "Keep as Income" },
+      })),
+    );
+    expect(await cards()).toHaveLength(3);
+
+    await moneyMovement.atStart();
+
+    const card = await cardOf("z1");
+    expect(transactionsOf(card)).toEqual(await idsOf(["z2", "z1"]));
+    expect(card?.bestAnswer).toEqual({ value: "keep", label: "Keep all as Income" });
+    // A line that names no person keeps an item of its own.
+    expect(transactionsOf(await cardOf("cashout"))).toEqual(await idsOf(["cashout"]));
+    expect(await cards()).toHaveLength(2);
+    const once = await sql("SELECT * FROM review_items ORDER BY id");
+    await moneyMovement.atStart();
+    expect((await sql("SELECT * FROM review_items ORDER BY id")).rows).toEqual(once.rows);
   });
 
   it("keeps only the money still on the card as Income, refuses a link on a card of more, and remembers nothing", async () => {
