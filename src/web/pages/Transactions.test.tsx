@@ -253,9 +253,11 @@ describe("the Transactions page", () => {
 
     expect([...controlsOf(form).buttons.keys()]).toEqual(["Clear the filters"]);
     const merchant = elementsOf(form).find((each) => each.props.name === "merchant");
+    const onKeyDown = merchant?.props.onKeyDown as (e: unknown) => void;
+    expect(onKeyDown).toBeTypeOf("function");
     const press = (key: string) => {
       const preventDefault = vi.fn();
-      (merchant?.props.onKeyDown as (e: unknown) => void)({ key, preventDefault });
+      onKeyDown({ key, preventDefault });
       return preventDefault.mock.calls.length;
     };
     expect(press("a")).toBe(0);
