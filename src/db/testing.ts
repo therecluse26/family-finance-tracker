@@ -55,11 +55,18 @@ export function readSettings(database: Database): Promise<Settings> {
 }
 
 // Every row of each of app.db's own tables, by table name, for a test that a step writes only where
-// it should. Drizzle's migration table is left out.
+// it should. Drizzle's migration table is left out, as are the tables FTS5 keeps for each of its
+// virtual tables, whose rows the virtual table shows.
 export async function readEveryTable(database: Database): Promise<Record<string, unknown[]>> {
   const tables = await database.all<{ name: string }>(sql`
-    SELECT name FROM sqlite_master
+    SELECT name FROM sqlite_master t
     WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%'
+      AND NOT EXISTS (
+        SELECT 1 FROM sqlite_master v
+        WHERE v.type = 'table' AND v.sql LIKE 'CREATE VIRTUAL TABLE%USING fts5%'
+          AND t.name IN (v.name || '_data', v.name || '_idx', v.name || '_content',
+            v.name || '_docsize', v.name || '_config')
+      )
   `);
   const rows: Record<string, unknown[]> = {};
   for (const { name } of tables) {
