@@ -55,6 +55,7 @@ A masked Merchant ([Categorization](04-categorization.md#identity)), such as Pri
 - **Continuing and reviving.** A Transaction continues or revives the series only at its latest amount to the cent, within the margin of the expected date.
 - **Price change.** A Transaction on the next expected date at another amount joins only when the expected date after it has a Transaction at the same new amount to the cent, with no missed expected date between them. Then both join.
   - A history load joins both in one pass. On a new sync, the first one waits until the next one arrives. So a price change in the series' last Transaction does not join yet.
+  - Neither one may be a Transaction that another active series of the Merchant takes at its own amount, on its own next expected date or the one after. So 2 series on the same days keep their own charges when one changes price or ends.
 - Example: $15.49 on the 12th for 8 months, then $17.99 on March 12 and April 12. March and April join. A $60 one-off on the 12th never joins, and neither does $15.50.
 
 ### Inactive and ended

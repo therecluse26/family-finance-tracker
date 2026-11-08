@@ -285,24 +285,27 @@ function inNextWindows<S extends SeriesSchedule>(
 // price change may: one outside the band joins when the series' next expected date after it has a
 // Transaction within the band of its own amount, and that one joins too. So a price change needs 2
 // charges in a row on expected dates, and one in the series' last charge waits for the next.
-// `nextAfter` gives the Transactions in a series' next windows after one of its own.
+// `nextAfter` gives the Transactions in a series' next windows after one of its own. Neither charge of
+// a price change may be one that `ownedByOther` says another active series takes at its own amount.
 function continuedBy<S extends SeriesSchedule>(
   series: Series<S>,
   candidates: readonly SeriesTxn[],
   priceBand: number | undefined,
   nextAfter: (series: Series<S>, txn: SeriesTxn) => readonly SeriesTxn[],
+  ownedByOther: (txn: SeriesTxn) => boolean,
 ): SeriesTxn[] {
   const latest = last(series).amount;
   const withinOf = (amount: number) => (txn: SeriesTxn) =>
     priceBand === undefined || withinPercent([txn.amount, amount], priceBand);
   const pick = nearest(candidates.filter(withinOf(latest)), latest);
   if (pick !== undefined || priceBand === undefined) return pick === undefined ? [] : [pick];
+  const free = (txn: SeriesTxn) => !ownedByOther(txn);
   const confirmed = new Map<SeriesTxn, SeriesTxn>();
-  for (const changed of candidates) {
+  for (const changed of candidates.filter(free)) {
     const trial = { ...series, txns: [...series.txns, changed] };
     refitFixedDays(trial);
     const next = nearest(
-      nextAfter(trial, changed).filter(withinOf(changed.amount)),
+      nextAfter(trial, changed).filter(withinOf(changed.amount)).filter(free),
       changed.amount,
     );
     if (next !== undefined) confirmed.set(changed, next);
@@ -310,6 +313,50 @@ function continuedBy<S extends SeriesSchedule>(
   const changed = nearest([...confirmed.keys()], latest);
   const next = changed === undefined ? undefined : confirmed.get(changed);
   return changed === undefined || next === undefined ? [] : [changed, next];
+}
+
+// The Transactions that the active series in `all` other than `series` take at their own amounts,
+// within `priceBand`: each one's next charge and the one after it. A price change in `series` never
+// takes these, so 2 series of a masked Merchant on the same days keep their own charges (spec 06,
+// A masked Merchant's series). Read once, on the first call.
+function chargesOfOthers<S extends SeriesSchedule>(
+  series: Series<S>,
+  all: readonly Series<S>[],
+  ordered: readonly SeriesTxn[],
+  isFree: (txn: SeriesTxn) => boolean,
+  priceBand: number,
+): (txn: SeriesTxn) => boolean {
+  let owned: Set<SeriesTxn> | undefined;
+  const windowFrom = (each: Series<S>) => firstOnOrAfter(ordered, spanOf(nextWindows(each)).from);
+  return (txn) => {
+    if (owned === undefined) {
+      owned = new Set();
+      for (const other of all) {
+        if (other === series || other.status !== "active") continue;
+        const amount = last(other).amount;
+        const atAmount = (later: SeriesTxn) => withinPercent([later.amount, amount], priceBand);
+        const pick = nearest(
+          inNextWindows(other, ordered, windowFrom(other), isFree).filter(atAmount),
+          amount,
+        );
+        if (pick === undefined) continue;
+        owned.add(pick);
+        const trial = { ...other, txns: [...other.txns, pick] };
+        refitFixedDays(trial);
+        const then = nearest(
+          inNextWindows(
+            trial,
+            ordered,
+            windowFrom(trial),
+            (later) => isFree(later) && isBefore(pick, later),
+          ).filter(atAmount),
+          amount,
+        );
+        if (then !== undefined) owned.add(then);
+      }
+    }
+    return owned.has(txn);
+  };
 }
 
 // A Recurring charge (spec 06, Finding a series): weekly, every 2 weeks, and monthly need 3
@@ -497,8 +544,12 @@ function continuing(
   for (;;) {
     if (spanOf(nextWindows(series)).from > through) return joined;
     const candidates = inNextWindows(series, ordered, windowFrom(series), after(last(series)));
-    const picks = continuedBy(series, candidates, priceBand, (trial, changed) =>
-      inNextWindows(trial, ordered, windowFrom(trial), after(changed)),
+    const picks = continuedBy(
+      series,
+      candidates,
+      priceBand,
+      (trial, changed) => inNextWindows(trial, ordered, windowFrom(trial), after(changed)),
+      () => false,
     );
     const [pick] = picks;
     if (pick === undefined || pick.date > through) return joined;
@@ -715,13 +766,20 @@ export function replayMerchant<S extends SeriesSchedule>(
     for (const each of fitting) {
       const isFree = (later: SeriesTxn) => !taken.has(later.id);
       const candidates = inNextWindows(each, ordered, index, isFree);
-      const picks = continuedBy(each, candidates, rule.priceBand, (trial, changed) =>
-        inNextWindows(
-          trial,
-          ordered,
-          firstOnOrAfter(ordered, spanOf(nextWindows(trial)).from),
-          (later) => isFree(later) && isBefore(changed, later),
-        ),
+      const picks = continuedBy(
+        each,
+        candidates,
+        rule.priceBand,
+        (trial, changed) =>
+          inNextWindows(
+            trial,
+            ordered,
+            firstOnOrAfter(ordered, spanOf(nextWindows(trial)).from),
+            (later) => isFree(later) && isBefore(changed, later),
+          ),
+        rule.priceBand === undefined
+          ? () => false
+          : chargesOfOthers(each, series, ordered, isFree, rule.priceBand),
       );
       if (picks.length === 0) continue;
       each.txns.push(...picks);
