@@ -176,6 +176,8 @@ The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with i
 Using this page is never required.
 
 - **Filters:** Account, Category, Merchant, date range, and type (Spending, Income, Transfer, Saving, Refund, Reimbursement).
+  - The Merchant filter finds any part of the Merchant name each row shows, in any case. % and _ match only themselves.
+  - Filters apply as they change, with no button. A chosen filter applies at once. A typed one (the Merchant and the dates) applies 300 ms after the last change. Enter applies at once. "Clear the filters" clears them all.
 - **Each row:** the date, the Merchant, the amount, the Account, the Category or type, and a "pending" mark when pending. Newest first, by the date each row shows.
 - A Category the AI or a Web lookup chose below "high" shows an "AI unsure" tag, in the row and on the detail view. At "medium" it counts as decided and is not on the Review list ([Categorization](04-categorization.md#the-categorization-cascade)).
 - **The detail view** shows:

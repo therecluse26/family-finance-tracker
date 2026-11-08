@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { CATEGORIES } from "../../categories/list.ts";
 import { calendarDateIn, dateLabel, dollarsAndCents, monthLabel } from "../../format.ts";
@@ -114,12 +114,63 @@ export function datesKeyDown(event: KeyboardEvent<HTMLDetailsElement>) {
   details.querySelector("summary")?.focus();
 }
 
-// The filter fields, as a Member edits them before pressing Show.
+// The filters a Member types: they apply a short time after the last change, not on each key.
+export const TYPED_FILTERS = [
+  "merchant",
+  "from",
+  "to",
+  "month",
+] as const satisfies readonly (keyof TransactionFilters)[];
+
+// How long a typed filter waits after the last change before it applies.
+export const TYPING_DELAY_MS = 300;
+
+// The filters' query as the page's address holds it: trimmed, with empty ones left out, in a fixed
+// order. Two drafts that show the same Transactions have the same query.
+export function shownQuery(filters: TransactionFilters): string {
+  const trimmed = filtersOf(new URLSearchParams(filterQuery(filters)));
+  return new URLSearchParams(filterQuery(trimmed)).toString();
+}
+
+// When a draft of the filters applies: a chosen filter at once, a typed one TYPING_DELAY_MS after
+// the last change, with every other filter as it then stands. A typed filter applies with
+// `replace`, so the Back button does not step through each pause in the typing. `now` applies at
+// once, as on Enter, and `cancel` drops a wait.
+export function draftApplier(
+  apply: (filters: TransactionFilters, how: { replace: boolean }) => void,
+) {
+  let waiting: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    clearTimeout(waiting);
+    waiting = undefined;
+  };
+  return {
+    change(before: TransactionFilters, next: TransactionFilters) {
+      cancel();
+      if (TYPED_FILTERS.some((name) => next[name] !== before[name])) {
+        waiting = setTimeout(() => {
+          waiting = undefined;
+          apply(next, { replace: true });
+        }, TYPING_DELAY_MS);
+      } else {
+        apply(next, { replace: false });
+      }
+    },
+    now(filters: TransactionFilters) {
+      cancel();
+      apply(filters, { replace: false });
+    },
+    cancel,
+  };
+}
+
+// The filter fields. Each change applies by itself (see Transactions); Enter in a field applies the
+// filters at once.
 export function TransactionFilterForm(props: {
   draft: TransactionFilters;
   accounts: readonly AccountView[];
   onDraft: (draft: TransactionFilters) => void;
-  onShow: () => void;
+  onApplyNow: () => void;
   onClear: () => void;
   // Today in the browser's zone, for the dates the "Dates" control shows.
   today: string;
@@ -159,12 +210,17 @@ export function TransactionFilterForm(props: {
         className={FILTER_FIELD}
         value={draft[name] ?? ""}
         onChange={(e) => set(name)(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          props.onApplyNow();
+        }}
       />
     </label>
   );
   function submit(event: FormEvent) {
     event.preventDefault();
-    props.onShow();
+    props.onApplyNow();
   }
   return (
     <form
@@ -228,9 +284,6 @@ export function TransactionFilterForm(props: {
         </details>
       </div>
       <div className="col-span-2 flex flex-wrap items-end gap-2">
-        <button type="submit" className={buttonClass("primary")}>
-          Show
-        </button>
         <button type="button" className={buttonClass("outlined")} onClick={props.onClear}>
           Clear the filters
         </button>
@@ -420,6 +473,15 @@ export function Transactions() {
   const filters = filtersOf(params);
   const shown = new URLSearchParams(filterQuery(filters)).toString();
   const [draft, setDraft] = useState<TransactionFilters>(filters);
+  // The query the page last applied by itself, and when each draft applies.
+  const applied = useRef<string | undefined>(undefined);
+  const applyFilters = useRef((_: TransactionFilters, __: { replace: boolean }) => {});
+  applyFilters.current = (next, { replace }) => {
+    const query = shownQuery(next);
+    applied.current = query;
+    setParams(new URLSearchParams(query), { replace });
+  };
+  const [applier] = useState(() => draftApplier((next, how) => applyFilters.current(next, how)));
   const [accounts, setAccounts] = useState<AccountView[]>([]);
   const [rows, setRows] = useState<TransactionRowView[] | undefined>();
   const [next, setNext] = useState<string | null>(null);
@@ -437,10 +499,24 @@ export function Transactions() {
     })();
   }, []);
 
+  useEffect(() => applier.cancel, [applier]);
+
+  // The filters apply by themselves: they go in the page's address, which reads the first page.
+  function changeDraft(next: TransactionFilters) {
+    setDraft(next);
+    applier.change(draft, next);
+  }
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: read the first page again when the filters change.
   useEffect(() => {
     let current = true;
-    setDraft(filters);
+    // A link or the Back button sets the fields from the address, and drops a typed change still
+    // waiting. The page's own change keeps them as typed, so a space typed at the end of the
+    // Merchant stays.
+    if (shown !== applied.current) {
+      applier.cancel();
+      setDraft(filters);
+    }
     setRows(undefined);
     void readPage(filters).then((page) => {
       if (!current) return;
@@ -468,9 +544,12 @@ export function Transactions() {
       <TransactionFilterForm
         draft={draft}
         accounts={accounts}
-        onDraft={setDraft}
-        onShow={() => setParams(new URLSearchParams(filterQuery(draft)))}
-        onClear={() => setParams(new URLSearchParams())}
+        onDraft={changeDraft}
+        onApplyNow={() => applier.now(draft)}
+        onClear={() => {
+          setDraft({});
+          applier.now({});
+        }}
         today={today}
       />
       <ErrorLine error={error} />

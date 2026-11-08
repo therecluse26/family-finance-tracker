@@ -224,6 +224,18 @@ describe("the Transactions page's routes", () => {
     expect(await listed("?account=&category=&type=&month=")).toHaveLength(6);
   });
 
+  it("finds a Merchant by any part of the name its row shows, in any case, where %, _ and \\ match only themselves", async () => {
+    expect(await listed("?merchant=bIsT")).toEqual(["tonight", "lunch", "dinner"]);
+    expect(await listed("?merchant=TARG")).toEqual(["refund", "purchase"]);
+    expect(await listed("?merchant=corner%20b")).toEqual(["tonight", "lunch", "dinner"]);
+    // A Transaction with no Merchant name is found by the bank's line its row shows.
+    expect(await listed("?merchant=payroll")).toEqual(["paycheck"]);
+    expect(await listed("?merchant=payroll&type=Spending")).toEqual([]);
+    for (const pattern of ["%25", "_", "Corner_Bistro", "Corner%25", "%5C", "Nowhere"]) {
+      expect(await listed(`?merchant=${pattern}`), pattern).toEqual([]);
+    }
+  });
+
   it("finds a Refund on a split purchase by each part's Category, and shows it per part in the detail", async () => {
     expect(
       (await browser.send("PUT", `/api/transactions/${id("purchase")}/split`, SPLIT)).status,

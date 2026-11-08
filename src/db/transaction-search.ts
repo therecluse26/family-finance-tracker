@@ -12,7 +12,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
-import { NEWEST_SHOWN_FIRST, shownDate } from "./bank-data.ts";
+import { containsText, NEWEST_SHOWN_FIRST, shownDate } from "./bank-data.ts";
 import type { Database } from "./client.ts";
 import type { PartType } from "./decisions.ts";
 import { spendingLinks, transactionParts, transactions } from "./schema.ts";
@@ -58,11 +58,9 @@ function conditions(database: Database, search: TransactionSearch): SQL[] {
   if (search.accountId !== undefined) where.push(eq(transactions.accountId, search.accountId));
   if (search.from !== undefined) where.push(gte(transactions.postedDate, search.from));
   if (search.to !== undefined) where.push(lte(transactions.postedDate, search.to));
+  // Any part of the Merchant's clean name, in any case.
   if (search.merchant !== undefined) {
-    // Any part of the name: % and _ in the text match only themselves. Both sides go through
-    // SQLite's lower(), so they fold case alike.
-    const pattern = `%${search.merchant.replace(/[\\%_]/g, (mark) => `\\${mark}`)}%`;
-    where.push(sql`lower(${transactions.merchantCleanName}) LIKE lower(${pattern}) ESCAPE '\\'`);
+    where.push(containsText(transactions.merchantCleanName, search.merchant));
   }
   if (search.minAmount !== undefined) {
     where.push(sql`abs(${transactions.amount}) >= ${search.minAmount}`);

@@ -19,6 +19,7 @@ import {
   notInArray,
   or,
   type SQL,
+  type SQLWrapper,
   sql,
 } from "drizzle-orm";
 import type {
@@ -1119,7 +1120,8 @@ export type TransactionFilter = {
   // Posted dates, YYYY-MM-DD. Both ends are included.
   from?: string;
   to?: string;
-  // The Merchant's clean name.
+  // Any part of the Merchant name the row shows, in any case: the clean name, else the provider's
+  // name, else the bank's line.
   merchant?: string;
   // A Transaction shows when one of its parts has the type, the Category, and the month, YYYY-MM,
   // each that is set. A part's month comes from the purchase date, else the posted date (spec 04,
@@ -1152,9 +1154,7 @@ function filtered(database: Queries, filter: TransactionFilter): SQL[] {
   if (filter.accountId !== undefined) where.push(eq(transactions.accountId, filter.accountId));
   if (filter.from !== undefined) where.push(gte(transactions.postedDate, filter.from));
   if (filter.to !== undefined) where.push(lte(transactions.postedDate, filter.to));
-  if (filter.merchant !== undefined) {
-    where.push(eq(transactions.merchantCleanName, filter.merchant));
-  }
+  if (filter.merchant !== undefined) where.push(containsText(shownMerchant, filter.merchant));
   const { type, category, month } = filter;
   if (type === undefined && category === undefined && month === undefined) return where;
   const spent = aliasedTable(transactions, "spent");
@@ -1202,6 +1202,17 @@ function filtered(database: Queries, filter: TransactionFilter): SQL[] {
   );
   return where;
 }
+
+// A match of any part of `text` in `value`, in any case. % and _ in the text match only
+// themselves. Both sides go through SQLite's lower(), so they fold case alike.
+export function containsText(value: SQLWrapper, text: string): SQL {
+  const pattern = `%${text.replace(/[\\%_]/g, (mark) => `\\${mark}`)}%`;
+  return sql`lower(${value}) LIKE lower(${pattern}) ESCAPE '\\'`;
+}
+
+// The Merchant name a Transaction's row shows: the Merchant's clean name, else the provider's
+// name, else the bank's line (spec 07, Transactions page).
+const shownMerchant = sql<string>`coalesce(${transactions.merchantCleanName}, ${transactions.merchantName}, ${transactions.description})`;
 
 // The date a Transaction's row shows: its purchase date when the bank gives one, else its posted
 // date (spec 07, Transactions page).
