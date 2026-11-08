@@ -22,7 +22,7 @@ import {
 } from "../db/index.ts";
 import { registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
-import { isPaymentApp, merchantKey } from "../merchants/index.ts";
+import { isMaskedMerchant, isPaymentApp, merchantKey } from "../merchants/index.ts";
 import { endCondition, raiseNotice } from "../notify/index.ts";
 import {
   addDays,
@@ -237,11 +237,13 @@ const isEarlier = (a: Spent, b: Spent, dateOf: (txn: Spent) => string) =>
 // at that amount in the 60 days before the earlier one. Never for a Transaction of a Duplicate
 // charge a Member marked "Not a problem": it is cleared. Never when the Merchant is the payment app,
 // as in a payment-app line that names no person or shop: two of those for one amount are often
-// payments to different people (spec 06, A payment app as the Merchant). The pair, earlier first.
+// payments to different people (spec 06, A payment app as the Merchant). Nor when the Merchant is
+// a masked one, such as Privacy.com: two of its lines for one amount are often two shops (spec 06,
+// A masked Merchant). The pair, earlier first.
 function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
-  if (txn.group === null || (txn.merchant !== null && isPaymentApp(txn.merchant))) {
-    return undefined;
-  }
+  const { merchant } = txn;
+  const hidesParty = merchant !== null && (isPaymentApp(merchant) || isMaskedMerchant(merchant));
+  if (txn.group === null || hidesParty) return undefined;
   const sameAmount = facts.byAmount.get(amountKey(txn.group, txn.amount)) ?? [];
   const near = between(
     sameAmount,

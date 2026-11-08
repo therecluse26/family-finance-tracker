@@ -1,7 +1,7 @@
 import { type Category, isCategory } from "../categories/index.ts";
 import { type CategoryRecord, type Database, readCategoryRecords } from "../db/index.ts";
 import { log } from "../log.ts";
-import { isPaymentApp, type Merchant, merchantKey } from "../merchants/index.ts";
+import { isMaskedMerchant, isPaymentApp, type Merchant, merchantKey } from "../merchants/index.ts";
 import { openReviewItemsOfKind, type ReviewItem, regroupReviewItems } from "../review/index.ts";
 import { coveredByCascade, merchantOf } from "./cascade.ts";
 
@@ -87,10 +87,12 @@ const mediumAnswer = (record: CategoryRecord | undefined) =>
   coveredParts(record).some((part) => chosenBy(part) && part.categoryConfidence === "medium");
 
 // The Merchant whose card a Transaction joins, or null when it keeps an item of its own: no clean
-// name, or a payment app that names no one, which may have no Category rule (as makesRule says).
+// name, or a payment app that names no one or a masked Merchant, which may have no Category rule
+// (as makesRule says).
 function cardMerchant(record: CategoryRecord): Merchant | null {
   const merchant = merchantOf(record);
-  if (merchant === null || merchantKey(merchant.name) === "" || isPaymentApp(merchant)) return null;
+  if (merchant === null || merchantKey(merchant.name) === "") return null;
+  if (isPaymentApp(merchant) || isMaskedMerchant(merchant)) return null;
   return merchant;
 }
 

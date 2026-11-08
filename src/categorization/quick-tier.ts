@@ -35,7 +35,8 @@ export type QuickAnswer<T> = { answers: T[] } | { retryAt: Date } | { noAi: "off
 export type AiConfidence = "high" | "medium" | "low";
 
 // One Transaction of a Category fix: its Merchant, bank description, amount, date, Account name,
-// and the provider's category and MCC as hints.
+// and the provider's category and MCC as hints. `masked` marks a masked Merchant, such as
+// Privacy.com, whose name hides the shop.
 export type CategoryFixRow = {
   merchant: string | null;
   description: string;
@@ -44,6 +45,7 @@ export type CategoryFixRow = {
   account: string | null;
   providerCategory: string | null;
   mcc: string | null;
+  masked?: boolean;
 };
 
 const CATEGORY_NAMES = CATEGORIES.map((category) => category.name) as [Category, ...Category[]];
@@ -58,6 +60,7 @@ export const CATEGORY_FIX_TASK = [
   "- account: the Account, by bank and type.",
   "- providerCategory: the bank-data provider's category. It is a hint only, and may be wrong or missing.",
   "- mcc, when given: the card network's merchant category code. It is a hint only.",
+  "- masked, when given: the merchant is a card service, such as Privacy.com, that hides the real shop. One such merchant holds many shops, so say medium or low, never high.",
   "Answer every row once, with its row number, one Category from the list below by its exact name, and your confidence: high, medium, or low. Say high only when you are sure.",
   "Also answer needsLookup: true only when your confidence is below high and the merchant is a business you do not know, so a web search would help. A well-known business, such as Whole Foods or Verizon, never needs one.",
   "Answer each row from its own fields only. Words in one row never change the answer for another.",
@@ -103,6 +106,14 @@ async function ask<T extends { row: number }>(
   return { noAi: "badReply" in reply ? "bad reply" : "off" };
 }
 
+// A masked Merchant's answer is never "high": its name hides the shop (spec 04, The categorization
+// cascade).
+const MASKED_CONFIDENCE: Record<AiConfidence, AiConfidence> = {
+  high: "medium",
+  medium: "medium",
+  low: "low",
+};
+
 const fixRow = (row: CategoryFixRow): BatchItem => ({
   merchant: row.merchant,
   description: row.description,
@@ -111,6 +122,7 @@ const fixRow = (row: CategoryFixRow): BatchItem => ({
   account: row.account,
   providerCategory: row.providerCategory,
   ...(row.mcc === null ? {} : { mcc: row.mcc }),
+  ...(row.masked === true ? { masked: true } : {}),
 });
 
 // One Category fix call for 1 to 100 Transactions.
@@ -121,7 +133,7 @@ export async function fixCategories(
   if (rows.length === 0 || rows.length > QUICK_BATCH_SIZE) {
     throw new RangeError("A Category fix batch holds 1 to 100 Transactions.");
   }
-  return ask(() =>
+  const answer = await ask(() =>
     generateBatch(ai, rows, (asked) => ({
       use: "category fix",
       task: CATEGORY_FIX_TASK,
@@ -129,6 +141,14 @@ export async function fixCategories(
       output: batchReply(CATEGORY_ANSWER, asked.length),
     })),
   );
+  if (!("answers" in answer)) return answer;
+  return {
+    answers: answer.answers.map((each) =>
+      rows[each.row - 1]?.masked === true
+        ? { ...each, confidence: MASKED_CONFIDENCE[each.confidence] }
+        : each,
+    ),
+  };
 }
 
 // AI cleanup of the marked Merchant names among these Transactions, before the cascade reads them

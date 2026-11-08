@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cleanMerchant,
   isFixedName,
+  isMaskedMerchant,
   type Merchant,
   merchantKey,
   paymentAppLine,
@@ -806,5 +807,69 @@ describe("Merchant identity", () => {
     expect(sameMerchant(null, null)).toBe(false);
     expect(sameMerchant(null, named("Pine Tavern"))).toBe(false);
     expect(sameMerchant(named("***"), named("---"))).toBe(false);
+  });
+});
+
+// Masked Merchants (spec 04, Identity): a card service whose bank line hides the shop.
+describe("masked Merchants", () => {
+  const LINES = ["PRIVACY.COM", "Privacy.com", "PWP*PRIVACY.COM", "PRIVACYCOM*SHOP"];
+
+  it.each(LINES)(
+    "names %j Privacy.com, a masked Merchant, with no provider name",
+    (description) => {
+      const { merchant, needsAi } = fromBank(description);
+      expect({ merchant, needsAi }).toEqual({
+        merchant: { id: null, name: "Privacy.com" },
+        needsAi: false,
+      });
+      expect(merchant !== null && isMaskedMerchant(merchant)).toBe(true);
+    },
+  );
+
+  it.each(LINES)("names %j Privacy.com under the provider's name Privacy.com", (description) => {
+    const { merchant } = cleanMerchant({
+      description,
+      merchantName: "Privacy.com",
+      merchantId: "merchant-privacy",
+    });
+    expect(merchant).toEqual({ id: "merchant-privacy", name: "Privacy.com" });
+    expect(merchant !== null && isMaskedMerchant(merchant)).toBe(true);
+  });
+
+  it("keeps the provider's name for a shop it names on a Privacy.com line", () => {
+    const { merchant } = cleanMerchant({
+      description: "PWP*PRIVACY.COM",
+      merchantName: "Bluebird Books",
+      merchantId: null,
+    });
+    expect(merchant).toEqual({ id: null, name: "Bluebird Books" });
+    expect(merchant !== null && isMaskedMerchant(merchant)).toBe(false);
+  });
+
+  it("matches the name as whole words only", () => {
+    expect(isMaskedMerchant({ id: null, name: "Privacy Computing" })).toBe(false);
+    expect(isMaskedMerchant({ id: null, name: "Privacycomics" })).toBe(false);
+    expect(isMaskedMerchant({ id: null, name: "Privacy Shield" })).toBe(false);
+  });
+
+  // K7: none of the hard lines is masked.
+  it.each([
+    "VENMO PAYMENT 1234567890 WEB ID",
+    "ZELLE PAYMENT TO 5551234",
+    "PAYPAL *INST XFER",
+    "CASH APP*SENT",
+    "VENMO CASHOUT",
+    "VENMO *MORGAN LEE",
+    "ZELLE PAYMENT TO JOHN SMITH",
+    "PAYPAL *ETSY SHOP",
+    "CASH APP*JOHN SMITH",
+    "PURCHASE 1005 BLUEBIRD BOOKS",
+    "BEST BUY CO",
+    "XXXX4821",
+    "REF#12345678",
+    "(800) 555-1212",
+  ])("never makes the K7 line %j masked", (description) => {
+    const { merchant } = fromBank(description);
+    expect(merchant !== null && isMaskedMerchant(merchant)).toBe(false);
   });
 });

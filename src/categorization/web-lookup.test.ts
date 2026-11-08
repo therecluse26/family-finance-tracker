@@ -459,6 +459,11 @@ describe("the Web lookup in the categorization step", () => {
           providerCategory: null,
         }),
       ],
+      ["a masked Merchant", line("Privacy.com", { description: "PWP*PRIVACY.COM" })],
+      [
+        "a masked Merchant the provider names",
+        line("Privacy.com", { description: "CARD PURCHASE" }),
+      ],
       ["no Merchant", line(null)],
       ["a clean name with no letter or digit", line("***")],
     ])("skips %s", (_, skipped) => {

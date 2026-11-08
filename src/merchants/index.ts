@@ -1,6 +1,7 @@
 // The merchants module's interface (spec 04, Merchants). Other modules import from here.
 export { isPaymentApp, merchantKey, sameMerchant } from "./identity.ts";
 export { accountLastFours, plainForms } from "./lead-ins.ts";
+export { isMaskedMerchant, MASKED_MERCHANTS, type MaskedMerchant } from "./masked.ts";
 export {
   cleanDescription,
   cleanMerchant,

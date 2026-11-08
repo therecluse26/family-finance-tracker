@@ -372,6 +372,30 @@ describe("the Anomaly checks", () => {
         pairs.flatMap(([, , merchant], at) => (merchant === null ? [] : [[2_000 + at, merchant]])),
       );
     });
+
+    it("never fires when the Merchant is a masked one, such as Privacy.com", async () => {
+      // Two lines each, for one amount on one day (spec 06, A masked Merchant).
+      const pairs: [string, string, string | null][] = [
+        ["PRIVACY.COM", "Privacy.com", null],
+        ["PWP*PRIVACY.COM", "PRIVACYCOM*SHOP", null],
+        ["PWP*PRIVACY.COM", "PWP*PRIVACY.COM", "Privacy.com"],
+      ];
+      await sync("fake-chase", {
+        added: pairs.flatMap(([first, second, merchantName], at) =>
+          [first, second].map((description, each) =>
+            purchase(`masked-${at}-${each}`, CHASE, "2026-11-10", 2_000 + at, "unused", {
+              merchantName,
+              merchantId: null,
+              description,
+            }),
+          ),
+        ),
+      });
+
+      expect((await ofKind("Duplicate charge")).filter((alert) => alert.state === null)).toEqual(
+        [],
+      );
+    });
   });
 
   describe("Price increase", () => {

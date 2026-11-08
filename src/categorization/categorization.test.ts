@@ -234,6 +234,29 @@ describe("the categorization cascade", () => {
       expect(await chosen("fourth")).toEqual(["Restaurants", "Merchant history", "high"]);
     });
 
+    it("gives no answer for a masked Merchant, such as Privacy.com", async () => {
+      await sync({
+        added: [
+          buy("first", "2026-10-01", {
+            merchant: "Privacy.com",
+            code: "FOOD_AND_DRINK_RESTAURANT",
+          }),
+          buy("second", "2026-10-02", {
+            merchant: "Privacy.com",
+            code: "FOOD_AND_DRINK_RESTAURANT",
+          }),
+          buy("third", "2026-10-03", {
+            merchant: "Privacy.com",
+            code: "FOOD_AND_DRINK_RESTAURANT",
+          }),
+          buy("fourth", "2026-10-04", { merchant: "Privacy.com" }),
+        ],
+      });
+
+      // With no AI, the best guess still takes the Merchant's most recent Category.
+      expect(await chosen("fourth")).toEqual(["Restaurants", "best guess", "low"]);
+    });
+
     it("gives no answer from fewer than 3, from a best guess, or from Categories that differ", async () => {
       await sync({
         added: [

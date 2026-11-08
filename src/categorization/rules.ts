@@ -15,7 +15,13 @@ import {
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain } from "../follow-up/index.ts";
 import { log } from "../log.ts";
-import { isPaymentApp, type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
+import {
+  isMaskedMerchant,
+  isPaymentApp,
+  type Merchant,
+  merchantKey,
+  sameMerchant,
+} from "../merchants/index.ts";
 import { merchantOf } from "./cascade.ts";
 import { categoryChoiceValue, readCategoryChoice } from "./category-choice.ts";
 import { updateCategoryCards } from "./review-cards.ts";
@@ -85,9 +91,10 @@ function ruleOf(stored: StoredCategoryRule): CategoryRule {
 // Whether a correction on a Transaction with this Merchant may make a rule. A Transaction with no
 // Merchant, such as a paper check, makes none. Neither does a payment-app line that names no
 // person, such as VENMO PAYMENT: its Merchant is the payment app. A line that names a person, as
-// Zelle lines do, has the person as its Merchant, who may have a rule.
+// Zelle lines do, has the person as its Merchant, who may have a rule. Nor does a masked Merchant,
+// such as Privacy.com: its bank line hides the shop, so one Merchant holds many shops.
 export function makesRule(merchant: Merchant | null): merchant is Merchant {
-  return merchant !== null && !isPaymentApp(merchant);
+  return merchant !== null && !isPaymentApp(merchant) && !isMaskedMerchant(merchant);
 }
 
 // The IDs of the Merchant's shown Transactions, oldest first.

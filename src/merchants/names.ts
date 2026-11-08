@@ -1,4 +1,5 @@
 import { leftLeadIns, markAccountNumbers, plainForms } from "./lead-ins.ts";
+import { maskedMerchantIn } from "./masked.ts";
 import { paymentAppLine } from "./payment-apps.ts";
 
 // Merchant names (spec 04, Names). The provider's Merchant name wins. Otherwise fixed rules clean
@@ -401,7 +402,8 @@ export function isFixedName(name: string): boolean {
 // app is the Merchant (spec 04, Identity). A line that names another Merchant is an ordinary
 // purchase. A card payment line, under Plaid's credit card payment code, is "<bank> card payment"
 // with no Merchant ID, whatever Merchant the provider gives it: a card payment never shares a
-// Merchant with the brand's purchases.
+// Merchant with the brand's purchases. A masked Merchant, named by the provider's Merchant name or,
+// with none, by the description, takes its own clean name, such as "Privacy.com".
 export function cleanMerchant(txn: {
   description: string;
   merchantName: string | null;
@@ -419,6 +421,8 @@ export function cleanMerchant(txn: {
     return { merchant: { id: null, name }, needsAi };
   }
   const providerName = txn.merchantName?.replace(/\s+/g, " ").trim() ?? "";
+  const masked = maskedMerchantIn(providerName === "" ? txn.description : providerName);
+  if (masked !== undefined) return { merchant: { id, name: masked }, needsAi: false };
   if (providerName !== "") return { merchant: { id, name: providerName }, needsAi: false };
   if (line?.party === "no one" && line.app !== null) {
     return { merchant: { id, name: line.app }, needsAi: false };

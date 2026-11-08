@@ -234,6 +234,31 @@ describe("Category rules", () => {
     expect(await rules()).toEqual([[null, "Morgan Lee", "Childcare"]]);
   });
 
+  it("changes only that Transaction on a masked Merchant, with or without the provider's name", async () => {
+    const masked = (id: string, postedDate: string, description: string) =>
+      buy(id, postedDate, { merchantName: null, description });
+    await sync({
+      added: [
+        masked("plain", "2026-10-01", "PRIVACY.COM"),
+        masked("mixed", "2026-10-02", "Privacy.com"),
+        masked("pwp", "2026-10-03", "PWP*PRIVACY.COM"),
+        masked("shop", "2026-10-04", "PRIVACYCOM*SHOP"),
+        buy("named", "2026-10-05", { merchantName: "Privacy.com", description: "PWP*PRIVACY.COM" }),
+      ],
+    });
+
+    expect(await correct("plain", "Hobbies")).toMatchObject({ rule: null });
+    expect(await correct("named", "Pets")).toMatchObject({ rule: null });
+    await runFollowUp(NOW);
+
+    expect(await chosen("plain")).toEqual(["Spending", "Hobbies", "hand-set"]);
+    expect(await chosen("named")).toEqual(["Spending", "Pets", "hand-set"]);
+    for (const providerId of ["mixed", "pwp", "shop"]) {
+      expect(await chosen(providerId)).toEqual(["Spending", "Restaurants", "provider"]);
+    }
+    expect(await rules()).toEqual([]);
+  });
+
   it("makes no rule for a payment-app line whose provider sends no Merchant name", async () => {
     const line = (id: string, postedDate: string, description: string) =>
       buy(id, postedDate, { merchantName: null, description });
@@ -431,6 +456,27 @@ describe("Category rules", () => {
       expect(await chosen("b2")).toEqual(["Spending", "Hobbies", "Category rule"]);
       expect(await chosen("c")).toEqual(["Spending", "Groceries", "hand-set"]);
       expect(await chosen("d")).toEqual(["Spending", "Restaurants", "best guess"]);
+    });
+
+    it("keeps an item of its own for each masked Transaction, and accepting makes no rule", async () => {
+      await sync({
+        added: [
+          guessed("a", "2026-10-01", "Privacy.com"),
+          guessed("b", "2026-10-02", "Privacy.com"),
+        ],
+      });
+      const item = await itemAbout("a");
+      expect(item?.id).not.toEqual((await itemAbout("b"))?.id);
+
+      expect(await answerReviewItem(bank.database, item?.id ?? "", "Restaurants", MEMBER)).toBe(
+        "answered",
+      );
+      await runFollowUp(NOW);
+
+      expect(await rules()).toEqual([]);
+      expect(await chosen("a")).toEqual(["Spending", "Restaurants", "hand-set"]);
+      expect(await chosen("b")).toEqual(["Spending", "Restaurants", "best guess"]);
+      expect(await itemAbout("b")).toBeDefined();
     });
 
     it("offers only this Transaction on a card of one Transaction, never on a card of several", async () => {
