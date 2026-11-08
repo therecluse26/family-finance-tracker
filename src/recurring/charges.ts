@@ -430,9 +430,9 @@ export type ChargeEdits = {
   priceBand?: number | null;
 };
 
-// Applies an edit to a Recurring charge not marked ended, then finds its Merchant's Recurring
-// charges again, and starts a follow-up job for `touched`, so the cascade and the checks run on
-// them again.
+// Applies an edit to a Recurring charge not marked ended, marks `touched` for the follow-up job, so
+// the cascade and the checks run on them again, then finds its Merchant's Recurring charges again.
+// The marks come before the find, so a find that fails still leaves the follow-up work (K5).
 async function edited(
   database: Database,
   id: string,
@@ -446,10 +446,11 @@ async function edited(
   if (charge.status === "ended") return "ended";
   const touched = await apply(charge);
   if (typeof touched === "string") return touched;
-  await findRecurringCharges(database, now, { only: merchantOfStored(charge) });
-  if (touched.length > 0) {
-    await followUpAgain(database, touched);
-    await followUpSoon();
+  if (touched.length > 0) await followUpAgain(database, touched);
+  try {
+    await findRecurringCharges(database, now, { only: merchantOfStored(charge) });
+  } finally {
+    if (touched.length > 0) await followUpSoon();
   }
   const after = await readRecurringCharge(database, id);
   if (after === undefined) return "not found";

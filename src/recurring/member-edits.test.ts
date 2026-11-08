@@ -316,6 +316,28 @@ describe("a Member's edits to a Recurring charge", () => {
     ]);
   });
 
+  it("still sends the Transactions through the cascade again when the find after an edit fails", async () => {
+    await sync(...[0, 1, 2, 3].map((at) => charge(`s${at}`, addMonths("2026-07-03", at), 1_549)));
+    const found = await only();
+    // The find fails as it rewrites the rows the checks wrote.
+    await bank.database.$client.execute(
+      `CREATE TRIGGER find_fails BEFORE DELETE ON recurring_charge_transactions
+       WHEN OLD.by_hand IS NULL BEGIN SELECT RAISE(ABORT, 'find failed'); END`,
+    );
+    const asked = bank.followUpsAsked();
+    await expect(
+      editCharge(bank.database, found.id, { category: "Phone and internet" }, now),
+    ).rejects.toThrow();
+    expect(bank.followUpsAsked()).toBe(asked + 1);
+    await bank.database.$client.execute("DROP TRIGGER find_fails");
+
+    // The retry: the follow-up job the edit asked for.
+    await runAsked();
+    expect(await chosen("s0")).toBe("Phone and internet (Recurring charge)");
+    expect(await chosen("s3")).toBe("Phone and internet (Recurring charge)");
+    expect(await members()).toEqual(["s0 1549", "s1 1549", "s2 1549", "s3 1549"]);
+  });
+
   it("keeps an added Transaction in after each sync, until the bank removes it", async () => {
     await sync(
       ...[0, 1, 2].map((at) => charge(`s${at}`, addMonths("2026-07-03", at), 1_549)),
