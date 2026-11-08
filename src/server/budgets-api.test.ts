@@ -276,13 +276,54 @@ describe("the Budget route", () => {
       ).toBe(409);
     });
 
-    it("answers 404 to a Category with no Budget and 400 to a bad amount, and changes nothing", async () => {
+    it("gives a Category with no Budget its first Budget: monthly, yearly, or a pinned Bills Budget", async () => {
+      const view = await budgets(thisMonth());
+      for (const category of ["Pets", "Travel", "Utilities"]) {
+        expect(view.budgets.some((budget) => budget.category === category)).toBe(false);
+      }
+      const put = async (path: string, amount: number) => {
+        const res = await browser.send("PUT", `/api/budgets/${path}`, { amount });
+        expect(res.status).toBe(200);
+        return ((await res.json()) as { budget: unknown }).budget;
+      };
+
+      expect(await put("Pets", 4_000)).toEqual({
+        category: "Pets",
+        categoryGroup: "Health and care",
+        amount: 4_000,
+        period: "monthly",
+        takesEffect: thisMonth(),
+        source: "Member edit",
+        setBy: memberId,
+        pinned: null,
+        reason: null,
+      });
+      expect(await put("Travel", 300_000)).toMatchObject({
+        period: "yearly",
+        takesEffect: thisMonth().slice(0, 4),
+        pinned: null,
+      });
+      expect(await put("Utilities", 15_000)).toMatchObject({ period: "monthly", pinned: true });
+
+      const after = await budgets(thisMonth());
+      expect(
+        after.budgets
+          .filter((budget) => ["Pets", "Travel", "Utilities"].includes(budget.category))
+          .map(({ category, amount }) => [category, amount]),
+      ).toEqual([
+        ["Utilities", 15_000],
+        ["Pets", 4_000],
+        ["Travel", 300_000],
+      ]);
+    });
+
+    it("answers 404 to a name that is not a Category, to Follow the bill with no Budget, and 400 to a bad amount, and changes nothing", async () => {
       const before = await stored();
 
+      expect(
+        (await browser.send("PUT", "/api/budgets/Not%20a%20Category", { amount: 100 })).status,
+      ).toBe(404);
       for (const category of ["Pets", "Not%20a%20Category"]) {
-        expect(
-          (await browser.send("PUT", `/api/budgets/${category}`, { amount: 100 })).status,
-        ).toBe(404);
         expect(
           (await browser.send("POST", `/api/budgets/${category}/follow-the-bill`, {})).status,
         ).toBe(404);
@@ -338,6 +379,11 @@ describe("the Budget route", () => {
       expect(await stored()).toEqual(before);
       expect(await acceptance()).toEqual([]);
     });
+  });
+
+  it("answers 404 to an edit before the first draft, and stores no Budget", async () => {
+    expect((await browser.send("PUT", "/api/budgets/Pets", { amount: 4_000 })).status).toBe(404);
+    expect(await stored()).toEqual([]);
   });
 
   it("answers 404 to Accept all before the first draft", async () => {

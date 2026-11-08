@@ -103,7 +103,8 @@ export type BudgetRoutes = {
   budgets(month: string): Promise<BudgetsView>;
   // "A usual month" for a month written YYYY-MM.
   usualMonth(month: string): Promise<UsualMonthView>;
-  // A Member's edit, or undefined when the Category has no Budget.
+  // A Member's edit, or a Category's first Budget. Undefined for a name that is not a Category,
+  // and before the first draft.
   edit(category: string, amount: number, memberId: string): Promise<BudgetView | undefined>;
   followTheBill(
     category: string,

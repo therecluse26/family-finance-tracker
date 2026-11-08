@@ -1482,7 +1482,8 @@ export const api = new Hono<ServerEnv>()
     return c.json({ picture: await c.var.pictures.draw(choice.data, month) });
   })
   // A Member's edit of any Budget (spec 05, Changing Budgets): it takes effect this month, or for a
-  // yearly Budget the whole current year. An edited Bills Budget is pinned.
+  // yearly Budget the whole current year. An edited Bills Budget is pinned. A Category with no
+  // Budget gets its first one this way.
   .put("/budgets/:category", jsonOnly, async (c) => {
     const body = budgetEditBody.safeParse(await jsonBody(c));
     if (!body.success) return c.json({ error: "Enter the Budget in dollars and cents." }, 400);

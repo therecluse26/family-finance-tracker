@@ -9,6 +9,7 @@ import {
 } from "../db/index.ts";
 import { log } from "../log.ts";
 import { householdMonth } from "./first-draft.ts";
+import { YEARLY_CATEGORIES } from "./periods.ts";
 import { type Budget, budgetOf } from "./stored.ts";
 
 // A Member's changes to Budgets (spec 05, Changing Budgets; When the app drafts): an edit of any
@@ -16,8 +17,9 @@ import { type Budget, budgetOf } from "./stored.ts";
 // effect in the Household's current month.
 
 // Edits the Budget in effect this month: from this month, or for a yearly Budget the whole current
-// year. An edited Bills Budget is pinned. A Category whose first Budget a Member undid gets its
-// Budget again this way. Undefined when the Category has no Budget.
+// year. An edited Bills Budget is pinned. A Category with no Budget gets its first one this way,
+// in its own period, as does a Category whose first Budget a Member undid. Undefined for a name
+// that is not a Category, and before the first draft's month.
 export async function editBudget(
   database: Database,
   edit: { category: string; amount: number; memberId: string },
@@ -31,6 +33,7 @@ export async function editBudget(
     setBy: edit.memberId,
     setAt: now,
     bills: categoryGroupOf(category) === "Bills",
+    period: YEARLY_CATEGORIES.includes(category) ? "yearly" : "monthly",
   });
   if (stored === undefined) return undefined;
   log.info("A Member edited a Budget", { period: stored.period, pinned: stored.pinned });

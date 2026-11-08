@@ -344,15 +344,49 @@ describe("the Budgets page", () => {
     expect(fill(html, "Housing")).toContain("bg-accent");
   });
 
-  it('shows "no Budget" and its Spending for a Category with no Budget', () => {
-    const sections = sectionsOf(report(VIEW));
+  it('shows "no Budget", its Spending, and an empty box for a Category with no Budget', () => {
+    const html = report(VIEW);
+    const sections = sectionsOf(html);
 
-    expect(sections.Shopping?.[0]?.words).toBe("Groceries $421 spent no Budget");
-    expect(sections.Shopping?.[1]?.words).toBe("Superstores $0 spent no Budget");
-    // A yearly Category with no Budget stays in its Category group.
-    expect(sections.Other?.map((row) => row.words)).toContain(
-      "Gifts and donations $50 spent no Budget",
+    expect(sections.Shopping?.[0]?.words).toBe(
+      "Groceries $421 spent no Budget Groceries Budget per month Save",
     );
+    expect(sections.Shopping?.[1]?.words).toBe(
+      "Superstores $0 spent no Budget Superstores Budget per month Save",
+    );
+    expect(boxValue(html, "budget-groceries")).toBe("");
+    // A yearly Category with no Budget stays in its Category group, and its box is per year.
+    expect(sections.Other?.map((row) => row.words)).toContain(
+      "Gifts and donations $50 spent no Budget Gifts and donations Budget per year Save",
+    );
+    expect(boxValue(html, "budget-gifts-and-donations")).toBe("");
+  });
+
+  it("gives a Category with no Budget its first Budget from its empty box", async () => {
+    const sent = recordRequests();
+    const actions: BudgetActions = {
+      ...noActions,
+      save: (category, words) => void editBudget(category, words),
+    };
+    const groceries = (state: RowState) =>
+      BudgetRowItem({
+        row: { category: "Groceries", spending: 42_050, budget: undefined },
+        state,
+        actions,
+      });
+    const saveClass = (state: RowState) =>
+      /class="([^"]*)"[^>]*data-slot="budget-save"/.exec(renderToString(groceries(state)))?.[1] ??
+      "";
+
+    // "Save" shows only once the empty box holds an amount.
+    expect(saveClass({}).split(" ")).toContain("invisible");
+    expect(saveClass({ typed: "600" }).split(" ")).not.toContain("invisible");
+    controlsOf(groceries({ typed: "$600" })).buttons.get("Save")?.();
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    expect(sent).toEqual([
+      { method: "PUT", path: "/api/budgets/Groceries", body: { amount: 60_000 } },
+    ]);
   });
 
   it("puts the yearly Budgets in their own section at the end, with the year's Spending and the share of the year passed", () => {
@@ -422,10 +456,10 @@ describe("the Budgets page", () => {
     const saved: [string, string][] = [];
     const actions: BudgetActions = {
       ...noActions,
-      type: (each, words) => typed.push(`${each.category}: ${words}`),
-      save: (each, words) => {
-        saved.push([each.category, words]);
-        void editBudget(each.category, words);
+      type: (category, words) => typed.push(`${category}: ${words}`),
+      save: (category, words) => {
+        saved.push([category, words]);
+        void editBudget(category, words);
       },
     };
 
