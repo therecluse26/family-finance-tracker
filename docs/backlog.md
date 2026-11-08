@@ -172,6 +172,12 @@ Small items left open after the T107 notes triage, for after the first release (
 - N221 (S, polish) The Household summary gives a renter the fixed note that Housing and Car Spending "can sit above their Benchmarks", though a renter has no Housing Benchmark. In: src/summary/summary.ts.
 - N268 (S, polish) Chat Proposals from one AI round are stored in transaction order, not tool-call order; it matters only for two Budget changes on one Category in one round. In: src/chat/.
 - N269 (S, polish) Redraft triggers firing together can log "A redraft already waits" one extra time. In: src/tailoring/.
+- N295 (S, polish) The summary's 3-month and 12-month averages divide by every month, even months before the first loaded Transaction, so a new Household gets low averages and a high amount at stake. In: src/summary/.
+- N296 (S, polish) The Biggest changes "a day keeps it in Budget" amount ignores Recurring charges still due this month, though the projection counts them. In: src/summary/.
+- N297 (S, polish) With 5 or more prices, "now X% from the first price" refers to a price the summary does not list (it shows the last 4). In: src/summary/.
+- N298 (S, polish) Spec 08 says the Insight card `check` field is never stored; the AI request log keeps it in the raw reply while a Member has the log on. Say "outside the AI request log". In: docs/spec/08-ai.md.
+- N299 (S, polish) No test checks the stored Insight card row's keys, so copying the whole AI card (with `check`) into it would pass. In: src/insights/.
+- N300 (S, polish) The Monthly review summary build is about 100 ms slower after X33 (839 ms alone against a 1 s limit). In: src/summary/, src/large-history/cases/.
 
 ## Pages and dev tools
 
