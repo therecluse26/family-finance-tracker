@@ -889,11 +889,13 @@ export type KeptCharge = {
 // expected date with none, or revive it, judged against the amount in force on its date
 // (amountOn): within the Member's band; else, once it has a Member's price change, within the
 // rule's band; else as the rule continues. A price change of 2 in a row still joins outside the
-// band. `candidates` are the Merchant's Transactions in no other Recurring charge, and none a
-// Member removed from this one.
+// band, but neither of its charges may be one `ownedByOther` says another series takes, so it
+// never merges another series (spec 06, A masked Merchant's series). `candidates` are the
+// Merchant's Transactions in no other Recurring charge, and none a Member removed from this one.
 export function continueKept(
   kept: KeptCharge,
   candidates: readonly SeriesTxn[],
+  ownedByOther: (txn: SeriesTxn) => boolean,
   today: string,
   rule: SeriesRule<ChargeSchedule>,
 ): Series<ChargeSchedule> {
@@ -949,7 +951,7 @@ export function continueKept(
             firstOnOrAfter(ordered, spanOf(nextWindows(trial)).from),
             (later) => free(later) && isBefore(changed, later),
           ),
-        () => false,
+        ownedByOther,
         judged,
       );
       if (picks.length > 0) join(picks);

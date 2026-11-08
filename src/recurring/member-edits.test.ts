@@ -4,7 +4,7 @@ import { connectionRemoving, syncConnection, type TxnRecord } from "../bank/inde
 import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { correctCategory, startCategorization } from "../categorization/index.ts";
 import { editRecurringCharge, replaceRecurringCharges } from "../db/index.ts";
-import { runFollowUp } from "../follow-up/index.ts";
+import { registerFollowUpStep, runFollowUp } from "../follow-up/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import {
   addChargeTransaction,
@@ -311,9 +311,59 @@ describe("a Member's edits to a Recurring charge", () => {
     expect(await chosen("s4")).toBe("Phone and internet (Recurring charge)");
     // It is one a Member may add back.
     const candidates = await chargeCandidates(bank.database, found.id);
-    expect(candidates).toEqual([
-      { transactionId: await idOf("s1"), date: "2026-08-03", amount: 1_549, removedByHand: true },
-    ]);
+    expect(candidates).toEqual({
+      more: false,
+      candidates: [
+        { transactionId: await idOf("s1"), date: "2026-08-03", amount: 1_549, removedByHand: true },
+      ],
+    });
+  });
+
+  it("lists the charges to add a page at a time: removed ones first, then 50, newest first, at one amount", async () => {
+    // Privacy.com lines at other amounts, one a day back from Oct 31, and 3 at $12.34.
+    const lines = Array.from({ length: 130 }, (_, at) => {
+      const day = new Date(Date.UTC(2026, 9, 31) - at * 86_400_000).toISOString().slice(0, 10);
+      return masked(`r${at}`, day, [10, 70, 120].includes(at) ? 1_234 : 2_000 + at * 3);
+    });
+    await sync(
+      ...[0, 1, 2, 3, 4, 5].map((at) => masked(`v${at}`, addMonths("2026-05-05", at), 2_500)),
+      ...lines,
+    );
+    const found = (await charges()).find((each) => each.latestAmount === 2_500);
+    if (found === undefined) throw new Error("Expected the $25 Recurring charge.");
+    edited(await removeChargeTransaction(bank.database, found.id, await idOf("v1"), now));
+    const page = async (filter: { amount?: number; before?: string } = {}) => {
+      const answer = await chargeCandidates(bank.database, found.id, filter);
+      if (answer === undefined || typeof answer === "string") throw new Error(`No page: ${answer}`);
+      const ids = await providerIds(answer.candidates.map((each) => each.transactionId));
+      return { ids, more: answer.more, last: answer.candidates.at(-1)?.transactionId };
+    };
+    const newest = lines.map((txn) => txn.id);
+
+    const first = await page();
+    expect(first.ids).toEqual(["v1", ...newest.slice(0, 50)]);
+    expect(first.more).toBe(true);
+    const second = await page({ before: first.last });
+    expect(second.ids).toEqual(newest.slice(50, 100));
+    expect(second.more).toBe(true);
+    const third = await page({ before: second.last });
+    expect(third.ids).toEqual(newest.slice(100));
+    expect(third.more).toBe(false);
+
+    // An exact amount. The removed one still comes first, at any amount.
+    expect(await page({ amount: 1_234 })).toMatchObject({
+      ids: ["v1", "r10", "r70", "r120"],
+      more: false,
+    });
+    expect((await page({ amount: 1_235 })).ids).toEqual(["v1"]);
+    expect(await chargeCandidates(bank.database, found.id, { before: "no-such-id" })).toBe(
+      "no Transaction",
+    );
+    // One in it is never listed, on any page.
+    const inIt = await providerIds(found.priceHistory.map((entry) => entry.transactionId));
+    for (const each of [first, second, third]) {
+      expect(each.ids.filter((id) => id !== "v1" && inIt.includes(id))).toEqual([]);
+    }
   });
 
   it("still sends the Transactions through the cascade again when the find after an edit fails", async () => {
@@ -345,14 +395,17 @@ describe("a Member's edits to a Recurring charge", () => {
       charge("extra", "2026-09-20", 4_000),
     );
     const found = await only();
-    expect(await chargeCandidates(bank.database, found.id)).toEqual([
-      {
-        transactionId: await idOf("extra"),
-        date: "2026-09-20",
-        amount: 4_000,
-        removedByHand: false,
-      },
-    ]);
+    expect(await chargeCandidates(bank.database, found.id)).toEqual({
+      more: false,
+      candidates: [
+        {
+          transactionId: await idOf("extra"),
+          date: "2026-09-20",
+          amount: 4_000,
+          removedByHand: false,
+        },
+      ],
+    });
 
     const added = edited(
       await addChargeTransaction(bank.database, found.id, await idOf("extra"), now),
@@ -369,6 +422,93 @@ describe("a Member's edits to a Recurring charge", () => {
     await runFollowUp(clock);
     expect(await members()).toEqual(["s0 1549", "s1 1549", "s2 1549", "s3 1549"]);
   });
+
+  it("gives a Transaction that joins its Member's Category before the later steps of the same job", async () => {
+    const seen: string[] = [];
+    const stopSpy = registerFollowUpStep("overspending checks", async (unhandled) => {
+      const ids = await providerIds(unhandled);
+      for (const id of ids) seen.push(`${id} ${await chosen(id ?? "")}`);
+      return undefined;
+    });
+    stops.push(stopSpy);
+    await sync(
+      ...[0, 1, 2].map((at) => charge(`s${at}`, addMonths("2026-07-03", at), 1_549)),
+      charge("store", "2026-09-20", 4_000),
+    );
+    await correctCategory(bank.database, await idOf("store"), "Hobbies", {
+      onlyThisTransaction: false,
+      memberId: MEMBER,
+    });
+    await runAsked();
+    const found = (await charges()).find((each) => each.latestAmount === 1_549);
+    edited(
+      await editCharge(bank.database, found?.id ?? "", { category: "Phone and internet" }, now),
+    );
+    await runAsked();
+    seen.length = 0;
+
+    now = new Date("2026-10-05T14:00:00.000Z");
+    bank.fake.addPages(BANK, { added: [charge("s3", "2026-10-03", 1_549)] });
+    await syncConnection(connectionId, clock);
+    await runFollowUp(clock);
+    expect(await chosen("s3")).toBe("Phone and internet (Recurring charge)");
+    expect(seen).toEqual(["s3 Phone and internet (Recurring charge)"]);
+    seen.length = 0;
+    await runAsked();
+    expect(await chosen("s3")).toBe("Phone and internet (Recurring charge)");
+    expect(await chosen("store")).toBe("Hobbies (hand-set)");
+  });
+
+  it("keeps a hand-set Category on a Transaction that joins one with a Member's Category", async () => {
+    now = new Date("2026-11-20T14:00:00.000Z");
+    await sync(
+      ...[0, 1, 2, 3].map((at) => masked(`a${at}`, addMonths("2026-07-05", at), 2_500)),
+      masked("a4", "2026-11-05", 2_600),
+    );
+    await correctCategory(bank.database, await idOf("a4"), "Hobbies", {
+      onlyThisTransaction: true,
+      memberId: MEMBER,
+    });
+    await runAsked();
+    const found = await only();
+    edited(await editCharge(bank.database, found.id, { category: "Phone and internet" }, now));
+    await runAsked();
+
+    // A band of 10% takes a4 in. Its Category is the Member's own.
+    const wider = edited(await editCharge(bank.database, found.id, { priceBand: 100 }, now));
+    expect(await members(wider)).toEqual(["a0 2500", "a1 2500", "a2 2500", "a3 2500", "a4 2600"]);
+    expect(await chosen("a4")).toBe("Hobbies (hand-set)");
+    expect(await chosen("a3")).toBe("Phone and internet (Recurring charge)");
+    await runAsked();
+    expect(await chosen("a4")).toBe("Hobbies (hand-set)");
+  });
+
+  it.each([
+    ["on the same day", "2026-07-05"],
+    ["a day apart", "2026-07-06"],
+    ["2 days apart", "2026-07-07"],
+  ])(
+    "never takes another masked series' charges as a price change once named, %s",
+    async (_, from) => {
+      now = new Date("2027-01-20T14:00:00.000Z");
+      const a = [0, 1, 2, 3].map((at) => masked(`a${at}`, addMonths("2026-07-05", at), 2_500));
+      const b = [0, 1, 2, 3, 4, 5, 6].map((at) => masked(`b${at}`, addMonths(from, at), 4_500));
+      await sync(...a, ...b.slice(0, 4));
+      const named = (await charges()).find((each) => each.latestAmount === 2_500);
+      edited(await editCharge(bank.database, named?.id ?? "", { name: "Visible Wireless" }, now));
+      await runAsked();
+
+      await sync(...b.slice(4));
+      const after = await charges();
+      const visible = after.find((each) => each.id === named?.id);
+      const other = after.find((each) => each.id !== named?.id);
+      expect(after).toHaveLength(2);
+      expect(visible?.status).toBe("inactive");
+      expect(await members(visible)).toEqual(["a0 2500", "a1 2500", "a2 2500", "a3 2500"]);
+      expect(other?.status).toBe("active");
+      expect(await members(other)).toEqual(b.map((txn) => `${txn.id} 4500`));
+    },
+  );
 
   it("takes a Member's Category before the Merchant's Category rule, and never over a hand-set one", async () => {
     await sync(
@@ -584,10 +724,24 @@ describe("a Member's edits to a Recurring charge", () => {
       "last Transaction",
     );
 
-    // An ended one takes no edit, and neither does a Transaction in it.
+    // An ended one takes a name and a Category (D38), and no other edit.
     await endCharge(bank.database, found.id, MEMBER, now);
+    const named = edited(await editCharge(bank.database, found.id, { name: "Movies" }, now));
+    expect(named.name).toBe("Movies");
+    expect(named.status).toBe("ended");
+    const categorized = edited(
+      await editCharge(bank.database, found.id, { category: "Phone and internet" }, now),
+    );
+    expect(categorized.category).toBe("Phone and internet");
+    await runAsked();
+    expect(await chosen("s2")).toBe("Phone and internet (Recurring charge)");
+    expect(await chosen("s0")).toBe("Entertainment (provider)");
     const ended = await charges();
-    expect(await editCharge(bank.database, found.id, { name: "Movies" }, now)).toBe("ended");
+    expect(await members(ended[0])).toEqual(["s2 1549"]);
+    expect(await editCharge(bank.database, found.id, { priceBand: 100 }, now)).toBe("ended");
+    expect(await editCharge(bank.database, found.id, { name: "Films", priceBand: 100 }, now)).toBe(
+      "ended",
+    );
     expect(
       await setChargePriceChange(
         bank.database,
@@ -603,8 +757,10 @@ describe("a Member's edits to a Recurring charge", () => {
       "ended",
     );
     expect(await charges()).toEqual(ended);
-    // The store's own guard, for an edit that races the end.
-    expect(await editRecurringCharge(bank.database, found.id, { name: "Movies" })).toBe(false);
+    // The store's own guard, for a price band that races the end.
+    expect(await editRecurringCharge(bank.database, found.id, { priceBand: 100 })).toBe(false);
+    expect(await charges()).toEqual(ended);
+    await sync();
     expect(await charges()).toEqual(ended);
   });
 

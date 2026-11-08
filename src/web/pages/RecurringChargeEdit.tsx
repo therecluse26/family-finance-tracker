@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import { CATEGORY_GROUPS } from "../../categories/list.ts";
 import { dateLabel, dollarsAndCents } from "../../format.ts";
 import type {
+  RecurringChargeCandidatesView,
   RecurringChargeCandidateView,
   RecurringChargeEditsView,
   RecurringChargeView,
@@ -110,7 +111,14 @@ export const recurringChargeEditRequests = {
     api["recurring-charges"][":id"].transactions[":transactionId"].$delete({
       param: { id, transactionId },
     }),
-  candidates: (id: string) => api["recurring-charges"][":id"].candidates.$get({ param: { id } }),
+  // A page of the charges to add: at `amount` in whole cents spent, older than `before`.
+  candidates: (id: string, filter: { amount?: number; before?: string } = {}) => {
+    const query: Record<string, string> = {};
+    if (filter.amount !== undefined) query.amount = String(filter.amount);
+    if (filter.before !== undefined) query.before = filter.before;
+    const page = { param: { id }, query };
+    return api["recurring-charges"][":id"].candidates.$get(page);
+  },
 };
 
 async function refusal(res: Response): Promise<string> {
@@ -131,8 +139,15 @@ export function RecurringChargeEdit(props: {
   const [draft, setDraft] = useState<EditDraft>(() => draftOf(charge));
   const [price, setPrice] = useState({ amount: "", fromDate: "" });
   const [candidates, setCandidates] = useState<RecurringChargeCandidateView[] | undefined>();
+  // The last charge of the newest page, and whether older ones follow.
+  const [older, setOlder] = useState<{ before: string | undefined; more: boolean }>({
+    before: undefined,
+    more: false,
+  });
+  const [amountFilter, setAmountFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // One marked ended takes a name and a Category, and no other edit (spec 07).
   const editable = charge.status !== "ended";
   const lines = priceLines(charge);
 
@@ -178,17 +193,33 @@ export function RecurringChargeEdit(props: {
     if (sent) setPrice({ amount: "", fromDate: "" });
   }
 
-  async function showCandidates() {
+  // The newest page, or with `before`, the next older one after the list.
+  async function showCandidates(before?: string) {
     setError(undefined);
+    const typed = amountFilter.trim();
+    const amount = typed === "" ? undefined : centsOf(typed);
+    if (typed !== "" && (amount === undefined || amount <= 0)) {
+      return setError("Enter an amount such as 25.00.");
+    }
     try {
-      const res = await recurringChargeEditRequests.candidates(charge.id);
+      const res = await recurringChargeEditRequests.candidates(charge.id, {
+        ...(amount === undefined ? {} : { amount }),
+        ...(before === undefined ? {} : { before }),
+      });
       if (!res.ok) return setError(await refusal(res));
-      setCandidates(
-        ((await res.json()) as { candidates: RecurringChargeCandidateView[] }).candidates,
+      const page = (await res.json()) as RecurringChargeCandidatesView;
+      setCandidates((shown) =>
+        before === undefined ? page.candidates : [...(shown ?? []), ...page.candidates],
       );
+      setOlder({ before: page.candidates.at(-1)?.transactionId ?? before, more: page.more });
     } catch {
       setError("The server did not answer.");
     }
+  }
+
+  function findAtAmount(event: FormEvent) {
+    event.preventDefault();
+    void showCandidates();
   }
 
   async function add(transactionId: string) {
@@ -199,37 +230,37 @@ export function RecurringChargeEdit(props: {
 
   return (
     <div className="grid gap-4">
-      {editable ? (
-        <form className="grid gap-x-4 gap-y-2 sm:grid-cols-3" onSubmit={save}>
-          <label className="block text-small">
-            Name
-            <input
-              className={FIELD}
-              value={draft.name}
-              maxLength={120}
-              placeholder={charge.merchantName}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            />
-          </label>
-          <label className="block text-small">
-            Category
-            <select
-              className={FIELD}
-              value={draft.category}
-              onChange={(e) => setDraft({ ...draft, category: e.target.value })}
-            >
-              <option value="">Each Transaction's own</option>
-              {CATEGORY_GROUPS.map((group) => (
-                <optgroup key={group.name} label={group.name}>
-                  {group.categories.map((category) => (
-                    <option key={category.name} value={category.name}>
-                      {category.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+      <form className="grid gap-x-4 gap-y-2 sm:grid-cols-3" onSubmit={save}>
+        <label className="block text-small">
+          Name
+          <input
+            className={FIELD}
+            value={draft.name}
+            maxLength={120}
+            placeholder={charge.merchantName}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          />
+        </label>
+        <label className="block text-small">
+          Category
+          <select
+            className={FIELD}
+            value={draft.category}
+            onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+          >
+            <option value="">Each Transaction's own</option>
+            {CATEGORY_GROUPS.map((group) => (
+              <optgroup key={group.name} label={group.name}>
+                {group.categories.map((category) => (
+                  <option key={category.name} value={category.name}>
+                    {category.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        {editable ? (
           <label className="block text-small">
             Price band (%)
             <input
@@ -240,13 +271,13 @@ export function RecurringChargeEdit(props: {
               onChange={(e) => setDraft({ ...draft, priceBand: e.target.value })}
             />
           </label>
-          <div className="sm:col-span-3">
-            <Button type="submit" variant="outlined" size="small" disabled={busy}>
-              Save
-            </Button>
-          </div>
-        </form>
-      ) : null}
+        ) : null}
+        <div className="sm:col-span-3">
+          <Button type="submit" variant="outlined" size="small" disabled={busy}>
+            Save
+          </Button>
+        </div>
+      </form>
       {editable ? (
         <form className="grid gap-x-4 gap-y-2 sm:grid-cols-3" onSubmit={setPriceChange}>
           <label className="block text-small">
@@ -332,13 +363,33 @@ export function RecurringChargeEdit(props: {
       {editable ? (
         candidates === undefined ? (
           <div>
-            <Button type="button" variant="outlined" size="small" onClick={showCandidates}>
+            <Button
+              type="button"
+              variant="outlined"
+              size="small"
+              onClick={() => void showCandidates()}
+            >
               Add a charge
             </Button>
           </div>
         ) : (
           <div>
             <p className="mb-1.5 text-small font-semibold">Add a charge</p>
+            <form className="mb-2 flex flex-wrap items-end gap-2" onSubmit={findAtAmount}>
+              <label className="block text-small">
+                Amount
+                <input
+                  className={FIELD}
+                  inputMode="decimal"
+                  value={amountFilter}
+                  placeholder="Any"
+                  onChange={(e) => setAmountFilter(e.target.value)}
+                />
+              </label>
+              <Button type="submit" variant="outlined" size="small" disabled={busy}>
+                Find
+              </Button>
+            </form>
             {candidates.length === 0 ? (
               <p className="text-small text-muted">No other posted charges from this Merchant.</p>
             ) : (
@@ -365,6 +416,18 @@ export function RecurringChargeEdit(props: {
                 ))}
               </ul>
             )}
+            {older.more ? (
+              <Button
+                type="button"
+                variant="outlined"
+                size="small"
+                className="mt-2"
+                disabled={busy}
+                onClick={() => void showCandidates(older.before)}
+              >
+                Show older
+              </Button>
+            ) : null}
           </div>
         )
       ) : null}

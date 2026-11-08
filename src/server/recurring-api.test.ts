@@ -368,9 +368,53 @@ describe("the Recurring charge routes", () => {
       expect((await browser.send("DELETE", `${path}/transactions/no-such-id`)).status).toBe(404);
       expect((await browser.get("/api/recurring-charges/no-such-id/candidates")).status).toBe(404);
 
+      for (const query of [
+        "amount=12.34",
+        "amount=0",
+        "amount=-1",
+        "amount=1e3",
+        "amount=100000000001",
+        "amount=%2e5",
+        "other=1",
+        `before=${"x".repeat(201)}`,
+      ]) {
+        const res = await browser.get(`${path}/candidates?${query}`);
+        expect([query, res.status]).toEqual([query, 400]);
+      }
+      expect((await browser.get(`${path}/candidates?before=no-such-id`)).status).toBe(404);
+      const atAmount = async (cents: number) =>
+        (await browser.get(`${path}/candidates?amount=${cents}`)).json();
+      expect(await atAmount(1_299)).toEqual({
+        more: false,
+        candidates: [expect.objectContaining({ amount: 1_299, date: "2026-08-01" })],
+      });
+      expect(await atAmount(1_300)).toEqual({ more: false, candidates: [] });
+
+      // An ended one takes a name and a Category, and no other edit (D38).
+      const [first] = charge.priceHistory;
       await browser.send("POST", `${path}/end`);
-      expect((await browser.send("PUT", path, { name: "Home phone" })).status).toBe(409);
-      expect((await brightwave()).name).toBe("📞".repeat(60));
+      const named = await browser.send("PUT", path, {
+        name: "Home phone",
+        category: "Phone and internet",
+      });
+      expect(named.status).toBe(200);
+      expect(await named.json()).toMatchObject({
+        charge: { name: "Home phone", category: "Phone and internet", status: "ended" },
+      });
+      for (const [method, route, body] of [
+        ["PUT", path, { priceBand: 10 }],
+        ["PUT", path, { name: "Phone", priceBand: 10 }],
+        ["POST", `${path}/price-changes`, { fromDate: "2026-09-20", amount: 100 }],
+        ["POST", `${path}/transactions`, { transactionId: first?.transactionId }],
+        ["DELETE", `${path}/transactions/${first?.transactionId}`, undefined],
+      ] as const) {
+        const res = await browser.send(method, route, body);
+        expect([method, route, res.status]).toEqual([method, route, 409]);
+      }
+      const after = await browser.send("PUT", path, { name: "Home phone" });
+      expect(await after.json()).toMatchObject({
+        charge: { name: "Home phone", priceBand: null, priceHistory: charge.priceHistory },
+      });
     });
 
     it("answers 401 with no session, 403 from another site, and 415 for a body not JSON, and changes nothing", async () => {

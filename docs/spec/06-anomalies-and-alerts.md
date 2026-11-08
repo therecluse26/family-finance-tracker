@@ -64,7 +64,7 @@ A masked Merchant ([Categorization](04-categorization.md#identity)), such as Pri
 - A Recurring charge goes inactive after one missed Transaction. It is missed when the next expected date plus 2 days passes with none. For a monthly one, that is 2 days after the latest date the business-day shift allows. A yearly one is missed 13 months after its last Transaction.
 - An inactive Recurring charge leaves "Coming up", the projection, and the Budget formulas' known amounts.
 - A later Transaction can make it active again. It must come from the same Merchant, within 7.5% of the latest amount. Its date must be within the margin of the last date plus a whole number of intervals. For a monthly one, it must be within the margin of a later month's expected date. This fires no New Recurring charge Alert.
-- A Member may mark a Recurring charge ended. An ended one never comes back by itself. Later Transactions from that Merchant start a new series. An ended one takes no more edits.
+- A Member may mark a Recurring charge ended. An ended one never comes back by itself. Later Transactions from that Merchant start a new series. An ended one still takes a name and a Category. It takes no price band, no price change, and no added or removed Transaction (owner decision D38).
 
 ### Member edits
 
@@ -79,10 +79,10 @@ A Member may edit a Recurring charge on the [Recurring charges page](07-dashboar
 **Kept by hand.** A Recurring charge with any Member edit keeps it through every check after:
 
 - The checks never delete, merge or split it, and never drop a Transaction in it. They never re-add a removed one.
-- They still add each new Transaction that fits, on an expected date that has none.
+- They still add each new Transaction that fits, on an expected date that has none. A price change of 2 in a row never takes a Transaction that another of the Merchant's series takes with 2 of its own before it, so it never merges another series.
 - An added Transaction leaves only when it is hidden, such as removed by the bank.
 - Inactive and ended still apply.
-- A Transaction that leaves the Recurring charge, or joins one with a Member's Category, goes through the cascade again in the next follow-up job.
+- A Transaction that leaves the Recurring charge, or joins one with a Member's Category, goes through the cascade again in the same follow-up job, before the steps after the checks read it.
 
 Example: a $25 monthly Privacy.com Recurring charge, named "Visible Wireless", Category Phone and internet. Later the Member sets "$45 from Nov 5". The $45 charges join from Nov 5, and every $25 charge stays in it.
 

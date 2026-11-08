@@ -218,8 +218,8 @@ Using this page is never required.
   - the name, the Category ("Each Transaction's own" clears it), and the price band, with **Save**;
   - a new amount and its start date, with **Set price change**;
   - the price history, newest first: each charge's date and amount, with **Remove**, and "added" on one a Member added. Each price change shows where it starts, with **Delete** on a Member's;
-  - **Add a charge**: the Merchant's other posted Spending, newest first, at most 50, each with **Add**. One a Member removed shows "removed".
-  - An ended Recurring charge shows its price history only.
+  - **Add a charge**: the Merchant's other posted Spending, each with **Add**. Those a Member removed from it come first, with "removed", at any amount, so a removal can be undone. Then 50 others, newest first, and **Show older** loads the next 50. An **Amount** field, in dollars and cents, lists only the others at exactly that amount.
+  - An ended Recurring charge shows the name and the Category, with **Save**, and its price history. It has no price band, price change, **Remove** or **Add a charge** (owner decision D38).
 - Rows run by next date. Inactive Recurring charges sit in a collapsed "Inactive" section ([Anomalies and Alerts](06-anomalies-and-alerts.md)).
 
 ### Top Merchants

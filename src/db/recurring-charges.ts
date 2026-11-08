@@ -355,8 +355,9 @@ export async function endRecurringCharge(
   return readRecurringCharge(database, id);
 }
 
-// Stores a Member's name, Category, or price band on a Recurring charge not marked ended. False
-// when none has the ID.
+// Stores a Member's name, Category, or price band on a Recurring charge. One marked ended takes a
+// name and a Category, but no price band (owner decision D38). False when none has the ID, or a
+// price band meets one marked ended.
 export async function editRecurringCharge(
   database: Queries,
   id: string,
@@ -365,7 +366,11 @@ export async function editRecurringCharge(
   const updated = await database
     .update(recurringCharges)
     .set(edits)
-    .where(and(eq(recurringCharges.id, id), ne(recurringCharges.status, "ended")))
+    .where(
+      edits.priceBand === undefined
+        ? eq(recurringCharges.id, id)
+        : and(eq(recurringCharges.id, id), ne(recurringCharges.status, "ended")),
+    )
     .returning({ id: recurringCharges.id });
   return updated.length > 0;
 }

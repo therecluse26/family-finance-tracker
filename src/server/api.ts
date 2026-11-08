@@ -659,6 +659,18 @@ const priceChangeBody = z
   })
   .strict();
 const chargeTransactionBody = z.object({ transactionId: z.string().min(1).max(200) }).strict();
+// A page of the charges a Member may add: an exact amount in whole cents spent, and the
+// Transaction the page before ended with.
+const candidateQuery = z
+  .object({
+    amount: z
+      .string()
+      .regex(/^[1-9]\d{0,10}$/)
+      .refine((amount) => Number(amount) <= MAX_PRICE_CHANGE_CENTS)
+      .optional(),
+    before: z.string().min(1).max(200).optional(),
+  })
+  .strict();
 const CHARGE_EDIT_ANSWERS = {
   "not found": [404, "No Recurring charge has this ID."],
   "no Transaction": [404, "The Recurring charge has no such Transaction to take or give up."],
@@ -938,11 +950,29 @@ export const api = new Hono<ServerEnv>()
       await c.var.recurring.removeTransaction(c.req.param("id"), c.req.param("transactionId")),
     ),
   )
-  // The Merchant's posted Spending a Member may add, newest first.
+  // The Merchant's posted Spending a Member may add: those a Member removed first, then a page of
+  // 50, newest first, at `amount` in whole cents spent, and older than the Transaction `before`.
   .get("/recurring-charges/:id/candidates", async (c) => {
-    const candidates = await c.var.recurring.candidates(c.req.param("id"));
-    if (candidates === undefined) return c.json({ error: "No Recurring charge has this ID." }, 404);
-    return c.json({ candidates }, 200);
+    const query = candidateQuery.safeParse(c.req.query());
+    if (!query.success) {
+      return c.json(
+        { error: "Ask for an amount in whole cents, and the page before a charge." },
+        400,
+      );
+    }
+    const { amount, before } = query.data;
+    const page = await c.var.recurring.candidates(c.req.param("id"), {
+      ...(amount === undefined ? {} : { amount: Number(amount) }),
+      ...(before === undefined ? {} : { before }),
+    });
+    if (page === undefined) return c.json({ error: "No Recurring charge has this ID." }, 404);
+    if (page === "no Transaction") {
+      return c.json(
+        { error: "The page before must start from one of the Merchant's charges." },
+        404,
+      );
+    }
+    return c.json(page, 200);
   })
   // Steady Income (spec 05): the detected figure, and the one a Member typed in Settings,
   // Household, which replaces it until a Member clears it with null.

@@ -115,8 +115,8 @@ export function recurringRoutes(database: Database): RecurringRoutes {
       return editView(await removeChargeTransaction(database, id, transactionId));
     },
 
-    async candidates(id) {
-      return chargeCandidates(database, id);
+    async candidates(id, filter) {
+      return chargeCandidates(database, id, filter);
     },
 
     async steadyIncome() {

@@ -1,6 +1,7 @@
 import { type Category, isCategory } from "../categories/index.ts";
-import { registerCascadeStep } from "../categorization/index.ts";
+import { categorize, registerCascadeStep } from "../categorization/index.ts";
 import {
+  clearCascadeCategories,
   type Database,
   deleteMemberPriceChange,
   editRecurringCharge,
@@ -236,6 +237,26 @@ export async function findRecurringCharges(
       charge.priceHistory.map((entry) => entry.transactionId).filter((id) => !posted.has(id)),
     ),
   );
+  // The Transactions the other series of a Merchant take with 2 or more of their own before them,
+  // from a replay with every kept one's Transactions claimed. A kept one's price change never takes
+  // these, so it never merges another series (spec 06, A masked Merchant's series). Replayed once
+  // for each Merchant with a kept one.
+  const ownedOf = new Map<string, Set<string>>();
+  const ownedByOthers = (key: string, merchant: Merchant): Set<string> => {
+    let owned = ownedOf.get(key);
+    if (owned === undefined) {
+      owned = new Set();
+      const txns = merchants.get(key)?.txns ?? [];
+      for (const series of replayMerchant(txns, claimed, today, ruleOf(merchant))) {
+        const ordered = [...series.txns].sort(
+          (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id),
+        );
+        for (const txn of ordered.slice(2)) owned.add(txn.id);
+      }
+      ownedOf.set(key, owned);
+    }
+    return owned;
+  };
   for (const charge of kept) {
     const merchant = merchantOfStored(charge);
     const stillShown = (entry: StoredRecurringCharge["priceHistory"][number]): SeriesTxn[] => {
@@ -269,6 +290,7 @@ export async function findRecurringCharges(
       charge.schedule === "monthly"
         ? { fixedDay: fixedDayOf(members.map((txn) => txn.date)) }
         : charge.schedule;
+    const owned = ownedByOthers(groupOf(merchant), merchant);
     const series = continueKept(
       {
         schedule,
@@ -277,6 +299,7 @@ export async function findRecurringCharges(
         band: charge.priceBand ?? undefined,
       },
       candidates,
+      (txn) => owned.has(txn.id),
       today,
       ruleOf(merchant),
     );
@@ -318,6 +341,16 @@ export async function findRecurringCharges(
   );
   if (again.length > 0) {
     await followUpAgain(database, again);
+    // The cascade chooses their Categories again now, so the steps after the checks in this job
+    // read the new ones (spec 04, Re-runs). Step 2 answers with no AI call. One that needs the AI
+    // waits for the follow-up job.
+    await clearCascadeCategories(database, again);
+    const dateOf = (id: string) => posted.get(id)?.date ?? "";
+    await categorize(
+      database,
+      [...again].sort((a, b) => dateOf(a).localeCompare(dateOf(b)) || a.localeCompare(b)),
+      "follow-up job",
+    );
     await followUpSoon();
   }
   log.info("Found Recurring charges", {
@@ -430,9 +463,10 @@ export type ChargeEdits = {
   priceBand?: number | null;
 };
 
-// Applies an edit to a Recurring charge not marked ended, marks `touched` for the follow-up job, so
-// the cascade and the checks run on them again, then finds its Merchant's Recurring charges again.
-// The marks come before the find, so a find that fails still leaves the follow-up work (K5).
+// Applies an edit, marks `touched` for the follow-up job, so the cascade and the checks run on them
+// again, then finds its Merchant's Recurring charges again. The marks come before the find, so a
+// find that fails still leaves the follow-up work (K5). Only a name and a Category apply to one
+// marked ended (`onEnded`, owner decision D38): its Transactions never change.
 async function edited(
   database: Database,
   id: string,
@@ -440,10 +474,11 @@ async function edited(
   apply: (
     charge: StoredRecurringCharge,
   ) => Promise<string[] | Exclude<ChargeEdit, RecurringCharge>>,
+  onEnded = false,
 ): Promise<ChargeEdit> {
   const charge = await readRecurringCharge(database, id);
   if (charge === undefined) return "not found";
-  if (charge.status === "ended") return "ended";
+  if (charge.status === "ended" && !onEnded) return "ended";
   const touched = await apply(charge);
   if (typeof touched === "string") return touched;
   if (touched.length > 0) await followUpAgain(database, touched);
@@ -458,27 +493,34 @@ async function edited(
 }
 
 // A Member names a Recurring charge, sets its Category, or sets its price band. A Category covers
-// each of its Transactions not set by hand, so they go through the cascade again.
+// each of its Transactions not set by hand, so they go through the cascade again. One marked ended
+// takes a name and a Category, but no price band.
 export function editCharge(
   database: Database,
   id: string,
   edits: ChargeEdits,
   now = new Date(),
 ): Promise<ChargeEdit> {
-  return edited(database, id, now, async (charge) => {
-    const { category, ...rest } = edits;
-    const stored = await editRecurringCharge(database, id, {
-      ...rest,
-      ...(category === undefined ? {} : { handSetCategory: category }),
-    });
-    if (!stored) return "ended";
-    log.info("A Member edited a Recurring charge", {
-      name: edits.name !== undefined,
-      category: category !== undefined,
-      priceBand: edits.priceBand !== undefined,
-    });
-    return category === undefined ? [] : charge.priceHistory.map((entry) => entry.transactionId);
-  });
+  return edited(
+    database,
+    id,
+    now,
+    async (charge) => {
+      const { category, ...rest } = edits;
+      const stored = await editRecurringCharge(database, id, {
+        ...rest,
+        ...(category === undefined ? {} : { handSetCategory: category }),
+      });
+      if (!stored) return "ended";
+      log.info("A Member edited a Recurring charge", {
+        name: edits.name !== undefined,
+        category: category !== undefined,
+        priceBand: edits.priceBand !== undefined,
+      });
+      return category === undefined ? [] : charge.priceHistory.map((entry) => entry.transactionId);
+    },
+    edits.priceBand === undefined,
+  );
 }
 
 // A Member sets a price change: a new amount, in whole cents spent, from a date. Each later
@@ -559,15 +601,31 @@ export function removeChargeTransaction(
   });
 }
 
-// The Merchant's posted Spending Transactions that a Member may add to a Recurring charge, newest
-// first: those not in it and not in one marked ended, with those a Member removed marked. Undefined
-// when no Recurring charge has the ID.
+// A posted Spending Transaction a Member may add to a Recurring charge.
+export type ChargeCandidate = {
+  transactionId: string;
+  date: string;
+  amount: number;
+  removedByHand: boolean;
+};
+
+// One page of the charges a Member may add, and whether older ones follow.
+export type ChargeCandidates = { candidates: ChargeCandidate[]; more: boolean };
+
+// Which page: only those at `amount`, in whole cents spent, and only those older than the
+// Transaction `before`, the last one of the page before.
+export type CandidateFilter = { amount?: number; before?: string };
+
+// The Merchant's posted Spending Transactions that a Member may add to a Recurring charge: those
+// not in it and not in one marked ended (spec 07, Recurring charges page). The first page lists
+// first each one a Member removed from it, at any amount, so a removal can be undone. Then 50 of
+// the others at a time, newest first. Undefined when no Recurring charge has the ID; "no
+// Transaction" when `before` is none of the Merchant's posted Spending.
 export async function chargeCandidates(
   database: Database,
   id: string,
-): Promise<
-  { transactionId: string; date: string; amount: number; removedByHand: boolean }[] | undefined
-> {
+  filter: CandidateFilter = {},
+): Promise<ChargeCandidates | "no Transaction" | undefined> {
   const charge = await readRecurringCharge(database, id);
   if (charge === undefined) return undefined;
   const group = groupOf(merchantOfStored(charge));
@@ -578,25 +636,48 @@ export async function chargeCandidates(
       .filter((each) => each.status === "ended")
       .flatMap((each) => each.priceHistory.map((entry) => entry.transactionId)),
   );
-  return (await listPostedSpending(database))
+  const newestFirst = (await listPostedSpending(database))
     .filter(
       (row) =>
         row.merchantCleanName !== null &&
         row.spending < 0 &&
-        !inIt.has(row.id) &&
-        !ended.has(row.id) &&
         groupOf({ id: row.merchantId, name: row.merchantCleanName }) === group,
     )
-    .reverse()
-    .slice(0, CANDIDATES_SHOWN)
-    .map((row) => ({
-      transactionId: row.id,
-      date: row.postedDate,
-      amount: -row.spending,
-      removedByHand: removed.has(row.id),
-    }));
+    .map(
+      (row): ChargeCandidate => ({
+        transactionId: row.id,
+        date: row.postedDate,
+        amount: -row.spending,
+        removedByHand: removed.has(row.id),
+      }),
+    )
+    .sort((a, b) => b.date.localeCompare(a.date) || b.transactionId.localeCompare(a.transactionId));
+  let from = 0;
+  if (filter.before !== undefined) {
+    const at = newestFirst.findIndex((each) => each.transactionId === filter.before);
+    if (at === -1) return "no Transaction";
+    from = at + 1;
+  }
+  const open = (each: ChargeCandidate) =>
+    !inIt.has(each.transactionId) && !ended.has(each.transactionId);
+  const undo =
+    filter.before === undefined
+      ? newestFirst.filter((each) => each.removedByHand && open(each))
+      : [];
+  const others = newestFirst
+    .slice(from)
+    .filter(
+      (each) =>
+        !each.removedByHand &&
+        open(each) &&
+        (filter.amount === undefined || each.amount === filter.amount),
+    );
+  return {
+    candidates: [...undo, ...others.slice(0, CANDIDATES_PER_PAGE)],
+    more: others.length > CANDIDATES_PER_PAGE,
+  };
 }
-const CANDIDATES_SHOWN = 50;
+const CANDIDATES_PER_PAGE = 50;
 
 // Registers the checks step, which finds the Recurring charges, then the Income series behind
 // Steady Income, after each sync (spec 05, Steady Income), and the cascade's step for a Member's

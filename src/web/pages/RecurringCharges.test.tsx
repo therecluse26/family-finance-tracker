@@ -209,17 +209,20 @@ describe("the Recurring charges page", () => {
       "Oct 3 · −$25.00 added Remove",
       "Sep 3 · −$25.00 Remove",
     ]);
-    // An ended one shows its history, with no edits.
-    const ended = text(
-      renderToString(
-        <RecurringChargeEdit
-          charge={{ ...visible, status: "ended" }}
-          today={TODAY}
-          onChange={() => {}}
-        />,
-      ),
+    // An ended one takes a name and a Category, and shows its history with no other edits.
+    const endedHtml = renderToString(
+      <RecurringChargeEdit
+        charge={{ ...visible, status: "ended" }}
+        today={TODAY}
+        onChange={() => {}}
+      />,
     );
-    expect(ended).not.toMatch(/Save|Remove|Delete|Add a charge|Set price change/);
+    const ended = text(endedHtml);
+    expect(ended).toMatch(/Name/);
+    expect(ended).toMatch(/Category/);
+    expect(ended).toMatch(/Save/);
+    expect(ended).not.toMatch(/Price band|Remove|Delete|Add a charge|Set price change/);
+    expect(text(html)).toMatch(/Price band/);
   });
 
   it("sends only what the edit form changed, and refuses a bad name or band", () => {
@@ -249,7 +252,7 @@ describe("the Recurring charges page", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input instanceof Request ? input.url : input), "http://app.test");
       const body = typeof init?.body === "string" ? init.body : "";
-      sent.push(`${init?.method ?? "GET"} ${url.pathname} ${body}`.trim());
+      sent.push(`${init?.method ?? "GET"} ${url.pathname}${url.search} ${body}`.trim());
       return Response.json({});
     });
 
@@ -262,6 +265,7 @@ describe("the Recurring charges page", () => {
     await recurringChargeEditRequests.add("c1", "t1");
     await recurringChargeEditRequests.remove("c1", "t2");
     await recurringChargeEditRequests.candidates("c1");
+    await recurringChargeEditRequests.candidates("c1", { amount: 2_500, before: "t9" });
 
     expect(sent).toEqual([
       'PUT /api/recurring-charges/c1 {"name":"Visible Wireless"}',
@@ -270,6 +274,7 @@ describe("the Recurring charges page", () => {
       'POST /api/recurring-charges/c1/transactions {"transactionId":"t1"}',
       "DELETE /api/recurring-charges/c1/transactions/t2",
       "GET /api/recurring-charges/c1/candidates",
+      "GET /api/recurring-charges/c1/candidates?amount=2500&before=t9",
     ]);
   });
 

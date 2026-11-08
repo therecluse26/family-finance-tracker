@@ -257,6 +257,7 @@ export {
   type CategoryConfidence,
   type CategoryRecord,
   type CategorySource,
+  clearCascadeCategories,
   type DecisionAccount,
   type DecisionRecord,
   inProportion,

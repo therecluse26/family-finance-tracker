@@ -58,6 +58,12 @@ export type RecurringChargeCandidateView = {
   removedByHand: boolean;
 };
 
+// One page of them, and whether older ones follow.
+export type RecurringChargeCandidatesView = {
+  candidates: RecurringChargeCandidateView[];
+  more: boolean;
+};
+
 // Steady Income (spec 05, Steady Income): the Household's regular Income per month, in whole
 // cents. `amount` is the figure in use: the typed one while a Member has one, else the detected
 // one.
@@ -95,8 +101,13 @@ export type RecurringRoutes = {
   deletePriceChange(id: string, changeId: string): Promise<RecurringChargeEditView>;
   addTransaction(id: string, transactionId: string): Promise<RecurringChargeEditView>;
   removeTransaction(id: string, transactionId: string): Promise<RecurringChargeEditView>;
-  // Undefined when no Recurring charge has the ID.
-  candidates(id: string): Promise<RecurringChargeCandidateView[] | undefined>;
+  // A page of them: those a Member removed first, then 50 at a time, newest first, at `amount` in
+  // whole cents spent, older than the Transaction `before`. Undefined when no Recurring charge has
+  // the ID; "no Transaction" when `before` is none of the Merchant's posted Spending.
+  candidates(
+    id: string,
+    filter: { amount?: number; before?: string },
+  ): Promise<RecurringChargeCandidatesView | "no Transaction" | undefined>;
   steadyIncome(): Promise<SteadyIncomeView>;
   // A typed figure in whole cents per month, or null to clear it.
   typeSteadyIncome(amount: number | null, memberId: string): Promise<SteadyIncomeView>;
