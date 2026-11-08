@@ -66,8 +66,7 @@ import {
 // The first AI run and the redo of no-AI work (spec 08, Runs that reuse these uses, Redo of no-AI
 // work; spec 03, AI decisions and the no-AI path), through the First run job, the AI back check and
 // the Redo no-AI work job, on Transactions the fake adapter syncs: the demo Household, or a few of
-// the test's own. The AI is AI SDK test models behind the real privacy filter. No test calls an AI
-// provider.
+// the test's own. The AI is AI SDK test models. No test calls an AI provider.
 
 const NOW = () => new Date("2026-11-20T14:00:00.000Z");
 const MEMBER = "member-1";

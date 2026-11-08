@@ -65,8 +65,7 @@ export type UnclearLoanPaymentAnswer = {
   confidence: "high" | "medium" | "low";
 };
 // It gets the clean Merchant name and no description. The lender is what a Member typed when
-// adding the Manual loan, so it may name a person; both go through the privacy filter, which
-// removes each Member's name.
+// adding the Manual loan, so it may name a person.
 export type UnclearLoanPaymentCandidate = {
   payment: {
     id: string;

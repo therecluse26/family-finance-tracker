@@ -25,8 +25,7 @@ import {
 
 // The AI request log (spec 08, AI request log): while a Member keeps it on, the text of each AI
 // call, as the AI provider got it and as the AI answered, for the kept days. The one AI call path
-// (src/ai/call.ts) hands each call to callLog through the cost middleware, after the privacy
-// filter. It is a table in app.db, never a log line: no log line here holds its text.
+// (src/ai/call.ts) hands each call to callLog through the cost middleware. It is a table in app.db, never a log line: no log line here holds its text.
 
 // Daily cleanup runs that may fail in a row before the cleanup stops. The log keeps no new text
 // while it is stopped.
@@ -62,7 +61,7 @@ export function cutText(text: string): { text: string; cut: boolean } {
   return { text: new TextDecoder().decode(bytes.subarray(0, end)), cut: true };
 }
 
-// The request as the app hands it to the AI provider, after the privacy filter, written as compact
+// The request as the app hands it to the AI provider, written as compact
 // JSON: the messages, the tools the AI may call, the tool choice, and the reply's schema. The
 // provider's own request has a different layout, but the JSON writes each text with the very
 // characters it sends. It leaves out the headers, which may hold a key, and the provider options,

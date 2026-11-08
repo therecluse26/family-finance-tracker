@@ -24,24 +24,11 @@ export type HouseholdFacts = HouseholdFactsInput & {
   updatedAt: Date;
 };
 
-// The mark that T78's privacy filter reads: a value that carries it is never sent to an AI
-// provider, in whole or in part (spec 01, Privacy). Every Household facts value carries it.
-export const NEVER_SENT_TO_AI: unique symbol = Symbol("never sent to an AI provider");
-
-export function isNeverSentToAi(value: unknown): boolean {
-  return typeof value === "object" && value !== null && NEVER_SENT_TO_AI in value;
-}
-
-function marked<T extends object>(value: T): T {
-  // Not enumerable, so the mark never reaches JSON or a copy made with spread.
-  return Object.defineProperty(value, NEVER_SENT_TO_AI, { value: true, enumerable: false });
-}
-
 export async function readHouseholdFacts(database: Database): Promise<HouseholdFacts | undefined> {
   const stored = await readStoredFacts(database);
   if (stored === undefined) return undefined;
   const { zipCode, ages, rentOrOwn, state, timeZone, updatedAt } = stored;
-  return marked({ zipCode, ages, rentOrOwn, state, timeZone, updatedAt });
+  return { zipCode, ages, rentOrOwn, state, timeZone, updatedAt };
 }
 
 // The Household time zone, or undefined until the wizard's step 4 is done.
@@ -118,7 +105,7 @@ export async function saveHouseholdFacts(
     log.info("A Member edited the Household facts");
     for (const listener of listeners) {
       try {
-        await listener({ previous, facts: marked({ ...facts }), memberId });
+        await listener({ previous, facts: { ...facts }, memberId });
       } catch (error) {
         // The error's name only: its message or stack can repeat a value from the listener.
         log.error("A Household facts listener failed", {
@@ -127,5 +114,5 @@ export async function saveHouseholdFacts(
       }
     }
   }
-  return { saved: marked(facts) };
+  return { saved: facts };
 }

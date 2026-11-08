@@ -116,14 +116,13 @@ The AI provider is optional. Core data works without it.
   | Service | When | What it gets |
   |---|---|---|
   | Bank-data provider (Plaid) | Each sync | Access tokens. It returns Accounts and Transactions. |
-  | AI provider, if set up | AI work | Summaries and Transaction batches, through the privacy filter ([AI](08-ai.md)) |
+  | AI provider, if set up | AI work | Summaries, Transaction batches, and Chat, as the app builds them ([AI](08-ai.md)) |
   | The Household's SMTP server, if set up | Email Alerts and System notices | The message |
   | Each Member's browser push service | Push Alerts and System notices | The message, encrypted by Web Push |
   | BLS API | CPI fetch | Nothing about the Household |
   | GitHub | Daily update check, which a Member can turn off | Nothing about the Household |
 
-- One privacy filter covers every AI call. Member names become "Member A" and "Member B". Account and card numbers are removed. The ZIP code and ages are never sent ([AI](08-ai.md)).
-- The filter is exact for text the app builds, and best effort for text a Member types, such as Chat messages ([AI](08-ai.md)).
+- The AI provider gets the Household's data as the app builds it, with no privacy filter (owner decision, 2026-11-07). The ZIP code and ages are never sent, nor any secret, key, or token ([AI](08-ai.md#what-the-ai-provider-gets)).
 - The app uses only AI providers and settings that do not train on API data or use it for ads ([AI](08-ai.md)).
 - The AI provider's API key still ties each request to the key owner's provider account.
 - The app has no analytics, usage tracking, or crash reporting.

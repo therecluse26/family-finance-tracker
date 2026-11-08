@@ -211,10 +211,9 @@ export const loginResets = sqliteTable(
   (table) => [index("login_resets_expires_at").on(table.expiresAt)],
 );
 
-// Each removed Member: the number of the label the AI knew them by, and their name (spec 09,
-// Members). Labels follow the order Members joined, "Member A" for number 0, and a removed
-// Member's number is never given again, so every other Member keeps their label. The screen shows
-// this name for the label in AI text from before the removal, such as a Chat answer.
+// Each removed Member: their label number and their name (spec 09, Members). Label numbers follow
+// the order Members joined, 0 for the first Member, and a removed Member's number is never given
+// again, so every other Member keeps theirs. Nothing reads the name but the data export.
 export const removedMembers = sqliteTable("removed_members", {
   labelNumber: integer("label_number").primaryKey(),
   name: text("name").notNull(),
@@ -651,7 +650,7 @@ export const AI_REQUEST_FAILURES = [
 ] as const;
 
 // The text of one AI call, kept only while the AI request log is on (spec 08, AI request log): the
-// request after the privacy filter, as the app hands it to the AI provider, and the reply as the
+// request as the app hands it to the AI provider, and the reply as the
 // AI wrote it. It never holds a key, a token, a header, or the base URL. Each text is cut at
 // 256 KB, and all rows together hold at most 100 MB. A call counted on the AI usage page links its
 // ai_calls row; a failed call that counted nothing has none. Deleting the call's Chat thread
@@ -1860,7 +1859,7 @@ export const proposalBudgets = sqliteTable(
 
 // The Household summary that today's Writer uses read (spec 08, Household summary): built before
 // the day's first Writer use, and kept for the rest of that day, Household time. It is app-built
-// text, before the privacy filter, which runs on each call. It has at most one row, whose ID is 1.
+// text. It has at most one row, whose ID is 1.
 export const householdSummary = sqliteTable(
   "household_summary",
   {
@@ -1988,7 +1987,7 @@ export const chatAlertThreads = sqliteTable(
 
 // The messages of a Chat thread, oldest first. A Member's message keeps the Member and their name
 // as it was then: a removed Member's messages keep their name (spec 09, Members). An AI message
-// holds the AI's answer with "Member A" labels, which the screen turns into names.
+// holds the AI's answer as it wrote it.
 export const chatMessages = sqliteTable(
   "chat_messages",
   {

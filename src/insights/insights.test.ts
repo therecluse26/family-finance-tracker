@@ -42,7 +42,7 @@ import {
 
 // Insight cards (spec 08, Insight cards; When AI does not run; Failures; Limits on each call),
 // through the daily Insight card check job and the follow-up job's last step: Transactions arrive
-// through the fake adapter, and the AI is AI SDK test models behind the real privacy filter, on a
+// through the fake adapter, and the AI is AI SDK test models, on a
 // fake clock. No test calls an AI provider. The Household is in New York: on Nov 4, 2026, 6 AM
 // there is 11:00 UTC.
 
@@ -612,9 +612,9 @@ describe("Insight cards", () => {
     await skipGoalAmount("Spend less on games", "Games");
 
     vi.setSystemTime(SIX);
-    // The AI names a Member by label; the card stores the name for the screen.
+    // The AI names a Member by name; the card stores the title as it wrote it.
     stub.reply = reply([
-      card(1, { title: "Member A's lunches add up", about: "Restaurants" }),
+      card(1, { title: "Dana Okafor's lunches add up", about: "Restaurants" }),
       ...cards(3),
     ]);
     await sync();
@@ -648,7 +648,7 @@ describe("Insight cards", () => {
       [
         "Feedback since the last Insight card run, on 2026-11-04:",
         "Cards a Member marked Done:",
-        "- Restaurants: Member A's lunches add up",
+        "- Restaurants: Dana Okafor's lunches add up",
         'Alerts a Member marked "Not a problem":',
         "- Large purchase Alert in Books from 2026-11-04, marked on 2026-11-04",
         "Proposals a Member accepted or skipped:",
@@ -658,10 +658,7 @@ describe("Insight cards", () => {
         "",
       ].join("\n"),
     );
-    // No Member name reaches the model, and no encoder escape puts a letter in the text.
-    const read = JSON.stringify(stub.prompts.at(-1));
-    expect(read).not.toContain("Dana");
-    expect(read).not.toContain("Okafor");
+    // No encoder escape puts a letter in the text.
     for (const text of userTexts(stub.prompts.at(-1) ?? [])) {
       expect(text).not.toMatch(/\\[A-Za-z]/);
     }

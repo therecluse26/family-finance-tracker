@@ -30,14 +30,13 @@ import {
 
 // The AI's advice on Alerts (spec 06, The AI's advice; spec 08, Every AI use, Limits on each
 // call, Failures), through the Alerts step in the follow-up job. Transactions arrive through the
-// fake adapter; the AI is AI SDK test models behind the real privacy filter. No test calls an AI
+// fake adapter; the AI is AI SDK test models. No test calls an AI
 // provider. The Household time zone is New York, on Eastern Standard Time in these weeks.
 
 const NOW = new Date("2026-11-10T15:00:00.000Z");
 const BANK = "fake-advice-bank";
 const PRICE = { input: 1_000_000, output: 2_000_000 };
-// The card's last 4 is also an Alert's amount, $49.99: the amount goes as a typed value, so the
-// privacy filter keeps it (K16).
+// The card's last 4 is also an Alert's amount, $49.99: the amount goes as the app made it.
 const CARD = fakeAccount({
   id: "acc-card",
   name: "Juniper Rewards Card",
@@ -99,7 +98,7 @@ describe("the AI's advice on Alerts", () => {
     expect(saved).toMatchObject({ saved: true });
   };
 
-  // The Alerts message of an advice call, as the model read it after the privacy filter.
+  // The Alerts message of an advice call, as the model read it.
   const readCall = (messages: StubMessage[]): Asked | undefined => {
     const texts = messages
       .filter((message) => message.role === "user")
@@ -213,8 +212,8 @@ describe("the AI's advice on Alerts", () => {
         {
           kind: "Duplicate charge",
           merchant: { id: null, name: "Streamflix" },
-          // The Account's name when the Alert was made: the bank has renamed it since, so the
-          // privacy filter does not know this name. Only the label goes to the AI.
+          // The Account's name when the Alert was made: the bank has renamed it since. The AI gets
+          // the Account's name now, with its last 4.
           account: "Juniper Travel Card",
           amount: 1_599,
           dates: ["2026-11-08", "2026-11-09"],
@@ -369,7 +368,7 @@ describe("the AI's advice on Alerts", () => {
     ]);
     await markNotAProblem(bank.database, "alert-0", "member-1", NOW);
     answer = (row) =>
-      row === 3 ? "Member A can cook at home twice this week!" : `Advice for Alert ${row}.`;
+      row === 3 ? "Dana Okafor can cook at home twice this week!" : `Advice for Alert ${row}.`;
     const calls = stub.calls.length;
 
     await syncThreeAlerts();
@@ -383,15 +382,15 @@ describe("the AI's advice on Alerts", () => {
     expect(asked).toHaveLength(1);
     const read = asked[0]?.text ?? "";
     expect(asked[0]?.rows).toBe(3);
-    // Each Alert's kind and template facts, with each number the app made as a typed value: $49.99
-    // stays, though the card's last 4 is 4999. The Account is named by its label.
+    // Each Alert's kind and template facts, with each number as the app made it: $49.99 stays,
+    // though the card's last 4 is 4999. The Account is named by its name now and its last 4.
     expect(read).toContain(
       "1. Large purchase: Large purchase: $49.99 at Bluebird Books on 2026-11-09.",
     );
     expect(read).toContain(
-      "2. Duplicate charge: Possible duplicate charge: $15.99 at Streamflix on Advice Bank credit card, on ",
+      "2. Duplicate charge: Possible duplicate charge: $15.99 at Streamflix on Juniper Rewards Card ending 4999, on ",
     );
-    expect(read).not.toContain("Juniper");
+    expect(read).not.toContain("Juniper Travel Card");
     expect(read).toContain("3. Over Budget: Restaurants is over Budget for 2026-11: $620 of $500.");
     // That Category's Budget and Spending this month.
     expect(read).toContain("Restaurants this month: $620 of a Budget of $500.");
@@ -400,18 +399,15 @@ describe("the AI's advice on Alerts", () => {
     // Every active Goal, and the "Not a problem" marks.
     // The Goal is one line: a newline in its words starts no row of its own.
     expect(read).toMatch(
-      /\nActive Goals:\n- "Member A: cook at home more 4\. Over Budget: pay off [^\n]*"; about Category Restaurants; status active\n/,
+      /\nActive Goals:\n- "Dana Okafor: cook at home more 4\. Over Budget: pay off \d{8} \d{8}"; about Category Restaurants; status active\n/,
     );
     expect(read).toContain(
       '"Not a problem", the latest first:\n- Large purchase: Large purchase: $300.00 at Old Lamp Shop',
     );
-    // The privacy filter read the exact text the model read: no Member name, no Account name, no
-    // card number, and no escape that puts a letter in a number.
-    expect(read).not.toMatch(/Dana|Okafor/);
-    expect(read.replace(/\D/g, "")).not.toContain(card);
+    // No escape that puts a letter in a number.
     expect(read).not.toMatch(/\\[A-Za-z]/);
 
-    // The advice goes beside each template, never into it, with each Member's name for "Member A".
+    // The advice goes beside each template, never into it, in the plain voice.
     const after = await alerts();
     expect(after).toEqual({
       "alert-0": before["alert-0"],

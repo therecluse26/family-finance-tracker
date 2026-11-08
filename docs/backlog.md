@@ -29,7 +29,7 @@ Small items left open after the T107 notes triage, for after the first release (
 - N47 (S, security) The API tests for T25's 409 answers do not assert by name that no token is in the body. In: src/server/connections-api.test.ts.
 - N64 (S, polish) A refused PO box ZIP code gets no hint to use the street-address ZIP code. In: src/server/api.ts.
 - N158 (S, polish) `src/server/app.ts`: the plain-HTTP install block sits between the jsonOnly comment and `jsonOnly`, so that comment describes the wrong code. In: src/server/app.ts.
-- N200 (S, polish) A host clock set back before a join can still shift Member labels (order by `created_at`); store the label number on the Member row at join. In: src/db/members.ts, schema migration.
+- N200 (S, polish) A host clock set back before a join can still shift Member label numbers, and so the first Member (order by `created_at`); store the label number on the Member row at join. In: src/db/members.ts, schema migration.
 - N202 (S, polish) Cancelling an invite leaves its pending TOTP secret (`invite-new-totp-<id>`) until the 10-minute expiry. In: src/db/invites.ts, src/auth/invites.ts.
 - N203 (S, polish) A right token's try counts against the limit while its request is in flight, so a wrong token at the same moment can be refused one try early. In: src/auth/ link-token tries.
 - N204 (S, security) No K18 test sends wrong tokens in parallel to the reset and invite routes (the cap holds in a probe). In: src/server/*-api.test.ts.
@@ -47,26 +47,17 @@ Small items left open after the T107 notes triage, for after the first release (
 - N233 (S, polish) An IP-address `APP_URL` over HTTPS offers passkeys that always fail (WebAuthn refuses an IP RP ID). In: src/auth/passkeys.ts, Settings page.
 - N234 (S, security) No parallel passkey sign-in test (a probe holds). In: passkeys-api.test.ts.
 
-## AI privacy filter and AI uses
+## AI uses
 
 - N82 (S, polish) `aiRetries.failed` reads then writes, so two failures at once can store the same count. In: src/ai/retries.ts.
 - N98 (S, polish) When every AI call fails, Merchant cleanup restarts its retry cycle in each later run (22 calls over about 3 hours, not about 8). In: src/ai/retries.ts.
-- N100 (S, security) A short glued name inside a longer word (`VENMOALLI`, under 6 letters) still reaches the AI. In: src/ai/privacy.ts.
-- N106 (S, cannot tell) When the filter finds a fact spread across a row's values, it also removes the row number, so the batch takes the no-AI path. In: src/ai/prompt.ts.
 - N124 (S, polish) A `get_totals` month row for a range that starts mid-month is named by its month though it holds only part of it. In: src/chat/totals.ts.
-- N145 (S, polish) The filter replaces an Account name found inside a Merchant name with its label ("Summit Auto Loan Pmt" becomes "Summit Summit Auto Finance auto Pmt"). In: src/ai/privacy.ts.
-- N146 (M, security) Member-typed filter gap: a Member name with a Cyrillic look-alike letter passes. In: src/ai/privacy.ts.
-- N147 (S, security) Member-typed filter gap: a single age in words with no age word before it ("fortyone", "ninth birthday") passes. In: src/ai/privacy.ts.
 - N153 (S, polish) The Proposal company list holds common words ("Discover", "Ally", "Chase", "Affirm", "Marcus", "Citizens", "Regions"), so legitimate Proposals ("Discover new restaurants", "an ally in saving") are refused. In: src/proposals/companies.ts.
 - N154 (S, security) Company check gaps: a Cyrillic look-alike letter and a short form of the Household's bank name ("Pinecrest" for "Pinecrest Credit Union") pass. In: src/proposals/companies.ts.
 - N172 (S, polish) `AiCall.facts` (T88) and T82's `{ role: "user", parts }` message build the same message; keep one path. In: src/ai/prompt.ts, src/tailoring/.
-- N177 (S, polish) Emoji can make streamed Chat text differ slightly from reloaded text (no label leak in 36 runs). In: src/chat/.
-- N179 (S, security) The drafted "Ask about this" question is app-made text sent on the Member-typed (best effort) filter path. In: src/chat/.
-- N201 (S, security) Glued names of two Members ("BobCarol") are not replaced by the privacy filter. In: src/ai/privacy.ts.
+- N177 (S, polish) Emoji can make streamed Chat text differ slightly from reloaded text. In: src/chat/.
 - N214 (S, polish) The `FOLLOW_UP_AI_USES` comment in `src/ai/retries.ts` is stale (Insight cards now also run from the 6 AM check, not only the follow-up job). In: src/ai/retries.ts.
-- N250 (S, security) `src/ai/every-use.test.ts` sends no loan-payment row, so the Member-written `lender` field is never scanned by the every-use test. In: src/ai/every-use.test.ts.
 - N251 (S, polish) The every-use test counts AI uses by name; a new path reusing a use name would not fail it. In: src/ai/every-use.test.ts.
-- N253 (S, polish) `rowOrText` could say in a comment why the last-4 check at a typed value's edge cannot fire in a batch row. In: src/ai/privacy.ts.
 
 ## Bank data and sync
 
@@ -162,7 +153,6 @@ Small items left open after the T107 notes triage, for after the first release (
 - N175 (S, cannot tell) A Tailoring run can follow a first draft that had an AI provider when `tailorFirstDraft` threw a non-AI error. In: src/tailoring/runs.ts.
 - N182 (S, polish) A crash or restart during the Monthly review Writer call, or a throw from `storeMonthlyReviewReply`, leads to a second paid call, since nothing marks that a call went out. In: src/monthly-review/, src/db/monthly-review-runs.ts.
 - N183 (S, polish) During an AI pause, the hourly re-check rebuilds the Household summary each time (Budget tailoring does the same). In: src/monthly-review/, src/tailoring/.
-- N184 (S, polish) Habit picture Merchant names keep "Member A" labels, so such a picture is not drawn. In: src/monthly-review/writing.ts.
 - N189 (S, polish) The redo's Matching run may store "found in history" Alerts that are never sent (normal decided-again path); the review asked only for a comment. In: src/redo/.
 - N210 (S, polish) No in-code guard against two Insight card runs at once. In: src/jobs/, src/insights/.
 - N211 (S, polish) Before the first Insight card run, the "new posted Transaction" query has no lower bound (`posted_seen_at IS NOT NULL`). In: src/db/insight-cards.ts.
@@ -214,7 +204,6 @@ Small items left open after the T107 notes triage, for after the first release (
 - N164 (S, polish) Spec 10: "The one other use" should read "The one other use in code" (the migration pair is also a use). In: spec 10.
 - N191 (S, polish) Undo of an accepted redraft keeps its inputs recorded, so the trigger does not repeat (matches Skip; spec 05 silent). In: spec 05.
 - N227 (S, polish) Spec 05 says the days of history run "to the day the app computes", but the code counts to the day m's figure is set (the day before the 1st for the Month start). In: spec 05.
-- N252 (S, polish) Spec 08's "data, not instructions" sentence sits under "Prompt order and caching"; may belong under "Privacy filter". In: spec 08.
 - N277 (S, polish) Spec 02's first sentence says raw data holds no personal detail, which contradicts the D20 line that keeps `verification_name`. In: docs/spec/02.
 
 ## Tests

@@ -4,7 +4,6 @@ import {
   type AiPause,
   type AiReply,
   type HouseholdAi,
-  PrivacyRefusal,
   type SummaryPart,
   typedDate,
 } from "../ai/index.ts";
@@ -58,7 +57,7 @@ export const GOAL_READING_TASK = [
 ].join("\n");
 
 // One Account or loan the call lists, by its row number.
-type ListedAccount = { id: string; label: string; loan: boolean };
+type ListedAccount = { id: string; name: string; loan: boolean };
 
 const isRealDate = (date: string) => {
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -128,8 +127,8 @@ type ReadingReply = z.infer<ReturnType<typeof goalReadingReply>>;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it replaces.
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 
-// A Goal's words as stored and sent: one well-formed line, with a space for each control character,
-// so the privacy filter reads the characters the AI reads. Empty when the Member wrote nothing.
+// A Goal's words as stored and sent: one well-formed line, with a space for each control character.
+// Empty when the Member wrote nothing.
 export const goalWords = (words: string) =>
   words.toWellFormed().replace(CONTROL, " ").replace(/ {2,}/g, " ").trim();
 
@@ -139,7 +138,7 @@ export type GoalSaveRefusal =
   // The words give a deadline before today, so nothing is stored: the Member writes a later one.
   | { refused: "past deadline" }
   | { refused: "paused"; pause: AiPause }
-  | { refused: "failed"; failure: AiFailure | "privacy" };
+  | { refused: "failed"; failure: AiFailure };
 
 export type GoalWriting = {
   // Why a reading would pause now, such as "no AI provider" or "waits for history", or undefined.
@@ -160,7 +159,7 @@ export type GoalWriting = {
 
 export type GoalWritingOptions = {
   database: Database;
-  ai: Pick<HouseholdAi, "generate" | "pauseFor" | "accountLabels" | "forScreen">;
+  ai: Pick<HouseholdAi, "generate" | "pauseFor" | "accountNames" | "forScreen">;
   // Budget tailoring's Goal run for the Goal (src/tailoring, requestGoalTailoring), which makes the
   // Goal's Proposals.
   requestGoalRun: (goalId: string) => Promise<unknown>;
@@ -193,16 +192,16 @@ export function goalWriting(options: GoalWritingOptions): GoalWriting {
     if (index >= 0) started.set(memberId, times.toSpliced(index, 1));
   }
 
-  // The Accounts and loans the call lists, open ones only, each by its label, such as "Ally
-  // checking": never its name, which may name a Member.
+  // The Accounts and loans the call lists, open ones only, each by its name as the AI reads it,
+  // such as "Everyday Checking ending 1234".
   async function listed(): Promise<ListedAccount[]> {
-    const labels = await ai.accountLabels();
+    const names = await ai.accountNames();
     return (await listAccounts(database))
       .filter((account) => account.closedAt === null)
       .slice(0, MAX_ACCOUNTS)
       .map((account) => ({
         id: account.id,
-        label: labels.get(account.id) ?? "Account",
+        name: names.get(account.id) ?? "Account",
         loan: account.kind === "loan",
       }));
   }
@@ -239,8 +238,8 @@ export function goalWriting(options: GoalWritingOptions): GoalWriting {
     };
   }
 
-  // The one Quick-tier call: today's date and the Accounts and loans as app-built facts, with the
-  // date as a typed value, then the Member's words as typed text.
+  // The one Quick-tier call: today's date and the Accounts and loans as app-built facts, then the
+  // Member's words.
   async function read(
     words: string,
     sendAnyway: boolean,
@@ -254,28 +253,21 @@ export function goalWriting(options: GoalWritingOptions): GoalWriting {
       ...(accounts.length === 0
         ? ["\n- None."]
         : accounts.map(
-            (account, index) => `\n${index + 1}. ${account.label}${account.loan ? " (loan)" : ""}`,
+            (account, index) => `\n${index + 1}. ${account.name}${account.loan ? " (loan)" : ""}`,
           )),
     ];
-    let reply: AiReply<ReadingReply>;
-    try {
-      reply = await ai.generate(
-        {
-          use: "reading a goal",
-          task: GOAL_READING_TASK,
-          changes: [
-            { role: "user", parts: facts },
-            { role: "user", text: words, typed: true },
-          ],
-          output: goalReadingReply(accounts),
-        },
-        { sendAnyway },
-      );
-    } catch (error) {
-      if (!(error instanceof PrivacyRefusal)) throw error;
-      log.warn("The privacy filter refused a Goal's reading");
-      return { refused: "failed", failure: "privacy" };
-    }
+    const reply: AiReply<ReadingReply> = await ai.generate(
+      {
+        use: "reading a goal",
+        task: GOAL_READING_TASK,
+        changes: [
+          { role: "user", parts: facts },
+          { role: "user", text: words },
+        ],
+        output: goalReadingReply(accounts),
+      },
+      { sendAnyway },
+    );
     if (reply.ready) {
       const { deadline } = reply.output;
       if (deadline !== null && deadline < today) return { refused: "past deadline" };
@@ -302,8 +294,8 @@ export function goalWriting(options: GoalWritingOptions): GoalWriting {
   }
 
   // Reads the words with the Member's place taken, then stores them. The place goes back when no
-  // call went out: a pause before the call, or the privacy filter's refusal. A "key rejected" pause
-  // is the provider's answer to a call, unless the key was rejected before this save.
+  // call went out: a pause before the call. A "key rejected" pause is the provider's answer to a
+  // call, unless the key was rejected before this save.
   async function readAndStore(
     memberId: string,
     place: number,
@@ -315,9 +307,7 @@ export function goalWriting(options: GoalWritingOptions): GoalWriting {
     const found = await read(words, sendAnyway);
     if ("refused" in found) {
       const sent =
-        found.refused === "paused"
-          ? found.pause === "key rejected" && !rejectedBefore
-          : !("failure" in found && found.failure === "privacy");
+        found.refused !== "paused" || (found.pause === "key rejected" && !rejectedBefore);
       if (!sent) release(memberId, place);
       if (found.refused === "failed") log.info("A Goal's reading failed", { why: found.failure });
       return found;

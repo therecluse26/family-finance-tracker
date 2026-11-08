@@ -40,8 +40,7 @@ describe("the Quick tier's link decisions", () => {
   const connections = new Map<string, string>();
 
   // Checking and savings at Maple, a card at Birch, and a card at Cedar. Each keeps the fake
-  // adapter's two-word name, such as "Account birch-card", which the privacy filter replaces with
-  // its label wherever it finds it.
+  // adapter's two-word name, such as "Account birch-card".
   const CHECKING = fakeAccount({ id: "maple-checking", mask: "1111" });
   const SAVINGS = fakeAccount({ id: "maple-savings", subtype: "savings", mask: "2222" });
   const CARD = fakeAccount({ id: "birch-card", type: "credit", subtype: "credit card" });
@@ -496,7 +495,7 @@ describe("the Quick tier's link decisions", () => {
       expect((await itemsOf(POSSIBLE_PAYMENT_KIND)).length).toBe(1);
     });
 
-    it("never sends a Member's name in the lender a Member typed", async () => {
+    it("sends the lender a Member typed as they typed it", async () => {
       await sync({
         added: [
           payment("aug", "2026-08-01", {
@@ -517,11 +516,7 @@ describe("the Quick tier's link decisions", () => {
       });
 
       expect(asked.loans).toHaveLength(1);
-      const read = JSON.stringify(sent)
-        .toLowerCase()
-        .replace(/[^a-z]/g, "");
-      expect(read).not.toContain("avery");
-      expect(read).not.toContain("parkfamily");
+      expect(JSON.stringify(sent)).toContain("AveryPark Family Loan");
     });
   });
 
@@ -988,7 +983,7 @@ describe("the Quick tier's link decisions", () => {
     });
   });
 
-  it("keeps an amount whose digits are an Account's last 4, and removes that last 4 from text", async () => {
+  it("sends an amount and a description whose digits are an Account's last 4 as they are", async () => {
     // A savings Account at Cedar whose last 4 are the digits of the pair's amount.
     bank.fake.addPages("cedar", {
       accounts: [
@@ -1010,7 +1005,7 @@ describe("the Quick tier's link decisions", () => {
           row: 1,
           out_date: "2026-10-05",
           out_amount: "48.21",
-          out_description: "ONLINE DEBIT REF [removed]",
+          out_description: "ONLINE DEBIT REF 4821",
           in_date: "2026-10-06",
           in_amount: "48.21",
         }),
@@ -1019,7 +1014,7 @@ describe("the Quick tier's link decisions", () => {
     for (const text of sent.flat()) expect(text).not.toMatch(/\\[a-zA-Z]/);
   });
 
-  it("sends no card number, Member name, or escape the model reads differently", async () => {
+  it("sends each description with each control character as a space, and no escape the model reads differently", async () => {
     pairAnswer = () => ({ answer: "no", confidence: "low" });
     await sync({
       added: [
@@ -1031,9 +1026,10 @@ describe("the Quick tier's link decisions", () => {
     });
 
     expect(asked.pairs).toHaveLength(1);
-    const texts = sent.flat().join("\n");
-    expect(texts.replace(/\D/g, "")).not.toContain("4111111111111111");
-    expect(texts.toLowerCase().replace(/[^a-z]/g, "")).not.toContain("averypark");
+    expect(asked.pairs[0]?.[0]).toMatchObject({
+      out_description: "TFR TO CARD 4111 1111 1111 1111 AVERY PARK",
+      in_description: "PAYMENT THANK YOU AveryPark",
+    });
     for (const text of sent.flat()) expect(text).not.toMatch(/\\[a-zA-Z]/);
     expect(await readTransactionDetail(bank.database, await idOf("maple-out"))).toBeDefined();
   });

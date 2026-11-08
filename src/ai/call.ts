@@ -19,13 +19,7 @@ import {
   type UIMessageChunk,
   wrapLanguageModel,
 } from "ai";
-import {
-  type Database,
-  listAccounts,
-  listMembersByJoinOrder,
-  listRemovedMembers,
-} from "../db/index.ts";
-import { readHouseholdFacts } from "../household/index.ts";
+import type { Database } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { AiProviderName, AiTier, ModelCheck, TierModels } from "./ai-view.ts";
 import {
@@ -35,7 +29,6 @@ import {
   type OutboundCall,
   STREAM_CUT,
 } from "./outbound.ts";
-import { type PrivacyFacts, PrivacyRefusal, privacyFilter } from "./privacy.ts";
 import {
   type AiCall,
   type AiTools,
@@ -52,13 +45,13 @@ import {
   webSearchTools,
 } from "./providers.ts";
 import { callLog, type KeptFailure } from "./request-log.ts";
+import { plainVoice } from "./voice.ts";
 
-// The one AI call path (spec 08, Privacy filter; spec 10, Module seams: `ai`). Every model the app
-// calls is made here, and each one sends every request first through the privacy filter, then
-// through its cost gate, and counts its cost from the reply, whatever calls it: a one-shot prompt,
-// a Chat turn, or a tool loop that sends tool results back. Only this file imports the AI SDK's
-// call functions (src/seams.test.ts). If the filter cannot decide, or cannot read what it hides,
-// the request does not go out, and nothing is counted.
+// The one AI call path (spec 10, Module seams: `ai`). Every model the app calls is made here, and
+// each one sends every request through its cost gate, and counts its cost from the reply, whatever
+// calls it: a one-shot prompt, a Chat turn, or a tool loop that sends tool results back. Only this
+// file imports the AI SDK's call functions (src/seams.test.ts). The AI provider gets Household
+// data as the app builds it (spec 08, What the AI provider gets).
 
 // Spec 08, Failures: no reply within 120 seconds is an AI error.
 const CALL_TIMEOUT_MS = 120_000;
@@ -75,35 +68,7 @@ const TOOL_FAILED = { error: "The lookup failed." };
 // What the AI reads for a call past the 5th. The tool does not run.
 const NO_MORE_TOOLS = { error: "No more lookups for this question." };
 
-// What the filter hides, read fresh for each request, so a new Member or Account counts at once.
-export async function readPrivacyFacts(database: Database): Promise<PrivacyFacts> {
-  const [members, removedMembers, accounts, facts] = await Promise.all([
-    listMembersByJoinOrder(database),
-    listRemovedMembers(database),
-    listAccounts(database),
-    readHouseholdFacts(database),
-  ]);
-  return {
-    members,
-    removedMembers,
-    accounts: accounts.map(({ id, name, memberName, institutionName, kind, subtype, mask }) => ({
-      id,
-      name,
-      memberName,
-      institutionName,
-      kind,
-      subtype,
-      mask,
-    })),
-    zipCode: facts?.zipCode,
-    ages: facts?.ages ?? [],
-  };
-}
-
-// The privacy filter as the outer middleware, then the cost gate and count (src/ai/outbound.ts).
-// The AI SDK runs the first middleware's transformParams first, so a request the filter refuses
-// never reaches the gate, the AI provider, the count, or the AI request log, and the count and the
-// log see only the filtered request that really goes out.
+// The cost gate and count (src/ai/outbound.ts), with the AI request log, around each model.
 function privateModel(
   model: LanguageModel,
   database: Database,
@@ -112,17 +77,11 @@ function privateModel(
   if (typeof model === "string") throw new TypeError("A model is never a plain model-ID string.");
   return wrapLanguageModel({
     model,
-    middleware: [
-      {
-        transformParams: async ({ params }) =>
-          privacyFilter(await readPrivacyFacts(database)).params(params),
-      },
-      costMiddleware(counted, callLog(database, counted, keptFailureOf)),
-    ],
+    middleware: costMiddleware(counted, callLog(database, counted, keptFailureOf)),
   });
 }
 
-// The Household's models, each behind the privacy filter and then the cost gate, and counted as
+// The Household's models, each behind the cost gate, and counted as
 // `countedAs` says for its tier. Only this file builds models: the AI provider packages' models
 // from makeFetchModels, or a test's models from `makeModels` (src/seams.test.ts).
 export function privateModels(
@@ -220,7 +179,7 @@ function networkCode(error: unknown): boolean {
 }
 
 // The failure an error stands for, or undefined for an error that is not the AI provider's, such
-// as a privacy refusal, a paused gate, or a database error, which the call path throws on.
+// as a paused gate or a database error, which the call path throws on.
 function callErrorOf(error: unknown): AiCallError | undefined {
   const last = RetryError.isInstance(error) ? error.lastError : error;
   if (APICallError.isInstance(last)) {
@@ -300,9 +259,8 @@ export async function testModel(
   }
 }
 
-// The AI SDK's tools for a call's tools. Each result goes out as plain JSON data, which the privacy
-// filter reads on its way out, like every other part of the request. `ran` counts the tools run for
-// this question: past the 5th, a call gets a fixed reply and runs nothing.
+// The AI SDK's tools for a call's tools. Each result goes out as plain JSON data. `ran` counts the
+// tools run for this question: past the 5th, a call gets a fixed reply and runs nothing.
 function toolSet(tools: AiTools, ran: { count: number }): ToolSet {
   return Object.fromEntries(
     Object.entries(tools).map(([name, each]) => [
@@ -410,39 +368,25 @@ export async function callModel<OUTPUT>(
   }
 }
 
-// How a streamed answer ended: with the AI's whole text, as it wrote it, with "Member A" labels;
-// with an AI error or a rejected key; paused by its gate between rounds, such as at the AI cost
-// cap; or refused by the privacy filter, so its request did not go out. `sent` is whether an
-// earlier round of the same answer went out, such as the round with the Member's question.
+// How a streamed answer ended: with the AI's whole text, as it wrote it; with an AI error or a
+// rejected key; or paused by its gate between rounds, such as at the AI cost cap.
 export type StreamEnd =
   | { answered: string }
   | { failed: AiFailure | "key rejected" }
-  | { paused: AiPause }
-  | { refused: true; sent: boolean };
+  | { paused: AiPause };
 
 // What ends a streamed answer that failed. An error that is none of these, such as a database
 // error in a gate, counts as a server error: a stream cannot throw to its route.
-function streamEndOf(error: unknown, timedOut: boolean, sent: boolean): StreamEnd {
+function streamEndOf(error: unknown, timedOut: boolean): StreamEnd {
   if (timedOut) return { failed: "timeout" };
   if (error instanceof AiPausedError) return { paused: error.pause };
-  if (error instanceof PrivacyRefusal) return { refused: true, sent };
   return { failed: callErrorOf(error)?.failure ?? "server error" };
 }
 
-// Where AI text so far may be cut for the screen: after its last whitespace, and before a "Member"
-// that a label's letters may still follow. What comes after waits for more text.
-function screenCut(text: string): number {
-  let cut = text.length;
-  while (cut > 0 && !/\s/u.test(text[cut - 1] ?? "")) cut -= 1;
-  const label = /[Mm]ember\s*$/u.exec(text.slice(0, cut));
-  return label === null ? cut : label.index;
-}
-
-// AI text as the screen shows it while it streams. `screen` turns the text so far into the
-// screen's words, such as a Member's name in place of "Member A". Each new piece of text sends
-// only what the screen shows past what it showed before, so a label split over two pieces is never
-// sent half turned.
-function screenedText(screen: (aiText: string) => string) {
+// AI text in the one plain voice as it streams (src/ai/voice.ts). The voice reads the spaces around
+// an emoji, so the text so far is shown up to its last whitespace, and what comes after waits for
+// more text. Each new piece sends only what is shown past what was shown before.
+function voicedText() {
   let aiText = "";
   let shown = "";
   const past = (next: string) => {
@@ -451,29 +395,31 @@ function screenedText(screen: (aiText: string) => string) {
     shown = next;
     return added;
   };
+  const lastSpace = (text: string) => {
+    let cut = text.length;
+    while (cut > 0 && !/\s/u.test(text[cut - 1] ?? "")) cut -= 1;
+    return cut;
+  };
   return {
     add(delta: string): string {
       aiText += delta;
-      return past(screen(aiText.slice(0, screenCut(aiText))));
+      return past(plainVoice(aiText.slice(0, lastSpace(aiText))));
     },
-    end: () => past(screen(aiText)),
+    end: () => past(plainVoice(aiText)),
     text: () => aiText,
   };
 }
 
 // Chat's answer as it streams (spec 08, Answers): one model round, then one more for each round
 // of tool calls, with callModel's 5-call cap, 120-second limit, and no retry. The browser gets
-// the answer's text as the screen shows it, through @ai-sdk/react's message stream, and nothing
+// the answer's text in the one plain voice, through @ai-sdk/react's message stream, and nothing
 // else: no tool call, no tool result, no reasoning. The answer runs to its end even when the
 // browser leaves, and `ended` runs once, before the stream's last part. It returns the words the
 // browser shows for a failure, or undefined when the answer stands.
 export function streamModel(
   model: LanguageModel,
   call: AiCall<undefined>,
-  hooks: {
-    screen: (aiText: string) => string;
-    ended: (end: StreamEnd) => Promise<string | undefined>;
-  },
+  hooks: { ended: (end: StreamEnd) => Promise<string | undefined> },
 ): Response {
   if (call.output !== undefined) throw new TypeError("A streamed answer is text.");
   const prompt = buildPrompt(call);
@@ -496,7 +442,7 @@ export function streamModel(
     // Errors come as parts of the stream, which answer() reads.
     onError: () => {},
   });
-  const text = screenedText(hooks.screen);
+  const text = voicedText();
   let left = false;
   let send: (chunk: UIMessageChunk) => void = () => {};
   let textStarted = false;
@@ -510,13 +456,9 @@ export function streamModel(
   async function answer(): Promise<void> {
     let failure: unknown;
     let failed = false;
-    // Whether a round went out and its answer came back.
-    let sent = false;
     try {
       for await (const part of result.fullStream) {
-        if (part.type === "finish-step") {
-          sent = true;
-        } else if (part.type === "text-start" && /\S$/u.test(text.text())) {
+        if (part.type === "text-start" && /\S$/u.test(text.text())) {
           // Each round's text starts a new paragraph.
           sendText(text.add("\n\n"));
         } else if (part.type === "text-delta") {
@@ -533,7 +475,7 @@ export function streamModel(
       clearTimeout(timer);
     }
     const end: StreamEnd = failed
-      ? streamEndOf(failure, timeout.signal.aborted, sent)
+      ? streamEndOf(failure, timeout.signal.aborted)
       : { answered: text.text() };
     const words = await hooks.ended(end);
     if (words !== undefined) {

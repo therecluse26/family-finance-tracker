@@ -686,7 +686,7 @@ describe("Goal progress", () => {
       (
         await householdSummary({
           database: bank.database,
-          ai: { accountLabels: async () => new Map(), memberLabels: async () => new Map() },
+          ai: { accountNames: async () => new Map(), memberNames: async () => new Map() },
           now: () => clock,
         }).today()
       ).text;

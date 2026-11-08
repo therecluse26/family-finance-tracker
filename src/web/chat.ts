@@ -17,9 +17,9 @@ export const INPUT_PLACEHOLDER = "Ask about your money…";
 export const WAITS_FOR_HISTORY = "Chat opens when your history has loaded.";
 export const SEND_ANYWAY = "Send anyway?";
 export const DROPPED_LINE = "Messages above this line are no longer sent to the AI.";
-// The owner's privacy rule for what a Member types (spec 08, Privacy filter).
+// What Chat sends (spec 08, What the AI provider gets).
 export const PRIVACY_NOTICE =
-  "What you type goes to your AI provider. The app hides names and numbers it spots, but not all of them.";
+  "Chat sends your Household's data and your messages to the AI provider.";
 
 // The note "Ask about this" attaches: its kind, ID, and title, which the drafted question names.
 export type AskAbout = { kind: Exclude<ChatNoteKindView, "Alert">; id: string; title: string };

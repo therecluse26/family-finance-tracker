@@ -1,8 +1,7 @@
 import type { JSONValue, ModelMessage, TextPart } from "ai";
 import * as z from "zod";
 import { type ModelUse, USE_TIERS } from "./ai-view.ts";
-import { MEMBER_TYPED, TYPED_PART } from "./privacy.ts";
-import { type TypedValue, typedValueOf } from "./typed.ts";
+import type { TypedValue } from "./typed.ts";
 import { FIXED_RULES } from "./voice.ts";
 
 // How the one AI call path shapes each prompt (spec 08, Prompt order and caching; Limits on each
@@ -10,29 +9,20 @@ import { FIXED_RULES } from "./voice.ts";
 // then anything that changes. The use sets the reply's token limit and where the cache mark goes.
 // No caller sets either.
 
-// One message of a call. Attached notes travel inside a message's text. `typed` marks text a
-// Member wrote, such as a Chat message, a note a Member wrote, or an earlier AI reply in a Chat's
-// history: the privacy filter does its best on it, but never refuses the call over it (spec 08,
-// Privacy filter). Without it, the text is app-built, and the filter's final check reads it. A
-// typed message never holds app-built text. An app-built user message may come as `parts` instead,
-// as the Household summary does, so each number the app made goes as a typed value, such as an
-// Alert's amounts in Alert advice.
+// One message of a call. Attached notes travel inside a message's text. An app-built user message
+// may come as `parts` instead, as the Household summary does, such as an Alert's facts in Alert
+// advice.
 export type AiMessage =
-  | { role: "user" | "assistant"; text: string; typed?: boolean }
+  | { role: "user" | "assistant"; text: string }
   | { role: "user"; parts: readonly SummaryPart[] };
 
 // One piece of the Household summary: app-built text, or a number the app made, such as an amount
-// or a date, as a typed value (src/ai/typed.ts). The privacy filter reads each text and keeps each
-// typed value as it is, so the AI reads "49.99" as the app built it, even when an Account's last 4
-// is 4999. The AI reads the pieces as one text, in order.
+// or a date (src/ai/typed.ts). The AI reads the pieces as one text, in order.
 export type SummaryPart = string | TypedValue;
 
 // One Transaction of a Quick batch, as plain fields, such as its Merchant, amount, and date. It
-// never holds the Transaction's ID: the AI answers each by its row number in the batch. Each
-// amount, date, and count the app made is a typed value (src/ai/typed.ts), so the privacy filter
-// keeps it as the app built it, as in a tool's result: the AI reads "48.21" even when an Account's
-// last 4 is 4821. Text, such as a bank description, still goes through the full filter.
-export type BatchItem = Readonly<Record<string, string | number | boolean | null | TypedValue>>;
+// never holds the Transaction's ID: the AI answers each by its row number in the batch.
+export type BatchItem = Readonly<Record<string, string | number | boolean | null>>;
 
 // The schema a structured reply must pass. Optional fields are .nullable(), never .optional(), for
 // OpenAI's strict mode. Counts, such as "4 to 7 cards", are part of it.
@@ -44,11 +34,9 @@ export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 // - task: what this use asks, which stays the same from call to call, such as the instructions
 //   and the fixed Category list. App-built.
 // - batch: a Quick batch's Transactions, at most 100. Each goes out as its own text, a JSON object
-//   with its row number in the batch, so the privacy filter reads each on its own and a removal
-//   never joins two rows.
+//   with its row number in the batch.
 // - facts: app-built facts this call needs past the summary, as pieces, such as Budget tailoring's
-//   figures. Each number the app made goes as a typed value, as in the summary. It comes after the
-//   task and any batch, as one user message.
+//   figures. It comes after the task and any batch, as one user message.
 // - note: for Chat, the note a thread was started from with "Ask about this", as pieces, as the
 //   summary may be. It goes after the task, before the turns.
 // - changes: anything else that changes, such as Alert facts, feedback, or a Chat's turns.
@@ -74,10 +62,9 @@ export type AiCall<OUTPUT = undefined> = {
   responseFormat?: never;
 };
 
-// One tool the AI may call. The privacy filter's final check skips each tool's input schema, so its
-// description and input schema are built only from constants in the code, such as the fixed
-// Category list, never from Household data. `run` checks its input against the schema, and answers
-// with plain JSON data that the call path makes plain and the privacy filter reads on its way out.
+// One tool the AI may call. Its description and input schema are built only from constants in the
+// code, such as the fixed Category list, never from Household data. `run` checks its input against
+// the schema, and answers with plain JSON data that the call path makes plain.
 export type AiTool = {
   description: string;
   input: z.ZodObject;
@@ -166,7 +153,7 @@ const CALL_KEYS: ReadonlySet<string> = new Set([
   "output",
   "tools",
 ]);
-const MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "text", "typed"]);
+const MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "text"]);
 const PARTS_MESSAGE_KEYS: ReadonlySet<string> = new Set(["role", "parts"]);
 const TOOL_KEYS: ReadonlySet<string> = new Set(["description", "input", "run"]);
 // A tool's name, as every AI provider takes it.
@@ -194,20 +181,13 @@ const isTextMessage = (message: object): boolean =>
   "role" in message &&
   (message.role === "user" || message.role === "assistant") &&
   "text" in message &&
-  typeof message.text === "string" &&
-  (!("typed" in message) || message.typed === undefined || typeof message.typed === "boolean");
-
-// A typed value made in src/ai/typed.ts, in its form.
-function isTypedValue(value: unknown): boolean {
-  try {
-    return typedValueOf(value) !== undefined;
-  } catch {
-    return false;
-  }
-}
+  typeof message.text === "string";
 
 const isParts = (parts: unknown): boolean =>
-  Array.isArray(parts) && parts.every((part) => typeof part === "string" || isTypedValue(part));
+  Array.isArray(parts) &&
+  parts.every(
+    (part) => typeof part === "string" || (typeof part === "number" && Number.isFinite(part)),
+  );
 
 const isSummary = (summary: unknown): boolean => typeof summary === "string" || isParts(summary);
 
@@ -219,9 +199,7 @@ const isBatchItem = (item: unknown): item is BatchItem =>
     ([field, value]) =>
       field !== "row" &&
       !ID_FIELD.test(field) &&
-      (value === null ||
-        ["string", "number", "boolean"].includes(typeof value) ||
-        isTypedValue(value)),
+      (value === null || ["string", "number", "boolean"].includes(typeof value)),
   );
 
 // Whether every object in a JSON schema lists each of its fields as required: an optional field
@@ -336,25 +314,10 @@ const userText = (text: string, cached: boolean): ModelMessage => ({
   ...(cached ? { providerOptions: CACHE_MARK } : {}),
 });
 
-// The Household summary, or another app-built message given as parts, as one user message. Given
-// as pieces, each text is a text part, and each typed value a text part of its bare value with the
-// filter's mark, which the filter takes off.
+// The Household summary, or another app-built message given as parts, as one user text: its pieces
+// joined, each number as its text.
 function summaryMessage(summary: string | readonly SummaryPart[], cached: boolean): ModelMessage {
-  if (typeof summary === "string") return userText(summary, cached);
-  return {
-    role: "user",
-    content: summary.flatMap((part): TextPart[] => {
-      if (typeof part === "string") return part === "" ? [] : [{ type: "text", text: part }];
-      return [
-        {
-          type: "text",
-          text: String(typedValueOf(part)),
-          providerOptions: { privacyFilter: { [TYPED_PART]: part as unknown as JSONValue } },
-        },
-      ];
-    }),
-    ...(cached ? { providerOptions: CACHE_MARK } : {}),
-  };
+  return userText(typeof summary === "string" ? summary : summary.map(String).join(""), cached);
 }
 
 // Every control character, and the line and paragraph separators.
@@ -365,8 +328,7 @@ const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 const plainField = (text: string) => text.toWellFormed().replace(CONTROL, " ");
 
 // JSON data as the AI reads it, such as a tool's result: each text and field name well-formed, with
-// a space for each control character. Its JSON then holds no escape but \" and \\, so the privacy
-// filter reads the characters the AI reads. Anything but JSON data is refused.
+// a space for each control character. Anything but JSON data is refused.
 export function plainData(value: unknown): unknown {
   if (typeof value === "string") return plainField(value);
   if (value === null || typeof value === "boolean") return value;
@@ -383,51 +345,14 @@ export function plainData(value: unknown): unknown {
   throw new TypeError("A tool answers with plain JSON data.");
 }
 
-// Whether JSON text holds an escape other than \" and \\, such as \n, which the AI reads as another
-// character than the privacy filter read.
-export const holdsOtherEscape = (json: string) => json.replace(/\\[\\"]/g, "").includes("\\");
-
-// A Quick batch with each text value filtered on its own, before any row is written as JSON (spec
-// 08, Privacy filter). A removal then never takes a row number, a field name, or the next field
-// with it, so each row stays one JSON object with its own row number. Each value is made plain
-// first, so the filter reads the characters the AI reads. A typed value passes as it is, as in the
-// filter's json. The call path filters the whole request again on its way out.
-export function filterBatch<OUTPUT>(
-  call: AiCall<OUTPUT>,
-  filter: (text: string) => string,
-): AiCall<OUTPUT> {
-  checkCall(call);
-  if (call.batch === undefined) return call;
-  return {
-    ...call,
-    batch: call.batch.map((item) =>
-      Object.fromEntries(
-        Object.entries(item).map(([field, value]) => [
-          field,
-          typeof value === "string" ? filter(plainField(value)) : value,
-        ]),
-      ),
-    ),
-  };
-}
-
-// One Transaction of a Quick batch as JSON. The privacy filter reads this JSON text, and the AI
-// model reads the decoded values, so both must hold the same characters: JSON writes a newline as
-// "\n" and a lone surrogate as "\ud800", and that letter would break the filter's digit runs and
-// stick to a name. With every control character a space and every text well-formed, the JSON holds
-// no escape but \" and \\, which hold no letter or digit. A row that still holds another is
-// refused. A typed value goes as its marked object, as in a tool's result, and the privacy filter
-// sends its bare value in its place.
+// One Transaction of a Quick batch as JSON, with its row number, each text well-formed and with a
+// space for each control character.
 function batchRow(row: number, item: BatchItem): string {
   const fields = Object.entries(item).map(([field, value]) => [
     plainField(field),
     typeof value === "string" ? plainField(value) : value,
   ]);
-  const text = JSON.stringify(Object.fromEntries([["row", row], ...fields]));
-  if (holdsOtherEscape(text)) {
-    throw new TypeError("A Quick batch row's JSON holds an escape the AI reads differently.");
-  }
-  return text;
+  return JSON.stringify(Object.fromEntries([["row", row], ...fields]));
 }
 
 // The prompt in its one order, with its reply limit and cache mark.
@@ -450,7 +375,7 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
       ),
     });
   }
-  // Facts go as the summary's pieces do, each typed value bare with the filter's mark.
+  // Facts go as the summary's pieces do.
   if (call.facts !== undefined) messages.push(summaryMessage(call.facts, false));
   if (call.note !== undefined) messages.push(summaryMessage(call.note, false));
   for (const message of call.changes ?? []) {
@@ -458,11 +383,7 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
       messages.push(summaryMessage(message.parts, false));
       continue;
     }
-    messages.push({
-      role: message.role,
-      content: message.text,
-      ...(message.typed === true ? { providerOptions: MEMBER_TYPED } : {}),
-    });
+    messages.push({ role: message.role, content: message.text });
   }
   return {
     system: FIXED_RULES,

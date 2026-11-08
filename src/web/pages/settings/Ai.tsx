@@ -683,22 +683,19 @@ export function WebLookupCard(props: { ai: AiView; onSaved: (ai: AiView) => void
   );
 }
 
-// What the privacy filter takes out of each call (spec 08, Privacy filter), on a grey card.
-function AiPrivacyNote() {
+// What each call sends (spec 08, What the AI provider gets), on a grey card.
+function AiDataNote() {
   return (
     <section
-      aria-labelledby="what-the-ai-never-sees"
+      aria-labelledby="what-the-ai-gets"
       className="rounded-card border border-line bg-page p-4 min-[900px]:px-[22px] min-[900px]:py-5"
     >
-      <h3 id="what-the-ai-never-sees" className="font-bold">
-        What the AI never sees
+      <h3 id="what-the-ai-gets" className="font-bold">
+        What the AI gets
       </h3>
       <p className="mt-1.5 text-small text-ink-soft">
-        The ZIP code and ages are never sent. In the text the app writes for each call, "Member A",
-        "Member B", and so on replace the names of the Household's current Members, and Member email
-        addresses and Account and card numbers are removed. The filter does not look for a removed
-        Member's name. What you type in Chat is best effort: the app hides names and numbers it
-        spots, but not all of them.
+        Each AI call sends your Household's data to the AI provider as the app shows it, with Member
+        names, Account names, and last 4 digits.
       </p>
     </section>
   );
@@ -776,7 +773,7 @@ export function AiSettingsFields() {
           {usage === undefined || today === undefined ? null : (
             <CostCapForm usage={usage} today={today} onSaved={setUsage} />
           )}
-          <AiPrivacyNote />
+          <AiDataNote />
           {ai === null ? null : <RemoveAiProvider onRemoved={() => showSaved(null)} />}
         </>
       )}

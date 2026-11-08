@@ -30,8 +30,8 @@ import { type AlertFacts, type AlertWriter, alertPieces } from "./templates.ts";
 // Goal, and the latest "Not a problem" marks, and writes one or two sentences for each. The advice is stored beside the template's text, never in it: the
 // template states the facts, and no number comes from the AI.
 //
-// With no AI provider, at the AI cost cap, after the last retry fails, or when the privacy filter
-// refuses the call, the Alerts go with their template only. While the call waits for a retry, the
+// With no AI provider, at the AI cost cap, or after the last retry fails, the Alerts go with their
+// template only. While the call waits for a retry, the
 // Alerts wait with it. An Alert the call is done with never gets advice later.
 
 // How many "Not a problem" marks the call holds, the latest first.
@@ -62,8 +62,7 @@ const ADVICE_ANSWER = z.object({ advice: z.string().trim().min(1).max(ADVICE_CHA
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 
 // Text a Member or a bank wrote, such as a Goal's words or a Merchant, as one plain line: well-
-// formed, with a space for each control character, so the privacy filter reads the characters the
-// AI reads and the text cannot start a line of its own.
+// formed, with a space for each control character, so the text cannot start a line of its own.
 const plain = (text: string) =>
   text.toWellFormed().replace(CONTROL, " ").replace(/ {2,}/g, " ").trim();
 
@@ -75,14 +74,14 @@ function dollars(cents: number): SummaryPart[] {
   return [`${sign}$`, whole < 1_000_000_000 ? typedCount(whole) : typedAmount(whole * 100)];
 }
 
-// An amount in dollars and cents, as "$" and a typed amount, such as $70.37.
+// An amount in dollars and cents, as "$" and an amount, such as $70.37.
 const money = (cents: number): SummaryPart[] => [
   cents < 0 ? "-$" : "$",
   typedAmount(Math.abs(Math.round(cents))),
 ];
 
-// An Alert's template as parts: each number the app made as a typed value, and its words and the
-// names in it as text, which the privacy filter reads.
+// An Alert's template as parts: each number the app made, and its words and the names in it as
+// text.
 const ADVICE_WRITER: AlertWriter<SummaryPart[]> = {
   text: (text) => [text.toWellFormed().replace(CONTROL, " ")],
   cents: money,
@@ -97,13 +96,13 @@ const ADVICE_WRITER: AlertWriter<SummaryPart[]> = {
   year: (year) => [typedCount(Number(year))],
 };
 
-// The facts an Alert's template states, with the Account it names by its label, such as "Ally
-// checking": the stored facts hold the Account's name as it was, which may name a Member.
-function factsOf(alert: AlertForAdvice, accountLabels: ReadonlyMap<string, string>): AlertFacts {
+// The facts an Alert's template states, with the Account it names by its name as the AI reads it
+// now, such as "Everyday Checking ending 1234".
+function factsOf(alert: AlertForAdvice, accountNames: ReadonlyMap<string, string>): AlertFacts {
   const facts = alert.facts as AlertFacts;
   if (facts.kind !== "Duplicate charge" && facts.kind !== "Card interest or fee") return facts;
-  const label = alert.accountId === null ? undefined : accountLabels.get(alert.accountId);
-  return { ...facts, account: label ?? "an Account" };
+  const name = alert.accountId === null ? undefined : accountNames.get(alert.accountId);
+  return { ...facts, account: name ?? "an Account" };
 }
 
 // The Category an Alert is about: its own, its Budget's, or that of a Transaction it is about.
@@ -118,8 +117,8 @@ function categoryOf(alert: AlertForAdvice): string | null {
 }
 
 // One active Goal: its words, what the AI read it to be about, and its status.
-function goalLine(goal: Goal, accountLabels: ReadonlyMap<string, string>): SummaryPart[] {
-  const account = (id: string) => accountLabels.get(id) ?? "an Account";
+function goalLine(goal: Goal, accountNames: ReadonlyMap<string, string>): SummaryPart[] {
+  const account = (id: string) => accountNames.get(id) ?? "an Account";
   const { target } = goal.reading;
   let about = "";
   switch (target?.kind) {
@@ -152,12 +151,12 @@ async function adviceParts(
   alerts: readonly AlertForAdvice[],
   now: Date,
 ): Promise<SummaryPart[]> {
-  const accountLabels = await ai.accountLabels();
+  const accountNames = await ai.accountNames();
   const month = (await householdToday(database, now)).slice(0, 7);
   const { budgets } = await budgetsForMonth(database, month);
   const spending = await budgetSpending(database, month, budgets, now);
   const template = (alert: AlertForAdvice) =>
-    alertPieces(factsOf(alert, accountLabels), ADVICE_WRITER).flat();
+    alertPieces(factsOf(alert, accountNames), ADVICE_WRITER).flat();
 
   const categoryLine = (category: string | null): SummaryPart[] => {
     if (category === null || !isCategory(category)) return [];
@@ -199,7 +198,7 @@ async function adviceParts(
     ]),
     [""],
     ["Active Goals:"],
-    ...(goals.length === 0 ? [["- None."]] : goals.map((goal) => goalLine(goal, accountLabels))),
+    ...(goals.length === 0 ? [["- None."]] : goals.map((goal) => goalLine(goal, accountNames))),
     [""],
     ['Earlier Alerts the Household marked "Not a problem", the latest first:'],
     ...(marks.length === 0

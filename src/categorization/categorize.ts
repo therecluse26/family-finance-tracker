@@ -253,8 +253,7 @@ export async function chooseCategories(
         asked.map(({ record }) => record.id),
       );
       lookups ??= await WebLookups.start(database, ai);
-      const lookable = await lookableLines(
-        ai,
+      const lookable = lookableLines(
         lookups,
         asked.map(({ record, txn }) => ({
           merchant: txn.merchant,
@@ -279,7 +278,7 @@ export async function chooseCategories(
           });
         } else sent.push(index);
       }
-      const labels = sent.length === 0 ? new Map<string, string>() : await ai.accountLabels();
+      const names = sent.length === 0 ? new Map<string, string>() : await ai.accountNames();
       answer =
         sent.length === 0
           ? { answers: [] }
@@ -293,7 +292,7 @@ export async function chooseCategories(
                   description: fact?.description ?? "",
                   amount: fact?.amount ?? 0,
                   date: record.postedDate,
-                  account: fact === undefined ? null : (labels.get(fact.accountId) ?? null),
+                  account: fact === undefined ? null : (names.get(fact.accountId) ?? null),
                   providerCategory: record.providerCategory,
                   mcc: fact?.mcc ?? null,
                 };
@@ -451,27 +450,13 @@ export async function chooseCategories(
   return { decided, left, again, answered };
 }
 
-// Whether each line may be looked up: the Web lookup is on, the skip rules pass it, and the privacy
-// filter finds no Member's name or protected number in its Merchant name, with one read of the
-// filter's facts for the batch (spec 04, Web lookup).
-async function lookableLines(
-  ai: HouseholdAi,
+// Whether each line may be looked up: the Web lookup is on, and the skip rules pass it (spec 04,
+// Web lookup).
+function lookableLines(
   lookups: WebLookups,
   lines: readonly Parameters<typeof skipsLookup>[0][],
-): Promise<boolean[]> {
-  if (!lookups.on) return lines.map(() => false);
-  const passed = lines.map((line) => !skipsLookup(line));
-  const names = lines.flatMap((line, index) =>
-    passed[index] === true && line.merchant !== null ? [line.merchant.name] : [],
-  );
-  const matched = await ai.privacyMatches(names);
-  let next = 0;
-  return passed.map((passes) => {
-    if (!passes) return false;
-    const found = matched[next];
-    next += 1;
-    return found === false;
-  });
+): boolean[] {
+  return lines.map((line) => lookups.on && !skipsLookup(line));
 }
 
 // Looks up each Merchant once, one at a time, in order, and hands each Transaction's place its

@@ -220,8 +220,8 @@ describe("the AI request log", () => {
     for (const call of usage.calls) expect(call).not.toHaveProperty("logEntryId");
   });
 
-  it("keeps the request after the privacy filter and the reply, linked to the call's AI usage row", async () => {
-    stub.reply = "Member A bought books: Books and magazines.";
+  it("keeps the request as the AI provider got it and the reply, linked to the call's AI usage row", async () => {
+    stub.reply = "Dana bought books: Books and magazines.";
     const ai = await connect();
     await turn(true);
 
@@ -234,18 +234,19 @@ describe("the AI request log", () => {
       failure: null,
       failureStatus: null,
       requestCut: false,
-      response: "Member A bought books: Books and magazines.",
+      response: "Dana bought books: Books and magazines.",
       responseCut: false,
       usage: { noCacheTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1 },
     });
-    // The request is the filtered one, as JSON: the label in place of the name, no last 4.
+    // The request is the one the AI provider got, as JSON: the name and last 4 as they are.
     const request = JSON.parse(entry.request) as { prompt: unknown[] };
     expect(request.prompt.length).toBeGreaterThan(1);
-    expect(entry.request).toContain("VENMO *Member A");
+    expect(entry.request).toContain("VENMO *DANA WHITFIELD");
+    expect(entry.request).toContain("Ally XXXX4821");
     expect(entry.request).toContain("Bluebird Books");
     // Compact JSON: the page indents it for reading.
     expect(entry.request).toBe(JSON.stringify(request));
-    for (const hidden of ["Dana", "Whitfield", "4821", "10001", apiKey]) {
+    for (const hidden of ["10001", apiKey]) {
       expect(entry.request).not.toContain(hidden);
     }
     // The AI usage page links the call to its text.
@@ -322,7 +323,7 @@ describe("the AI request log", () => {
       use: "chat",
       summary: "Household summary.",
       task: "Answer the Member's question.",
-      changes: [{ role: "user", text: "How much went to Restaurants?", typed: true }],
+      changes: [{ role: "user", text: "How much went to Restaurants?" }],
     };
 
     async function answer(
@@ -349,7 +350,7 @@ describe("the AI request log", () => {
     }
 
     it("keeps the whole answer once it ends, and each round of a tool loop, linked to the thread", async () => {
-      stub.reply = "Member A spent $480 on Restaurants.";
+      stub.reply = "Dana spent $480 on Restaurants.";
       stub.streamPiece = 3;
       stub.callTools = (messages) =>
         messages.some((each) => each.role === "tool")
@@ -369,7 +370,7 @@ describe("the AI request log", () => {
       const kept = await rows();
       expect(kept.map((row) => [row.use, row.chat_thread_id, row.response])).toEqual([
         ["chat", threadId, 'Tool call: look_up {"month":"2026-10"}'],
-        ["chat", threadId, "Member A spent $480 on Restaurants."],
+        ["chat", threadId, "Dana spent $480 on Restaurants."],
       ]);
       expect(kept.every((row) => typeof row.ai_call_id === "number")).toBe(true);
       expect(String(kept[1]?.request)).toContain('"total":480');
@@ -392,7 +393,7 @@ describe("the AI request log", () => {
     });
 
     it("keeps nothing when the thread is deleted while the answer runs, and the answer still ends", async () => {
-      stub.reply = "Member A spent $480.";
+      stub.reply = "Dana spent $480.";
       const ai = await connect();
       await turn(true);
       const threadId = await thread();
@@ -407,7 +408,7 @@ describe("the AI request log", () => {
     });
 
     it("keeps the reply so far when the stream fails, with the call's AI usage row", async () => {
-      stub.reply = "Member A spent";
+      stub.reply = "Dana spent";
       stub.streamFails = true;
       const ai = await connect();
       await turn(true);
@@ -415,7 +416,7 @@ describe("the AI request log", () => {
       await answer(ai, await thread());
 
       const [row] = await rows();
-      expect(row).toMatchObject({ response: "Member A spent", failure: "app error" });
+      expect(row).toMatchObject({ response: "Dana spent", failure: "app error" });
       expect(typeof row?.ai_call_id).toBe("number");
     });
   });

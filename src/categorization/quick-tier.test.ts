@@ -36,8 +36,8 @@ import { CATEGORY_FIX_TASK, fixCategories, MERCHANT_CLEANUP_TASK } from "./quick
 
 // Cascade step 5 and AI cleanup of Merchant names on the Quick tier (spec 04, The categorization
 // cascade, Names, AI decisions, Review list items; spec 08, Every AI use, Limits on each call,
-// Failures). Transactions arrive through the fake adapter; the AI is AI SDK test models behind the
-// real privacy filter. No test calls an AI provider.
+// Failures). Transactions arrive through the fake adapter; the AI is AI SDK test models. No test
+// calls an AI provider.
 
 const NOW = () => new Date("2026-11-01T14:00:00.000Z");
 const BANK = "fake-first-bank";
@@ -122,7 +122,7 @@ describe("the Quick tier in the categorization step", () => {
         ? "merchant cleanup"
         : undefined;
     if (use === undefined) return undefined;
-    // A row the privacy filter broke is not JSON: it reads as row 0, with its text.
+    // A row that is not JSON reads as row 0, with its text.
     const rows = texts
       .filter((text) => text.startsWith("{"))
       .map((text) => {
@@ -630,7 +630,7 @@ describe("the Quick tier in the categorization step", () => {
       expect(await nameOf("austin-3")).toEqual({ name: "Chipotle", needsAi: 0 });
     });
 
-    it("sends the hard Merchant lines the cleanup rules mark, through the real rules and the privacy filter", async () => {
+    it("sends the hard Merchant lines the cleanup rules mark, through the real rules, as they are", async () => {
       await connectAi();
       answerName = () => "Clean Name";
       const lines = [...K7_LINES];
@@ -643,9 +643,13 @@ describe("the Quick tier in the categorization step", () => {
       const sent = callsOf("merchant cleanup").flatMap((call) =>
         call.rows.map((row) => row.description),
       );
-      // A payment-app line is its app or its person, and a fixed name is not marked. The privacy
-      // filter takes the digit runs out of what the model reads.
-      expect(sent.toSorted()).toEqual(["([removed]", "BEST BUY CO", "REF#[removed]", "[removed]"]);
+      // A payment-app line is its app or its person, and a fixed name is not marked.
+      expect(sent.toSorted()).toEqual([
+        "(800) 555-1212",
+        "BEST BUY CO",
+        "REF#12345678",
+        "XXXX4821",
+      ]);
       const marked = new Set(["BEST BUY CO", "XXXX4821", "REF#12345678", "(800) 555-1212"]);
       for (const [index, description] of lines.entries()) {
         const name = await nameOf(`k7-${index}`);
@@ -755,8 +759,8 @@ describe("the Quick tier in the categorization step", () => {
     });
   });
 
-  describe("the privacy filter on each row", () => {
-    it("filters each value on its own, so every row stays one JSON object with its own row number", async () => {
+  describe("each row as the AI reads it", () => {
+    it("writes each value on its own, so every row stays one JSON object with its own row number", async () => {
       await bank.database.$client.execute(
         `INSERT INTO members (id, name, email, created_at, updated_at)
          VALUES ('member-1', 'Dana Whitfield', 'dana@example.com', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`,
@@ -777,21 +781,20 @@ describe("the Quick tier in the categorization step", () => {
 
       const [call] = callsOf("category fix");
       expect(call?.rows.map((row) => row.row)).toEqual([1, 2, 3, 4, 5]);
-      expect(call?.rows.map((row) => row.description).toSorted()).toEqual([
-        '"[removed]"',
-        "PAYPAL [removed] Member A",
-        "REF [removed]\\",
-        "ZELLE TO Member A [removed]",
-        "[removed]",
-      ]);
-      const read = JSON.stringify(call?.texts);
-      expect(read).not.toContain(card.slice(-4));
-      expect(read).not.toMatch(/dana|whitfield/i);
-      // The model reads no escape that puts a letter inside a card number or before a name.
+      expect(call?.rows.map((row) => row.description).toSorted()).toEqual(
+        [
+          spaced,
+          `PAYPAL ${card.slice(0, 8)} ${card.slice(8)} DANA`,
+          `ZELLE TO DANAWHITFIELD ${card}`,
+          `REF 7\\${spaced}\\`,
+          `"${card.slice(0, 8)}"${card.slice(8)}"`,
+        ].toSorted(),
+      );
+      // Each control character is a space, so the model reads no escape that puts a letter in.
       for (const text of call?.texts ?? []) expect(text).not.toMatch(/\\[a-z]/i);
     });
 
-    it("keeps an amount whose digits are an Account's last 4, and removes that last 4 from text", async () => {
+    it("sends an amount and a description whose digits are an Account's last 4 as they are", async () => {
       await connectAi();
       const savings = fakeAccount({ id: "acc-savings", subtype: "savings", mask: "4821" });
       await sync({
@@ -808,7 +811,7 @@ describe("the Quick tier in the categorization step", () => {
       expect(fix?.rows).toEqual([
         expect.objectContaining({
           row: 1,
-          description: "PURCHASE [removed] BLUEBIRD BOOKS",
+          description: "PURCHASE 4821 BLUEBIRD BOOKS",
           amount: "-48.21",
           date: "2026-10-12",
         }),
@@ -831,43 +834,10 @@ describe("the Quick tier in the categorization step", () => {
       const [call] = callsOf("merchant cleanup");
       expect(call?.rows).toEqual([
         { row: 1, description: "BEST BUY CO" },
-        { row: 2, description: "[removed]" },
+        { row: 2, description: spaced },
         { row: 3, description: "CHIPOTLE AUSTIN TX" },
       ]);
       expect(await nameOf("after")).toEqual({ name: "Clean Name", needsAi: 0 });
-    });
-
-    it("never sends a Member's full name glued inside a longer word", async () => {
-      await bank.database.$client.execute(
-        `INSERT INTO members (id, name, email, created_at, updated_at)
-         VALUES ('member-1', 'Morgan Lee', 'morgan@example.com', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`,
-      );
-      await connectAi();
-      const lines = [
-        "VENMOMORGANLEE PMT",
-        "PAYPALMORGANLEE",
-        "MORGANLEEPHOTO 12",
-        "PayPalMorganLee",
-        // A form the code never names: last name first, glued in mixed case between two words.
-        "studioLeeMorganPrints",
-      ];
-      await sync({
-        added: lines.map((line, index) =>
-          buy(`glued-${index}`, `2026-10-${10 + index}`, { merchantName: line, description: line }),
-        ),
-      });
-
-      const rows = callsOf("category fix").flatMap((call) => call.rows);
-      expect(rows).toHaveLength(lines.length);
-      const sent = JSON.stringify(rows);
-      expect(sent).not.toMatch(/morgan|lee/i);
-      expect(rows.map((row) => row.description)).toEqual([
-        "VENMOMember A PMT",
-        "PAYPALMember A",
-        "Member APHOTO 12",
-        "PayPalMember A",
-        "studioMember APrints",
-      ]);
     });
   });
 });

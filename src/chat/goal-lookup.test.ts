@@ -5,9 +5,8 @@ import { addGoal, addUnconnectedAccount, loginTables } from "../db/index.ts";
 import { progressDetailPieces, readGoalsWithProgress, startGoal } from "../goals/index.ts";
 import { lookupTools } from "./index.ts";
 
-// Chat's Goal lookup (spec 08, Lookup tools; known finding K16): a Goal's progress detail is text
-// the app builds, so each amount in it goes as a typed value, as the Household summary sends it.
-// The privacy filter would otherwise cut an amount that matches an Account's last 4. The Household's
+// Chat's Goal lookup (spec 08, Lookup tools): a Goal's progress detail is text the app builds, so
+// each amount in it goes as its own piece, as the Household summary sends it. The Household's
 // names and numbers are made up, and no test calls an AI provider.
 
 const NOW = new Date("2026-11-20T14:00:00.000Z");
@@ -56,15 +55,11 @@ describe("the Goal lookup", () => {
     test.close();
   });
 
-  it("sends a Goal's progress detail with each amount typed, even one that matches an Account's last 4", async () => {
+  it("sends a Goal's progress detail with each amount as its own piece, even one that matches an Account's last 4", async () => {
     const [goal] = await readGoalsWithProgress(test.database, NOW);
     const detail = goal?.progress?.detail ?? "";
-    // The Goal amount, $4,999, matches the Account's last 4. As text, the filter cuts it: the test
-    // reads a real match.
+    // The Goal amount, $4,999, matches the Account's last 4.
     expect(detail).toBe("On pace for $0 this month; Goal is $4,999");
-    expect(asTheAiReads(await ai.toolResult({ detail }))).toEqual({
-      detail: expect.stringContaining("[removed]"),
-    });
 
     const tools = lookupTools({ database: test.database, ai, now: () => NOW });
     const answer = asTheAiReads(

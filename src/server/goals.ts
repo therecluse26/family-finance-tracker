@@ -66,12 +66,6 @@ function refusalView(refusal: GoalSaveRefusal): GoalSaveRefusalView {
           };
         case "bad reply":
           return { status: 502, error: "The AI's reading did not make sense.", tryAgain: true };
-        case "privacy":
-          return {
-            status: 502,
-            error: "The privacy filter stopped this reading, so nothing went to the AI.",
-            tryAgain: true,
-          };
         case "server error":
           return { status: 502, error: "The AI provider did not answer.", tryAgain: true };
       }

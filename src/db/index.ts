@@ -456,8 +456,6 @@ export {
 export {
   listMemberNamesById,
   listMembers,
-  listMembersByJoinOrder,
-  listRemovedMembers,
   type MemberRemoval,
   readFirstMemberId,
   removeMember,

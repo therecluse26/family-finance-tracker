@@ -1,4 +1,4 @@
-import { type HouseholdAi, PrivacyRefusal } from "../ai/index.ts";
+import type { HouseholdAi } from "../ai/index.ts";
 import { benchmarkSnapshot } from "../benchmarks/index.ts";
 import { type DraftTailoring, withinHalfOf } from "../budgets/index.ts";
 import { type Category, categoryGroupOf } from "../categories/index.ts";
@@ -426,8 +426,8 @@ async function runOne(run: StoredTailoringRun): Promise<"next" | "wait"> {
 }
 
 // Runs each waiting run, oldest first, until AI pauses. A run that throws anything but an AI error
-// counts a try and waits for the next start; at the cap, it ends with one System notice. A run the
-// privacy filter refuses ends at once. Returns how many runs ended.
+// counts a try and waits for the next start; at the cap, it ends with one System notice. Returns
+// how many runs ended.
 export async function runWaitingTailoring(): Promise<number> {
   if (services === undefined) throw new Error("Budget tailoring is not running.");
   const { database } = services;
@@ -438,13 +438,6 @@ export async function runWaitingTailoring(): Promise<number> {
       ended += 1;
     } catch (error) {
       const name = error instanceof Error ? error.name : "unknown";
-      if (error instanceof PrivacyRefusal) {
-        await redraftHandled(run);
-        await dropTailoringRun(database, run.id);
-        log.error("The privacy filter refused a Budget tailoring run", { kind: run.kind });
-        ended += 1;
-        continue;
-      }
       const tries = await countTailoringRunFailure(database, run.id);
       log.error("A Budget tailoring run failed", { kind: run.kind, tries, error: name });
       if (tries >= TAILORING_RUN_CAP) {

@@ -53,8 +53,8 @@ export const REVIEW_HOUR = 12;
 // review that is written ends it.
 export const REVIEW_STOPPED = "monthly review stopped";
 
-// The task, as the AI reads it after the Household summary. Its counts stay far apart, so no two of
-// them read as a Household's ages to the privacy filter. The reply's schema holds every count too.
+// The task, as the AI reads it after the Household summary. The reply's schema holds every count
+// too.
 export const MONTHLY_REVIEW_TASK = [
   "Task: the Monthly review of the month just ended, which the Household summary covers. On the 1st the dashboard moves to the new month, so the review holds the old month's story. Do not restate the dashboard.",
   "",
@@ -193,9 +193,8 @@ export function reviewAnswer(goals: number) {
 // the call listed, by number.
 const storedReply = z.object({ answer: z.unknown(), goalIds: z.array(z.string()) });
 
-// The call's facts after the task: the active Goals by number, each number a typed count, and each
-// Goal's words as one plain line, so the privacy filter reads the characters the AI reads and the
-// words cannot start a line of their own. The reply names each Goal by its number, never by its ID.
+// The call's facts after the task: the active Goals by number, and each Goal's words as one plain
+// line, so the words cannot start a line of their own. The reply names each Goal by its number, never by its ID.
 function goalParts(goals: readonly Goal[]): SummaryPart[] {
   if (goals.length === 0) return ["Active Goals: none, so goals is empty."];
   return [
@@ -381,8 +380,8 @@ async function ask(
       output: reviewAnswer(goals.length),
     });
   } catch (error) {
-    // Such as the privacy filter refusing the call, which then did not go out. Only the error's
-    // name: never the prompt, the reply, or a message that may quote them.
+    // Such as a database error. Only the error's name: never the prompt, the reply, or a message
+    // that may quote them.
     logger.warn("The Monthly review call could not be made", {
       month,
       error: error instanceof Error ? error.name : "unknown",
@@ -410,8 +409,7 @@ async function ask(
   return stored;
 }
 
-// The review's text for the screen, in the one plain voice, with each Member's name in place of
-// their label.
+// The review's text for the screen, in the one plain voice.
 async function forScreen(ai: HouseholdAi, review: ReviewReply): Promise<ReviewReply> {
   const screen = (text: string) => ai.forScreen(text);
   const maybe = async (text: string | null) => (text === null ? null : screen(text));
@@ -484,8 +482,7 @@ async function finish(
     }
     await markMonthlyReviewProposed(database, run.month, now);
   }
-  // A Member's name can make a text longer than its field allows: the review then keeps the
-  // labels, as the AI wrote them.
+  // A text the voice leaves outside its field's limits keeps the AI's words as it wrote them.
   const screened = await forScreen(ai, review);
   const reply = reviewReply.safeParse(screened).success ? screened : review;
   const saved = await saveMonthlyReview(database, { month: run.month, reply, writtenAt: now });

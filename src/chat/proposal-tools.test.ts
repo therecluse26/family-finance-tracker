@@ -6,14 +6,14 @@ import { proposalTools } from "./proposal-tools.ts";
 
 // Chat's Proposal tools on app.db's write queue: a propose call whose write never settles holds the
 // queue only up to its time limit, and the next Chat Proposal is stored. The AI's words are made up,
-// and the privacy filter is a stand-in that changes nothing.
+// and the AI is a stand-in.
 
 const WRITE_LIMIT_MS = 300;
 // Oct 20, 2026, 4 PM UTC.
 const NOW = new Date("2026-10-20T16:00:00.000Z");
 const RUN = "thread-1/answer-1";
 
-const ai = { forScreen: async (text: string) => text, toolResult: async (data: unknown) => data };
+const ai = { forScreen: async (text: string) => text };
 
 // Makes the next transaction on app.db do its writes, then wait forever before it commits.
 function stallNextTransaction(database: Database): Promise<void> {

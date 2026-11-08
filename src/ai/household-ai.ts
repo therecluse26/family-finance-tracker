@@ -1,6 +1,7 @@
 import {
   claimAiBack,
   giveBackMerchantLookup,
+  listAccounts,
   listMemberNamesById,
   markAiAway,
   markAiRedoDue,
@@ -13,17 +14,9 @@ import {
 import { log } from "../log.ts";
 import { isActivityUse, startAiActivity } from "./activity.ts";
 import { isBackground, MERCHANT_LOOKUPS_A_MONTH } from "./ai-view.ts";
-import {
-  AiCallError,
-  type AiFailure,
-  callModel,
-  readPrivacyFacts,
-  type StreamEnd,
-  streamModel,
-} from "./call.ts";
+import { AiCallError, type AiFailure, callModel, type StreamEnd, streamModel } from "./call.ts";
 import { type AiPause, AiPausedError } from "./outbound.ts";
-import { memberLabel, PrivacyRefusal, privacyFilter } from "./privacy.ts";
-import { type AiCall, filterBatch, isQuickBatchUse, plainData } from "./prompt.ts";
+import { type AiCall, isQuickBatchUse } from "./prompt.ts";
 import { aiRetries } from "./retries.ts";
 import {
   type AiOptions,
@@ -67,34 +60,33 @@ const SEARCH_REFUSED = new Set([400, 404, 422]);
 const refusedSearch = (status: number | undefined) =>
   status !== undefined && SEARCH_REFUSED.has(status);
 
-// The one way other modules call the AI. Every call goes out through the privacy filter (spec 08,
-// Privacy filter), then the cost gate, and its cost counts (src/ai/call.ts). AI text comes back
-// with "Member A" labels, which forScreen turns into names for the screen.
+// The one way other modules call the AI. Every call goes out through the cost gate, and its cost
+// counts (src/ai/call.ts). The AI provider gets Household data as the app builds it, real names
+// included (spec 08, What the AI provider gets).
 export type HouseholdAi = {
   // A pause, such as no AI provider or the AI cost cap, makes no call: the use takes its no-AI
   // path. At the cap, Chat and reading a Goal pause with "send anyway?" until the Member says
   // yes with `sendAnyway`. A 401 or 403 from the AI provider pauses AI until a Member fixes the
-  // key, with a System notice. Throws when the privacy filter refuses the call, which then does
-  // not go out and does not count.
+  // key, with a System notice.
   generate<OUTPUT = undefined>(
     call: AiCall<OUTPUT>,
     options?: { sendAnyway?: boolean },
   ): Promise<AiReply<OUTPUT>>;
-  // AI text for the screen, in the one plain voice: no emoji, "!" turned into ".", and each
-  // Member's name in place of their label.
+  // AI text for the screen, in the one plain voice: no emoji, and "!" turned into ".".
   forScreen(aiText: string): Promise<string>;
-  // forScreen for many AI texts, such as a Chat thread's answers, with one read of the names.
+  // forScreen for many AI texts, such as a Chat thread's answers.
   forScreenAll(aiTexts: readonly string[]): Promise<string[]>;
   // Why a use would pause now, as generate and stream pause, or undefined when it may call. It
   // makes no call.
   pauseFor(use: AiCall["use"], options?: { sendAnyway?: boolean }): Promise<AiPause | undefined>;
   // Whether a background use waits for its AI retry, so a call now would not go out.
   retryWaits(use: AiCall["use"]): Promise<boolean>;
-  // Each Account's label, such as "Ally checking", by its ID, for the text of a call.
-  accountLabels(): Promise<ReadonlyMap<string, string>>;
-  // Each Member's label, such as "Member A", by their ID: the label the privacy filter gives the
-  // Member's name, by the order Members joined. App-built text names a Member by it, never by name.
-  memberLabels(): Promise<ReadonlyMap<string, string>>;
+  // Each Account's name as the AI reads it, by its ID: its own name and last 4, such as "Everyday
+  // Checking ending 1234". Two Accounts that would read the same get " 2", " 3" in ID order, so
+  // each name the AI writes means one Account.
+  accountNames(): Promise<ReadonlyMap<string, string>>;
+  // Each Member's name, by their ID.
+  memberNames(): Promise<ReadonlyMap<string, string>>;
   // The Merchant lookup (spec 08, Merchant web lookup). Whether a lookup may run now: AI is set up
   // with an AI provider that has a web search, and the Web lookup's switch is on. It makes no call,
   // and says nothing of the AI cost cap, which pauses the call itself.
@@ -106,17 +98,9 @@ export type HouseholdAi = {
   // Takes one lookup's place under the month's cap of 200, in one step, or undefined at the cap
   // (known finding K18). `giveBack` returns the place when no call went out.
   reserveLookup(): Promise<{ giveBack(): Promise<void> } | undefined>;
-  // Whether the privacy filter finds a Member's name or a protected number in each text. A lookup
-  // never goes out for a name it finds one in.
-  privacyMatches(texts: readonly string[]): Promise<boolean[]>;
-  // A tool's result as the AI reads it (spec 08, Privacy filter): plain JSON data, with each text
-  // made plain, then filtered as app-built text. Its typed values, such as amounts and dates, pass
-  // as the app built them (src/ai/typed.ts). Throws when the filter cannot pass it.
-  toolResult(data: unknown): Promise<unknown>;
   // Chat's answer, streamed to the browser as the AI writes it (spec 08, Answers), as @ai-sdk/react
   // reads it. A pause makes no call, as for generate. `ended` runs once when the answer ends,
-  // before the browser hears that it ended: with the AI's whole text, with "Member A" labels, or
-  // with why it failed. A failure never retries by itself, and the browser shows `ended`'s words
+  // before the browser hears that it ended: with the AI's whole text, or with why it failed. A failure never retries by itself, and the browser shows `ended`'s words
   // for it with "Try again". `chatThreadId` names the answer's thread, which the AI request log
   // links each call's text to, so deleting the thread deletes it.
   stream(
@@ -133,7 +117,6 @@ export function householdAi(options: AiOptions): HouseholdAi {
   const { database, logger = log } = options;
   const calls = aiCalls(options);
   const retries = aiRetries(database, noticesOf(options), logger);
-  const filter = async () => privacyFilter(await readPrivacyFacts(database));
   // Each Quick batch use's bad replies in a row. A reply that works ends the row.
   const badReplies = new Map<AiCall["use"], number>();
 
@@ -197,8 +180,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
     // Spec 08, Live AI status: a background call shows from here to its end, whatever the end.
     const ended = isActivityUse(use) ? startAiActivity(use) : undefined;
     try {
-      const sent = call.batch === undefined ? call : filterBatch(call, (await filter()).text);
-      const reply = await callModel(found.model, sent, found.webSearch);
+      const reply = await callModel(found.model, call, found.webSearch);
       badReplies.delete(use);
       if (background) await retries.worked(use);
       return { ready: true, ...reply };
@@ -247,10 +229,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
         ...(chatThreadId === undefined ? {} : { chatThreadId }),
       });
       if (!found.ready) return found;
-      // The names the screen shows, read once for the whole answer.
-      const shown = await filter();
       const response = streamModel(found.model, call, {
-        screen: (aiText) => shown.showMemberNames(plainVoice(aiText)),
         async ended(end) {
           if ("failed" in end) {
             // Never the prompt or the reply: only the use and what failed.
@@ -262,26 +241,15 @@ export function householdAi(options: AiOptions): HouseholdAi {
       });
       return { ready: true, response };
     },
-    // The voice first, so a Member's own name stays as written.
-    forScreen: async (aiText) => (await filter()).showMemberNames(plainVoice(aiText)),
-    async forScreenAll(aiTexts) {
-      if (aiTexts.length === 0) return [];
-      const shown = await filter();
-      return aiTexts.map((aiText) => shown.showMemberNames(plainVoice(aiText)));
-    },
+    forScreen: async (aiText) => plainVoice(aiText),
+    forScreenAll: async (aiTexts) => aiTexts.map(plainVoice),
     async pauseFor(use, { sendAnyway = false } = {}) {
       const found = await calls.modelFor(use, { sendAnyway });
       return found.ready ? undefined : found.pause;
     },
-    accountLabels: async () => (await filter()).accountLabels,
-    memberLabels: async () =>
-      new Map(
-        (await listMemberNamesById(database)).map(({ id, labelNumber }) => [
-          id,
-          memberLabel(labelNumber),
-        ]),
-      ),
-    toolResult: async (data) => (await filter()).json(plainData(data)),
+    accountNames: async () => accountNamesOf(await listAccounts(database)),
+    memberNames: async () =>
+      new Map((await listMemberNamesById(database)).map(({ id, name }) => [id, plainName(name)])),
     async retryWaits(use) {
       return (await retries.waitsUntil(use, new Date())) !== undefined;
     },
@@ -301,12 +269,32 @@ export function householdAi(options: AiOptions): HouseholdAi {
       }
       return { giveBack: () => giveBackMerchantLookup(database, month) };
     },
-    async privacyMatches(texts) {
-      if (texts.length === 0) return [];
-      const shown = await filter();
-      return texts.map((each) => shown.matches(each));
-    },
   };
+}
+
+// Every control character, and the line and paragraph separators.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it replaces.
+const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
+
+// A name as one plain line: well-formed, with a space for each control character.
+const plainName = (name: string) =>
+  name.toWellFormed().replace(CONTROL, " ").replace(/ {2,}/g, " ").trim();
+
+// Each Account's name as the AI reads it, by its ID (HouseholdAi.accountNames).
+function accountNamesOf(
+  accounts: readonly { id: string; name: string; mask: string | null }[],
+): ReadonlyMap<string, string> {
+  const names = new Map<string, string>();
+  const taken = new Map<string, number>();
+  for (const account of [...accounts].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    const mask = plainName(account.mask ?? "");
+    const base = `${plainName(account.name) || "Account"}${mask === "" ? "" : ` ending ${mask}`}`;
+    const key = base.toLowerCase();
+    const count = (taken.get(key) ?? 0) + 1;
+    taken.set(key, count);
+    names.set(account.id, count === 1 ? base : `${base} ${count}`);
+  }
+  return names;
 }
 
 // One Quick batch, kept row by row (spec 08, Limits on each call). `callFor` makes the call for
@@ -314,8 +302,7 @@ export function householdAi(options: AiOptions): HouseholdAi {
 // turns such an answer into one for the same row among all `items`. The rows with no answer go
 // once more, in batches of half the size: all of them after a bad reply, such as one cut off at
 // its limit. Returns each answer with its row among `items`, or why the batch has none, as
-// generate does. A second call that does not work, or that the privacy filter refuses, ends the
-// tries, and its rows have no answer.
+// generate does. A second call that does not work ends the tries, and its rows have no answer.
 export async function generateBatch<ITEM, ANSWER extends { row: number }>(
   ai: HouseholdAi,
   items: readonly ITEM[],
@@ -332,12 +319,7 @@ export async function generateBatch<ITEM, ANSWER extends { row: number }>(
   for (let start = 0; start < left.length; start += size) {
     const rows = left.slice(start, start + size);
     const asked = rows.map((row) => items[row - 1] as ITEM);
-    try {
-      last = await ai.generate(callFor(asked));
-    } catch (error) {
-      if (!(error instanceof PrivacyRefusal)) throw error;
-      break;
-    }
+    last = await ai.generate(callFor(asked));
     if (!last.ready) {
       if ("badReply" in last) continue;
       break;

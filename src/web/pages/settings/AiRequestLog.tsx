@@ -140,8 +140,8 @@ export function AiRequestLogCard(props: {
       }
     >
       <Lead>
-        The exact text of each AI call: what the AI provider got, after the privacy filter, and what
-        came back. Kept on this server only.
+        The exact text of each AI call: what the AI provider got, and what came back. Kept on this
+        server only.
       </Lead>
       <div className="mt-4 border-t border-line-soft pt-3.5">
         <label className="flex flex-wrap items-center gap-x-3.5 gap-y-2">

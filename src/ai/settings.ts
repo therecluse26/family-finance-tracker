@@ -300,8 +300,8 @@ export function aiSettings(options: AiOptions): AiSettings {
         if (secret !== undefined) registerSecretValue(secret);
       }
       // The test is the Member's own, as the check on save is, so no gate holds it back: it runs at
-      // the AI cost cap, while history loads, and while the key is marked as rejected. It still
-      // passes the privacy filter, and its cost still counts.
+      // the AI cost cap, while history loads, and while the key is marked as rejected. Its cost
+      // still counts.
       const models = privateModels(
         database,
         makeModels,
@@ -403,8 +403,7 @@ export function aiSettings(options: AiOptions): AiSettings {
         baseUrl: input.baseUrl,
         gatewayToken,
       };
-      // The check is the Member's own, so no gate holds it back. It still passes the privacy
-      // filter, and its cost still counts.
+      // The check is the Member's own, so no gate holds it back. Its cost still counts.
       const models = privateModels(database, makeModels, connection, modelOf, (tier) => ({
         use: "check on save",
         provider: input.provider,
@@ -499,8 +498,7 @@ export type AiCalls = {
   ): Promise<ModelFor>;
 };
 
-// Every AI use gets its model here, and nowhere else, behind the privacy filter and the cost gate
-// (src/ai/call.ts). Only householdAi hands its calls to other modules: no model leaves the ai
+// Every AI use gets its model here, and nowhere else, behind the cost gate (src/ai/call.ts). Only householdAi hands its calls to other modules: no model leaves the ai
 // module. Decrypting registers the key and the token with the logger, which refuses them from
 // then on.
 export function aiCalls(options: AiOptions): AiCalls {

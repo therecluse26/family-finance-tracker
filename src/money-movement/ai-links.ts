@@ -5,7 +5,6 @@ import {
   batchReply,
   generateBatch,
   type HouseholdAi,
-  PrivacyRefusal,
   QUICK_BATCH_SIZE,
   typedAmount,
   typedDate,
@@ -17,7 +16,6 @@ import {
   storeAiLinkAnswers,
   type TransferCandidate,
 } from "../db/index.ts";
-import { log } from "../log.ts";
 import type { AiRun, LinkAiUse } from "./ai-run.ts";
 import { addDays } from "./business-days.ts";
 import {
@@ -36,10 +34,8 @@ import { registerUnclearPairJudge, type UnclearPairAnswer } from "./transfers.ts
 
 // The Quick-tier AI's link decisions (spec 03, Tiers, Reimbursements, AI decisions and the no-AI
 // path; spec 08, Every AI use): Unclear Transfer pairs, Unclear payments to Manual loans, and
-// Reimbursement linking. Each question goes out once, in batches, through householdAi, so the
-// privacy filter and its final check read every row: all of this text is app-built. Each amount and
-// date is a typed value, which the filter keeps as the app built it. A row holds no Transaction or
-// Merchant ID; the AI answers by row number. Each answer is stored, so the app never asks about
+// Reimbursement linking. Each question goes out once, in batches, through householdAi. A row holds
+// no Transaction or Merchant ID; the AI answers by row number. Each answer is stored, so the app never asks about
 // the same candidate twice.
 
 const CONFIDENCE = z.enum(["high", "medium", "low"]);
@@ -84,49 +80,49 @@ export const PICK_TASK = [
 // The answer about one money from a person: a Spending row of the batch, or null.
 const PICK = z.object({ spendingRow: z.number().int().min(1).nullable(), confidence: CONFIDENCE });
 
-type Labels = ReadonlyMap<string, string>;
+type Names = ReadonlyMap<string, string>;
 
 // Every amount goes out without a sign: each row says which way its money moved.
 const amountOf = (cents: number) => typedAmount(Math.abs(cents));
 
 const pairRow = (
   { out, into }: { out: TransferCandidate; into: TransferCandidate },
-  labels: Labels,
+  names: Names,
 ): BatchItem => ({
   out_date: typedDate(out.postedDate),
   out_amount: amountOf(out.amount),
   out_description: out.description,
-  out_account: labels.get(out.accountId) ?? null,
+  out_account: names.get(out.accountId) ?? null,
   in_date: typedDate(into.postedDate),
   in_amount: amountOf(into.amount),
   in_description: into.description,
-  in_account: labels.get(into.accountId) ?? null,
+  in_account: names.get(into.accountId) ?? null,
 });
 
 // The payment, the loan, and the loan's last linked payment, by clean Merchant name only.
-const loanRow = ({ payment, loan, linked }: UnclearLoanPaymentCandidate, labels: Labels) => {
+const loanRow = ({ payment, loan, linked }: UnclearLoanPaymentCandidate, names: Names) => {
   const last = linked.at(-1);
   return {
     payment_date: typedDate(payment.postedDate),
     payment_amount: amountOf(payment.amount),
     payment_merchant: payment.merchantCleanName,
-    payment_account: labels.get(payment.accountId) ?? null,
+    payment_account: names.get(payment.accountId) ?? null,
     lender: loan.lender,
     regular_payment: loan.regularPayment === null ? null : amountOf(loan.regularPayment),
     last_payment_date: last === undefined ? null : typedDate(last.postedDate),
     last_payment_amount: last === undefined ? null : amountOf(last.amount),
     last_payment_merchant: last?.merchantCleanName ?? null,
-    last_payment_account: last === undefined ? null : (labels.get(last.accountId) ?? null),
+    last_payment_account: last === undefined ? null : (names.get(last.accountId) ?? null),
   } satisfies BatchItem;
 };
 
-const moneyRow = ({ money, from }: MoneyToPick & { from: string }, labels: Labels): BatchItem => ({
+const moneyRow = ({ money, from }: MoneyToPick & { from: string }, names: Names): BatchItem => ({
   kind: "money in",
   date: typedDate(money.postedDate),
   spending_from: typedDate(from),
   amount: amountOf(money.amount),
   description: money.description,
-  account: labels.get(money.accountId) ?? null,
+  account: names.get(money.accountId) ?? null,
 });
 
 const spendingRow = (spending: MoneyToPick["spending"][number]): BatchItem => ({
@@ -151,8 +147,6 @@ function batchesOf<T>(items: readonly T[], size: number): T[][] {
 // - A bad reply: the batch takes the no-AI path. The rest of the use's batches still go.
 // - A pause, or a failed call with no retry left: the use stops, and takes the no-AI path.
 // - A failed call whose retry is still to come: the use stops, and `waiting` waits for the retry.
-// - The privacy filter refused the batch: it did not go out, and takes the no-AI path. The rest of
-//   the use's batches still go.
 async function ask<ANSWER extends { row: number }>(
   run: AiRun,
   use: LinkAiUse,
@@ -167,14 +161,7 @@ async function ask<ANSWER extends { row: number }>(
     if (stopped === "retry") wait();
     return undefined;
   }
-  let reply: AiReply<{ answers: ANSWER[] }>;
-  try {
-    reply = await generate();
-  } catch (error) {
-    if (!(error instanceof PrivacyRefusal)) throw error;
-    log.warn("The privacy filter refused a batch, which takes the no-AI path", { use });
-    return undefined;
-  }
+  const reply = await generate();
   if (reply.ready) return reply.output;
   if ("badReply" in reply) return undefined;
   if ("retryAt" in reply) {
@@ -202,7 +189,7 @@ async function judge<CANDIDATE>(
     task: string;
     // The candidate's key: its Transaction and the other ID it is stored under.
     keyOf(candidate: CANDIDATE): { transactionId: string; otherId: string };
-    row(candidate: CANDIDATE, labels: Labels): BatchItem;
+    row(candidate: CANDIDATE, names: Names): BatchItem;
     // The Transactions that wait for a retry with it.
     waiting(candidate: CANDIDATE): string[];
   },
@@ -218,7 +205,7 @@ async function judge<CANDIDATE>(
     answers[index] === undefined ? [{ candidate, index }] : [],
   );
   if (unasked.length === 0) return answers;
-  const labels = await ai.accountLabels();
+  const names = await ai.accountNames();
   for (const batch of batchesOf(unasked, ROWS_OF_TWO)) {
     const output = await ask(
       run,
@@ -227,7 +214,7 @@ async function judge<CANDIDATE>(
         generateBatch(ai, batch, (asked) => ({
           use: "unclear transfer",
           task: shape.task,
-          batch: asked.map(({ candidate }) => shape.row(candidate, labels)),
+          batch: asked.map(({ candidate }) => shape.row(candidate, names)),
           output: batchReply(YES_OR_NO, asked.length),
         })),
       batch.flatMap(({ candidate }) => shape.waiting(candidate)),
@@ -322,7 +309,7 @@ async function pickAll(
   ai: HouseholdAi,
   run: AiRun,
   found: readonly MoneyToPick[],
-  labels: Labels,
+  names: Names,
 ): Promise<Map<string, Omit<ReimbursementPick, "justAsked">>> {
   const heard = new Map<string, Heard>();
   const unanswered = new Set<string>();
@@ -340,7 +327,7 @@ async function pickAll(
             task: PICK_TASK,
             batch: [
               ...asked.map((each) =>
-                moneyRow({ ...each, from: windowStart(each.money.postedDate) }, labels),
+                moneyRow({ ...each, from: windowStart(each.money.postedDate) }, names),
               ),
               ...call.spending.map(spendingRow),
             ],
@@ -429,7 +416,7 @@ export function startLinkAi(database: Database, ai: HouseholdAi): () => void {
         (found) => !picks.has(found.money.id) && found.spending.length > 0,
       );
       if (unasked.length === 0) return picks;
-      const asked = await pickAll(ai, run, unasked, await ai.accountLabels());
+      const asked = await pickAll(ai, run, unasked, await ai.accountNames());
       const askedAt = new Date();
       await storeAiLinkAnswers(
         database,

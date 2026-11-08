@@ -5,8 +5,7 @@ import { lookupTools, RECURRING_ROWS } from "../../chat/index.ts";
 import { HISTORY_NOW } from "../history.ts";
 import { REQUEST_LIMIT_MS, timedCase, timeWork } from "../index.ts";
 
-// Chat's lookup tools on the full history, each as the AI's tool call runs it, through the privacy
-// filter. Each has the 1 s request limit: Chat waits on it. Each answer's size goes in the table,
+// Chat's lookup tools on the full history, each as the AI's tool call runs it. Each has the 1 s request limit: Chat waits on it. Each answer's size goes in the table,
 // and stays under 10,000 characters, about 2,500 tokens (spec 08 counts characters / 4), as the AI
 // reads it again on each later round. The widest inputs: every Transaction, every Merchant and
 // every month over five years, every Recurring charge, Debt over every date, and 92 days of daily

@@ -89,7 +89,7 @@ Each outside dependency sits behind one module. No other module imports that dep
 | `db` | The Drizzle schema, the client, the migrator | `drizzle-orm`, `@libsql/client` |
 | `jobs` | Job registration, the scheduler tick | `sidequest` and the `@sidequest/*` packages |
 | `bank` | The `BankDataAdapter` interface and its adapters ([Accounts and bank sync](02-accounts-and-bank-sync.md)) | `plaid` |
-| `ai` | Every AI call: models, the privacy filter, cost counting, the AI cost cap ([AI](08-ai.md)) | `ai` and the AI provider packages |
+| `ai` | Every AI call: models, cost counting, the AI cost cap ([AI](08-ai.md)) | `ai` and the AI provider packages |
 | `secrets` | The Master key, encrypting and decrypting secrets | `node:crypto` for secrets |
 | `notify` | Alerts and System notices by push and email ([Anomalies and Alerts](06-anomalies-and-alerts.md)) | `web-push`, `nodemailer` |
 | `auth` | Better Auth and its plugins | `better-auth`, `@better-auth/passkey` |
