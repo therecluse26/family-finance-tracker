@@ -75,15 +75,23 @@ export function requestText(params: CallOptions): string {
   });
 }
 
+// Reasoning with no text: the AI provider keeps its text to itself, as Anthropic does by default.
+export const HIDDEN_REASONING = "Reasoning: (hidden by the AI provider)";
+
+// The last line of a reply that ended at its reply limit.
+export const CUT_AT_LIMIT = "(Cut off at the reply limit.)";
+
 // The reply as the AI wrote it: each text, each piece of reasoning, and each tool call, with a
-// blank line between parts.
-export function replyText(reply: readonly ReplyPart[]): string {
-  return reply
-    .map((part) => {
+// blank line between parts, and a last line when it ended at its reply limit.
+export function replyText(reply: readonly ReplyPart[], atLimit = false): string {
+  return [
+    ...reply.map((part) => {
       if (part.type === "tool call") return `Tool call: ${part.toolName} ${part.input}`;
-      return part.type === "reasoning" ? `Reasoning:\n${part.text}` : part.text;
-    })
-    .join("\n\n");
+      if (part.type === "text") return part.text;
+      return part.text === "" ? HIDDEN_REASONING : `Reasoning:\n${part.text}`;
+    }),
+    ...(atLimit ? [CUT_AT_LIMIT] : []),
+  ].join("\n\n");
 }
 
 const errorName = (error: unknown) => (error instanceof Error ? error.name : "unknown");
@@ -113,10 +121,10 @@ export function callLog(
         return undefined;
       }
       return {
-        async end({ aiCallId, reply, error }) {
+        async end({ aiCallId, reply, atLimit, error }) {
           try {
             const failed = error === undefined ? undefined : failureOf(error);
-            const response = cutText(replyText(reply));
+            const response = cutText(replyText(reply, atLimit));
             await addAiRequestLogEntry(
               database,
               {

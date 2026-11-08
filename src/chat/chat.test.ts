@@ -289,8 +289,8 @@ describe("Chat", () => {
       await answered(id, "And Ravi\tOkafor?", RAVI);
 
       expect(modelCalls()).toEqual([
-        { tier: "writer", modelId: "writer-model", maxOutputTokens: 1500 },
-        { tier: "writer", modelId: "writer-model", maxOutputTokens: 1500 },
+        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000, effort: "low" },
+        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000, effort: "low" },
       ]);
       const [system, summary, task, ...turns] = prompts().at(-1) ?? [];
       expect(system).toEqual({ role: "system", content: FIXED_RULES });

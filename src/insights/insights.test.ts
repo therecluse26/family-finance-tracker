@@ -525,7 +525,7 @@ describe("Insight cards", () => {
     await sync();
 
     expect(stub.calls.slice(saveCalls)).toEqual([
-      { tier: "writer", modelId: "writer-model", maxOutputTokens: 1_000 },
+      { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000, effort: "medium" },
     ]);
     const prompt = stub.prompts.at(-1) ?? [];
     expect(JSON.stringify(prompt)).not.toMatch(/cache_?control/i);

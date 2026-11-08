@@ -64,14 +64,18 @@ export function savedLine(
   return before.stopped && after.stopped ? { error: CLEANUP_FAILED_AGAIN } : { done: said };
 }
 
-// The request, kept as compact JSON, indented for reading. A request cut at 256 KB is no longer
-// whole JSON, so it shows as kept.
+// The request, kept as compact JSON, indented for reading, with each line break in a message's
+// text shown as a real one. Outside its strings, JSON holds no backslash, so each escape is read in
+// turn: a written backslash stays as it is. A request cut at 256 KB is no longer whole JSON, so it
+// shows as kept.
 export function readableRequest(text: string): string {
+  let indented: string;
   try {
-    return JSON.stringify(JSON.parse(text), null, 2);
+    indented = JSON.stringify(JSON.parse(text), null, 2);
   } catch {
     return text;
   }
+  return indented.replace(/\\./g, (written) => (written === "\\n" ? "\n" : written));
 }
 
 // The words to show for a refused request: the server's own.

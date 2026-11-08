@@ -375,9 +375,9 @@ describe("the AI's advice on Alerts", () => {
     const before = await alerts();
     await runFollowUp(() => new Date());
 
-    // One Quick-tier call for all three, with a reply limit of 300 tokens each.
+    // One Quick-tier call for all three, with a reply limit of 1,000 tokens each, at effort low.
     expect(stub.calls.slice(calls)).toEqual([
-      { tier: "quick", modelId: "quick-model", maxOutputTokens: 900 },
+      { tier: "quick", modelId: "quick-model", maxOutputTokens: 3_000, effort: "low" },
     ]);
     expect(asked).toHaveLength(1);
     const read = asked[0]?.text ?? "";
@@ -719,7 +719,7 @@ describe("the AI's advice on Alerts", () => {
     await runFollowUp(() => new Date());
 
     expect(stub.calls.slice(calls)).toEqual([
-      { tier: "quick", modelId: "quick-model", maxOutputTokens: 1_200 },
+      { tier: "quick", modelId: "quick-model", maxOutputTokens: 4_000, effort: "low" },
     ]);
     expect(asked.map((call) => call.rows)).toEqual([4]);
     expect(asked[0]?.text).not.toMatch(/Shop [12]\b/);

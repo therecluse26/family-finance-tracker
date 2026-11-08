@@ -272,6 +272,25 @@ describe("Settings → AI usage → one kept call", () => {
     );
   });
 
+  it("shows each line break in a message's text as a real one, and a written backslash as kept", () => {
+    const kept = JSON.stringify({
+      prompt: [{ role: "user", content: 'Line one\nLine two, with C:\\new and a "quote"' }],
+    });
+    expect(readableRequest(kept)).toBe(
+      [
+        "{",
+        '  "prompt": [',
+        "    {",
+        '      "role": "user",',
+        '      "content": "Line one',
+        'Line two, with C:\\\\new and a \\"quote\\""',
+        "    }",
+        "  ]",
+        "}",
+      ].join("\n"),
+    );
+  });
+
   it("shows a failed call with no usage row as such", () => {
     const html = routed(
       <AiRequestLogEntryReport

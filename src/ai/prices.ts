@@ -13,7 +13,7 @@ export function perMillion(dollars: number): number {
 }
 
 // Input and output from the spec. Cache reads from each AI provider's price page in November 2026:
-// Haiku 5.5 $0.01 and Sonnet 5.5 $0.10 (0.05× input) on Anthropic; GPT-6 Luna $0.01 and GPT-6.1
+// Haiku 5.5 $0.01, Sonnet 5.5 $0.20, and Opus 5.5 $0.20 on Anthropic; GPT-6 Luna $0.01 and GPT-6.1
 // Terra $0.05 on OpenAI. A cache write is 1.25× input on both. Haiku 5.5 costs more for a prompt
 // over 100,000 tokens; no prompt of the app's comes near that. Each release updates this table.
 function price(input: number, output: number, cacheRead: number): ModelPrice {
@@ -26,18 +26,24 @@ function price(input: number, output: number, cacheRead: number): ModelPrice {
 }
 
 const HAIKU_5_5 = price(0.1, 0.5, 0.01);
-const SONNET_5_5 = price(2, 10, 0.1);
+const SONNET_5_5 = price(2, 10, 0.2);
+const OPUS_5_5 = price(4, 20, 0.2);
 const GPT_6_LUNA = price(0.1, 0.5, 0.01);
 const GPT_6_1_TERRA = price(1, 5, 0.05);
 
 // By each AI provider's own model ID. On OpenRouter, the reply's own cost replaces these. An
 // OpenAI-compatible endpoint has none: the Member enters each model's prices.
 export const PRICE_TABLE: Record<AiProviderName, Readonly<Record<string, ModelPrice>>> = {
-  anthropic: { "claude-haiku-5-5": HAIKU_5_5, "claude-sonnet-5-5": SONNET_5_5 },
+  anthropic: {
+    "claude-haiku-5-5": HAIKU_5_5,
+    "claude-sonnet-5-5": SONNET_5_5,
+    "claude-opus-5-5": OPUS_5_5,
+  },
   openai: { "gpt-6-luna": GPT_6_LUNA, "gpt-6.1-terra": GPT_6_1_TERRA },
   openrouter: {
     "anthropic/claude-haiku-5.5": HAIKU_5_5,
     "anthropic/claude-sonnet-5.5": SONNET_5_5,
+    "anthropic/claude-opus-5.5": OPUS_5_5,
     "openai/gpt-6-luna": GPT_6_LUNA,
     "openai/gpt-6.1-terra": GPT_6_1_TERRA,
   },

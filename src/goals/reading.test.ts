@@ -216,9 +216,9 @@ describe("reading a Goal", () => {
       });
       // One Quick-tier call per save, at most 300 reply tokens, and the Goal's run at once.
       expect(calls()).toEqual([
-        { tier: "quick", modelId: "quick-model", maxOutputTokens: 300 },
-        { tier: "quick", modelId: "quick-model", maxOutputTokens: 300 },
-        { tier: "quick", modelId: "quick-model", maxOutputTokens: 300 },
+        { tier: "quick", modelId: "quick-model", maxOutputTokens: 2_000, effort: "low" },
+        { tier: "quick", modelId: "quick-model", maxOutputTokens: 2_000, effort: "low" },
+        { tier: "quick", modelId: "quick-model", maxOutputTokens: 2_000, effort: "low" },
       ]);
       expect(goalRuns).toEqual([restaurants, house, car]);
     });

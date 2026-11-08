@@ -105,7 +105,23 @@ describe("counting AI cost", () => {
       cacheRead: perMillion(0.01),
       cacheWrite: perMillion(0.125),
     });
-    expect(claude["claude-sonnet-5-5"]).toMatchObject({ input: 2_000_000, output: 10_000_000 });
+    expect(claude["claude-sonnet-5-5"]).toEqual({
+      input: 2_000_000,
+      output: 10_000_000,
+      cacheRead: 200_000,
+      cacheWrite: 2_500_000,
+    });
+    // Opus 5.5 is a choice, on Anthropic and on OpenRouter, at the same prices.
+    expect(claude["claude-opus-5-5"]).toEqual({
+      input: 4_000_000,
+      output: 20_000_000,
+      cacheRead: 200_000,
+      cacheWrite: 5_000_000,
+    });
+    expect(PRICE_TABLE.openrouter["anthropic/claude-opus-5.5"]).toEqual(claude["claude-opus-5-5"]);
+    expect(PRICE_TABLE.openrouter["anthropic/claude-sonnet-5.5"]).toEqual(
+      claude["claude-sonnet-5-5"],
+    );
     expect(openai["gpt-6-luna"]).toMatchObject({ input: 100_000, output: 500_000 });
     expect(openai["gpt-6.1-terra"]).toMatchObject({
       input: 1_000_000,
@@ -137,14 +153,17 @@ describe("counting AI cost", () => {
         cacheReadTokens: 2000,
         cacheWriteTokens: 400,
         outputTokens: 300,
-        // 1,000 × $2 + 2,000 × $0.10 + 400 × $2.50 + 300 × $10, per million: $0.0062.
-        costNanos: 6_200_000,
+        // 1,000 × $2 + 2,000 × $0.20 + 400 × $2.50 + 300 × $10, per million: $0.0064.
+        costNanos: 6_400_000,
         at: "2026-11-10T15:00:00.000Z",
       },
       expect.objectContaining({ use: "category fix", costNanos: 320_000 }),
     ]);
-    expect(page.totalNanos).toBe(CHECK_COST + 320_000 + 6_200_000);
-    expect(callCost(6_200_000)).toBe("$0.0062");
+    expect(page.totalNanos).toBe(CHECK_COST + 320_000 + 6_400_000);
+    expect(callCost(6_400_000)).toBe("$0.0064");
+    // Opus 5.5: 1,000 × $4 + 2,000 × $0.20 + 400 × $5 + 300 × $20, per million: $0.0124.
+    const opus = tablePrice("anthropic", "claude-opus-5-5");
+    expect(opus && costOf({ ...tokens, outputTokens: 300 }, opus)).toBe(12_400_000);
     expect(callCost(1_000)).toBe("under $0.0001");
   });
 

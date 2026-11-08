@@ -72,13 +72,19 @@ export type CallLog = {
 
 export type KeptCall = {
   // Runs once, when the call ends: with its AI usage row's ID when it counted, the reply so far,
-  // and the error when it failed. It never throws, so the log never fails a call.
+  // whether the reply ended at its reply limit, and the error when it failed. It never throws, so
+  // the log never fails a call.
   end(end: {
     aiCallId: number | undefined;
     reply: readonly ReplyPart[];
+    atLimit?: boolean;
     error?: unknown;
   }): Promise<void>;
 };
+
+// Whether a reply ended at its reply limit, by the model call's finish reason.
+const endedAtLimit = (finishReason: { unified: string } | undefined) =>
+  finishReason?.unified === "length";
 
 // Adds a streamed piece of text or reasoning to the reply.
 function addPiece(reply: ReplyPart[], type: "text" | "reasoning", piece: string): void {
@@ -191,7 +197,11 @@ export function costMiddleware(call: OutboundCall, log?: CallLog): LanguageModel
         (part) => part.type === "tool-call" && part.providerExecuted === true,
       ).length;
       const aiCallId = await count(result.usage, result.providerMetadata, searches);
-      await kept?.end({ aiCallId, reply: replyOf(result.content) });
+      await kept?.end({
+        aiCallId,
+        reply: replyOf(result.content),
+        atLimit: endedAtLimit(result.finishReason),
+      });
       return result;
     },
     // A streamed call is counted once: at its finish part, or, when it is closed or fails first,
@@ -214,6 +224,7 @@ export function costMiddleware(call: OutboundCall, log?: CallLog): LanguageModel
       // The reply so far, and the first error the stream sent as a part, for the log.
       const reply: ReplyPart[] = [];
       let streamError: { error: unknown } | undefined;
+      let atLimit = false;
       let ended = false;
       async function countOnce(usage: ProviderUsage, metadata: ProviderMetadata): Promise<void> {
         if (counted) return;
@@ -226,7 +237,12 @@ export function costMiddleware(call: OutboundCall, log?: CallLog): LanguageModel
         if (ended || kept === undefined) return;
         ended = true;
         const error = streamError ?? failure;
-        await kept.end({ aiCallId, reply, ...(error === undefined ? {} : { error: error.error }) });
+        await kept.end({
+          aiCallId,
+          reply,
+          atLimit,
+          ...(error === undefined ? {} : { error: error.error }),
+        });
       }
       const countCut = () =>
         countOnce(
@@ -268,12 +284,16 @@ export function costMiddleware(call: OutboundCall, log?: CallLog): LanguageModel
             if (part.type === "text-delta" || part.type === "reasoning-delta") {
               outputText += part.delta;
               addPiece(reply, part.type === "text-delta" ? "text" : "reasoning", part.delta);
+            } else if (part.type === "reasoning-start") {
+              // Reasoning the AI provider hides comes with no text, and still shows in the log.
+              addPiece(reply, "reasoning", "");
             } else if (part.type === "tool-call") {
               reply.push({ type: "tool call", toolName: part.toolName, input: part.input });
             } else if (part.type === "error" && streamError === undefined) {
               streamError = { error: part.error };
             }
             if (part.type === "finish") {
+              atLimit = endedAtLimit(part.finishReason);
               await countOnce(part.usage, part.providerMetadata);
               await endOnce();
             }

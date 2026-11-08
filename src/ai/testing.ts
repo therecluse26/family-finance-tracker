@@ -142,6 +142,9 @@ export class StubModels {
   replyTo: ((messages: StubMessage[]) => string) | undefined;
   // Why each text reply ends: "length" for one cut off at its reply limit.
   finishReason: "stop" | "length" = "stop";
+  // When set, each text reply starts with reasoning whose text the AI provider hides, as
+  // Anthropic's Claude 5 models send it by default: a reasoning part with no text.
+  hiddenReasoning = false;
   // When set, a reply that works calls these tools in place of a text reply, while it returns any.
   callTools: ((messages: StubMessage[]) => readonly StubToolCall[]) | undefined;
   // The tools each call offered by name, and its tool choice, such as "auto" or "none".
@@ -151,7 +154,14 @@ export class StubModels {
   usage: StubUsage = { noCache: 5, cacheRead: 0, cacheWrite: 0, output: 1 };
   providerMetadata: ProviderMetadata | undefined;
   readonly connections: AiConnection[] = [];
-  readonly calls: { tier: AiTier; modelId: string; maxOutputTokens: number | undefined }[] = [];
+  // Each call's tier, model, reply limit, and the effort it sent under its AI provider's own
+  // option name.
+  readonly calls: {
+    tier: AiTier;
+    modelId: string;
+    maxOutputTokens: number | undefined;
+    effort?: string;
+  }[] = [];
   // Runs before each answer, so a test can act while the AI provider is answering.
   beforeAnswer: () => Promise<void> = async () => {};
   // A streamed reply that fails after its text and before its finish part, with its usage.
@@ -177,6 +187,7 @@ export class StubModels {
             tier,
             modelId: models[tier],
             maxOutputTokens: options.maxOutputTokens,
+            ...effortSent(connection, options.providerOptions),
           });
           this.prompts.push(options.prompt as StubMessage[]);
           this.offered.push({
@@ -198,6 +209,7 @@ export class StubModels {
             tier,
             modelId: models[tier],
             maxOutputTokens: options.maxOutputTokens,
+            ...effortSent(connection, options.providerOptions),
           });
           this.prompts.push(options.prompt as StubMessage[]);
           this.offered.push({
@@ -240,30 +252,35 @@ export class StubModels {
                 ...content.flatMap((part): StreamPart[] =>
                   part.type === "tool-result"
                     ? [part]
-                    : part.type === "text"
+                    : part.type === "reasoning"
                       ? [
-                          { type: "text-start" as const, id: "1" },
-                          ...pieces(part.text).map((delta) => ({
-                            type: "text-delta" as const,
-                            id: "1",
-                            delta,
-                          })),
-                          { type: "text-end" as const, id: "1" },
+                          { type: "reasoning-start" as const, id: "0" },
+                          { type: "reasoning-end" as const, id: "0" },
                         ]
-                      : [
-                          {
-                            type: "tool-input-start" as const,
-                            id: part.toolCallId,
-                            toolName: part.toolName,
-                          },
-                          ...pieces(part.input).map((delta) => ({
-                            type: "tool-input-delta" as const,
-                            id: part.toolCallId,
-                            delta,
-                          })),
-                          { type: "tool-input-end" as const, id: part.toolCallId },
-                          part,
-                        ],
+                      : part.type === "text"
+                        ? [
+                            { type: "text-start" as const, id: "1" },
+                            ...pieces(part.text).map((delta) => ({
+                              type: "text-delta" as const,
+                              id: "1",
+                              delta,
+                            })),
+                            { type: "text-end" as const, id: "1" },
+                          ]
+                        : [
+                            {
+                              type: "tool-input-start" as const,
+                              id: part.toolCallId,
+                              toolName: part.toolName,
+                            },
+                            ...pieces(part.input).map((delta) => ({
+                              type: "tool-input-delta" as const,
+                              id: part.toolCallId,
+                              delta,
+                            })),
+                            { type: "tool-input-end" as const, id: part.toolCallId },
+                            part,
+                          ],
                 ),
                 {
                   type: "finish" as const,
@@ -340,7 +357,11 @@ export class StubModels {
     return {
       content:
         toolCalls.length === 0
-          ? [...searches, { type: "text" as const, text: this.replyTo?.(messages) ?? this.reply }]
+          ? [
+              ...searches,
+              ...(this.hiddenReasoning ? [{ type: "reasoning" as const, text: "" }] : []),
+              { type: "text" as const, text: this.replyTo?.(messages) ?? this.reply },
+            ]
           : toolCalls.map((call, index) => ({
               type: "tool-call" as const,
               toolCallId: `call-${index + 1}`,
@@ -359,6 +380,24 @@ export class StubModels {
       warnings: [],
     };
   }
+}
+
+// The effort a call sent, read as its AI provider's package reads it: Anthropic's effort, OpenAI's
+// reasoningEffort, or OpenRouter's reasoning.effort. An OpenAI-compatible endpoint reads none.
+function effortSent(
+  connection: AiConnection,
+  options: Record<string, Record<string, unknown>> | undefined,
+): { effort?: string } {
+  const own = (name: string) => options?.[name];
+  const effort =
+    connection.provider === "anthropic"
+      ? own("anthropic")?.effort
+      : connection.provider === "openai"
+        ? own("openai")?.reasoningEffort
+        : connection.provider === "openrouter"
+          ? (own("openrouter")?.reasoning as { effort?: unknown } | undefined)?.effort
+          : undefined;
+  return typeof effort === "string" ? { effort } : {};
 }
 
 // Waits until the call is aborted, then throws as fetch does.

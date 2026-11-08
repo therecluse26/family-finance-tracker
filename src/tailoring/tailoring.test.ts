@@ -240,7 +240,7 @@ describe("Budget tailoring", () => {
       expect(await draftFirstBudgets(bank.database, NOW, tailorFirstDraft)).toBe(true);
 
       expect(stub.calls).toEqual([
-        { tier: "writer", modelId: "writer-model", maxOutputTokens: 1_500 },
+        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000, effort: "medium" },
       ]);
       expect(await budgetOf("Restaurants")).toMatchObject({
         amount: Math.round((restaurants * 0.8) / 100) * 100,
