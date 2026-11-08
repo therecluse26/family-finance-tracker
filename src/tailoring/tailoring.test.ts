@@ -37,7 +37,7 @@ import {
 // Budget tailoring (spec 05, The AI's part in a draft; Which Proposals exist; spec 08, Budget
 // tailoring) on a small Household: 3 months of Spending through the fake adapter, Steady Income,
 // and Household facts. AI SDK test models only: no test calls an AI provider. Each prompt is read
-// as the Writer model got it, after the real privacy filter.
+// as the Writer model got it.
 
 // The Goals whose start a test reads as not known, so a Goal run's limits cannot lean on it.
 const unknownStarts = vi.hoisted(() => new Set<string>());
@@ -356,7 +356,7 @@ describe("Budget tailoring", () => {
       });
     });
 
-    it("sends the formula's figures and Benchmarks as typed values, with no cache mark, and never the ZIP code or ages", async () => {
+    it("sends the formula's figures and Benchmarks as the app made them, with no cache mark, and never the ZIP code or ages", async () => {
       await connectAi();
       const hobbies = await figureOf("Hobbies");
       const typed = `${Math.floor(hobbies / 100)}.${String(hobbies % 100).padStart(2, "0")}`;

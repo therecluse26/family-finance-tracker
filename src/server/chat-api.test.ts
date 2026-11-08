@@ -153,7 +153,7 @@ describe("the Chat routes", () => {
   };
 
   it("streams an answer, and every Member sees every thread with who wrote each message", async () => {
-    stub.reply = "Member A asked a good one.";
+    stub.reply = "Alice asked a good one.";
     const id = await newThread();
     expect(modelCalls()).toEqual([]);
 
@@ -495,7 +495,7 @@ describe("the Chat routes", () => {
       const answer = await alice.post("/api/chat", answerBody(threadId, "Why?"));
       expect(await streamedText(answer)).toBe("O");
       const sent = JSON.stringify(stub.prompts.at(-1));
-      // $48.21 goes as the app made it, though it matches the last 4. The name never goes.
+      // $48.21 goes as the app made it, though it matches the last 4. The note names no Account.
       expect(sent).toContain("Card interest: $48.21 on an Account on 2026-10-17.");
       for (const word of ["Alice", "4821", "Made up"]) expect(sent).not.toContain(word);
       expect((await threadOf(threadId)).messages.map((message) => message.text)).toEqual([

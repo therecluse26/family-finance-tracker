@@ -43,7 +43,7 @@ export function webSearchTools(provider: AiProviderName): ToolSet | undefined {
   }
 }
 
-// Settings the lookup model adds to each request, after the privacy filter, as fixed constants.
+// Settings the lookup model adds to each request, as fixed constants.
 function withRequestOptions(
   model: LanguageModel,
   options: Record<string, Record<string, string | number>>,

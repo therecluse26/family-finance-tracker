@@ -5,12 +5,12 @@ import { propose } from "../proposals/index.ts";
 
 // Chat's two Proposal tools (spec 08, Proposal tools). Each hands the AI's Proposal to the
 // proposals module, which checks every guardrail in code and stores it open: nothing changes until
-// a Member accepts it. Each answers "shown", or an error that names the broken guardrail, as
-// app-built text through the privacy filter. The run is the answer: at most 2 Proposals in one.
+// a Member accepts it. Each answers "shown", or an error that names the broken guardrail. The run
+// is the answer: at most 2 Proposals in one.
 
 export type ProposalToolOptions = {
   database: Database;
-  ai: Pick<HouseholdAi, "forScreen" | "toolResult">;
+  ai: Pick<HouseholdAi, "forScreen">;
   // The answer's run ID, which ties its Proposals to it and to its thread.
   runId: string;
   now?: () => Date;
@@ -29,12 +29,12 @@ export function proposalTools({
   runId,
   now = () => new Date(),
 }: ProposalToolOptions): AiTools {
-  // The AI's words as the card shows them: one plain line, in the one plain voice, with each
-  // Member's name in place of their label. A newline in the tool's input is a space.
+  // The AI's words as the card shows them: one plain line, in the one plain voice. A newline in the
+  // tool's input is a space.
   const shown = async (text: string) =>
     (await ai.forScreen(text.toWellFormed().replace(CONTROL, " "))).trim();
-  const answer = async (result: Awaited<ReturnType<typeof propose>>) =>
-    ai.toolResult(result.outcome === "shown" ? { result: "shown" } : { error: result.guardrail });
+  const answer = (result: Awaited<ReturnType<typeof propose>>) =>
+    result.outcome === "shown" ? { result: "shown" } : { error: result.guardrail };
 
   const propose_budget_change = aiTool({
     description:

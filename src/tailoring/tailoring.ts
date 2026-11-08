@@ -22,13 +22,12 @@ import { householdSummary } from "../summary/index.ts";
 // and reading a Goal): one Writer call that adjusts the flexible Budgets for the active Goals, with
 // a one-sentence reason per Category. It reads the Household summary, the draft or current
 // Budgets, the formula's figures, the Benchmarks, and the CE note on Housing and Car. It never
-// reads the ZIP code or the ages: the Benchmarks come as amounts only. Every number the app made
-// goes as a typed value, so the privacy filter never takes one for a last 4. The call has no cache
-// mark and at most 1,500 reply tokens (src/ai/prompt.ts sets both for this use).
+// reads the ZIP code or the ages: the Benchmarks come as amounts only. The call has no cache mark
+// and at most 1,500 reply tokens (src/ai/prompt.ts sets both for this use).
 
 // The longest reason the app keeps: one sentence.
 const MAX_REASON = 300;
-// The largest figure the reply may hold, in dollars: under a typed amount's cap.
+// The largest figure the reply may hold, in dollars: under typedAmount's cap.
 const MAX_DOLLARS = 1_000_000_000;
 
 const CATEGORY_NAMES = CATEGORIES.map(({ name }) => name) as [Category, ...Category[]];
@@ -94,13 +93,13 @@ export type CategoryFigure = {
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 
 // Text a Member wrote, such as a Goal's words, as one plain line, so it cannot start a line of its
-// own. It is app-built text after that, and the privacy filter reads it in full.
+// own.
 const plain = (text: string) =>
   text.toWellFormed().replace(CONTROL, " ").replace(/ {2,}/g, " ").trim();
 
 const isBills = (category: Category) => categoryGroupOf(category) === "Bills";
 
-// The facts of one call, as pieces: each amount the app made is a typed value.
+// The facts of one call, as pieces: text, and each amount the app made.
 export function tailoringFacts(input: {
   run: TailoringRun;
   figures: readonly CategoryFigure[];

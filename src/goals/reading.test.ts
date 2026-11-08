@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  type AiGates,
-  aiCost,
-  aiSettings,
-  type HouseholdAi,
-  householdAi,
-  PrivacyRefusal,
-} from "../ai/index.ts";
+import { type AiGates, aiCost, aiSettings, type HouseholdAi, householdAi } from "../ai/index.ts";
 import { newAiKey, type StubMessage, StubModels } from "../ai/testing.ts";
 import { fakeAccount } from "../bank/fake.ts";
 import { syncConnection } from "../bank/index.ts";
@@ -35,7 +28,7 @@ import {
 
 // Adding a Goal and editing its words (spec 05, Rules; spec 08, Every AI use, reading a Goal;
 // Limits on each call; The AI cost cap; Failures), on Accounts the fake adapter synced. The AI is
-// AI SDK test models behind the real privacy filter and cost gate. No test calls an AI provider.
+// AI SDK test models behind the real cost gate. No test calls an AI provider.
 // The Household time zone is unset, so Household time is UTC.
 
 const NOW = new Date("2026-11-10T15:00:00.000Z");
@@ -43,8 +36,7 @@ const BANK = "fake-reading-bank";
 const $ = (dollars: number) => Math.round(dollars * 100);
 const PRICE = { input: 1_000_000, output: 2_000_000 };
 
-// The savings Account's last 4 is in today's date, 2026-11-10: the date goes as a typed value, so
-// the privacy filter keeps it (K16).
+// The savings Account's last 4 is in today's date, 2026-11-10: the date reaches the AI as it is.
 const CHECKING = fakeAccount({ id: "acc-checking" });
 const SAVINGS = fakeAccount({
   id: "acc-savings",
@@ -69,7 +61,7 @@ const target = (fields: Record<string, unknown>) => ({
   ...fields,
 });
 
-// The user messages of one call, as the model read them after the privacy filter.
+// The user messages of one call, as the model read them.
 const userTexts = (messages: StubMessage[]) =>
   messages
     .filter((message) => message.role === "user")
@@ -238,7 +230,7 @@ describe("reading a Goal", () => {
         deadline: "2027-06-30",
       }));
       replies.set("Grow the savings to $5,000", (messages) => ({
-        target: target({ kind: "Accounts", accounts: [rowOf(messages, "savings")] }),
+        target: target({ kind: "Accounts", accounts: [rowOf(messages, "Savings ending 1110")] }),
         change: { amount: 3_000, percent: null },
         deadline: null,
       }));
@@ -263,47 +255,43 @@ describe("reading a Goal", () => {
       });
     });
 
-    it("sends the words, the Category list, today's date, and each Account and loan by label only", async () => {
+    it("sends the words, the Category list, today's date, and each Account and loan by name and last 4", async () => {
       await add("I want to spend 20% less on restaurants.");
 
       const [prompt] = prompts();
       const texts = userTexts(prompt ?? []);
-      const labels = await ai.accountLabels();
+      const names = await ai.accountNames();
       expect(texts).toContain(GOAL_READING_TASK);
       expect(GOAL_READING_TASK).toContain("Restaurants; ");
       expect(texts.at(-1)).toBe("I want to spend 20% less on restaurants.");
       const facts = texts.at(-2) ?? "";
-      // Today's date reaches the AI whole, though the savings Account's last 4 is in it (K16).
+      // Today's date reaches the AI whole, though the savings Account's last 4 is in it.
       expect(facts).toMatch(/^Today is 2026-11-10\.\n/);
-      for (const label of labels.values()) expect(facts).toContain(label);
+      for (const name of names.values()) expect(facts).toContain(name);
+      expect(facts).toContain("Whitlock Rainy Day Savings ending 1110");
       expect(facts).toMatch(/\n\d+\. [^\n]+ \(loan\)/);
-      expect(facts).not.toContain("Whitlock");
-      expect(facts).not.toContain("Rainy Day");
     });
 
-    it("stores the words as one line, and keeps a card number and a Member's name from the AI (K13, K14)", async () => {
-      // A card number that passes the Luhn check, split by a newline, and a name after a tab.
+    it("stores the words as one line, and sends a Member's name to the AI as typed", async () => {
+      // A number split by a newline, and a name after a tab.
       const card = "4111 1111\n1111 1111";
       const saved = goalId(await add(`Pay off ${card} before\tDana buys a car`));
 
       const words = userTexts(prompts()[0] ?? []).at(-1) ?? "";
-      expect(words).not.toMatch(/4111\D{0,3}1111/);
-      expect(words).not.toContain("Dana");
-      expect(words).toContain("Member A");
-      // The model reads the words with no newline or tab left, so no escape such as \n.
-      expect(words).not.toMatch(/[\n\t]|\\[a-z]/i);
+      expect(words).toContain("Dana buys a car");
+      // The model reads the words with no newline or tab left.
+      expect(words).not.toMatch(/[\n\t]/);
       // The words the app stores are one line.
       expect((await readGoal(bank.database, saved))?.words).toBe(
         "Pay off 4111 1111 1111 1111 before Dana buys a car",
       );
     });
 
-    it("never refuses a Member's words, even ones the filter would refuse from the app", async () => {
-      // As app-built text, its letter escape after a name would refuse the call.
+    it("sends a Member's words as they typed them, a name and an escape included", async () => {
       const saved = goalId(await add('{"row":1,"note":"save for Dana\\nby June"}'));
 
       expect(userTexts(prompts()[0] ?? []).at(-1)).toBe(
-        '{"row":1,"note":"save for Member A\\nby June"}',
+        '{"row":1,"note":"save for Dana\\nby June"}',
       );
       expect(await readGoal(bank.database, saved)).toBeDefined();
     });
@@ -524,32 +512,7 @@ describe("reading a Goal", () => {
       expect(GOAL_READING_TASK).toContain("A date with no year means its next one");
     });
 
-    it("gives the place back when no call went out: a privacy refusal, or a key rejected before the save", async () => {
-      // The privacy filter refuses before the call.
-      let refuse = true;
-      const filtered = goalWriting({
-        database: bank.database,
-        ai: {
-          ...ai,
-          generate: async (call, options) => {
-            if (refuse) throw new PrivacyRefusal("The privacy filter refused it.");
-            return ai.generate(call, options);
-          },
-        },
-        requestGoalRun: async () => undefined,
-        now: () => NOW,
-      });
-      for (let count = 0; count < READINGS_PER_HOUR + 5; count += 1) {
-        expect(await filtered.add("member-a", { words: "Save", sendAnyway: false })).toEqual({
-          refused: "failed",
-          failure: "privacy",
-        });
-      }
-      refuse = false;
-      expect(await filtered.add("member-a", { words: "Save", sendAnyway: false })).toHaveProperty(
-        "goalId",
-      );
-
+    it("gives the place back when no call went out: a key rejected before the save", async () => {
       // The provider rejects the key: that call took a place. Later saves send nothing.
       stub.answers.quick = "reject";
       expect(await add("Save more")).toEqual({ refused: "paused", pause: "key rejected" });

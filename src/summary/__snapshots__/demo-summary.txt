@@ -63,12 +63,12 @@ In 2026-11, so far: meals out (Restaurants Transactions) 0, delivery orders 0.
 - Most frequent Merchants, with Transactions and Spending: none
 
 ## Balances: money owed is negative
-- Ally Bank checking: 18950.32
-- Ally Bank savings: 19971.32
-- Capital One credit card: -814.02, APR 28.49%, statement balance -731.27, minimum payment 35.00, due 2026-11-20
-- Chase credit card: -450.93, APR 21.24%, statement balance -431.53, minimum payment 40.00, due 2026-11-22
-- Larkspur personal: -10082.45
-- Synchrony Bank credit card: -906.95, APR 26.99%, statement balance -1009.07, minimum payment 61.00, due 2026-11-18
+- Interest Checking ending 4417: 18950.32
+- Online Savings ending 8802: 19971.32
+- Rewards Card ending 3391: -814.02, APR 28.49%, statement balance -731.27, minimum payment 35.00, due 2026-11-20
+- Chase Card ending 7731: -450.93, APR 21.24%, statement balance -431.53, minimum payment 40.00, due 2026-11-22
+- Personal Loan ending 0057: -10082.45
+- Home Store Card ending 5520: -906.95, APR 26.99%, statement balance -1009.07, minimum payment 61.00, due 2026-11-18
 
 ## Coming up, 2026-11-21 to 2026-12-04
 - 2026-11-20: Tunebox, -11.99, Recurring charge, late
@@ -81,15 +81,15 @@ Checking now: 18950.32. Lowest in the window: 18830.32 on 2026-11-24.
 - ShopMart Plus: 139.00 yearly, next 2027-06-14, General goods; prices: 139.00 from 2025-06-14
 
 ## Goals
-- "Spend less at restaurants", by Member B on 2026-11-01; reading: target Category Restaurants, change 100.00, deadline none, Goal amount 300.00; progress: 100% done, On track, On pace for $0 this month, and Goal is $300; status active
-- "Put away for a summer trip", by Member A on 2026-11-01; reading: target Accounts Ally Bank savings, change 3000.00, deadline 2027-06-30, Goal amount 22971.32; progress: 0% done, Behind, $19971 of $22971, and $237 behind pace; status active
+- "Spend less at restaurants", by Alex Rivera on 2026-11-01; reading: target Category Restaurants, change 100.00, deadline none, Goal amount 300.00; progress: 100% done, On track, On pace for $0 this month, and Goal is $300; status active
+- "Put away for a summer trip", by Jamie Rivera on 2026-11-01; reading: target Accounts Online Savings ending 8802, change 3000.00, deadline 2027-06-30, Goal amount 22971.32; progress: 0% done, Behind, $19971 of $22971, and $237 behind pace; status active
 
 ## Alerts in the last 7 days
 - None.
 Alerts the weekly cap held back in 2026-11:
 - None.
 Earlier Alerts a Member marked "Not a problem", the latest first:
-- 2026-11-01, Price increase: City of Mapleford Utilities went up from $70.37 to $103.24 (+$32.87, +47%) on 2026-06-10. Marked "Not a problem" by Member B on 2026-11-01.
+- 2026-11-01, Price increase: City of Mapleford Utilities went up from $70.37 to $103.24 (+$32.87, +47%) on 2026-06-10. Marked "Not a problem" by Alex Rivera on 2026-11-01.
 
 ## Proposals
 - None open.

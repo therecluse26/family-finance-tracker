@@ -135,9 +135,9 @@ function importedSpecifiers(file: SourceFile, parsed: Parsed): string[] {
   ];
 }
 
-// The one AI call path (spec 08, Privacy filter). Every value from the `ai` package, such as
-// generateText, is imported in src/ai/call.ts, which sends every request through the privacy
-// filter. providers.ts wraps each model with its AI provider's data-use setting. Test files and
+// The one AI call path (spec 08, What the AI provider gets). Every value from the `ai` package,
+// such as generateText, is imported in src/ai/call.ts, which sends every request through the cost
+// gate. providers.ts wraps each model with its AI provider's data-use setting. Test files and
 // test support use the AI SDK's test models; a type passes anywhere in src/ai.
 const AI_VALUE_IMPORTS: Record<string, readonly string[] | "all"> = {
   "src/ai/call.ts": "all",
@@ -183,7 +183,7 @@ function findCallPathBreaches(files: SourceFile[]): string[] {
   return breaches;
 }
 
-// Only src/ai/call.ts builds models, so every model is behind the privacy filter: the AI
+// Only src/ai/call.ts builds models, so every model is behind the cost gate: the AI
 // provider packages' models are made in src/ai/providers.ts, and only call.ts takes a value from
 // providers.ts. A raw model's doGenerate needs no import from ai, so this guards the models too.
 const MODEL_BUILDERS: { owner: string; matches: (specifier: string, from: string) => boolean }[] = [

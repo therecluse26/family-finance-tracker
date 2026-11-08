@@ -9,7 +9,6 @@ import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
 import type { AiTier, TierModels } from "./ai-view.ts";
 import type { AiConnection, AiModelMaker } from "./providers.ts";
-import { typedValueOf } from "./typed.ts";
 
 export type TestAi = { database: Database; secrets: Secrets; close(): void };
 
@@ -20,10 +19,9 @@ export async function newTestAi(): Promise<TestAi> {
   return { database: db.database, secrets, close: db.close };
 }
 
-// A tool's answer as the AI reads it: plain JSON data, with each typed value bare, as the privacy
-// filter sends it (src/ai/typed.ts).
+// A tool's answer as the AI reads it: plain JSON data.
 export function asTheAiReads(answer: unknown): unknown {
-  return JSON.parse(JSON.stringify(answer), (_field, value) => typedValueOf(value) ?? value);
+  return JSON.parse(JSON.stringify(answer));
 }
 
 // A made-up API key or gateway token: letters and digits, as AI providers' dashboards show them.
@@ -120,7 +118,7 @@ export type StubUsage = {
   output: number;
 };
 
-// One message of a request, as the model gets it after the privacy filter.
+// One message of a request, as the model gets it.
 export type StubMessage = {
   role: string;
   content: string | readonly { type: string; text?: string; output?: unknown }[];
@@ -148,7 +146,7 @@ export class StubModels {
   callTools: ((messages: StubMessage[]) => readonly StubToolCall[]) | undefined;
   // The tools each call offered by name, and its tool choice, such as "auto" or "none".
   readonly offered: { tools: string[]; toolChoice: string | undefined }[] = [];
-  // The messages of each request, as the model got them after the privacy filter.
+  // The messages of each request, as the model got them.
   readonly prompts: StubMessage[][] = [];
   usage: StubUsage = { noCache: 5, cacheRead: 0, cacheWrite: 0, output: 1 };
   providerMetadata: ProviderMetadata | undefined;

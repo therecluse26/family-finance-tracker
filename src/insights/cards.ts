@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { type HouseholdAi, PrivacyRefusal, type SummaryPart, typedDate } from "../ai/index.ts";
+import { type HouseholdAi, type SummaryPart, typedDate } from "../ai/index.ts";
 import { alertList } from "../anomalies/index.ts";
 import {
   type Database,
@@ -170,13 +170,12 @@ function pictureOf(answer: z.infer<typeof PICTURE_ANSWER> | null): PictureChoice
   return parsed.success ? parsed.data : null;
 }
 
-// One line of the feedback, from text and typed values.
+// One line of the feedback, from text and numbers.
 const feedbackLine = (...parts: SummaryPart[]): SummaryPart[] => [...parts, "\n"];
 
 // The feedback since the last run (spec 08, Insight cards): the cards marked Done, the "Not a
 // problem" marks, the Proposals a Member accepted or skipped, and the plan items a Member ticked.
-// Each date is typed, and each Proposal's amounts too; the cards' and the plan's words, which the
-// AI wrote, are text the filter reads.
+// The cards' and the plan's words are the AI's own.
 async function feedbackParts(
   database: Database,
   current: readonly InsightCardRow[],
@@ -256,28 +255,21 @@ async function feedbackParts(
 
 // One Insight card run, at any hour: one Writer call that writes every card and picks every
 // picture. Cards that pass the schema replace the whole set, marked with the moment the run
-// started: a Transaction stored after it is new to the next run. A pause, an AI error with no
-// retry left, or a call the privacy filter refuses takes the no-AI path: the last cards stay.
+// started: a Transaction stored after it is new to the next run. A pause, or an AI error with no
+// retry left, takes the no-AI path: the last cards stay.
 export async function writeInsightCards(options: InsightCardOptions): Promise<InsightCardRun> {
   const { database, ai, now = () => new Date(), logger = log } = options;
   const startedAt = now();
   const current = await listInsightCards(database);
   const summary = await householdSummary({ database, ai, now, logger }).today();
   const feedback = await feedbackParts(database, current, now());
-  let reply: Awaited<ReturnType<typeof ai.generate<InsightCardsReply>>>;
-  try {
-    reply = await ai.generate({
-      use: "insight cards",
-      summary: summary.parts,
-      task: INSIGHT_CARDS_TASK,
-      changes: [{ role: "user", parts: feedback }],
-      output: INSIGHT_CARDS_REPLY,
-    });
-  } catch (error) {
-    if (!(error instanceof PrivacyRefusal)) throw error;
-    logger.warn("The privacy filter refused the Insight card run");
-    return "no AI";
-  }
+  const reply = await ai.generate<InsightCardsReply>({
+    use: "insight cards",
+    summary: summary.parts,
+    task: INSIGHT_CARDS_TASK,
+    changes: [{ role: "user", parts: feedback }],
+    output: INSIGHT_CARDS_REPLY,
+  });
   if (!reply.ready) return "retryAt" in reply ? { retryAt: reply.retryAt } : "no AI";
 
   const writtenAt = startedAt;

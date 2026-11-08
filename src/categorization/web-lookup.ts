@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { type AiReply, type HouseholdAi, PrivacyRefusal, plainVoice } from "../ai/index.ts";
+import { type AiReply, type HouseholdAi, plainVoice } from "../ai/index.ts";
 import { CATEGORIES, type Category, isCategory } from "../categories/index.ts";
 import {
   type Database,
@@ -8,7 +8,6 @@ import {
   readMerchantLookups,
   storeMerchantLookup,
 } from "../db/index.ts";
-import { log } from "../log.ts";
 import { isPaymentApp, type Merchant, merchantKey, paymentAppLine } from "../merchants/index.ts";
 import { merchantOf } from "./cascade.ts";
 import type { AiConfidence } from "./quick-tier.ts";
@@ -16,7 +15,7 @@ import type { AiConfidence } from "./quick-tier.ts";
 // The Web lookup (spec 04, Web lookup; spec 08, Merchant web lookup). When the Category fix is
 // unsure of a Merchant it does not know, the app looks the Merchant up with the AI provider's own
 // web search, keeps the answer for the Merchant, and picks the Category from it. Its only input is
-// the clean Merchant name, which goes through the privacy filter as app-built text.
+// the clean Merchant name.
 
 // At most 50 lookups in one run of the categorization step, one at a time (K3, K4).
 export const LOOKUPS_A_RUN = 50;
@@ -32,8 +31,7 @@ export const DESCRIPTION_LENGTH = 120;
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
 
 // The line about the business as the app keeps and shows it: in the plain voice, with each control
-// or format character a space, and at most 120 characters. A "Member A" in it stays as written:
-// web text names no Member, so no label turns back into a name.
+// or format character a space, and at most 120 characters.
 export function cleanDescription(text: string): string {
   return plainVoice(text.replace(CONTROL_OR_FORMAT, " "))
     .replace(/\s+/g, " ")
@@ -90,8 +88,7 @@ const NOT_A_PURCHASE = /^(?:TRANSFER_IN|TRANSFER_OUT|LOAN_PAYMENTS)(?:_|$)/;
 // A card payment's clean name, such as "Chase card payment" (spec 04, Names).
 const CARD_PAYMENT_NAME = /(?:^|\s)card payment$/i;
 
-// Whether a Transaction is never looked up (spec 04, Web lookup), before the privacy filter's own
-// check: a payment-app or Zelle line to or from a person or naming no one, a Transfer, a loan
+// Whether a Transaction is never looked up (spec 04, Web lookup): a payment-app or Zelle line to or from a person or naming no one, a Transfer, a loan
 // payment, a card payment, or a line with no clean Merchant name.
 export function skipsLookup(line: LookupLine): boolean {
   const { merchant } = line;
@@ -139,7 +136,7 @@ export async function readKeptAnswers(
 // What one lookup did.
 // - found: the business, with its Category, confidence, and line, which the app keeps.
 // - nothing found: kept, so no new search for 90 days.
-// - skipped: no answer for this Merchant, such as a bad reply or a privacy refusal. The next
+// - skipped: no answer for this Merchant, such as a bad reply. The next
 //   Merchant still goes.
 // - stopped: no more lookups in this run, with `mark` when the Category waits for the redo of
 //   no-AI work, as after an AI error or at the AI cost cap.
@@ -183,8 +180,8 @@ export class WebLookups {
     return undefined;
   }
 
-  // Looks the Merchant up and keeps its answer. A name the skip rules or the privacy filter would
-  // stop is the caller's to leave out.
+  // Looks the Merchant up and keeps its answer. A name the skip rules would stop is the caller's to
+  // leave out.
   async lookUp(merchant: Merchant, now = new Date()): Promise<LookupResult> {
     const key = keptKey(merchant);
     if (!this.on || key === undefined) return "skipped";
@@ -220,9 +217,7 @@ export class WebLookups {
       });
     } catch (error) {
       await place.giveBack();
-      if (!(error instanceof PrivacyRefusal)) throw error;
-      log.warn("The privacy filter refused a Merchant lookup");
-      return "skipped";
+      throw error;
     }
     if (!reply.ready) {
       // No search ran for a pause, such as the AI cost cap reached since the check, for a refused

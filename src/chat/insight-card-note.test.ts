@@ -23,8 +23,7 @@ import { type Chat, type ChatMember, chat } from "./index.ts";
 
 // "Ask about this" on an Insight card (spec 08, Threads; spec 07, 1. AI box): a new Chat thread
 // with the card attached, read from app.db by its ID, never from the browser. The card's figure
-// goes as a typed value (known finding K16); every word on it is the AI's, stored with each
-// Member's name, and goes through the privacy filter as the model reads it (K13, K14, K17). On AI
+// goes as the app checked it; every word on it is the AI's, and goes as the model reads it. On AI
 // SDK test models; no test calls an AI provider. The Household's names and numbers are made up.
 
 const QUIET = createLogger(() => {}, { throwOnSecretField: true });
@@ -35,8 +34,8 @@ const HOUR = 60 * 60 * 1000;
 
 const DANA: ChatMember = { id: "m1", name: "Dana Whitfield" };
 
-// What must never reach the AI: the Members' names, the Account's last 4, the ZIP code, and a card.
-const PRIVATE = ["Dana", "Whitfield", "Ravi", "Okafor", "10001", "4111"];
+// What never reaches the AI: the ZIP code.
+const ZIP_CODE = "10001";
 
 // The text of a message the model read, part by part.
 const textsOf = (message: StubMessage | undefined): string[] =>
@@ -158,7 +157,7 @@ describe("an Insight card in Chat", () => {
     return result.threadId;
   }
 
-  it("starts a new thread with the card attached and its figure typed, even one that matches an Account's last 4", async () => {
+  it("starts a new thread with the card attached and its figure as the app checked it, even one that matches an Account's last 4", async () => {
     const shown = card();
     await replaceInsightCards(test.database, [shown]);
 
@@ -173,16 +172,14 @@ describe("an Insight card in Chat", () => {
       ],
     });
     const [, , , note, question] = prompts().at(-1) ?? [];
-    // $4,821 matches the Account's last 4, 4821, but goes as a typed value, as the app checked it.
+    // $4,821 matches the Account's last 4, 4821, and goes as the app checked it.
     expect(textsOf(note).join("")).toBe(
       "The Member asks about this note from the AI box.\nAn Insight card in Worth acting on, about Restaurants: Delivery fees add up\n- Its figure: $4821 on takeout fees\n- Why: Six delivery orders this month each paid a fee.\n- Next step: Pick up two orders a week instead.",
     );
     expect(textsOf(question)).toEqual(["Tell me more about this: Delivery fees add up"]);
-    const typed = (calls.at(-1)?.note ?? []).filter((part) => typeof part !== "string");
-    expect(typed).toHaveLength(1);
   });
 
-  it("sends a percent and a count typed, and a Good news card's last words with no Next step label", async () => {
+  it("sends a percent and a count as the app checked them, and a Good news card's last words with no Next step label", async () => {
     const good = card({
       group: "good_news",
       figure: 12,
@@ -248,7 +245,7 @@ describe("an Insight card in Chat", () => {
     expect(prompts()).toEqual([]);
   });
 
-  it("leaves out a Member's name next to a Merchant name and a card number split by a newline", async () => {
+  it("sends a Member's name next to a Merchant name as it is, each control character a space", async () => {
     const shown = card({
       about: "Dana Whitfield Photo",
       title: "Shell and\tRavi Okafor Cafe add up",
@@ -261,13 +258,11 @@ describe("an Insight card in Chat", () => {
 
     const [, , , note] = prompts().at(-1) ?? [];
     const text = textsOf(note).join("");
-    expect(text).toContain("about Member A Photo: Shell and Member B Cafe add up");
-    expect(text).toContain("at Member B Cafe");
-    expect(text).not.toMatch(/\t|1111/u);
-    // The filter read the exact characters the model reads: no control character but the note's
-    // own line breaks, so no escape puts a letter inside the card number or before a name.
+    expect(text).toContain("about Dana Whitfield Photo: Shell and Ravi Okafor Cafe add up");
+    expect(text).toContain("at Ravi Okafor Cafe");
+    expect(text).toContain("Paid at DanaWhitfield Photo with card 4111 1111 1111 1111 twice.");
+    // No control character but the note's own line breaks.
     expect([...text].filter((char) => char < " " && char !== "\n")).toEqual([]);
-    const sent = JSON.stringify(prompts());
-    for (const word of PRIVATE) expect(sent).not.toContain(word);
+    expect(JSON.stringify(prompts())).not.toContain(ZIP_CODE);
   });
 });

@@ -40,9 +40,8 @@ import {
 
 // The Web lookup (spec 04, Web lookup; spec 08, Merchant web lookup): when the Category fix is
 // unsure of a Merchant it does not know, the AI provider's own web search looks the Merchant up.
-// Transactions arrive through the fake adapter; the AI is AI SDK test models behind the real
-// privacy filter, and each search is a provider-executed tool call in the test model's reply. No
-// test calls an AI provider or a search.
+// Transactions arrive through the fake adapter; the AI is AI SDK test models, and each search is a
+// provider-executed tool call in the test model's reply. No test calls an AI provider or a search.
 
 const NOW = () => new Date("2026-11-01T14:00:00.000Z");
 const BANK = "fake-first-bank";
@@ -184,7 +183,7 @@ describe("the Web lookup in the categorization step", () => {
     ).rows.map((row) => ({ ...row }));
   const itemsOf = async (kind: string) =>
     (await openReviewItems(bank.database)).filter((item) => item.kind === kind);
-  // A Member, Morgan Lee, whose name the privacy filter takes out.
+  // A Member, Morgan Lee.
   const addMorgan = () =>
     bank.database.$client.execute(
       `INSERT INTO members (id, name, email, created_at, updated_at)
@@ -340,8 +339,7 @@ describe("the Web lookup in the categorization step", () => {
     ]);
   });
 
-  it("keeps the line about the business with no control or format character, and never turns a Member label into a name", async () => {
-    await addMorgan();
+  it("keeps the line about the business as the AI wrote it, with no control or format character", async () => {
     await connectAi();
     answerLookup = () =>
       found("Pets", "high", "A pet shop\u0007 that Member A\u202E runs\u200B\u001b here!");
@@ -497,29 +495,16 @@ describe("the Web lookup in the categorization step", () => {
         ],
       });
 
-      // AI cleanup answers each marked line with the description as it read it, after the filter.
-      // A name that holds the filter's "[removed]" is not looked up, nor is a payment-app line.
-      expect(lookedUp().toSorted()).toEqual(["BEST BUY CO", "Bluebird Books", "Etsy Shop"]);
-    });
-
-    it("never looks up a name the privacy filter matches, in forms the code never names", async () => {
-      await addMorgan();
-      await connectAi();
-      const names = [
-        "Morgan Lee Photo",
-        "studioLeeMorganPrints",
-        "MORGAN‐LEE DESIGNS",
-        "Ḿorgan Lee Art",
-        "Ｍｏｒｇａｎ Lee Crafts",
+      // AI cleanup answers each marked line with the description as it read it. A payment-app line
+      // is not looked up.
+      expect(lookedUp().toSorted()).toEqual([
+        "(800) 555-1212",
+        "BEST BUY CO",
         "Bluebird Books",
-      ];
-      await sync({
-        added: names.map((name, index) => buy(`private-${index}`, `2026-10-${10 + index}`, name)),
-      });
-
-      expect(lookedUp()).toEqual(["Bluebird Books"]);
-      const sent = JSON.stringify(callsOf("merchant lookup"));
-      expect(sent).not.toMatch(/morgan|lee/i);
+        "Etsy Shop",
+        "REF#12345678",
+        "XXXX4821",
+      ]);
     });
 
     it("never looks up with the switch off, and reads no kept answer", async () => {

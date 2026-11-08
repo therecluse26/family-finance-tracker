@@ -61,8 +61,8 @@ const $ = (dollars: number) => Math.round(dollars * 100);
 const DANA: ChatMember = { id: "m1", name: "Dana Whitfield" };
 const RAVI: ChatMember = { id: "m2", name: "Ravi Okafor" };
 
-// What must never reach the AI: the Members' names, the Account's last 4, the ZIP code, and a card.
-const PRIVATE = ["Dana", "Whitfield", "Ravi", "Okafor", "4821", "10001", "4111"];
+// What never reaches the AI: the ZIP code.
+const ZIP_CODE = "10001";
 
 type StreamPart = { type: string; [key: string]: unknown };
 
@@ -217,9 +217,9 @@ describe("Chat", () => {
   };
 
   describe("an answer", () => {
-    it("streams as the AI writes it, with each Member's name in place of their label, and is stored", async () => {
-      stub.reply = "Member A spent **$480** on Restaurants.";
-      // Two characters a piece, so "Member A" arrives split. The AI looks up once first.
+    it("streams as the AI writes it, and is stored as it wrote it", async () => {
+      stub.reply = "Dana Whitfield spent **$480** on Restaurants.";
+      // Two characters a piece, so the name arrives split. The AI looks up once first.
       stub.streamPiece = 2;
       callingOnce([{ toolName: "get_budgets_and_goals", input: { month: "2026-10" } }]);
       const id = await started("How much did we spend on Restaurants?");
@@ -230,21 +230,21 @@ describe("Chat", () => {
       expect(parts.at(-1)).toEqual({ type: "finish" });
       expect(parts.filter((part) => part.type === "text-delta").length).toBeGreaterThan(1);
       expect(textOf(parts)).toBe("Dana Whitfield spent **$480** on Restaurants.");
-      // The browser gets the text, and no tool call, tool result, or label.
+      // The browser gets the text, and no tool call or tool result.
       expect(toolResults(prompts().at(-1))).toEqual([
         expect.objectContaining({ value: expect.objectContaining({ goals: [] }) }),
       ]);
       expect(parts.filter((part) => /tool|source|file|data-/u.test(part.type))).toEqual([]);
       const streamed = JSON.stringify(parts);
-      for (const word of ["get_budgets_and_goals", "2026-10", "goals", "budgets", "Member A"]) {
+      for (const word of ["get_budgets_and_goals", "2026-10", "goals", "budgets"]) {
         expect(streamed).not.toContain(word);
       }
 
-      // app.db keeps the AI's words as it wrote them, and the thread shows them with the name.
+      // app.db keeps the AI's words as it wrote them, and the thread shows them.
       const rows = await listChatMessages(test.database, id);
       expect(rows.map((row) => [row.author, row.text])).toEqual([
         ["Member", "How much did we spend on Restaurants?"],
-        ["AI", "Member A spent **$480** on Restaurants."],
+        ["AI", "Dana Whitfield spent **$480** on Restaurants."],
       ]);
       const thread = await talk.thread(id);
       expect(thread?.messages.map(({ name, text }) => [name, text])).toEqual([
@@ -254,34 +254,32 @@ describe("Chat", () => {
       expect(thread?.answering).toBe(false);
     });
 
-    it("still names each Member after one is removed, and the AI keeps calling the others by the same label", async () => {
-      stub.reply = "Member A paid and Member B saved.";
+    it("keeps an answer as the AI wrote it after a Member is removed, and sends it again as it is", async () => {
+      stub.reply = "Dana Whitfield paid and Ravi Okafor saved.";
       const id = await started("Who paid?", RAVI);
       await answered(id, null, RAVI);
-      expect(await ai.memberLabels()).toEqual(
+      expect(await ai.memberNames()).toEqual(
         new Map([
-          ["m1", "Member A"],
-          ["m2", "Member B"],
+          ["m1", "Dana Whitfield"],
+          ["m2", "Ravi Okafor"],
         ]),
       );
 
       expect(await removeMember(test.database, "m1", NOW)).toBe("removed");
 
-      // The stored answer shows the removed Member's kept name, and the other Member's own name.
       const thread = await talk.thread(id);
       expect(thread?.messages.map(({ name, text }) => [name, text])).toEqual([
         ["Ravi Okafor", "Who paid?"],
         ["AI", "Dana Whitfield paid and Ravi Okafor saved."],
       ]);
-      expect(await ai.memberLabels()).toEqual(new Map([["m2", "Member B"]]));
+      expect(await ai.memberNames()).toEqual(new Map([["m2", "Ravi Okafor"]]));
 
-      // The next prompt calls Ravi "Member B", as the earlier answer does.
       await answered(id, "What did Ravi Okafor save?", RAVI);
       const [, , , ...turns] = prompts().at(-1) ?? [];
       expect(turns.map((turn) => [turn.role, textsOf(turn).join("")])).toEqual([
         ["user", "Who paid?"],
-        ["assistant", "Member A paid and Member B saved."],
-        ["user", "What did Member B save?"],
+        ["assistant", "Dana Whitfield paid and Ravi Okafor saved."],
+        ["user", "What did Ravi Okafor save?"],
       ]);
     });
 
@@ -304,11 +302,11 @@ describe("Chat", () => {
       expect(textsOf(summary)).toEqual(["Household summary: 2 Members, 3 Accounts."]);
       expect(JSON.stringify([task, ...turns])).not.toContain("cacheControl");
       expect(textsOf(task)).toEqual([CHAT_TASK]);
-      // A Member's card split by newlines and a name after a tab, in the characters the AI reads.
+      // A Member's words as the app stores them: their line breaks kept, a tab as a space.
       expect(turns.map((turn) => [turn.role, textsOf(turn).join("")])).toEqual([
-        ["user", "Card [removed] and Member A paid?"],
+        ["user", "Card 4111\n1111\n1111\n1111 and Dana Whitfield paid?"],
         ["assistant", "O"],
-        ["user", "And Member B?"],
+        ["user", "And Ravi Okafor?"],
       ]);
       expect(offered().at(-1)).toEqual({
         tools: [
@@ -322,17 +320,7 @@ describe("Chat", () => {
         ],
         toolChoice: "auto",
       });
-      const sent = JSON.stringify(prompts());
-      for (const word of PRIVATE) expect(sent).not.toContain(word);
-      // Each Member message and each earlier answer goes as text a Member typed: filtered best
-      // effort, never refused.
-      expect(
-        calls.at(-1)?.changes?.map((turn) => [turn.role, "typed" in turn && turn.typed]),
-      ).toEqual([
-        ["user", true],
-        ["assistant", true],
-        ["user", true],
-      ]);
+      expect(JSON.stringify(prompts())).not.toContain(ZIP_CODE);
     });
 
     it("makes one model call for an answer with no tool call, and makes none when it does not start", async () => {
@@ -370,7 +358,7 @@ describe("Chat", () => {
       expect(modelCalls()).toHaveLength(4);
     });
 
-    it("sends a tool result filtered exactly, with a card split by newlines and a name after a tab removed and no letter escape", async () => {
+    it("sends a tool result as the app built it, each control character a space, with no letter escape", async () => {
       await addGoal(test.database, {
         words: "Spend less at one shop",
         authorId: "m1",
@@ -390,54 +378,9 @@ describe("Chat", () => {
       const [result] = toolResults(prompts().at(-1));
       expect(result).toMatchObject({
         type: "json",
-        value: { goals: [{ target: "Merchant: PAID Member A [removed]" }] },
+        value: { goals: [{ target: "Merchant: PAID Dana Whitfield 4111 1111 1111 1111" }] },
       });
       expect(JSON.stringify(result)).not.toMatch(LETTER_ESCAPE);
-      const sent = JSON.stringify(prompts());
-      for (const word of PRIVATE) expect(sent).not.toContain(word);
-    });
-
-    it("says nothing went to the AI when the privacy filter refuses the first round", async () => {
-      // A Household summary of two typed values with no text between them reads as one number.
-      const refusing = chat({
-        database: test.database,
-        ai,
-        summary: { today: async () => ({ parts: [typedCount(3), typedCount(4)] }) },
-        now: () => clock,
-      });
-      const result = await refusing.start(DANA, {
-        text: "How much do we spend on sewing each month?",
-        note: null,
-        sendAnyway: false,
-      });
-      if (!("threadId" in result)) throw new Error(`Refused: ${result.refused}`);
-      const response = await refusing.answer(DANA, result.threadId, {
-        text: null,
-        sendAnyway: false,
-      });
-      if (!(response instanceof Response)) throw new Error(`Refused: ${response.refused}`);
-
-      expect((await partsOf(response)).at(-1)).toEqual({
-        type: "error",
-        errorText: "The privacy filter stopped this answer, so nothing went to the AI.",
-      });
-      expect(modelCalls()).toEqual([]);
-    });
-
-    it("says the question went to the AI when the privacy filter refuses a later round", async () => {
-      // The AI's own tool call names a Household fact, so the next round, which repeats it, is
-      // refused.
-      callingOnce([{ toolName: "get_budgets_and_goals", input: { age: 40 } }]);
-      const id = await started("How much do we spend on sewing each month?");
-
-      const parts = await answered(id, null);
-
-      expect(parts.at(-1)).toEqual({
-        type: "error",
-        errorText:
-          "The privacy filter stopped this answer partway. Your question went to the AI, but nothing more did.",
-      });
-      expect(modelCalls()).toHaveLength(1);
     });
 
     it("shows an error with no retry when the AI provider fails, stores no answer, and answers again on Try again", async () => {
@@ -720,22 +663,25 @@ describe("Chat", () => {
 
       await answered(id, null);
 
-      expect(toolResults(prompts().at(-1))).toEqual([
-        { type: "json", value: { error: GUARDRAIL.range } },
-        { type: "json", value: { result: "shown" } },
-        { type: "json", value: { result: "shown" } },
-        { type: "json", value: { error: GUARDRAIL.perRun } },
-      ]);
+      // The tool calls run at once, so which 2 of the 3 good ones are stored is the order their
+      // writes reach app.db; the third gets the cap's guardrail.
+      const results = toolResults(prompts().at(-1));
+      expect(results[0]).toEqual({ type: "json", value: { error: GUARDRAIL.range } });
+      const rest = results.slice(1) as { value?: { result?: string; error?: string } }[];
+      expect(rest.filter((each) => each?.value?.result === "shown")).toHaveLength(2);
+      expect(rest.filter((each) => each?.value?.error === GUARDRAIL.perRun)).toHaveLength(1);
+      const good = [
+        ["Budget change", ["Restaurants Budget: $600 → $480"], "Takeout is steady."],
+        ["new Goal", [`New Goal: "Save for a car"`], "It fits."],
+        ["new Goal", [`New Goal: "Save for a trip"`], "It fits too."],
+      ];
       const thread = await talk.thread(id);
       const answer = thread?.messages.at(-1);
-      expect(thread?.proposals.map((each) => [each.kind, each.changes, each.runId])).toEqual([
-        ["Budget change", ["Restaurants Budget: $600 → $480"], `${id}/${answer?.id}`],
-        ["new Goal", [`New Goal: "Save for a car"`], `${id}/${answer?.id}`],
-      ]);
-      expect(thread?.proposals.map((each) => each.reason)).toEqual([
-        "Takeout is steady.",
-        "It fits.",
-      ]);
+      expect(thread?.proposals.map((each) => [each.kind, each.changes, each.reason])).toEqual(
+        expect.arrayContaining(good.filter((_, index) => rest[index]?.value?.result === "shown")),
+      );
+      expect(thread?.proposals).toHaveLength(2);
+      for (const each of thread?.proposals ?? []) expect(each.runId).toBe(`${id}/${answer?.id}`);
       // Nothing changes until a Member accepts it: no Budget and no Goal.
       const after = await readEveryTable(test.database);
       expect(after.budgets).toEqual(before.budgets);
@@ -759,7 +705,7 @@ describe("Chat", () => {
       expect((await talk.thread(id))?.proposals).toEqual([]);
     });
 
-    it("attaches a note from the AI box, with its numbers as typed values, read from app.db by its ID", async () => {
+    it("attaches a note from the AI box, with its numbers as the app made them, read from app.db by its ID", async () => {
       const shown = await propose(
         test.database,
         {
@@ -811,14 +757,11 @@ describe("Chat", () => {
       expect(textsOf(question)).toEqual([
         "Tell me more about this: Restaurants Budget: $600 → $480",
       ]);
-      // Each number the app made goes as a typed value, which the filter sends as written.
-      const typed = (calls.at(-1)?.note ?? []).filter((part) => typeof part !== "string");
-      expect(typed).toHaveLength(2);
     });
   });
 
   describe("an Alert note", () => {
-    it("goes with its Account as a label, its amounts and dates typed, and its card number left out", async () => {
+    it("goes with its amounts and dates as the app made them, and no Account name", async () => {
       const facts: AlertFacts = {
         kind: "Duplicate charge",
         merchant: { id: null, name: "Shell" },
@@ -853,14 +796,12 @@ describe("Chat", () => {
       expect(text).toMatch(/^The Member asks about this note from the AI box\.\nAn Alert note: /u);
       expect(text).toContain("Shell");
       expect(text).toContain("an Account");
-      // $48.21 matches the Account's last 4, 4821, but goes as a typed amount, as the app made it.
+      // $48.21 matches the Account's last 4, 4821, and goes as the app made it.
       expect(text).toContain("$48.21");
-      for (const word of PRIVATE) expect(text).not.toContain(word);
-      const typed = (calls.at(-1)?.note ?? []).filter((part) => typeof part !== "string");
-      expect(typed.length).toBeGreaterThanOrEqual(3);
+      expect(text).toContain("2026-10-17");
     });
 
-    it("keeps the spaces between its pieces, so a Member's name in a Merchant name is left out", async () => {
+    it("keeps the spaces between its pieces", async () => {
       const facts: AlertFacts = {
         kind: "Duplicate charge",
         merchant: { id: null, name: "Dana Whitfield Photo" },
@@ -892,10 +833,8 @@ describe("Chat", () => {
       const [, , , note] = prompts().at(-1) ?? [];
       const text = textsOf(note).join("");
       expect(text).toContain(
-        "$48.21 at Member A Photo on an Account, on 2026-10-17 and 2026-10-18.",
+        "$48.21 at Dana Whitfield Photo on an Account, on 2026-10-17 and 2026-10-18.",
       );
-      const sent = JSON.stringify(prompts());
-      for (const word of ["Dana", "Whitfield", "DANA", "dana"]) expect(sent).not.toContain(word);
     });
   });
 
@@ -983,7 +922,7 @@ describe("Chat", () => {
       expect(alertThreadTitle("x".repeat(80))).toBe(`About: ${"x".repeat(53)}`);
     });
 
-    it("gives the AI the Alert with each first question: its amounts and dates typed, its Account as a label, and no Member's name or number", async () => {
+    it("gives the AI the Alert with each first question: its amounts and dates as the app made them", async () => {
       const { threadId } = await asked("interest");
 
       const parts = await answered(threadId, "Why did this happen?");
@@ -992,20 +931,17 @@ describe("Chat", () => {
       const [, , task, note, question] = prompts().at(-1) ?? [];
       expect(textsOf(task)).toEqual([CHAT_TASK]);
       const text = textsOf(note).join("");
-      // $48.21 matches the Account's last 4, 4821, but goes as a typed amount, as the app made it.
+      // $48.21 matches the Account's last 4, 4821, and goes as the app made it.
       expect(text).toBe(
         "The Member asks about this Alert from the Alert list.\nAn Alert from the Alert list: Card interest or fee.\n- Card interest: $48.21 on an Account on 2026-10-17.\nThe app sent it to the Members.",
       );
       expect(textsOf(question)).toEqual(["Why did this happen?"]);
-      const typed = (calls.at(-1)?.note ?? []).filter((part) => typeof part !== "string");
-      expect(typed).toHaveLength(2);
       const sent = JSON.stringify(prompts());
-      for (const word of PRIVATE) expect(sent).not.toContain(word);
       // The title, which names the Account, never goes to the AI.
       expect(sent).not.toContain("Rewards");
     });
 
-    it("passes the Alert's words through the privacy filter as the model reads them: a name after a tab and a card split by line breaks are left out, with no letter escape", async () => {
+    it("sends the Alert's words as the model reads them, each control character a space, with no letter escape", async () => {
       await talk.askAboutAlert(DANA, "purchase").then(async (result) => {
         if (!("threadId" in result)) throw new Error("Refused");
         await answered(result.threadId, "What should we do?");
@@ -1013,7 +949,9 @@ describe("Chat", () => {
 
       const [, , , note] = prompts().at(-1) ?? [];
       const text = textsOf(note).join("");
-      expect(text).toContain("Large purchase: $312.40 at PAID Member A [removed] on 2026-10-18.");
+      expect(text).toContain(
+        "Large purchase: $312.40 at PAID Dana Whitfield 4111 1111 1111 1111 on 2026-10-18.",
+      );
       expect(text).toContain("The weekly cap held it back, so the app sent no message for it.");
       // The note's own line breaks start its lines. No other control character is left.
       expect(
@@ -1025,8 +963,6 @@ describe("Chat", () => {
       // biome-ignore lint/suspicious/noControlCharactersInRegex: the characters it must not hold.
       expect(text).not.toMatch(/[\u0000-\u0009\u000B-\u001F]/u);
       expect(text).not.toMatch(/\\[a-z]/iu);
-      const sent = JSON.stringify(prompts());
-      for (const word of [...PRIVATE, "DANA", "dana"]) expect(sent).not.toContain(word);
     });
 
     it("opens the same thread on the same Member's next press, and another thread for another Member or another Alert", async () => {
@@ -1137,9 +1073,9 @@ describe("Chat", () => {
           database: test.database,
           ai: {
             ...ai,
-            accountLabels: async () => {
+            accountNames: async () => {
               await gone();
-              return ai.accountLabels();
+              return ai.accountNames();
             },
           },
           summary: { today: async () => ({ parts: [] }) },

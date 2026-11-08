@@ -29,13 +29,13 @@ import { openProposals } from "../proposals/index.ts";
 // open Proposal, or an Insight card in the AI box. Or the Alert a thread starts from with "Ask the
 // AI" in the Alert list (spec 06, "Ask the AI"). The app reads the note itself from its ID, never
 // from the browser, and keeps a copy with the thread: the words the thread shows, and the pieces
-// the AI reads, with each amount, date, and month as a typed value (src/ai/typed.ts).
+// the AI reads, with each amount, date, and month as src/ai/typed.ts writes it.
 
 const NOTE_KINDS = ["Alert note", "Proposal", "Insight card", "Alert"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
 // One piece of the note the AI reads: text, or a number the app made. app.db stores the pieces as
-// JSON, never a typed value, whose mark is new each time the app starts.
+// JSON.
 type Piece = string | { amount: number } | { date: string } | { month: string } | { count: number };
 
 export type ChatNote = {
@@ -55,8 +55,7 @@ const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/gu;
 
 // Text a bank, a Member, or the AI wrote, on one line: well-formed, with a space for each control
 // character, so it cannot start a line of its own. A piece keeps the spaces at its ends, which
-// part it from the pieces beside it: a name glued to the word before it would pass the privacy
-// filter.
+// part it from the pieces beside it.
 const oneLine = (text: string) => text.toWellFormed().replace(CONTROL, " ").replace(/ {2,}/g, " ");
 
 // The same, as a whole value with no space at either end.
@@ -72,8 +71,8 @@ function dollars(cents: number): Piece[] {
   return [`${sign}$`, whole < 1_000_000_000 ? { count: whole } : money(whole * 100)];
 }
 
-// An Alert's template (src/anomalies/templates.ts) as pieces: each amount as "$" and a typed
-// value, each date and month typed, and its words and the names in it as text.
+// An Alert's template (src/anomalies/templates.ts) as pieces: each amount as "$" and a number,
+// each date and month as a number piece, and its words and the names in it as text.
 const ALERT_WRITER: AlertWriter<Piece[]> = {
   text: (text) => [oneLine(text)],
   cents: (cents) => [cents < 0 ? "-$" : "$", money(Math.abs(cents))],
@@ -88,14 +87,14 @@ const ALERT_WRITER: AlertWriter<Piece[]> = {
   year: (year) => [{ count: Number(year) }],
 };
 
-// An Alert's parts, oldest first, as pieces: one line each. An Account in its facts goes as its
-// label: the facts hold the Account's name as it was, which may name a Member.
+// An Alert's parts, oldest first, as pieces: one line each. An Account in its facts goes by its
+// name as the AI reads it now (HouseholdAi.accountNames).
 async function partPieces(
   database: Database,
-  ai: Pick<HouseholdAi, "accountLabels">,
+  ai: Pick<HouseholdAi, "accountNames">,
   parts: readonly Alert[],
 ): Promise<Piece[]> {
-  const labels = await ai.accountLabels();
+  const names = await ai.accountNames();
   const accountOf = new Map(
     (
       await readShownTransactions(
@@ -111,7 +110,7 @@ async function partPieces(
       const accountId = alert.transactionIds
         .map((txnId) => accountOf.get(txnId))
         .find((each) => each !== undefined);
-      const account = (accountId === undefined ? undefined : labels.get(accountId)) ?? "an Account";
+      const account = (accountId === undefined ? undefined : names.get(accountId)) ?? "an Account";
       facts = { ...facts, account };
     }
     pieces.push("\n- ", ...alertPieces(facts, ALERT_WRITER).flat());
@@ -122,7 +121,7 @@ async function partPieces(
 // The Alert note in the box at `now` with this ID, with its parts, oldest first.
 async function alertNote(
   database: Database,
-  ai: Pick<HouseholdAi, "accountLabels">,
+  ai: Pick<HouseholdAi, "accountNames">,
   id: string,
   now: Date,
 ): Promise<ChatNote | undefined> {
@@ -155,7 +154,7 @@ const STATE_WORDS: Record<AlertState, string> = {
 // part, oldest first, titled on the Household's date at `now`. `alertId` is the merged Alert's ID.
 export async function listedAlert(
   database: Database,
-  ai: Pick<HouseholdAi, "accountLabels">,
+  ai: Pick<HouseholdAi, "accountNames">,
   id: string,
   now: Date,
 ): Promise<{ alertId: string; note: ChatNote } | undefined> {
@@ -243,8 +242,8 @@ const CARD_GROUPS = {
 // The largest figure a card shows (src/insights/cards.ts): past it, the card shows none.
 const MAX_FIGURE = 1e12;
 
-// A card's figure as pieces: whole dollars as "$" and a typed value, a count typed, and a percent
-// as a typed count and "%". A figure too large for a typed count goes as text.
+// A card's figure as pieces: whole dollars as "$" and a count, a count, and a percent as a count
+// and "%". A figure too large for a count goes as text.
 function figurePieces(figure: number, kind: "dollars" | "count" | "percent"): Piece[] {
   if (kind === "dollars") return dollars(Math.round(figure * 100));
   const whole = Math.floor(Math.abs(figure) + 0.5);
@@ -257,8 +256,7 @@ function figurePieces(figure: number, kind: "dollars" | "count" | "percent"): Pi
 }
 
 // The current Insight card with this ID. A card from an older run is gone: each run replaces every
-// card. Every word on a card is the AI's, stored with each Member's name for the screen, so each
-// goes as text through the privacy filter; its figure is a number the app checked, so it goes typed.
+// card. Every word on a card is the AI's, and goes as text; its figure is a number the app checked.
 async function insightCardNote(database: Database, id: string): Promise<ChatNote | undefined> {
   const card = (await listInsightCards(database)).find((each) => each.id === id);
   if (card === undefined) return undefined;
@@ -290,7 +288,7 @@ async function insightCardNote(database: Database, id: string): Promise<ChatNote
 // The note in the AI box at `now` with this kind and ID, or undefined when none is there now.
 export function readNote(
   database: Database,
-  ai: Pick<HouseholdAi, "accountLabels">,
+  ai: Pick<HouseholdAi, "accountNames">,
   note: { kind: Exclude<NoteKind, "Alert">; id: string },
   now: Date,
 ): Promise<ChatNote | undefined> {
@@ -326,8 +324,8 @@ export function storedNote(json: unknown): ChatNote | undefined {
   return fits ? (note as ChatNote) : undefined;
 }
 
-// The note's pieces as Chat sends them, with each number a typed value. Text next to text goes as
-// one. A piece that no longer fits its typed form, such as from an older app, leaves the note out.
+// The note's pieces as Chat sends them. Text next to text goes as one. A number piece that no
+// longer fits its form, such as from an older app, leaves the note out.
 export function noteParts(note: ChatNote): SummaryPart[] | undefined {
   const parts: SummaryPart[] = [
     note.kind === "Alert"

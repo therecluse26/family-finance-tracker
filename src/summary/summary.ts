@@ -36,15 +36,10 @@ import { habitCounts } from "./habits.ts";
 // every Writer use. It holds the month's numbers, history totals, balances, Coming up, Recurring
 // charges, Goals, Alerts, and the app's Habit counts, and no raw Transactions.
 //
-// It is app-built, so the privacy filter reads it on each call, and its final check refuses a call
-// that still holds a name or number the rules remove (spec 08, Privacy filter). So it names each
-// Account by its label, such as "Ally checking", and each Member by their label, such as "Member
-// A", never by name, and holds no Account number. Each number the app made, such as an amount, a
-// date, a month, or a count, goes as a typed value (src/ai/typed.ts), which the filter keeps as it
-// is: the AI reads 49.99 even when an Account's last 4 is 4999. Every text, such as a label, a
-// Merchant, a Goal's words, or an Alert's text, goes through the full filter. Each text a Member
-// or a bank wrote is made plain first: a space for each control character, and well-formed. The
-// call sends the text as it is, with no encoding, so the filter reads the characters the AI reads.
+// It names each Account by its name and last 4, such as "Everyday Checking ending 1234", and each
+// Member by name (HouseholdAi.accountNames, memberNames). Each number the app made, such as an
+// amount, a date, a month, or a count, is written as src/ai/typed.ts writes it. Each text a Member
+// or a bank wrote is made plain first: a space for each control character, and well-formed.
 
 // The most tokens a summary may hold.
 export const SUMMARY_TOKENS = 3_000;
@@ -71,13 +66,13 @@ export function summaryTokens(text: string): number {
 
 export type SummaryOptions = {
   database: Database;
-  ai: Pick<HouseholdAi, "accountLabels" | "memberLabels">;
+  ai: Pick<HouseholdAi, "accountNames" | "memberNames">;
   now?: () => Date;
   logger?: Logger;
 };
 
 // A built summary: its parts, as a Writer use sends them (src/ai/prompt.ts), and its text, as the
-// AI reads it when the privacy filter removes nothing from its texts.
+// AI reads it.
 export type BuiltSummary = { parts: readonly SummaryPart[]; text: string };
 
 export type HouseholdSummary = {
@@ -111,9 +106,8 @@ export function householdSummary(options: SummaryOptions): HouseholdSummary {
   };
 }
 
-// One piece of the summary: text, or a number the app made, which goes as a typed value: an amount
-// in whole cents, a date, a month, or a count. app.db stores the pieces as JSON, never a typed
-// value, whose mark is new each time the app starts.
+// One piece of the summary: text, or a number the app made: an amount in whole cents, a date, a
+// month, or a count. app.db stores the pieces as JSON.
 type Piece = string | { amount: number } | { date: string } | { month: string } | { count: number };
 
 // One line of the summary, as its pieces.
@@ -125,8 +119,8 @@ const monthOf = (month: string): Piece => ({ month });
 const count = (value: number): Piece => ({ count: value });
 // A whole percent, such as a share of Spending, as a count with "%" after it.
 const percent = (share: number): Line => [count(Math.round(share * 100)), "%"];
-// A rate such as an APR of 28.49. With at most 2 decimals, it goes in an amount's form, 28.49, so
-// the filter keeps it as it keeps an amount. Any other rate, which no bank sends, goes as text.
+// A rate such as an APR of 28.49. With at most 2 decimals, it goes in an amount's form, 28.49. Any
+// other rate, which no bank sends, goes as text.
 const rate = (value: number): Piece => {
   const hundredths = Math.round(value * 100);
   const exact = Math.abs(value * 100 - hundredths) < 1e-6 && Math.abs(hundredths) < 10 ** 11;
@@ -148,7 +142,7 @@ function joined(lines: readonly Line[], separator: string): Line {
   return lines.flatMap((each, index) => (index === 0 ? each : [separator, ...each]));
 }
 
-// A piece as a Writer use sends it: text, or a typed value. Each typed value checks its form.
+// A piece as a Writer use sends it: text, or a number the app made, which checks its form.
 function summaryPart(piece: Piece): SummaryPart {
   if (typeof piece === "string") return piece;
   if ("amount" in piece) return typedAmount(piece.amount);
@@ -157,7 +151,7 @@ function summaryPart(piece: Piece): SummaryPart {
   return typedCount(piece.count);
 }
 
-// A piece as the AI reads it: the typed value's form, such as -1234.50.
+// A piece as the AI reads it, such as -1234.50.
 function pieceText(piece: Piece): string {
   if (typeof piece === "string") return piece;
   if ("amount" in piece) {
@@ -218,8 +212,8 @@ function dollars(cents: number): Line {
   return [`${sign}$`, whole < 1_000_000_000 ? count(whole) : money(whole * 100)];
 }
 
-// An Alert's template (src/anomalies/templates.ts) as pieces: each amount as "$" and a typed
-// value, each date and month typed, and its words and the names in it as text.
+// An Alert's template (src/anomalies/templates.ts) as pieces: each amount as "$" and a number
+// piece, each date and month a piece, and its words and the names in it as text.
 const ALERT_WRITER: AlertWriter<Line> = {
   text: (text) => [text.toWellFormed().replace(CONTROL, " ")],
   cents: (cents) => [cents < 0 ? "-$" : "$", money(Math.abs(cents))],
@@ -235,7 +229,7 @@ const ALERT_WRITER: AlertWriter<Line> = {
 };
 
 // A Goal's progress detail (src/goals/progress.ts) as pieces, with each whole-dollar amount as "$"
-// and a typed count, and each "; " as ", and ". Only a detail one of its templates wrote does
+// and a count, and each "; " as ", and ". Only a detail one of its templates wrote does
 // this; any other text goes as text.
 const AMOUNT = String.raw`\$\d{1,3}(?:,\d{3})*`;
 const PROGRESS_DETAIL = new RegExp(
@@ -293,9 +287,9 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
   const { database, ai } = options;
   const today = await householdToday(database, now);
   const timeZone = (await householdTimeZone(database)) ?? "UTC";
-  const accountLabels = await ai.accountLabels();
-  const memberLabels = await ai.memberLabels();
-  const label = (id: string | null) => (id === null ? undefined : accountLabels.get(id));
+  const accountNames = await ai.accountNames();
+  const memberNames = await ai.memberNames();
+  const nameOf = (id: string | null) => (id === null ? undefined : accountNames.get(id));
   const complete = monthsBefore(month, HISTORY_MONTHS);
 
   // The month.
@@ -443,7 +437,7 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
       }
       if (account.paymentDueDate !== null) facts.push(line`due ${day(account.paymentDueDate)}`);
       // A promo end date would go here: no bank adapter sends one yet.
-      return line`- ${label(account.id) ?? "Account"}: ${joined(facts, ", ")}`;
+      return line`- ${nameOf(account.id) ?? "Account"}: ${joined(facts, ", ")}`;
     });
   const balancePart: Line[] = [
     [""],
@@ -459,11 +453,11 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     ...(due.rows.length === 0
       ? [["- Nothing."]]
       : due.rows.map((row) => {
-          // A card or loan payment names its Account by label, never by its name.
+          // A card or loan payment names its Account.
           const what =
             row.accountId === null
               ? plain(row.what)
-              : `${label(row.accountId) ?? "Account"} payment`;
+              : `${nameOf(row.accountId) ?? "Account"} payment`;
           return line`- ${day(row.date)}: ${what}, ${money(row.amount)}, ${row.kind}${row.late ? ", late" : ""}`;
         })),
   ];
@@ -505,7 +499,7 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     ["## Goals"],
     ...(goals.length === 0
       ? [["- None."]]
-      : goals.map((goal) => goalLine(goal, memberLabels, accountLabels))),
+      : goals.map((goal) => goalLine(goal, memberNames, accountNames))),
   ];
 
   // Alerts.
@@ -514,8 +508,8 @@ async function summaryParts(options: SummaryOptions, month: string, now: Date): 
     today,
     month,
     timeZone,
-    memberLabels,
-    accountLabels,
+    memberNames,
+    accountNames,
   });
 
   // Open Proposals, oldest first.
@@ -576,15 +570,15 @@ export function proposalParts(proposal: Proposal): SummaryPart[] {
 // control character.
 export const plainLine = (text: string): string => plain(text);
 
-// One active Goal: its words, its author by label, the AI's reading, its progress, and its status.
+// One active Goal: its words, its author, the AI's reading, its progress, and its status.
 function goalLine(
   goal: Goal,
-  memberLabels: ReadonlyMap<string, string>,
-  accountLabels: ReadonlyMap<string, string>,
+  memberNames: ReadonlyMap<string, string>,
+  accountNames: ReadonlyMap<string, string>,
 ): Line {
   const author =
-    (goal.authorId === null ? undefined : memberLabels.get(goal.authorId)) ?? "a Member";
-  const account = (id: string) => accountLabels.get(id) ?? "Account";
+    (goal.authorId === null ? undefined : memberNames.get(goal.authorId)) ?? "a Member";
+  const account = (id: string) => accountNames.get(id) ?? "Account";
   const { target, change, deadline } = goal.reading;
   let aim = "none";
   if (target !== null) {
@@ -632,7 +626,7 @@ function goalLine(
 }
 
 // The Alerts part: the Alerts of the last 7 days, those the weekly cap held back in `month`, and
-// the latest "Not a problem" marks. Each is its template text, with each Account by its label.
+// the latest "Not a problem" marks. Each is its template text, with each Account by its name and last 4.
 async function alertLines(
   { database }: SummaryOptions,
   alerts: readonly Alert[],
@@ -640,11 +634,11 @@ async function alertLines(
     today: string;
     month: string;
     timeZone: string;
-    memberLabels: ReadonlyMap<string, string>;
-    accountLabels: ReadonlyMap<string, string>;
+    memberNames: ReadonlyMap<string, string>;
+    accountNames: ReadonlyMap<string, string>;
   },
 ): Promise<Line[]> {
-  const { today, month, timeZone, memberLabels, accountLabels } = facts;
+  const { today, month, timeZone, memberNames, accountNames } = facts;
   const dayOf = (alert: Alert) => calendarDateIn(alert.createdAt, timeZone);
   const byId = new Map(alerts.map((alert) => [alert.id, alert]));
   // A later part of a merged Alert shares its first part's state.
@@ -692,12 +686,12 @@ async function alertLines(
         .map((id) => accountOf.get(id))
         .find((id) => id !== undefined);
       const account =
-        (accountId === undefined ? undefined : accountLabels.get(accountId)) ?? "an Account";
+        (accountId === undefined ? undefined : accountNames.get(accountId)) ?? "an Account";
       alertFacts = { ...alertFacts, account };
     }
     const presses = alert.notAProblem.map(
       (press) =>
-        line`${(press.memberId === null ? undefined : memberLabels.get(press.memberId)) ?? "a Member"} on ${day(calendarDateIn(press.pressedAt, timeZone))}`,
+        line`${(press.memberId === null ? undefined : memberNames.get(press.memberId)) ?? "a Member"} on ${day(calendarDateIn(press.pressedAt, timeZone))}`,
     );
     const mark: Line =
       presses.length === 0 ? [] : line` Marked "Not a problem" by ${joined(presses, ", ")}.`;

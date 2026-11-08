@@ -15,7 +15,7 @@ import { type App, TestBrowser } from "./testing.ts";
 
 // Goals and their progress through the app's HTTP interface (spec 05, Goals). The first tests
 // write each reading directly, with no AI; adding a Goal and editing its words read it with AI SDK
-// test models behind the real privacy filter and cost gate.
+// test models behind the real cost gate.
 
 const APP_URL = "http://nas.local:8080";
 

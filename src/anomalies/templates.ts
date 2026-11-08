@@ -76,7 +76,7 @@ export type AlertFacts =
     };
 
 // How a template writes each fact: as the app's text, or as the Household summary's pieces, where
-// each number goes as a typed value (src/summary/summary.ts). `month` is YYYY-MM and `year` YYYY.
+// each number goes as its own piece (src/summary/summary.ts). `month` is YYYY-MM and `year` YYYY.
 export type AlertWriter<Out> = {
   text: (text: string) => Out;
   // An amount in dollars and cents, such as $70.37.

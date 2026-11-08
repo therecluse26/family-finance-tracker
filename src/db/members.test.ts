@@ -1,12 +1,6 @@
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  listMemberNamesById,
-  listMembers,
-  listMembersByJoinOrder,
-  listRemovedMembers,
-  removeMember,
-} from "./members.ts";
+import { listMemberNamesById, listMembers, removeMember } from "./members.ts";
 import * as schema from "./schema.ts";
 import { newTestDatabase, readEveryTable, type TestDatabase } from "./testing.ts";
 
@@ -276,14 +270,6 @@ describe("Member label numbers", () => {
     expect(await numbers()).toEqual([
       ["sam", 2],
       ["lee", 3],
-    ]);
-    expect(await listMembersByJoinOrder(test.database)).toEqual([
-      { name: "Sam", email: "sam@example.com", labelNumber: 2 },
-      { name: "Lee", email: "lee@example.com", labelNumber: 3 },
-    ]);
-    expect(await listRemovedMembers(test.database)).toEqual([
-      { labelNumber: 0, name: "Alex" },
-      { labelNumber: 1, name: "Dana" },
     ]);
   });
 });

@@ -42,7 +42,7 @@ import {
 // Writing the Monthly review (spec 08, Monthly review; Review fields; Every AI use; Limits on each
 // call; Failures; The AI cost cap): when it is due, the one Writer call, the retries, and the
 // review and its Proposals stored once. Transactions arrive through the fake adapter; the AI is AI
-// SDK test models behind the real privacy filter. No test calls an AI provider. The Household time
+// SDK test models. No test calls an AI provider. The Household time
 // zone is New York: on Sunday, Nov 1, 2026, the clocks go back at 2 AM, so noon is 17:00 UTC.
 
 const BANK = "fake-review-bank";
@@ -83,7 +83,7 @@ function answerOf(goals: number, fields: Partial<ReviewAnswer> = {}): ReviewAnsw
       },
       {
         name: "The card never quite gets paid off",
-        line: "Member A's card carried a balance into every month!",
+        line: "Dana Okafor's card carried a balance into every month!",
         costMonth: 96,
         picture: { type: "cards", category: null, merchants: null },
       },
@@ -155,7 +155,7 @@ function answerOf(goals: number, fields: Partial<ReviewAnswer> = {}): ReviewAnsw
   };
 }
 
-// The user texts of one request, as the model read them after the privacy filter.
+// The user texts of one request, as the model read them.
 const userTexts = (messages: StubMessage[]) =>
   messages
     .filter((message) => message.role === "user")
@@ -397,7 +397,7 @@ describe("writing the Monthly review", () => {
     expect(review?.review).toMatchObject({
       writtenOn: "2026-11-01",
       headline: "Takeout carried October, and the card still holds a balance.",
-      // The plain voice, with the Member's name for "Member A". Amounts are stored in cents.
+      // The plain voice. Amounts are stored in cents.
       habits: [
         { name: "Takeout fills the busy nights", costMonth: 42_000 },
         { line: "Dana Okafor's card carried a balance into every month.", costMonth: 9_600 },
@@ -447,8 +447,7 @@ describe("writing the Monthly review", () => {
   it("rebuilds the summary for the month just ended and sends the rules, the Goals by number, no cache mark, and a 4,000-token limit", async () => {
     await connectAi();
     const card = newCardNumber();
-    // A Goal whose words name a Member after a tab and glued, and hold a card number split by a
-    // newline.
+    // A Goal whose words name a Member after a tab, and hold a number split by a newline.
     await addGoal(bank.database, {
       words: `Dana\tOkafor wants to pay off ${card.slice(0, 8)}\n${card.slice(8)} with DanaOkafor`,
       authorId: "member-1",
@@ -481,15 +480,12 @@ describe("writing the Monthly review", () => {
     ]) {
       expect(MONTHLY_REVIEW_TASK).toContain(rule);
     }
-    // Each Goal by its number, as one line, never by its ID. The privacy filter read the exact
-    // text the model read: no Member name, no card number, and no escape that puts a letter in a
-    // number.
-    expect(goals).toMatch(
-      /^Active Goals, by number:\n1\. "Spend less on eating out"\n2\. "[^\n]*"$/,
+    // Each Goal by its number, as one line, never by its ID, with its words as the Member wrote
+    // them and no escape that puts a letter in a number.
+    expect(goals).toBe(
+      `Active Goals, by number:\n1. "Spend less on eating out"\n2. "Dana Okafor wants to pay off ${card.slice(0, 8)} ${card.slice(8)} with DanaOkafor"`,
     );
     expect(goals).not.toContain(goalId);
-    expect(goals).not.toMatch(/Dana|Okafor/i);
-    expect(goals.replace(/\D/g, "")).not.toContain(card);
     expect(goals).not.toMatch(/\\[A-Za-z]/);
     // Each Goal's line goes to its own Goal.
     const review = await readReview(bank.database, "2026-10");
@@ -607,7 +603,7 @@ describe("writing the Monthly review", () => {
     answer = (goals) =>
       answerOf(goals, {
         budgetChanges: [
-          { category: "Restaurants", newAmount: 450, reason: "Takeout ran over, Member A!" },
+          { category: "Restaurants", newAmount: 450, reason: "Takeout ran over, Dana Okafor!" },
           { category: "Rent", newAmount: 1_500, reason: "Rent is high." },
         ],
       });

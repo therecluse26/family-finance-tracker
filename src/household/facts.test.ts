@@ -5,7 +5,6 @@ import {
   type HouseholdFactsEdit,
   type HouseholdFactsInput,
   householdTimeZone,
-  isNeverSentToAi,
   onHouseholdFactsEdited,
   readHouseholdFacts,
   saveHouseholdFacts,
@@ -76,16 +75,6 @@ describe("the Household facts", () => {
     expect(await householdTimeZone(test.database)).toBe("America/Phoenix");
   });
 
-  it("marks the facts as never sent to an AI provider, and keeps the mark out of JSON", async () => {
-    const result = await save(NEW_YORK);
-    const read = await readHouseholdFacts(test.database);
-
-    expect(result !== "unknown zip code" && isNeverSentToAi(result.saved)).toBe(true);
-    expect(isNeverSentToAi(read)).toBe(true);
-    expect(isNeverSentToAi({ ...read })).toBe(false);
-    expect(JSON.parse(JSON.stringify(read))).toMatchObject({ zipCode: "10001" });
-  });
-
   it("fires the facts-edited hook on each edit, with the facts before and after", async () => {
     await save(NEW_YORK);
     expect(edits).toEqual([]);
@@ -98,9 +87,6 @@ describe("the Household facts", () => {
       [[41, 39, 8, 1], "own"],
     ]);
     expect(edits.every((edit) => edit.memberId === memberId)).toBe(true);
-    expect(
-      edits.every((edit) => isNeverSentToAi(edit.facts) && isNeverSentToAi(edit.previous)),
-    ).toBe(true);
   });
 
   it("does not fire the hook for a save that changes nothing", async () => {

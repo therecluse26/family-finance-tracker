@@ -11,10 +11,9 @@ import {
 } from "./prices.ts";
 
 // The cost gate and the cost count (spec 10, Module seams: `ai`). src/ai/call.ts, the one AI call
-// path, stacks costMiddleware on every model it hands out, behind the privacy filter, so every
-// model call, one round of Chat included, first passes the filter, then its gate, then has its
-// cost counted from the reply's usage. While the AI request log is on, it also hands the log the
-// filtered request and the reply (spec 08, AI request log). This file imports nothing but types
+// path, stacks costMiddleware on every model it hands out, so every model call, one round of Chat
+// included, first passes its gate, then has its cost counted from the reply's usage. While the AI
+// request log is on, it also hands the log the request and the reply (spec 08, AI request log). This file imports nothing but types
 // from the AI SDK.
 
 // Why an AI use takes its no-AI path instead of a call.
@@ -54,7 +53,7 @@ export type OutboundCall = {
   searchFee?: WebSearchFee;
 };
 
-// A model call's request, as the AI SDK hands it to the model: after the privacy filter.
+// A model call's request, as the AI SDK hands it to the model.
 export type CallOptions = Parameters<
   NonNullable<LanguageModelMiddleware["transformParams"]>
 >[0]["params"];

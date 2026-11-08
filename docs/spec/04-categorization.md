@@ -130,8 +130,7 @@ A Member often looks up an unknown Merchant on the web to learn what it sells. T
 - **Never looked up:**
   - a payment-app or Zelle line to or from a person, or one that names no one ([Identity](#identity));
   - a Transfer, a loan payment, or a card payment, by the provider's category;
-  - a line with no clean Merchant name;
-  - a Merchant name in which the privacy filter finds a Member's name or a protected number.
+  - a line with no clean Merchant name.
 - **The lookup** asks the AI provider's own web search, with the clean Merchant name alone ([AI](08-ai.md#merchant-web-lookup)). It answers with one Category, a confidence, and a one-line description of the business.
 - **Outcome.** The lookup's answer takes the place of the AI's, with the source "Web lookup". At "high", it decides. Below "high", it still applies, as an unsure AI answer does: at "low" the Transaction goes on the Review list, and at "medium" it counts as decided, with the "AI unsure" tag.
 - **Cache.** The app keeps one answer for each Merchant, by the same identity as everywhere else: its Category, confidence, description, the time of the lookup, and whether the lookup found the business. A kept answer decides each later Transaction of that Merchant at step 5. A lookup that found nothing is kept too, and the app looks that Merchant up again only after 90 days. The cache holds facts about Merchants, not about a Connection, so removing a Connection keeps it.

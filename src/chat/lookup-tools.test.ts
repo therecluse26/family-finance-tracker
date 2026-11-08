@@ -15,8 +15,7 @@ import { startRecurringCharges } from "../recurring/index.ts";
 import { LOOKUP_ROWS, lookupTools, PRICE_HISTORY_ROWS, RECURRING_ROWS } from "./index.ts";
 
 // Chat's lookup tools (spec 08, Lookup tools) on the demo Household, with no AI: each is called as
-// a plain function, as the AI's tool call would run it, and answers through the privacy filter.
-// Each answer is read as the AI reads it, with each typed value bare.
+// a plain function, as the AI's tool call would run it. Each answer is read as the AI reads it.
 // The demo history runs from May 2025 to October 2026, and loads on November 1, 2026.
 
 type Row = Record<string, unknown>;
@@ -221,20 +220,21 @@ describe("the lookup tools", () => {
       if (found.count <= LOOKUP_ROWS) expect(cents(found.total)).toBe(sum);
     });
 
-    it("finds one Account by its label, in any case, and names the labels for an unknown one", async () => {
-      const labels = [...(await householdLabels()).values()];
-      const label = labels.find((each) => each.toLowerCase().includes("checking")) ?? "";
+    it("finds one Account by its name, in any case, and lists the names for an unknown one", async () => {
+      const names = [...(await householdNames()).values()];
+      const name = names.find((each) => each.toLowerCase().includes("checking")) ?? "";
 
-      const found = await search({ account: label.toUpperCase() });
-      const unknown = await run<{ error: string; accountLabels: string[] }>("search_transactions", {
+      const found = await search({ account: name.toUpperCase() });
+      const unknown = await run<{ error: string; accountNames: string[] }>("search_transactions", {
         ...ANY,
         account: "Nowhere savings",
       });
 
       expect(found.count).toBeGreaterThan(0);
-      expect(new Set(found.transactions.map((txn) => txn.account))).toEqual(new Set([label]));
-      expect(unknown.error).toBe("No Account has that label.");
-      expect(unknown.accountLabels).toEqual([...new Set(labels)].sort());
+      expect(name).toMatch(/ ending \d{4}$/);
+      expect(new Set(found.transactions.map((txn) => txn.account))).toEqual(new Set([name]));
+      expect(unknown.error).toBe("No Account has that name.");
+      expect(unknown.accountNames).toEqual([...new Set(names)].sort());
     });
 
     it("finds a Merchant by any part of its name, in any case, where % and _ match only themselves", async () => {
@@ -250,11 +250,13 @@ describe("the lookup tools", () => {
       }
     });
 
-    it("names a Merchant that is a Member by the Member's label", async () => {
+    it("names a Merchant that is a Member by the Merchant's name", async () => {
       const found = await search({ merchant: "alex rivera" });
 
       expect(found.count).toBeGreaterThan(0);
-      expect(new Set(found.transactions.map((txn) => txn.merchant))).toEqual(new Set(["Member B"]));
+      expect(new Set(found.transactions.map((txn) => txn.merchant))).toEqual(
+        new Set(["Alex Rivera"]),
+      );
     });
 
     it("refuses an input that does not fit its schema", async () => {
@@ -372,8 +374,8 @@ describe("the lookup tools", () => {
     });
 
     it("sums one Account's balances or the Debt tile's, with money owed negative", async () => {
-      const labels = [...(await householdLabels()).values()];
-      const card = labels.find((each) => each.toLowerCase().includes("credit")) ?? "";
+      const names = [...(await householdNames()).values()];
+      const card = names.find((each) => each.toLowerCase().includes("card")) ?? "";
 
       const one = await history({
         of: "Account",
@@ -462,7 +464,7 @@ describe("the lookup tools", () => {
         status: "active",
         progress: { kind: "spend less" },
       });
-      expect(String(answer.goals[1]?.target)).toMatch(/^Accounts: [A-Za-z ]+ savings$/);
+      expect(String(answer.goals[1]?.target)).toMatch(/^Accounts: [A-Za-z ]+ ending \d{4}$/);
       expect(JSON.stringify(answer.goals)).not.toContain("wants this");
     });
 
@@ -488,7 +490,7 @@ describe("the lookup tools", () => {
     });
   });
 
-  describe("typed values", () => {
+  describe("numbers that equal a last 4", () => {
     // An amount's first 4 digits, which an Account's last 4 matches when it has 4 or more dollars
     // digits, such as 2026 in "-2026.40".
     const firstFour = (amount: string) => amount.replace(/\D/g, "").slice(0, 4);
@@ -502,14 +504,6 @@ describe("the lookup tools", () => {
       const total = totals.rows[0]?.total ?? "";
       const amount = String(found.transactions.find((txn) => sized(txn.amount))?.amount);
       expect(sized(total) && sized(amount)).toBe(true);
-      const ai = householdAi({
-        database: bank.database,
-        secrets: bank.secrets,
-        cost: aiCost({ database: bank.database }),
-      });
-      // The same values as text: the filter cuts each, so the test reads a real match.
-      const asText = { month: "2026-10", total, amount };
-
       const accounts = await listAccounts(bank.database);
       expect(accounts.length).toBeGreaterThanOrEqual(3);
       const lastFours = ["2026", firstFour(total), firstFour(amount)];
@@ -523,13 +517,12 @@ describe("the lookup tools", () => {
       };
       await setMasks(lastFours);
       try {
-        expect(await ai.toolResult(asText)).toEqual({
-          month: "[removed]-10",
-          total: expect.stringContaining("[removed]"),
-          amount: expect.stringContaining("[removed]"),
-        });
         expect(await run<Totals>("get_totals", byMonth)).toEqual(totals);
-        expect(await search(october)).toEqual(found);
+        const again = await search(october);
+        expect([again.count, again.total]).toEqual([found.count, found.total]);
+        expect(again.transactions.map((txn) => txn.amount)).toEqual(
+          found.transactions.map((txn) => txn.amount),
+        );
       } finally {
         await setMasks(accounts.map((account) => account.mask));
       }
@@ -537,7 +530,7 @@ describe("the lookup tools", () => {
   });
 
   describe("every answer", () => {
-    it("holds no Member name, email address, last 4, or ID, and no escape the AI reads differently", async () => {
+    it("holds no email address or ID, and no escape the AI reads differently", async () => {
       const accounts = await listAccounts(bank.database);
       const ids = (await bank.database.$client.execute("SELECT id FROM transactions")).rows.map(
         (row) => String(row.id),
@@ -545,15 +538,8 @@ describe("the lookup tools", () => {
       const text = JSON.stringify(answers);
 
       expect(answers.length).toBeGreaterThan(10);
-      for (const member of DEMO_MEMBERS) {
-        expect(text).not.toMatch(new RegExp(member.lastName, "i"));
-        expect(text).not.toContain(member.email);
-      }
-      for (const account of accounts) {
-        expect(text).not.toContain(account.id);
-        if (account.mask !== null)
-          expect(text).not.toMatch(new RegExp(`(?<!\\d)${account.mask}(?!\\d)`));
-      }
+      for (const member of DEMO_MEMBERS) expect(text).not.toContain(member.email);
+      for (const account of accounts) expect(text).not.toContain(account.id);
       for (const id of ids) expect(text).not.toContain(id);
       expect(text).not.toMatch(/\\[^\\"]/);
     });
@@ -583,10 +569,10 @@ describe("the lookup tools", () => {
     });
   });
 
-  const householdLabels = () =>
+  const householdNames = () =>
     householdAi({
       database: bank.database,
       secrets: bank.secrets,
       cost: aiCost({ database: bank.database }),
-    }).accountLabels();
+    }).accountNames();
 });

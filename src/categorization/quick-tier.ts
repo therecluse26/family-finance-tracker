@@ -5,7 +5,6 @@ import {
   batchReply,
   generateBatch,
   type HouseholdAi,
-  PrivacyRefusal,
   QUICK_BATCH_SIZE,
   typedAmount,
   typedDate,
@@ -18,30 +17,24 @@ import {
   readMerchantNameAnswers,
   storeMerchantNameAnswers,
 } from "../db/index.ts";
-import { log } from "../log.ts";
 
 // The categorization step's two Quick-tier uses (spec 08, Every AI use; spec 04, AI decisions):
 // the Category fix at cascade step 5, and AI cleanup of the Merchant names the fixed rules could
 // not fix. Each sends up to 100 rows in one normal call, never a batch API. Each row is plain
-// fields with its row number, never a Transaction ID. All of it is app-built text, so the privacy
-// filter's final check reads it. Each amount and date is a typed value, which the filter keeps as
-// the app built it.
+// fields with its row number, never a Transaction ID.
 
 // What a use's batch got back: the answers of its good rows, in row order, where a row with no
 // answer takes the no-AI path; or a retry time, so the rows wait for the AI retry; or no answer, so
 // the rows take the no-AI path. With `off`, AI is not available, such as with no AI provider, at
 // the AI cost cap, or after the last retry, and the use's later batches take the no-AI path too, so
-// no new retry cycle starts. With `refused`, the privacy filter refused this batch alone, and with
-// `bad reply` the AI's replies to it failed their schema: the later batches still go.
-export type QuickAnswer<T> =
-  | { answers: T[] }
-  | { retryAt: Date }
-  | { noAi: "off" | "refused" | "bad reply" };
+// no new retry cycle starts. With `bad reply` the AI's replies to this batch failed their schema:
+// the later batches still go.
+export type QuickAnswer<T> = { answers: T[] } | { retryAt: Date } | { noAi: "off" | "bad reply" };
 
 // The AI's confidence in a Category. Below high, the AI counts as unsure.
 export type AiConfidence = "high" | "medium" | "low";
 
-// One Transaction of a Category fix: its Merchant, bank description, amount, date, Account label,
+// One Transaction of a Category fix: its Merchant, bank description, amount, date, Account name,
 // and the provider's category and MCC as hints.
 export type CategoryFixRow = {
   merchant: string | null;
@@ -98,20 +91,11 @@ export type CategoryFixAnswer = {
 
 const NAME_ANSWER = z.object({ name: z.string().trim().min(1).max(100) });
 
-// The answers of one batch's reply, in row order, or why it has none. A privacy refusal sends
-// nothing: its rows take the no-AI path, and the next batch still goes out.
+// The answers of one batch's reply, in row order, or why it has none.
 async function ask<T extends { row: number }>(
   generate: () => Promise<AiReply<{ answers: T[] }>>,
-  use: string,
 ): Promise<QuickAnswer<T>> {
-  let reply: AiReply<{ answers: T[] }>;
-  try {
-    reply = await generate();
-  } catch (error) {
-    if (!(error instanceof PrivacyRefusal)) throw error;
-    log.warn("The privacy filter refused a Quick batch", { use });
-    return { noAi: "refused" };
-  }
+  const reply = await generate();
   if (reply.ready) {
     return { answers: [...reply.output.answers].sort((a, b) => a.row - b.row) };
   }
@@ -137,15 +121,13 @@ export async function fixCategories(
   if (rows.length === 0 || rows.length > QUICK_BATCH_SIZE) {
     throw new RangeError("A Category fix batch holds 1 to 100 Transactions.");
   }
-  return ask(
-    () =>
-      generateBatch(ai, rows, (asked) => ({
-        use: "category fix",
-        task: CATEGORY_FIX_TASK,
-        batch: asked.map(fixRow),
-        output: batchReply(CATEGORY_ANSWER, asked.length),
-      })),
-    "category fix",
+  return ask(() =>
+    generateBatch(ai, rows, (asked) => ({
+      use: "category fix",
+      task: CATEGORY_FIX_TASK,
+      batch: asked.map(fixRow),
+      output: batchReply(CATEGORY_ANSWER, asked.length),
+    })),
   );
 }
 
@@ -174,15 +156,13 @@ export async function cleanMarkedNames(
   let left: readonly string[] = [];
   for (let start = 0; start < asked.length; start += QUICK_BATCH_SIZE) {
     const descriptions = asked.slice(start, start + QUICK_BATCH_SIZE);
-    const answer = await ask(
-      () =>
-        generateBatch(ai, descriptions, (asked) => ({
-          use: "merchant cleanup",
-          task: MERCHANT_CLEANUP_TASK,
-          batch: asked.map((description) => ({ description })),
-          output: batchReply(NAME_ANSWER, asked.length),
-        })),
-      "merchant cleanup",
+    const answer = await ask(() =>
+      generateBatch(ai, descriptions, (asked) => ({
+        use: "merchant cleanup",
+        task: MERCHANT_CLEANUP_TASK,
+        batch: asked.map((description) => ({ description })),
+        output: batchReply(NAME_ANSWER, asked.length),
+      })),
     );
     if ("retryAt" in answer) {
       again = answer.retryAt;
@@ -193,8 +173,7 @@ export async function cleanMarkedNames(
       if (answer.noAi === "off") break;
       continue;
     }
-    // Each name as the screen shows it: a Member's label back to the Member's name, in the one
-    // plain voice. A name that leaves nothing keeps the rule-cleaned name and its mark.
+    // Each name as the screen shows it, in the one plain voice. A name that leaves nothing keeps the rule-cleaned name and its mark.
     const named: { description: string; name: string }[] = [];
     for (const { row, name } of answer.answers) {
       const shown = (await ai.forScreen(name)).replace(/\s+/g, " ").trim();

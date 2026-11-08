@@ -60,10 +60,7 @@ export type ChatMember = { id: string; name: string };
 
 export type ChatOptions = {
   database: Database;
-  ai: Pick<
-    HouseholdAi,
-    "stream" | "pauseFor" | "forScreen" | "forScreenAll" | "accountLabels" | "toolResult"
-  >;
+  ai: Pick<HouseholdAi, "stream" | "pauseFor" | "forScreen" | "forScreenAll" | "accountNames">;
   // The Household summary every Writer use reads today, as parts (src/summary).
   summary: { today(): Promise<{ parts: readonly SummaryPart[] }> };
   now?: () => Date;
@@ -162,11 +159,6 @@ export function firstSentIndex(count: number, lastIsMember: boolean): number {
 
 // The words the browser shows when an answer fails, with "Try again".
 function failureWords(end: Exclude<StreamEnd, { answered: string }>): string {
-  if ("refused" in end) {
-    return end.sent
-      ? "The privacy filter stopped this answer partway. Your question went to the AI, but nothing more did."
-      : "The privacy filter stopped this answer, so nothing went to the AI.";
-  }
   if ("paused" in end) {
     return end.paused === "send anyway?"
       ? "Chat reached the AI cost cap. Send anyway?"
@@ -240,7 +232,7 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
   }
 
   // The call for the thread's last message, a Member's: the summary, the attached note, and the
-  // last 10 turns, each marked typed.
+  // last 10 turns.
   async function callFor(
     threadId: string,
     rows: ChatMessageRow[],
@@ -250,7 +242,6 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
     const turns: AiMessage[] = rows.slice(firstSentIndex(rows.length, true)).map((row) => ({
       role: row.author === "AI" ? "assistant" : "user",
       text: row.text,
-      typed: true,
     }));
     const stored = storedNote(note);
     const parts = stored === undefined ? undefined : noteParts(stored);

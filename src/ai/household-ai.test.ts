@@ -5,7 +5,6 @@ import { createLogger } from "../log.ts";
 import type { AiProviderName, AiSettingsInput } from "./ai-view.ts";
 import { type AiCost, aiCost } from "./cost.ts";
 import { BAD_REPLIES_IN_A_ROW, generateBatch, householdAi } from "./household-ai.ts";
-import { MEMBER_TYPED } from "./privacy.ts";
 import { type AiCall, batchReply, buildPrompt } from "./prompt.ts";
 import { type AiModelMaker, makeFetchModels } from "./providers.ts";
 import { RETRY_DELAYS_MS, runAiRetries, startAiRetries } from "./retries.ts";
@@ -107,9 +106,9 @@ describe("an AI call", () => {
         summary: SUMMARY,
         task: "Answer the Member's question.",
         changes: [
-          { role: "user", text: "How much did we spend on groceries?", typed: true },
+          { role: "user", text: "How much did we spend on groceries?" },
           { role: "assistant", text: "$412 in October." },
-          { role: "user", text: "And in September?", typed: true },
+          { role: "user", text: "And in September?" },
         ],
       });
 
@@ -251,7 +250,6 @@ describe("an AI call", () => {
         },
         { use: "chat", summary: SUMMARY, task: "Answer.", alerts: 1 },
         { use: "chat", summary: ["Spending: ", { amount: "2310.00" } as never], task: "Answer." },
-        { use: "chat", summary: [SUMMARY, 2310 as never], task: "Answer." },
         {
           use: "reading a goal",
           task: "Read.",
@@ -270,28 +268,7 @@ describe("an AI call", () => {
   });
 
   describe("app-built text", () => {
-    const typedMark = Object.keys(MEMBER_TYPED)[0] ?? "";
-    const marked = (built: ReturnType<typeof buildPrompt>) =>
-      built.messages.map((message) => typedMark in (message.providerOptions ?? {}));
-
-    it("marks only the changes a Member typed as typed: never the summary, task, or batch", () => {
-      const changes = [
-        { role: "user" as const, text: "Typed by a Member.", typed: true },
-        { role: "assistant" as const, text: "Built by the app." },
-        { role: "user" as const, text: "Also built by the app.", typed: false },
-      ];
-
-      const chat = buildPrompt({ use: "chat", summary: SUMMARY, task: "Answer.", changes });
-      expect(marked(chat)).toEqual([false, false, true, false, false]);
-
-      const batch = buildPrompt({ ...categoryFix(), changes });
-      expect(marked(batch)).toEqual([false, false, true, false, false]);
-
-      const advice = buildPrompt({ use: "alert advice", task: "Advise.", alerts: 2, changes });
-      expect(marked(advice)).toEqual([false, true, false, false]);
-    });
-
-    it("sends an app-built message given as parts as one user message, with each typed value marked for the filter", () => {
+    it("sends an app-built message given as parts as one user text, each number as its text", () => {
       const built = buildPrompt({
         use: "alert advice",
         task: "Advise.",
@@ -304,20 +281,7 @@ describe("an AI call", () => {
         ],
       });
 
-      expect(marked(built)).toEqual([false, false]);
-      const content = built.messages[1]?.content;
-      if (!Array.isArray(content)) throw new Error("Expected the message's text parts.");
-      expect(content.map((part) => (part.type === "text" ? part.text : ""))).toEqual([
-        "Lunch: $",
-        "49.99",
-        " on ",
-        "2026-11-09",
-      ]);
-      expect(
-        content.map(
-          (part) => part.type === "text" && part.providerOptions?.privacyFilter !== undefined,
-        ),
-      ).toEqual([false, true, false, true]);
+      expect(built.messages[1]).toEqual({ role: "user", content: "Lunch: $49.99 on 2026-11-09" });
     });
 
     it("sends each batch row as JSON with no escape the AI would read as other characters", () => {
@@ -1037,7 +1001,7 @@ describe("an AI call", () => {
       expect(plainVoice(written)).toBe(shown);
     });
 
-    it("shows each Member's name in place of their label, in the plain voice", async () => {
+    it("shows AI text in the plain voice", async () => {
       const { ai } = await connect();
 
       expect(await ai.forScreen("Nice! 🎉 Spending fell 4%.")).toBe("Nice. Spending fell 4%.");

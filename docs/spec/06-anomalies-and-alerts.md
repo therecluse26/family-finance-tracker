@@ -226,7 +226,7 @@ An Alert that went out never changes, even when a later Refund or Reimbursement 
 - One advice call covers every Alert a sync creates. The app sends those Alerts when the call ends.
 - The Alert has the template only in three cases: no AI provider, the AI cost cap, or a call that still fails after its retries ([AI](08-ai.md#failures)). It never gets advice later.
 - The Alert note in the AI box shows at once. Its Next step appears when the advice arrives.
-- **The AI receives:** each Alert's kind and template facts, that Category's Budget and Spending this month, every active Goal, and the "Not a problem" marks. [AI](08-ai.md) gives the tier and the privacy filter.
+- **The AI receives:** each Alert's kind and template facts, that Category's Budget and Spending this month, every active Goal, and the "Not a problem" marks. [AI](08-ai.md) gives the tier and what the AI provider gets.
 
 ## "Not a problem"
 
@@ -255,7 +255,7 @@ Each Alert in the Alert list has an "Ask the AI" button, beside "Not a problem".
   - It has no message at first. The Member types the first question. Like every thread, it is shared ([AI](08-ai.md#threads)).
   - The thread keeps a copy of the Alert from when it started. A later change to the Alert does not change the thread.
 - **One thread per Member and Alert:** a Member's next press on the same Alert opens that Member's thread for it again. It starts no second thread. Two presses at once start one thread. Another Member's press starts that Member's own thread. After a Member deletes the thread, the next press starts a new one.
-- **What the AI receives,** with each question in the thread: the Alert's kind; each part's template facts; what the Alerts step did with it ("sent", "held back (weekly cap)", or "found in history"); whether a Member pressed "Not a problem"; and the AI's advice, if any. The Account goes as its label ([AI](08-ai.md#privacy-filter)). Each amount, date, month, and count goes as a typed value, as the app made it, so the privacy filter never takes an amount for an Account's last 4. The words, such as a Merchant name, are app-built text and pass the privacy filter in full. No Member name and no Account or card number is sent. The thread's title is never sent.
+- **What the AI receives,** with each question in the thread: the Alert's kind; each part's template facts; what the Alerts step did with it ("sent", "held back (weekly cap)", or "found in history"); whether a Member pressed "Not a problem"; and the AI's advice, if any. Each amount, date, month, and count goes as the app made it ([AI](08-ai.md#what-the-ai-provider-gets)). The note names no Account. The thread's title is never sent.
 - **Cost:** pressing the button makes no AI call. Each answer in the thread is a Chat answer: it counts against the AI cost cap, like every Chat answer.
 - **When Chat cannot answer:** the button always shows. With no AI provider, before history has loaded, while the AI provider rejects the key, or while the model has no price, pressing it starts no thread. The Alert then shows why, in Chat's words, such as "Set up an AI provider in Settings, AI, to use Chat."
 - **At the AI cost cap:** pressing it starts the thread. Chat then asks "Send anyway?" before each message, as it always does at the cap ([AI](08-ai.md#the-ai-cost-cap)).

@@ -93,7 +93,7 @@ const DETAIL = new RegExp(
 );
 
 // A progress detail that one of the templates below wrote, in pieces, with each amount in cents, so
-// an AI use can send each as a typed value (spec 08, Privacy filter). Any other detail, such as
+// an AI use can write each as src/ai/typed.ts writes an amount. Any other detail, such as
 // NO_GOAL_AMOUNT, is one piece of words.
 export function progressDetailPieces(detail: string): DetailPiece[] {
   if (!DETAIL.test(detail)) return [detail];

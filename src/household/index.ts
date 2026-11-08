@@ -5,8 +5,6 @@ export {
   type HouseholdFactsInput,
   householdTimeZone,
   isKnownTimeZone,
-  isNeverSentToAi,
-  NEVER_SENT_TO_AI,
   onHouseholdFactsEdited,
   type RentOrOwn,
   readHouseholdFacts,

@@ -18,13 +18,10 @@ import { balanceHistory, DAILY_DAYS, tileAccounts } from "./balance-history.ts";
 import { TOTAL_GROUPINGS, TOTAL_KINDS, totalsBy } from "./totals.ts";
 
 // Chat's five lookup tools (spec 08, Lookup tools). Each is a plain function: it checks its input
-// against its Zod schema, reads app.db, writes nothing, and answers through the privacy filter as
-// app-built text (spec 08, Privacy filter). Every description and schema is built only from
-// constants in the code, such as the fixed Category list, never from Household data: the filter's
-// final check skips input schemas. Amounts, dates, months, and counts the app computes go out as
-// typed values (src/ai/typed.ts), which the filter does not cut: an amount reads "-48.21" with 2
-// decimals even when an Account's last 4 is 4821. Merchant names, Category names, Account labels,
-// and status words are text, and the filter reads each in full. Transactions go out with no ID.
+// against its Zod schema, reads app.db, writes nothing, and answers with plain JSON data. Every
+// description and schema is built only from constants in the code, such as the fixed Category
+// list, never from Household data. Amounts, dates, months, and counts read as src/ai/typed.ts
+// writes them, such as "-48.21". Transactions go out with no ID.
 
 // The most rows search_transactions and get_totals answer with.
 export const LOOKUP_ROWS = 50;
@@ -40,7 +37,7 @@ export const PRICE_HISTORY_ROWS = 6;
 
 export type LookupOptions = {
   database: Database;
-  ai: Pick<HouseholdAi, "accountLabels" | "toolResult">;
+  ai: Pick<HouseholdAi, "accountNames">;
   now?: () => Date;
 };
 
@@ -51,12 +48,10 @@ const isDate = (text: string) =>
   new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;
 const DATE = z.string().refine(isDate, "A date is written YYYY-MM-DD.");
 const MONTH = z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/, "A month is written YYYY-MM.");
-const ACCOUNT_LABEL = z.string().min(1).max(100);
+const ACCOUNT_NAME = z.string().min(1).max(100);
 const DOLLARS = z.number().nonnegative().max(100_000_000);
 
-// Cents as dollars, with 2 decimals and no thousands separator, such as "-1234.50", as text the
-// filter reads in full. Only a Goal's reading uses it: the AI read it from the Goal's own words,
-// which a Member wrote, so it is not a typed value.
+// Cents as dollars, with 2 decimals and no thousands separator, such as "-1234.50", at any size.
 function dollars(cents: number): string {
   const size = Math.abs(Math.round(cents));
   const sign = cents < 0 && size > 0 ? "-" : "";
@@ -65,12 +60,11 @@ function dollars(cents: number): string {
 
 const cents = (amount: number) => Math.round(amount * 100);
 
-// The largest amount a typed value holds: under 10^12 cents.
+// The largest amount typedAmount writes: under 10^12 cents.
 const TYPED_AMOUNT_CAP = 10 ** 12;
 
-// A Goal's progress detail (src/goals/progress.ts) in parts: its words as text, and each amount
-// the app computed as a typed value, as the Household summary sends it. An amount too large for a
-// typed value goes as text.
+// A Goal's progress detail (src/goals/progress.ts) in parts: its words, and each amount the app
+// computed, as the Household summary sends it.
 const progressDetail = (detail: string) =>
   progressDetailPieces(detail).map((piece) =>
     typeof piece === "string"
@@ -80,16 +74,16 @@ const progressDetail = (detail: string) =>
         : dollars(piece.cents),
   );
 
-// The Account with this label, in any case.
-function accountWithLabel(labels: ReadonlyMap<string, string>, label: string): string | undefined {
-  const wanted = label.trim().toLowerCase();
-  for (const [id, each] of labels) if (each.toLowerCase() === wanted) return id;
+// The Account with this name as the AI reads it (HouseholdAi.accountNames), in any case.
+function accountWithName(names: ReadonlyMap<string, string>, name: string): string | undefined {
+  const wanted = name.trim().toLowerCase();
+  for (const [id, each] of names) if (each.toLowerCase() === wanted) return id;
   return undefined;
 }
 
-const unknownLabel = (labels: ReadonlyMap<string, string>) => ({
-  error: "No Account has that label.",
-  accountLabels: [...new Set(labels.values())].sort(),
+const unknownName = (names: ReadonlyMap<string, string>) => ({
+  error: "No Account has that name.",
+  accountNames: [...new Set(names.values())].sort(),
 });
 
 const joined = (values: readonly (string | null)[]) => {
@@ -97,11 +91,10 @@ const joined = (values: readonly (string | null)[]) => {
   return named.length === 0 ? null : named.join(", ");
 };
 
-// A Goal as the AI reads it: what it targets, by Category, Merchant, or Account label, with its
-// reading, progress, and status. The Goal's own words are a Member's text, so they stay out, and
-// the change, deadline, and Goal amount read from them are text the filter reads in full.
-function goalOf(goal: Goal, labels: ReadonlyMap<string, string>) {
-  const label = (id: string) => labels.get(id) ?? "Account";
+// A Goal as the AI reads it: what it targets, by Category, Merchant, or Account name, with its
+// reading, progress, and status.
+function goalOf(goal: Goal, names: ReadonlyMap<string, string>) {
+  const nameOf = (id: string) => names.get(id) ?? "Account";
   const target = goal.reading.target;
   let named: string | null = null;
   if (target !== null) {
@@ -116,10 +109,10 @@ function goalOf(goal: Goal, labels: ReadonlyMap<string, string>) {
         named = "Saving";
         break;
       case "Accounts":
-        named = `Accounts: ${target.accountIds.map(label).join(", ")}`;
+        named = `Accounts: ${target.accountIds.map(nameOf).join(", ")}`;
         break;
       case "loan":
-        named = `loan: ${label(target.accountId)}`;
+        named = `loan: ${nameOf(target.accountId)}`;
         break;
     }
   }
@@ -156,7 +149,7 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
           .nullable()
           .describe("A part of the Merchant's name, in any case"),
         category: z.enum(CATEGORY_NAMES).nullable(),
-        account: ACCOUNT_LABEL.nullable().describe("An Account label"),
+        account: ACCOUNT_NAME.nullable().describe("An Account name"),
         type: z.enum(TRANSACTION_TYPES).nullable(),
         from: DATE.nullable().describe("The first date, YYYY-MM-DD"),
         to: DATE.nullable().describe("The last date, YYYY-MM-DD"),
@@ -174,11 +167,11 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         { message: "minAmount is at most maxAmount." },
       ),
     async run(input) {
-      const labels = await ai.accountLabels();
+      const names = await ai.accountNames();
       let accountId: string | undefined;
       if (input.account !== null) {
-        accountId = accountWithLabel(labels, input.account);
-        if (accountId === undefined) return ai.toolResult(unknownLabel(labels));
+        accountId = accountWithName(names, input.account);
+        if (accountId === undefined) return unknownName(names);
       }
       const found = await searchTransactions(
         database,
@@ -198,7 +191,7 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         database,
         found.transactions.map((txn) => txn.id),
       );
-      return ai.toolResult({
+      return {
         count: typedCount(found.count),
         total: typedAmount(found.total),
         transactions: found.transactions.map((txn) => {
@@ -209,11 +202,11 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
             amount: typedAmount(txn.amount),
             category: joined(shown.map((part) => part.category)),
             type: joined(shown.map((part) => part.type)),
-            account: labels.get(txn.accountId) ?? "Account",
+            account: names.get(txn.accountId) ?? "Account",
             pending: txn.pending,
           };
         }),
-      });
+      };
     },
   });
 
@@ -235,13 +228,13 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
       ),
     async run(input) {
       const rows = await totalsBy(database, input.of, input.groupedBy, input);
-      return ai.toolResult({
+      return {
         count: typedCount(rows.length),
         rows: rows.slice(0, LOOKUP_ROWS).map(({ name, total }) => ({
           name: input.groupedBy === "month" ? typedMonth(name) : name,
           total: typedAmount(total),
         })),
-      });
+      };
     },
   });
 
@@ -252,30 +245,30 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
         of: z
           .enum(["Account", "Cash on hand", "Debt"])
           .describe("One Account, Cash on hand, or Debt"),
-        account: ACCOUNT_LABEL.nullable().describe("The Account label, for one Account"),
+        account: ACCOUNT_NAME.nullable().describe("The Account name, for one Account"),
         from: DATE.describe("The first date, YYYY-MM-DD"),
         to: DATE.describe("The last date, YYYY-MM-DD"),
       })
       .refine((input) => input.from <= input.to, { message: "from is on or before to." })
       .refine((input) => (input.of === "Account") === (input.account !== null), {
-        message: "An Account label is given for one Account, and only then.",
+        message: "An Account name is given for one Account, and only then.",
       }),
     async run(input) {
       const accounts = await listAccounts(database);
       let counted = accounts;
       let name: string = input.of;
       if (input.of === "Account") {
-        const labels = await ai.accountLabels();
-        const accountId = accountWithLabel(labels, input.account ?? "");
-        if (accountId === undefined) return ai.toolResult(unknownLabel(labels));
+        const names = await ai.accountNames();
+        const accountId = accountWithName(names, input.account ?? "");
+        if (accountId === undefined) return unknownName(names);
         counted = accounts.filter((account) => account.id === accountId);
-        name = labels.get(accountId) ?? "Account";
+        name = names.get(accountId) ?? "Account";
       } else {
         counted = tileAccounts(accounts, input.of);
       }
       const today = await householdToday(database, now());
       const { daily, points } = await balanceHistory(database, counted, input, today);
-      return ai.toolResult({
+      return {
         of: name,
         balances: daily ? "daily" : "month-end",
         points: points.map(({ date, balance, estimated }) => ({
@@ -283,15 +276,15 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
           balance: typedAmount(balance),
           estimated,
         })),
-      });
+      };
     },
   });
 
   const get_recurring_charges = aiTool({
-    description: `Recurring charges that are active or inactive, or only those in one Category. Answers with up to ${RECURRING_ROWS}, active first, soonest next date first, and the count of all: each one's Merchant, latest amount spent, interval, next date, Account label, and its ${PRICE_HISTORY_ROWS} latest Transactions as price history.`,
+    description: `Recurring charges that are active or inactive, or only those in one Category. Answers with up to ${RECURRING_ROWS}, active first, soonest next date first, and the count of all: each one's Merchant, latest amount spent, interval, next date, Account name, and its ${PRICE_HISTORY_ROWS} latest Transactions as price history.`,
     input: z.object({ category: z.enum(CATEGORY_NAMES).nullable() }),
     async run(input) {
-      const labels = await ai.accountLabels();
+      const names = await ai.accountNames();
       const charges = (await recurringCharges(database, now()))
         .filter(
           (charge) =>
@@ -305,7 +298,7 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
             b.latestAmount - a.latestAmount ||
             a.merchant.name.localeCompare(b.merchant.name),
         );
-      return ai.toolResult({
+      return {
         count: typedCount(charges.length),
         recurringCharges: charges.slice(0, RECURRING_ROWS).map((charge) => ({
           merchant: charge.merchant.name,
@@ -313,13 +306,13 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
           amount: typedAmount(charge.latestAmount),
           interval: charge.schedule,
           nextDate: typedDate(charge.nextExpectedDate),
-          account: labels.get(charge.accountId) ?? "Account",
+          account: names.get(charge.accountId) ?? "Account",
           status: charge.status,
           priceHistory: charge.priceHistory
             .slice(-PRICE_HISTORY_ROWS)
             .map(({ date, amount }) => ({ date: typedDate(date), amount: typedAmount(amount) })),
         })),
-      });
+      };
     },
   });
 
@@ -331,13 +324,13 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
       const at = now();
       const { budgets } = await budgetsForMonth(database, input.month);
       const spending = await budgetSpending(database, input.month, budgets, at);
-      const labels = await ai.accountLabels();
+      const names = await ai.accountNames();
       const goals = await readGoalsWithProgress(database, at);
       const withSpending = budgets.map((budget) => ({
         budget,
         found: spending.budgets.get(budget.category),
       }));
-      return ai.toolResult({
+      return {
         budgets: [
           ...withSpending
             .filter(({ budget }) => budget.period === "monthly")
@@ -365,8 +358,8 @@ export function lookupTools({ database, ai, now = () => new Date() }: LookupOpti
             shareOfYear: `${Math.round((found?.shareOfYear ?? 0) * 100)}%`,
             status: found?.status ?? "on track",
           })),
-        goals: goals.map((goal) => goalOf(goal, labels)),
-      });
+        goals: goals.map((goal) => goalOf(goal, names)),
+      };
     },
   });
 

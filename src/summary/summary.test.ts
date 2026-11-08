@@ -40,8 +40,7 @@ import {
 
 // The Household summary (spec 08, Household summary) on the demo Household, with AI SDK test
 // models: no test calls an AI provider. The demo history runs from May 2025 to October 2026, and
-// loads on November 1, 2026. The summary is read as the Writer model reads it, after the real
-// privacy filter.
+// loads on November 1, 2026. The summary is read as the Writer model reads it.
 
 const LOADED = new Date("2026-11-01T14:00:00.000Z");
 const NOW = new Date("2026-11-20T14:00:00.000Z");
@@ -123,7 +122,7 @@ describe("the Household summary on the demo Household", () => {
     const savings = (await listAccounts(bank.database)).find(
       (account) => account.subtype === "savings",
     );
-    // One Goal by each Member: Alex joined second, so is Member B.
+    // One Goal by each Member.
     const restaurants = await addGoal(bank.database, {
       words: "Spend less at restaurants",
       authorId: "member-2",
@@ -192,35 +191,30 @@ describe("the Household summary on the demo Household", () => {
     }
   });
 
-  it("names each Goal's author by Member label, in the order Members joined", async () => {
+  it("names each Goal's author by their name, and holds no email address", async () => {
     const { text } = await summary().today();
 
-    expect(text).toContain('- "Spend less at restaurants", by Member B on 2026-11-01;');
-    expect(text).toContain('- "Put away for a summer trip", by Member A on 2026-11-01;');
-    expect(text).toContain('Marked "Not a problem" by Member B on 2026-11-01.');
-    for (const member of DEMO_MEMBERS) {
-      for (const name of [member.firstName, member.lastName, member.email]) {
-        expect(text).not.toContain(name);
-      }
-    }
+    expect(text).toContain('- "Spend less at restaurants", by Alex Rivera on 2026-11-01;');
+    expect(text).toContain('- "Put away for a summer trip", by Jamie Rivera on 2026-11-01;');
+    expect(text).toContain('Marked "Not a problem" by Alex Rivera on 2026-11-01.');
+    for (const member of DEMO_MEMBERS) expect(text).not.toContain(member.email);
   });
 
-  it("names each Account by its label, and holds no Account number", async () => {
+  it("names each Account by its name and last 4", async () => {
     const { text } = await summary().today();
-    const labels = await ai.accountLabels();
+    const names = await ai.accountNames();
 
     for (const account of await listAccounts(bank.database)) {
       if (account.closedAt === null && !account.excluded) {
-        expect(text).toContain(`- ${labels.get(account.id)}: `);
+        expect(names.get(account.id)).toBe(
+          account.mask === null ? account.name : `${account.name} ending ${account.mask}`,
+        );
+        expect(text).toContain(`- ${names.get(account.id)}: `);
       }
-      if (account.mask !== null) {
-        expect(text).not.toMatch(new RegExp(`(?<!\\d)${account.mask}(?!\\d)`));
-      }
-      expect(text).not.toContain(account.name);
     }
   });
 
-  it("goes to the model whole: the privacy filter finds nothing to remove", async () => {
+  it("goes to the model whole", async () => {
     const { parts, text } = await summary().today();
 
     expect(
@@ -230,7 +224,7 @@ describe("the Household summary on the demo Household", () => {
     expect(summaryTheModelRead(stub)).toBe(text);
   });
 
-  it("keeps each amount, date, month, and count the app made, even when a last 4, the ZIP code, or an age matches it", async () => {
+  it("sends each amount, date, month, and count the app made as it is, even when a last 4 matches it", async () => {
     const { parts, text } = await summary().today();
     // Fitness is 49.99 a month and Housing 1850.00; every date starts 2026; checking holds
     // 18950.32; today is day 20 of the month's 30; the Capital One card's APR is 28.49%.
@@ -266,9 +260,9 @@ describe("the Household summary on the demo Household", () => {
       ),
     ).toMatchObject({ saved: { zipCode: "18950" } });
     try {
-      // Sent as one text, the filter would take these numbers out of the app's own amounts.
+      // Sent as one text or as its parts, the model reads the same summary.
       await ai.generate({ use: "insight cards", summary: text, task: "Write the cards." });
-      expect(summaryTheModelRead(stub)).not.toBe(text);
+      expect(summaryTheModelRead(stub)).toBe(text);
 
       expect(
         await ai.generate({ use: "insight cards", summary: parts, task: "Write the cards." }),
@@ -277,10 +271,9 @@ describe("the Household summary on the demo Household", () => {
       expect(read).toBe(text);
       expect(read).not.toMatch(/\\\p{L}/u);
 
-      // A Goal's words stay text, so the filter still takes out a last 4, a card number, the ZIP
-      // code, and an age that a Member wrote, while every line the app made stays as it was.
+      // A Goal's words reach the model as the Member wrote them, on one line.
       await addGoal(bank.database, {
-        words: "Pay card 4999 and\n4111\n1111\n1111\n1111 from ZIP 18950 for our 20 year old",
+        words: "Pay card 4999 and\nsave 18950 for our 20 year old",
         authorId: "member-1",
         date: "2026-11-24",
         target: null,
@@ -291,17 +284,11 @@ describe("the Household summary on the demo Household", () => {
       const later = await summary().today();
       await ai.generate({ use: "insight cards", summary: later.parts, task: "Write the cards." });
       const readLater = summaryTheModelRead(stub);
-      const isGoal = (line: string) => line.startsWith('- "Pay card');
-      expect(readLater.split("\n").filter((line) => !isGoal(line))).toEqual(
-        later.text.split("\n").filter((line) => !isGoal(line)),
+      expect(readLater).toBe(later.text);
+      const goalLine = readLater.split("\n").find((line) => line.startsWith('- "Pay card')) ?? "";
+      expect(goalLine).toContain(
+        '- "Pay card 4999 and save 18950 for our 20 year old", by Jamie Rivera on 2026-11-24',
       );
-      const goalLine = readLater.split("\n").find(isGoal) ?? "";
-      expect(goalLine).toContain("by Member A on 2026-11-24");
-      expect(goalLine).not.toContain("4999");
-      expect(goalLine).not.toMatch(/4111\D{0,3}1111/);
-      expect(goalLine).not.toContain("18950");
-      expect(goalLine).not.toMatch(/(?<!\d)20(?!\d)/);
-      expect(readLater).not.toMatch(/\\\p{L}/u);
     } finally {
       now = NOW;
       for (const [name] of masks) {
@@ -313,7 +300,7 @@ describe("the Household summary on the demo Household", () => {
     }
   });
 
-  it("keeps the amounts in an Alert and in a Goal's progress, even when a last 4 or the ZIP code matches them", async () => {
+  it("sends the amounts in an Alert and in a Goal's progress as they are, even when a last 4 matches them", async () => {
     const { parts, text } = await summary().today();
     const alertLine = text.split("\n").find((line) => line.includes("Price increase:")) ?? "";
     const goalLine = text.split("\n").find((line) => line.startsWith('- "Put away')) ?? "";
@@ -340,12 +327,10 @@ describe("the Household summary on the demo Household", () => {
       NOW,
     );
     try {
-      // Sent as one text, the filter would take these numbers out.
       await ai.generate({ use: "insight cards", summary: text, task: "Write the cards." });
-      const asText = summaryTheModelRead(stub);
-      expect(asText).not.toContain("$70.37");
-      expect(asText).not.toContain("$32.87");
-      expect(asText).not.toContain("$22971");
+      const asText = summaryTheModelRead(stub).split("\n");
+      expect(asText).toContain(alertLine);
+      expect(asText).toContain(goalLine);
 
       await ai.generate({ use: "insight cards", summary: parts, task: "Write the cards." });
       const read = summaryTheModelRead(stub).split("\n");
@@ -371,9 +356,8 @@ describe("the Household summary on the demo Household", () => {
     const first = await summary().today();
     const stored = await readHouseholdSummary(bank.database);
     expect(stored?.day).toBe("2026-11-20");
-    // Stored as its pieces, with no typed value's mark, which is new each time the app starts.
+    // Stored as its pieces.
     expect(stored?.text).toContain('{"amount":');
-    expect(stored?.text).not.toContain("privacyFilter");
 
     // A Goal added later that day stays out until the next day's summary.
     await addGoal(bank.database, {
@@ -390,7 +374,7 @@ describe("the Household summary on the demo Household", () => {
     try {
       const { text: next } = await summary().today();
       expect(next).not.toBe(first.text);
-      expect(next).toContain('"Pay the card off", by Member A');
+      expect(next).toContain('"Pay the card off", by Jamie Rivera');
       expect(next).toContain("Today is 2026-11-21");
       expect((await readHouseholdSummary(bank.database))?.day).toBe("2026-11-21");
     } finally {
@@ -436,7 +420,7 @@ describe("the Household summary on the demo Household", () => {
     }
   });
 
-  it("passes the real privacy filter: no Member name, Account number, ZIP code, or age reaches the model", async () => {
+  it("sends a Member's words and names as they are, and never the ZIP code or ages", async () => {
     const zipCode = "10001";
     const ages = [47, 13];
     expect(
@@ -449,10 +433,9 @@ describe("the Household summary on the demo Household", () => {
     ).toMatchObject({ saved: { zipCode } });
     const accounts = await listAccounts(bank.database);
     const card = accounts.find((account) => account.kind === "credit");
-    // A Goal's words, as a Member wrote them: a name after a tab, names glued, a last 4 and a card
-    // number split by line breaks, the ZIP code, and ages in digits and in words.
+    // A Goal's words, as a Member wrote them: a name after a tab and a last 4 after a line break.
     await addGoal(bank.database, {
-      words: `Before\tJamie turns forty-seven, AlexRivera pays card ${card?.mask}\n4111\n1111\n1111\n1111 from ZIP ${zipCode} for our 13 year old`,
+      words: `Before\tJamie turns ten, Alex pays card\n${card?.mask}`,
       authorId: "member-2",
       date: "2026-11-21",
       target: null,
@@ -462,7 +445,9 @@ describe("the Household summary on the demo Household", () => {
     now = new Date("2026-11-22T14:00:00.000Z");
     try {
       const { parts, text } = await summary().today();
-      expect(text).toContain("by Member B on 2026-11-21");
+      expect(text).toContain(
+        `- "Before Jamie turns ten, Alex pays card ${card?.mask}", by Alex Rivera on 2026-11-21`,
+      );
       // The summary is one text the AI reads as it is: no control character but a line break, so
       // no field starts a line of its own, and no backslash before a letter.
       // biome-ignore lint/suspicious/noControlCharactersInRegex: the characters it looks for.
@@ -471,35 +456,15 @@ describe("the Household summary on the demo Household", () => {
 
       await ai.generate({ use: "insight cards", summary: parts, task: "Write the cards." });
       const read = summaryTheModelRead(stub);
-      expect(read).not.toMatch(/\\\p{L}/u);
-
-      expect(read).toContain("Member A turns");
-      expect(read).toContain("Member B pays card");
-      for (const member of DEMO_MEMBERS) {
-        for (const name of [member.firstName, member.lastName, member.email]) {
-          expect(read.toLowerCase()).not.toContain(name.toLowerCase());
-        }
-      }
-      for (const account of accounts) {
-        if (account.mask !== null) {
-          expect(read).not.toMatch(new RegExp(`(?<!\\d)${account.mask}(?!\\d)`));
-        }
-      }
-      expect(read).not.toMatch(/4111\D{0,3}1111/);
+      expect(read).toBe(text);
+      // The Household facts never go in.
       expect(read).not.toContain(zipCode);
-      // The Goal's line holds neither age. Elsewhere, an amount or a share such as +47% is not an
-      // age, and stays.
-      const goalLine = read.split("\n").find((line) => line.includes("Member A turns")) ?? "";
-      expect(goalLine).not.toMatch(/forty[\s-]?seven/i);
-      for (const age of ages) {
-        expect(goalLine).not.toMatch(new RegExp(`(?<!\\d)${age}(?!\\d)`));
-      }
     } finally {
       now = NOW;
     }
   });
 
-  it("names the Account of a Card interest or Duplicate charge Alert by its label", async () => {
+  it("names the Account of a Card interest or Duplicate charge Alert by its name and last 4", async () => {
     const chase = (await listConnections(bank.database)).find(
       (connection) => connection.bankId === "fake-chase",
     );
@@ -539,14 +504,13 @@ describe("the Household summary on the demo Household", () => {
       const card = (await listAccounts(bank.database)).find(
         (account) => account.name === "Chase Card",
       );
-      const label = (await ai.accountLabels()).get(card?.id ?? "") ?? "";
-      expect(label).not.toBe("");
+      const label = (await ai.accountNames()).get(card?.id ?? "") ?? "";
+      expect(label).toBe(`Chase Card ending ${card?.mask}`);
       const lines = recent?.split("\n") ?? [];
       const interest = lines.find((line) => line.includes("Card interest or fee:")) ?? "";
       const duplicate = lines.find((line) => line.includes("Duplicate charge:")) ?? "";
       expect(interest).toContain(` on ${label} `);
       expect(duplicate).toContain(label);
-      expect(text).not.toContain("Chase Card");
     } finally {
       now = NOW;
     }
@@ -605,7 +569,7 @@ describe("the Household summary on the demo Household", () => {
     }
   });
 
-  it("lists each open Proposal, with the app's amounts as typed parts the filter leaves alone", async () => {
+  it("lists each open Proposal, with the app's amounts as they are", async () => {
     // A Goal with no Goal amount yet, for a Goal amount Proposal.
     const groceries = await addGoal(bank.database, {
       words: "Spend less on groceries",
@@ -663,7 +627,7 @@ describe("the Household summary on the demo Household", () => {
       await ai.generate({ use: "insight cards", summary: parts, task: "Write the cards." });
       expect(summaryTheModelRead(stub)).toContain("Goal amount of 4821.00 for the Goal");
       await ai.generate({ use: "insight cards", summary: text, task: "Write the cards." });
-      expect(summaryTheModelRead(stub)).not.toContain("Goal amount of 4821");
+      expect(summaryTheModelRead(stub)).toContain("Goal amount of 4821.00 for the Goal");
     } finally {
       await setMask(
         DEMO_BANKS.flatMap((each) => each.accounts).find(
@@ -849,13 +813,13 @@ describe("the Habit counts", () => {
     );
   });
 
-  it("names a card or loan payment in Coming up by its Account's label, never by its name", async () => {
+  it("names a card or loan payment in Coming up by its Account's name and last 4", async () => {
     const text = await summaryOf();
     const labels = await householdAi({
       database: bank.database,
       secrets: bank.secrets,
       cost: aiCost({ database: bank.database }),
-    }).accountLabels();
+    }).accountNames();
     const accounts = await listAccounts(bank.database);
     const labelOf = (name: string) =>
       labels.get(accounts.find((account) => account.name === name)?.id ?? "");
@@ -867,8 +831,6 @@ describe("the Habit counts", () => {
     expect(comingUp).toContain(
       `- 2026-11-15: ${labelOf("Dana Okafor Car Loan")} payment, -310.00, loan payment`,
     );
-    expect(text).not.toContain("Dana");
-    expect(text).not.toContain("Okafor");
   });
 
   it("builds the day's summary again when the stored one is not its pieces", async () => {
