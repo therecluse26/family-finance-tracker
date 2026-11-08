@@ -339,14 +339,17 @@ const bookedAsIncome = (result: { step: string; parts: readonly { type: string }
 // path decided goes to the AI the same way, once (spec 03, AI decisions and the no-AI path): a link
 // takes it off its card, and any other answer becomes its best answer. Returns the Transactions to
 // decide again: each side of a link it made, and each Transaction whose other links ended with it.
+// With `everyCard`, the open items regroup by the card key even when nothing was decided, as at
+// start-up.
 export async function updateMoneyFromPersonItems(
   database: Database,
   decided: readonly { transactionId: string; step: string; parts: readonly { type: string }[] }[],
   gone: readonly string[],
   run?: AiRun,
   now = new Date(),
+  everyCard = false,
 ): Promise<string[]> {
-  if (decided.length === 0 && gone.length === 0) return [];
+  if (!everyCard && decided.length === 0 && gone.length === 0) return [];
   const openItems = await openReviewItemsOfKind(database, MONEY_FROM_PERSON_KIND);
   // Each money's open card. Money on two, which only a race leaves, belongs to the newest.
   const cardOf = new Map<string, ReviewItem>();
