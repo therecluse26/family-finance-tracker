@@ -105,6 +105,8 @@ export function Field(props: {
   required?: boolean;
   // A width in place of the usual one, such as "max-w-36".
   className?: string;
+  // The ID of a datalist the field offers its choices from.
+  list?: string;
 }) {
   return (
     <label className={LABEL}>
@@ -115,6 +117,7 @@ export function Field(props: {
         inputMode={props.inputMode}
         autoComplete={props.autoComplete ?? "off"}
         placeholder={props.placeholder}
+        list={props.list}
         required={props.required ?? false}
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}

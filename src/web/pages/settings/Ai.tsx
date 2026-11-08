@@ -17,7 +17,7 @@ import {
   onGateway,
   USAGE_LIMIT_LINKS,
 } from "../../../ai/ai-view.ts";
-import { tablePrice } from "../../../ai/prices.ts";
+import { PRICE_TABLE, tablePrice } from "../../../ai/prices.ts";
 import { capLine } from "../../../ai/usage-view.ts";
 import { calendarDateIn, dateLabel, type StatusTone } from "../../../format.ts";
 import { api } from "../../api.ts";
@@ -382,6 +382,7 @@ export function AiProviderForm(props: {
           onChange={setQuickModel}
           required
           className="max-w-none"
+          list="ai-priced-models"
         />
         <Field
           label="Writer model"
@@ -389,8 +390,15 @@ export function AiProviderForm(props: {
           onChange={setWriterModel}
           required
           className="max-w-none"
+          list="ai-priced-models"
         />
       </div>
+      {/* The AI provider's models in the app's price table, such as Opus 5.5. Any other name works too. */}
+      <datalist id="ai-priced-models">
+        {Object.keys(PRICE_TABLE[provider]).map((model) => (
+          <option key={model} value={model} />
+        ))}
+      </datalist>
       {unpriced.length === 0 ? null : (
         <fieldset className="mt-5">
           <legend className="text-sm font-semibold">Prices, in dollars per million tokens</legend>

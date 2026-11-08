@@ -6,6 +6,7 @@ import {
   InvalidResponseDataError,
   JSONParseError,
   type LanguageModel,
+  type LanguageModelMiddleware,
   NoContentGeneratedError,
   NoObjectGeneratedError,
   NoOutputGeneratedError,
@@ -29,10 +30,12 @@ import {
   type OutboundCall,
   STREAM_CUT,
 } from "./outbound.ts";
+import { tablePrice } from "./prices.ts";
 import {
   type AiCall,
   type AiTools,
   buildPrompt,
+  effortOptions,
   goodRows,
   plainData,
   quickBatchOf,
@@ -68,7 +71,36 @@ const TOOL_FAILED = { error: "The lookup failed." };
 // What the AI reads for a call past the 5th. The tool does not run.
 const NO_MORE_TOOLS = { error: "No more lookups for this question." };
 
-// The cost gate and count (src/ai/outbound.ts), with the AI request log, around each model.
+// Spec 08, Effort: the use's effort goes only to a model in the app's own price table for its AI
+// provider, each of which takes it. A model with only a Member's price may not, such as gpt-4o or
+// claude-sonnet-4-5, and its AI provider would refuse the whole call. Each option is merged into
+// the call's own options for that AI provider, such as OpenAI's cache mode.
+function effortMiddleware(counted: OutboundCall): LanguageModelMiddleware {
+  const added =
+    tablePrice(counted.provider, counted.model) === undefined
+      ? undefined
+      : effortOptions(counted.use);
+  return {
+    transformParams: async ({ params }) =>
+      added === undefined
+        ? params
+        : {
+            ...params,
+            providerOptions: {
+              ...params.providerOptions,
+              ...Object.fromEntries(
+                Object.entries(added).map(([name, options]) => [
+                  name,
+                  { ...params.providerOptions?.[name], ...options },
+                ]),
+              ),
+            },
+          },
+  };
+}
+
+// The use's effort, then the cost gate and count (src/ai/outbound.ts) with the AI request log,
+// around each model.
 function privateModel(
   model: LanguageModel,
   database: Database,
@@ -77,7 +109,10 @@ function privateModel(
   if (typeof model === "string") throw new TypeError("A model is never a plain model-ID string.");
   return wrapLanguageModel({
     model,
-    middleware: costMiddleware(counted, callLog(database, counted, keptFailureOf)),
+    middleware: [
+      effortMiddleware(counted),
+      costMiddleware(counted, callLog(database, counted, keptFailureOf)),
+    ],
   });
 }
 

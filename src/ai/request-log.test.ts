@@ -29,8 +29,11 @@ import {
   AI_REQUEST_LOG_PAGE,
   AiRequestLogCleanupJob,
   aiRequestLogRoutes,
+  CUT_AT_LIMIT,
   cleanUpAiRequestLog,
   cutText,
+  HIDDEN_REASONING,
+  replyText,
   startAiRequestLogCleanup,
 } from "./request-log.ts";
 import {
@@ -257,6 +260,52 @@ describe("the AI request log", () => {
     expect(lines.join("\n")).not.toContain("Bluebird");
   });
 
+  it("says when the AI provider hid the reasoning, and when a reply ended at its reply limit", async () => {
+    // Thinking that used the whole limit before any answer text: the reply fails its schema.
+    stub.hiddenReasoning = true;
+    stub.finishReason = "length";
+    stub.reply = '{"cards":[';
+    const ai = await connect();
+    await turn(true);
+
+    expect(
+      await ai.generate({
+        use: "insight cards",
+        summary: "Household summary.",
+        task: "Write the cards.",
+        output: z.object({ cards: z.array(z.object({ title: z.string() })) }),
+      }),
+    ).toMatchObject({ ready: false, retryAt: expect.any(Date) });
+
+    // Still the same AI failure on the call path: a bad reply that ended at its limit.
+    expect(
+      lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === "An AI call failed"),
+    ).toEqual([
+      expect.objectContaining({
+        use: "insight cards",
+        failure: "bad reply",
+        finishReason: "length",
+      }),
+    ]);
+    expect((await onlyEntry()).response).toBe(
+      'Reasoning: (hidden by the AI provider)\n\n{"cards":[\n\n(Cut off at the reply limit.)',
+    );
+  });
+
+  it("writes reasoning with text under its heading, and no cut line for a reply that ended by itself", () => {
+    expect(
+      replyText([
+        { type: "reasoning", text: "Dana's restaurants rose." },
+        { type: "text", text: "Restaurants rose." },
+      ]),
+    ).toBe("Reasoning:\nDana's restaurants rose.\n\nRestaurants rose.");
+    expect(replyText([{ type: "text", text: "Done." }], false)).toBe("Done.");
+    expect(replyText([{ type: "text", text: "Do" }], true)).toBe(`Do\n\n${CUT_AT_LIMIT}`);
+    expect(replyText([{ type: "reasoning", text: "" }])).toBe(HIDDEN_REASONING);
+  });
+
   it("keeps the exact text the AI provider got, and never the key, the headers, or the base URL", async () => {
     const capture = new CapturingFetch();
     const ai = await connect("anthropic", makeFetchModels(capture.fetch));
@@ -405,6 +454,23 @@ describe("the AI request log", () => {
 
       expect(await rows()).toEqual([]);
       expect(lines.join("\n")).not.toContain("could not keep");
+    });
+
+    it("says when the AI provider hid the reasoning, and when the answer ended at its reply limit", async () => {
+      stub.hiddenReasoning = true;
+      stub.finishReason = "length";
+      stub.reply = "Dana spent $480 on";
+      stub.streamPiece = 4;
+      const ai = await connect();
+      await turn(true);
+
+      await answer(ai, await thread());
+
+      const [row] = await rows();
+      expect(row).toMatchObject({
+        response: `${HIDDEN_REASONING}\n\nDana spent $480 on\n\n${CUT_AT_LIMIT}`,
+        failure: null,
+      });
     });
 
     it("keeps the reply so far when the stream fails, with the call's AI usage row", async () => {

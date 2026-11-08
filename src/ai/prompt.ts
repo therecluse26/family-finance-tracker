@@ -1,6 +1,6 @@
 import type { JSONValue, ModelMessage, TextPart } from "ai";
 import * as z from "zod";
-import { type ModelUse, USE_TIERS } from "./ai-view.ts";
+import { type AiUse, type ModelUse, USE_TIERS } from "./ai-view.ts";
 import type { TypedValue } from "./typed.ts";
 import { FIXED_RULES } from "./voice.ts";
 
@@ -88,24 +88,59 @@ export function aiTool<Shape extends z.ZodRawShape>(tool: {
   };
 }
 
-// Spec 08, Limits on each call: the most reply tokens each use may take.
-// At 6,000, Category fix replies for 100 rows ran past the limit on real data.
+// Spec 08, Limits on each call: the most reply tokens each use may take. A model's thinking counts
+// against the limit before its answer, so each limit leaves room for it. Only tokens used are
+// billed. At 6,000, Category fix replies for 100 rows ran past the limit on real data.
 const QUICK_BATCH_TOKENS = 12_000;
 const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
   "category fix": QUICK_BATCH_TOKENS,
   "merchant cleanup": QUICK_BATCH_TOKENS,
   "unclear transfer": QUICK_BATCH_TOKENS,
   "reimbursement linking": QUICK_BATCH_TOKENS,
-  "reading a goal": 300,
+  "reading a goal": 2_000,
   // The searches' own turns count as reply tokens, before the answer.
   "merchant lookup": 2_000,
-  "insight cards": 1_000,
-  "monthly review": 4_000,
-  "budget tailoring": 1_500,
-  chat: 1_500,
+  "insight cards": 8_000,
+  "monthly review": 16_000,
+  "budget tailoring": 8_000,
+  chat: 8_000,
 };
-const ALERT_TOKENS = 300;
-const ALERT_CALL_TOKENS = 1_200;
+const ALERT_TOKENS = 1_000;
+const ALERT_CALL_TOKENS = 4_000;
+
+// Spec 08, Effort: how much each use's model thinks before it answers, sent on every call of the
+// use to a model in the app's price table (src/ai/call.ts). A model that thinks by default spends
+// its thinking from the reply limit. Quick batches and the Merchant lookup send none, and keep each
+// model's own default.
+export type Effort = "low" | "medium";
+export const EFFORT: Record<ModelUse, Effort | undefined> = {
+  "category fix": undefined,
+  "merchant cleanup": undefined,
+  "unclear transfer": undefined,
+  "reimbursement linking": undefined,
+  "merchant lookup": undefined,
+  "reading a goal": "low",
+  "alert advice": "low",
+  "insight cards": "medium",
+  "monthly review": "medium",
+  "budget tailoring": "medium",
+  chat: "low",
+};
+
+// A use's effort under each AI provider package's own option name, from its installed types:
+// Anthropic sends it as output_config.effort, OpenAI's Chat Completions as reasoning_effort, and
+// OpenRouter as reasoning.effort. Each package reads only its own key. An OpenAI-compatible
+// endpoint reads none of these, so it gets nothing. Undefined for a use that sends none, and for
+// the check on save and the key test.
+export function effortOptions(use: AiUse): Record<string, Record<string, JSONValue>> | undefined {
+  const effort = Object.hasOwn(EFFORT, use) ? EFFORT[use as ModelUse] : undefined;
+  if (effort === undefined) return undefined;
+  return {
+    anthropic: { effort },
+    openai: { reasoningEffort: effort },
+    openrouter: { reasoning: { effort } },
+  };
+}
 
 // A Quick batch holds up to 100 Transactions (spec 08, Limits on each call).
 export const QUICK_BATCH_SIZE = 100;

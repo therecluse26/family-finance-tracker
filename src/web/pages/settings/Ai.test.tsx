@@ -140,6 +140,28 @@ describe("Settings → AI", () => {
     expect(text(html)).toContain("The app does not check it.");
   });
 
+  it("offers each priced model of the AI provider, Opus 5.5 among them, while the defaults stay", () => {
+    const anthropic = renderToString(<AiProviderForm ai={null} onSaved={() => {}} />);
+    expect(anthropic.match(/list="ai-priced-models"/g)).toHaveLength(2);
+    expect(anthropic).toContain('<option value="claude-opus-5-5">');
+    expect(anthropic).toContain('<option value="claude-haiku-5-5">');
+    expect(anthropic).toContain('value="claude-sonnet-5-5"');
+
+    const openrouter = renderToString(
+      <AiProviderForm
+        ai={{
+          ...OPENAI,
+          provider: "openrouter",
+          quickModel: "anthropic/claude-haiku-5.5",
+          writerModel: "anthropic/claude-sonnet-5.5",
+        }}
+        onSaved={() => {}}
+      />,
+    );
+    expect(openrouter).toContain('<option value="anthropic/claude-opus-5.5">');
+    expect(openrouter).not.toContain('<option value="claude-opus-5-5">');
+  });
+
   it("shows only that the key is set, the saved models, and a link to the OpenAI project limit", () => {
     const html = renderToString(<AiProviderForm ai={OPENAI} onSaved={() => {}} />);
 

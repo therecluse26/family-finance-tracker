@@ -253,8 +253,9 @@ describe("the demo Household through every AI use", () => {
       provider: "anthropic",
       apiKey: newAiKey(),
       baseUrl: null,
-      quickModel: "quick-model",
-      writerModel: "writer-model",
+      // Both models are in the app's price table, so each use that has an effort sends it.
+      quickModel: "claude-haiku-5-5",
+      writerModel: "claude-sonnet-5-5",
       prices: { quick: PRICE, writer: PRICE },
     });
     expect(saved).toMatchObject({ saved: true });
@@ -439,6 +440,46 @@ describe("the demo Household through every AI use", () => {
     expect(uses.rows.map((row) => String(row.use)).toSorted()).toEqual(
       [...Object.keys(USE_TIERS), "check on save"].toSorted(),
     );
+    // Each use's calls went out with its reply limit and effort (spec 08, Limits on each call and
+    // Effort), each request matched to its AI usage row in order.
+    // The check on save's two calls went out before `sent` was cleared.
+    const counted = await bank.database.$client.execute(
+      "SELECT use FROM ai_calls ORDER BY id LIMIT -1 OFFSET 2",
+    );
+    expect(counted.rows).toHaveLength(sent.length);
+    const limits: Record<string, number> = {
+      "category fix": 12_000,
+      "merchant cleanup": 12_000,
+      "unclear transfer": 12_000,
+      "reimbursement linking": 12_000,
+      "merchant lookup": 2_000,
+      "reading a goal": 2_000,
+      "insight cards": 8_000,
+      "monthly review": 16_000,
+      "budget tailoring": 8_000,
+      chat: 8_000,
+    };
+    const efforts: Record<string, string> = {
+      "reading a goal": "low",
+      "alert advice": "low",
+      chat: "low",
+      "insight cards": "medium",
+      "monthly review": "medium",
+      "budget tailoring": "medium",
+    };
+    sent.forEach((each, index) => {
+      const use = String(counted.rows[index]?.use);
+      const limit = Number(each.maxOutputTokens);
+      const effort = (each.providerOptions as { anthropic?: { effort?: unknown } } | undefined)
+        ?.anthropic?.effort;
+      expect([use, effort]).toEqual([use, efforts[use]]);
+      if (use === "alert advice") {
+        expect([use, limit % 1_000, limit >= 1_000 && limit <= 4_000]).toEqual([use, 0, true]);
+      } else {
+        expect([use, limit]).toEqual([use, limits[use]]);
+      }
+    });
+
     // The $77.31 pair went out with its amount as the app built it.
     expect(sent.flatMap((each) => readsOf(each).encoded)).toContainEqual(
       expect.stringContaining('"out_amount":"77.31"'),
