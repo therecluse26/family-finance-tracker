@@ -1,5 +1,12 @@
 import { type UIMessage, useChat } from "@ai-sdk/react";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { calendarDateIn, dateLabel } from "../../format.ts";
 import type {
@@ -246,11 +253,22 @@ export function Composer(props: {
 }) {
   const [asking, setAsking] = useState(false);
   const blocked = statusLine(props.status);
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (props.draft.trim() === "") return;
+  function send() {
+    if (props.draft.trim() === "" || props.busy || blocked !== undefined) return;
     if (props.status === "send anyway?") setAsking(true);
     else props.onSend(false);
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    send();
+  }
+  // Enter sends, as Send does, and Shift+Enter starts a new line. An Enter that an input method
+  // takes while it composes text, such as Japanese, Chinese or Korean, stays the input method's.
+  function sendOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    send();
   }
   return (
     <form className={`-mt-px border-t border-line bg-white pt-4 pb-5 ${GUTTER}`} onSubmit={submit}>
@@ -268,6 +286,7 @@ export function Composer(props: {
           value={props.draft}
           disabled={blocked !== undefined}
           onChange={(event) => props.onDraft(event.target.value)}
+          onKeyDown={sendOnEnter}
         />
         {asking ? null : (
           <button type="submit" className={SEND} disabled={props.busy || blocked !== undefined}>
@@ -371,14 +390,20 @@ function OpenThread(props: {
     void chat.regenerate({ body: { sendAnyway } });
   }
 
-  // A new thread answers its first message once, when it opens after "Send".
-  const answered = useRef(false);
+  // A new thread answers its first message once, when it opens after "Send". The answer starts
+  // just after the effect, not in it: useChat stops its answer when its own effect cleans up, and
+  // in development React's StrictMode cleans up every effect once and runs it again. That stopped
+  // an answer started in the effect, and the thread showed it had no answer yet. Here the clean-up
+  // clears the timer instead, so only the last run's timer starts the answer.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only when the thread opens.
   useEffect(() => {
-    if (props.answerFirst === undefined || answered.current || !unanswered) return;
-    answered.current = true;
-    answerAgain(props.answerFirst.sendAnyway);
-    props.onFirstAnswer();
+    const first = props.answerFirst;
+    if (first === undefined || !unanswered) return;
+    const start = setTimeout(() => {
+      answerAgain(first.sendAnyway);
+      props.onFirstAnswer();
+    });
+    return () => clearTimeout(start);
   }, []);
 
   // The messages scroll inside the pane: the newest shows when the thread opens and when a
