@@ -287,14 +287,16 @@ function inNextWindows<S extends SeriesSchedule>(
 // charges in a row on expected dates, and one in the series' last charge waits for the next.
 // `nextAfter` gives the Transactions in a series' next windows after one of its own. Neither charge of
 // a price change may be one that `ownedByOther` says another active series takes at its own amount.
+// `latest` is the amount a Transaction is judged against: the latest amount, or a Member's price
+// change after it.
 function continuedBy<S extends SeriesSchedule>(
   series: Series<S>,
   candidates: readonly SeriesTxn[],
   priceBand: number | undefined,
   nextAfter: (series: Series<S>, txn: SeriesTxn) => readonly SeriesTxn[],
   ownedByOther: (txn: SeriesTxn) => boolean,
+  latest = last(series).amount,
 ): SeriesTxn[] {
-  const latest = last(series).amount;
   const withinOf = (amount: number) => (txn: SeriesTxn) =>
     priceBand === undefined || withinPercent([txn.amount, amount], priceBand);
   const pick = nearest(candidates.filter(withinOf(latest)), latest);
@@ -831,6 +833,135 @@ export function replayMerchant<S extends SeriesSchedule>(
       continue;
     }
     free.push(txn);
+  }
+  goInactive(today);
+  return series;
+}
+
+// A Member's price change (spec 06, Member edits): a new amount, in whole cents, from a date.
+export type PriceChange = { fromDate: string; amount: number };
+
+// The amount a Transaction on `date` is judged against: a Member's price change in force on that
+// date that starts on or after the series' last Transaction, else the last Transaction's amount. So
+// a price change counts as a charge at its amount on its start date. `changes` is by start date.
+export function amountOn(
+  txns: readonly SeriesTxn[],
+  changes: readonly PriceChange[],
+  date: string,
+): number {
+  const latest = txns.at(-1);
+  if (latest === undefined) throw new Error("A series has at least one Transaction.");
+  const change = changes.findLast((each) => each.fromDate <= date);
+  return change !== undefined && change.fromDate >= latest.date ? change.amount : latest.amount;
+}
+
+// The price changes in a series' Transactions, as the page marks them: each one outside `band`, in
+// tenths of a percent, of the amount it was judged against. `changes` are a Member's, by start date.
+export function priceChangesIn(
+  txns: readonly SeriesTxn[],
+  band: number,
+  changes: readonly PriceChange[] = [],
+): PriceChange[] {
+  const found: PriceChange[] = [];
+  for (const [index, txn] of txns.entries()) {
+    if (index === 0) continue;
+    const judged = amountOn(txns.slice(0, index), changes, txn.date);
+    if (!withinPercent([txn.amount, judged], band)) {
+      found.push({ fromDate: txn.date, amount: txn.amount });
+    }
+  }
+  return found;
+}
+
+// A Recurring charge a Member edited (spec 06, Member edits): its schedule, the Transactions that
+// stay in it, the Member's price changes by start date, and the Member's price band in tenths of a
+// percent, if any.
+export type KeptCharge = {
+  schedule: ChargeSchedule;
+  members: readonly SeriesTxn[];
+  priceChanges: readonly PriceChange[];
+  band: number | undefined;
+};
+
+// Continues a Recurring charge a Member edited, through `today`, as the replay continues a series
+// (replayMerchant), with these differences. Its Transactions stay, in date order, and an expected
+// date that has one of them takes no other. Each other Transaction in `candidates` may fill an
+// expected date with none, or revive it, judged against the amount in force on its date
+// (amountOn): within the Member's band; else, once it has a Member's price change, within the
+// rule's band; else as the rule continues. A price change of 2 in a row still joins outside the
+// band. `candidates` are the Merchant's Transactions in no other Recurring charge, and none a
+// Member removed from this one.
+export function continueKept(
+  kept: KeptCharge,
+  candidates: readonly SeriesTxn[],
+  today: string,
+  rule: SeriesRule<ChargeSchedule>,
+): Series<ChargeSchedule> {
+  const members = [...kept.members].sort((a, b) => (isBefore(a, b) ? -1 : 1));
+  const [first] = members;
+  if (first === undefined) throw new Error("A Recurring charge has at least one Transaction.");
+  const isMember = new Set(members);
+  const ordered = [...members, ...candidates].sort((a, b) => (isBefore(a, b) ? -1 : 1));
+  const continueBand =
+    kept.band ?? (kept.priceChanges.length > 0 ? (rule.priceBand ?? rule.band) : rule.priceBand);
+  const reviveBand = kept.band ?? rule.band;
+  const series: Series<ChargeSchedule> = {
+    schedule: kept.schedule,
+    txns: [first],
+    status: "active",
+  };
+  refitFixedDays(series);
+  const taken = new Set<SeriesTxn>([first]);
+  const free = (txn: SeriesTxn) => !taken.has(txn) && !isMember.has(txn);
+  const goInactive = (date: string) => {
+    if (series.status === "active" && date > spanOf(nextWindows(series)).to) {
+      series.status = "inactive";
+    }
+  };
+  const join = (txns: readonly SeriesTxn[]) => {
+    series.txns.push(...txns);
+    series.txns.sort((a, b) => (isBefore(a, b) ? -1 : 1));
+    for (const txn of txns) taken.add(txn);
+    refitFixedDays(series);
+    series.status = "active";
+  };
+
+  for (const [index, txn] of ordered.entries()) {
+    if (taken.has(txn) || isBefore(txn, first)) continue;
+    goInactive(txn.date);
+    if (isMember.has(txn)) {
+      join([txn]);
+      continue;
+    }
+    const judged = amountOn(series.txns, kept.priceChanges, txn.date);
+    if (series.status === "active") {
+      if (!inAnyWindow(nextWindows(series), txn.date)) continue;
+      const own = (later: SeriesTxn) => isMember.has(later) && !taken.has(later);
+      if (inNextWindows(series, ordered, index, own).length > 0) continue;
+      const picks = continuedBy(
+        series,
+        inNextWindows(series, ordered, index, free),
+        continueBand,
+        (trial, changed) =>
+          inNextWindows(
+            trial,
+            ordered,
+            firstOnOrAfter(ordered, spanOf(nextWindows(trial)).from),
+            (later) => free(later) && isBefore(changed, later),
+          ),
+        () => false,
+        judged,
+      );
+      if (picks.length > 0) join(picks);
+      continue;
+    }
+    const latest = last(series);
+    if (
+      withinPercent([txn.amount, judged], reviveBand) &&
+      onSchedule(series.schedule, latest.date, txn.date)
+    ) {
+      join([txn]);
+    }
   }
   goInactive(today);
   return series;

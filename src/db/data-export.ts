@@ -199,6 +199,8 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   ),
   exported(schema.transferAnswers, "every column"),
   exported(schema.recurringCharges, "every column"),
+  exported(schema.recurringChargeTransactions, "every column"),
+  exported(schema.recurringChargePriceChanges, "every column"),
   exported(schema.incomeSeries, "every column"),
   exported(schema.typedSteadyIncome, "every column"),
   exported(schema.budgets, "every column"),

@@ -333,6 +333,15 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
         errorName: error instanceof Error ? error.name : typeof error,
       });
     }
+    // Each price history from before Recurring charges kept their Transactions in their own table
+    // moves there once, before any job runs. A failure tries again at the next start.
+    try {
+      await recurring.atStart();
+    } catch (error) {
+      log.error("The Recurring charges' price histories could not move at start-up", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
     let jobs: Awaited<ReturnType<typeof startJobs>>;
     try {
       jobs = await startJobs({ ...options.jobs, database, timeZone });
