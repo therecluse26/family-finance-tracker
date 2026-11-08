@@ -321,8 +321,8 @@ function GroupHeading(props: { title: string; group: BudgetsView["groups"][numbe
 
 // A Category group with no monthly Budget, folded to one line: its name and its Spending, then
 // "no Budget", or "no monthly Budget" when it has a yearly one. Its name is a button that opens
-// its rows in place; each row's empty box gives its Category a first Budget. As on the board, folded groups that
-// follow each other share one box. The page holds which are open.
+// its rows in place; each row's empty box gives its Category a first Budget. As on the board,
+// folded groups that follow each other share one box. The page holds which are open.
 function FoldedGroup(props: {
   title: string;
   rows: BudgetRow[];

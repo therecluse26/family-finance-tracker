@@ -411,6 +411,26 @@ describe("the month's Budgets", () => {
     expect((await budgets("2027-01"))["Gifts and donations"]).toBe("600 Member edit");
   });
 
+  it("stores no edit in a Household month before the first draft's month", async () => {
+    const before = await bank.database.$client.execute("SELECT * FROM budgets");
+
+    // The first draft ran in November. A Household month that goes back to October, as when the
+    // time zone is set after a draft just past midnight UTC, has no Budget to edit or start.
+    for (const category of ["Pets", "Miscellaneous"]) {
+      expect(
+        await editBudget(
+          bank.database,
+          { category, amount: $(40), memberId: MEMBER },
+          at("2026-10-31"),
+        ),
+      ).toBeUndefined();
+    }
+
+    expect((await bank.database.$client.execute("SELECT * FROM budgets")).rows).toEqual(
+      before.rows,
+    );
+  });
+
   it("applies a yearly edit to the whole current year, and keeps it on January 1", async () => {
     await editBudget(
       bank.database,
