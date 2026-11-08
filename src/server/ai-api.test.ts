@@ -88,6 +88,7 @@ describe("the AI routes", () => {
     baseUrl: null,
     quickModel: "gpt-6-luna",
     writerModel: "gpt-6.1-terra",
+    chatModel: "gpt-6.1-terra",
     ...more,
   });
 
@@ -129,7 +130,7 @@ describe("the AI routes", () => {
     expect(await ready()).toBe(false);
   });
 
-  it("checks both models on save, shows the result, and never shows the key again", async () => {
+  it("checks each model on save, shows the result, and never shows the key again", async () => {
     await finishWizard();
     const tab = await signedIn();
     const gatewayToken = newAiKey();
@@ -140,7 +141,7 @@ describe("the AI routes", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(JSON.parse(text)).toEqual({
-      check: { quick: "worked", writer: "worked" },
+      check: { quick: "worked", writer: "worked", chat: "worked" },
       ai: {
         provider: "openai",
         keySet: true,
@@ -148,7 +149,12 @@ describe("the AI routes", () => {
         gatewayTokenSet: true,
         quickModel: "gpt-6-luna",
         writerModel: "gpt-6.1-terra",
-        prices: { quick: { source: "table" }, writer: { source: "table" } },
+        chatModel: "gpt-6.1-terra",
+        prices: {
+          quick: { source: "table" },
+          writer: { source: "table" },
+          chat: { source: "table" },
+        },
         status: { state: "on" },
         webLookup: { on: true, unavailable: null },
       },
@@ -400,6 +406,37 @@ describe("the AI routes", () => {
       expect((await tab.send("POST", "/api/ai/remove", {}, { origin })).status).toBe(403);
     }
     expect(stub.calls).toEqual([]);
+  });
+
+  it("refuses a Chat model with no price or a bad ID, and stores a Chat model with its own price", async () => {
+    await finishWizard();
+    const tab = await signedIn();
+
+    const unpriced = await save(tab, openai({ chatModel: "gpt-chat-9" }));
+    expect([unpriced.status, await unpriced.json()]).toEqual([
+      400,
+      { error: "The app has no price for the Chat model. Enter its input and output prices." },
+    ]);
+    const spaced = await save(tab, openai({ chatModel: "gpt chat" }));
+    expect(spaced.status).toBe(400);
+    expect(stub.calls).toEqual([]);
+    expect(await shown(tab)).toBeNull();
+
+    const priced = await save(
+      tab,
+      openai({ chatModel: "gpt-chat-9", prices: { chat: { input: 100_000, output: 200_000 } } }),
+    );
+    expect(priced.status).toBe(200);
+    expect(await shown(tab)).toMatchObject({
+      writerModel: "gpt-6.1-terra",
+      chatModel: "gpt-chat-9",
+      prices: { chat: { source: "member", input: 100_000, output: 200_000 } },
+    });
+    expect(stub.calls.map(({ tier, modelId }) => [tier, modelId])).toEqual([
+      ["quick", "gpt-6-luna"],
+      ["writer", "gpt-6.1-terra"],
+      ["chat", "gpt-chat-9"],
+    ]);
   });
 
   it("shows the AI usage page, with the check on save counted, and changes the AI cost cap", async () => {

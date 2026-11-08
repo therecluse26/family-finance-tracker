@@ -233,6 +233,7 @@ describe("the demo Household through every AI use", () => {
       return {
         quick: kept(models.quick as object),
         writer: kept(models.writer as object),
+        chat: kept(models.chat as object),
         lookup: kept(models.lookup as object),
       } as never;
     };

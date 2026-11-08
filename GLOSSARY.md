@@ -152,6 +152,10 @@ _Avoid_: LLM vendor, model host
 The most the Household lets the app spend on its AI provider in one calendar month. When the app reaches it, background AI stops until the 1st.
 _Avoid_: AI budget, spending limit, quota
 
+**Model tier**:
+One of the three kinds of model the app calls at the AI provider, each with its own model: the Quick tier makes the small choices during sync, the Writer tier writes the Insight cards, the Monthly review and Budget tailoring, and the Chat tier answers Chat.
+_Avoid_: Model class, model level
+
 ## AI output
 
 **Monthly review**:

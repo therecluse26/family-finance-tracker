@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import {
   AI_PROVIDER_LABELS,
   AI_PROVIDERS,
+  AI_TIERS,
   type AiProviderName,
   type AiStatus,
   type AiTier,
@@ -107,7 +108,21 @@ const CHECK_TONE: Record<ModelCheck, StatusTone> = {
   failed: "critical",
 };
 
-const TIER_LABELS: Record<AiTier, string> = { quick: "Quick model", writer: "Writer model" };
+const TIER_LABELS: Record<AiTier, string> = {
+  quick: "Quick model",
+  writer: "Writer model",
+  chat: "Chat model",
+};
+
+// The tiers whose model is not in the price table, each model once, under the first tier with it.
+export function unpricedTiers(provider: AiProviderName, models: Record<AiTier, string>): AiTier[] {
+  return AI_TIERS.filter(
+    (tier, i) =>
+      models[tier] !== "" &&
+      tablePrice(provider, models[tier]) === undefined &&
+      AI_TIERS.findIndex((other) => models[other] === models[tier]) === i,
+  );
+}
 
 // What "Test the key" found, as its line shows it (spec 08, Test the key).
 export const KEY_TEST_WORDS: Record<KeyTestResult, string> = {
@@ -180,17 +195,16 @@ function storedPriceText(ai: AiView | null, tier: AiTier): PriceText {
     : { input: "", output: "" };
 }
 
-// The prices to send for each model not in the price table. Fields left empty keep the stored
-// prices. "bad" when a field holds no price.
+// The prices to send for each model not in the price table, once for each model. Fields left empty
+// keep the stored prices. "bad" when a field holds no price.
 export function enteredPrices(
   provider: AiProviderName,
   models: Record<AiTier, string>,
   texts: Record<AiTier, PriceText>,
 ): Partial<Record<AiTier, EnteredPrice>> | "bad" {
   const prices: Partial<Record<AiTier, EnteredPrice>> = {};
-  for (const tier of ["quick", "writer"] as const) {
+  for (const tier of unpricedTiers(provider, models)) {
     const text = texts[tier];
-    if (tablePrice(provider, models[tier]) !== undefined) continue;
     if (text.input.trim() === "" && text.output.trim() === "") continue;
     const input = priceOfText(text.input);
     const output = priceOfText(text.output);
@@ -218,9 +232,15 @@ export function AiProviderForm(props: {
   const [writerModel, setWriterModel] = useState(
     ai?.writerModel ?? DEFAULT_MODELS.anthropic?.writer ?? "",
   );
+  // Undefined while the Chat model follows the Writer model: for an AI provider with no defaults,
+  // until the Member types a Chat model.
+  const [chatModel, setChatModel] = useState<string | undefined>(
+    ai?.chatModel ?? DEFAULT_MODELS.anthropic?.chat,
+  );
   const [prices, setPrices] = useState<Record<AiTier, PriceText>>({
     quick: storedPriceText(ai, "quick"),
     writer: storedPriceText(ai, "writer"),
+    chat: storedPriceText(ai, "chat"),
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -238,12 +258,16 @@ export function AiProviderForm(props: {
     setProvider(next);
     setQuickModel(DEFAULT_MODELS[next]?.quick ?? "");
     setWriterModel(DEFAULT_MODELS[next]?.writer ?? "");
+    setChatModel(DEFAULT_MODELS[next]?.chat);
   }
 
-  const models: Record<AiTier, string> = { quick: quickModel.trim(), writer: writerModel.trim() };
-  const unpriced = (["quick", "writer"] as const).filter(
-    (tier) => models[tier] !== "" && tablePrice(provider, models[tier]) === undefined,
-  );
+  const chatShown = chatModel ?? writerModel;
+  const models: Record<AiTier, string> = {
+    quick: quickModel.trim(),
+    writer: writerModel.trim(),
+    chat: chatShown.trim(),
+  };
+  const unpriced = unpricedTiers(provider, models);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -267,6 +291,7 @@ export function AiProviderForm(props: {
           ...(gateway && removeToken ? { gatewayToken: null } : {}),
           quickModel: models.quick,
           writerModel: models.writer,
+          chatModel: models.chat,
           ...(Object.keys(entered).length === 0 ? {} : { prices: entered }),
         },
       });
@@ -373,9 +398,9 @@ export function AiProviderForm(props: {
       <h4 className={SUBHEADING}>Models</h4>
       <p className={HINT}>
         The Quick model makes the small choices during sync. The Writer model writes the Insight
-        cards, the Monthly review, Chat, and Budget tailoring.
+        cards, the Monthly review, and Budget tailoring. The Chat model answers in Chat.
       </p>
-      <div className="grid gap-x-5 sm:grid-cols-2">
+      <div className="grid gap-x-5 sm:grid-cols-3">
         <Field
           label="Quick model"
           value={quickModel}
@@ -388,6 +413,14 @@ export function AiProviderForm(props: {
           label="Writer model"
           value={writerModel}
           onChange={setWriterModel}
+          required
+          className="max-w-none"
+          list="ai-priced-models"
+        />
+        <Field
+          label="Chat model"
+          value={chatShown}
+          onChange={setChatModel}
           required
           className="max-w-none"
           list="ai-priced-models"
@@ -452,7 +485,7 @@ export function AiProviderForm(props: {
       {tested === undefined ? null : <KeyTestLine result={tested} />}
       {check === undefined ? null : (
         <ul className="mt-3 text-small">
-          {(["quick", "writer"] as const).map((tier) => (
+          {AI_TIERS.map((tier) => (
             <li key={tier}>
               <StatusText tone={CHECK_TONE[check[tier]]}>
                 {TIER_LABELS[tier]}: {CHECK_WORDS[check[tier]]}

@@ -119,6 +119,25 @@ describe("reading an exported table", () => {
     return JSON.parse(JSON.stringify(rows)) as unknown[];
   };
 
+  it("exports the stored Chat model, and an empty one as null", async () => {
+    await test.database.$client.execute(
+      "INSERT INTO ai_settings (id, provider, quick_model, writer_model) " +
+        "VALUES (1, 'anthropic', 'quick-model', 'writer-model')",
+    );
+    expect((await pagesOf("ai_settings")).flat()).toEqual([
+      {
+        provider: "anthropic",
+        quick_model: "quick-model",
+        writer_model: "writer-model",
+        chat_model: null,
+        web_lookup: true,
+      },
+    ]);
+
+    await test.database.$client.execute("UPDATE ai_settings SET chat_model = 'chat-model'");
+    expect((await pagesOf("ai_settings")).flat()).toMatchObject([{ chat_model: "chat-model" }]);
+  });
+
   it("reads every row once, a page at a time, by column name as app.db names it", async () => {
     const at = new Date("2026-11-05T12:00:00.000Z");
     for (let i = 1; i <= 5; i += 1) {

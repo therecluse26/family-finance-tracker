@@ -7,6 +7,7 @@ import {
   type AiSettingsInput,
   DEFAULT_MODELS,
   type TierModels,
+  USE_TIERS,
 } from "./ai-view.ts";
 import { type AiCost, aiCost } from "./cost.ts";
 import { BAD_REPLIES_IN_A_ROW, generateBatch, householdAi } from "./household-ai.ts";
@@ -77,14 +78,15 @@ describe("an AI call", () => {
 
   const settingsFor = (
     provider: AiProviderName,
-    models: TierModels = { quick: "quick-model", writer: "writer-model" },
+    models: TierModels = { quick: "quick-model", writer: "writer-model", chat: "chat-model" },
   ): AiSettingsInput => ({
     provider,
     apiKey: newAiKey(),
     baseUrl: provider === "openai-compatible" ? "http://ollama.local:11434/v1" : null,
     quickModel: models.quick,
     writerModel: models.writer,
-    prices: { quick: PRICE, writer: PRICE },
+    chatModel: models.chat,
+    prices: { quick: PRICE, writer: PRICE, chat: PRICE },
   });
 
   async function connect(
@@ -103,8 +105,8 @@ describe("an AI call", () => {
     ({ use: "category fix", task: TASK, batch }) satisfies AiCall;
   const readingAGoal: AiCall = { use: "reading a goal", task: "Read this Goal." };
 
-  // The calls the test models were given, after the two checks on save.
-  const modelCalls = () => stub.calls.slice(2);
+  // The calls the test models were given, after the three checks on save.
+  const modelCalls = () => stub.calls.slice(3);
 
   describe("prompt order and cache marks", () => {
     it("sends the fixed rules, then the summary, the task, and the changes, with Chat's mark after the summary", async () => {
@@ -323,6 +325,48 @@ describe("an AI call", () => {
     });
   });
 
+  describe("model tiers", () => {
+    // Spec 08, Model tiers (D44): Chat has its own tier beside Quick and Writer.
+    it("puts Chat on the Chat tier, and the other uses that write on the Writer tier", () => {
+      expect(USE_TIERS.chat).toBe("chat");
+      for (const use of ["insight cards", "monthly review", "budget tailoring"] as const) {
+        expect([use, USE_TIERS[use]]).toEqual([use, "writer"]);
+      }
+      expect(Object.values(USE_TIERS).filter((tier) => tier !== "quick")).toHaveLength(4);
+    });
+
+    it("starts each AI provider on its default models", () => {
+      expect(DEFAULT_MODELS).toEqual({
+        anthropic: {
+          quick: "claude-haiku-5-5",
+          writer: "claude-opus-5-5",
+          chat: "claude-sonnet-5-5",
+        },
+        openai: { quick: "gpt-6-luna", writer: "gpt-6.1-terra", chat: "gpt-6.1-terra" },
+        openrouter: {
+          quick: "anthropic/claude-haiku-5.5",
+          writer: "anthropic/claude-opus-5.5",
+          chat: "anthropic/claude-sonnet-5.5",
+        },
+        "openai-compatible": undefined,
+      });
+    });
+
+    it("sends a Chat call to the Chat model, and an Insight cards call to the Writer model", async () => {
+      const { ai } = await connect("anthropic");
+
+      await ai.generate({ use: "chat", summary: SUMMARY, task: "Answer." });
+      await ai.generate({ use: "insight cards", summary: SUMMARY, task: "Cards." });
+      await ai.generate({ use: "reading a goal", task: "Read." });
+
+      expect(modelCalls().map(({ tier, modelId }) => [tier, modelId])).toEqual([
+        ["chat", "chat-model"],
+        ["writer", "writer-model"],
+        ["quick", "quick-model"],
+      ]);
+    });
+  });
+
   describe("reply limits and effort", () => {
     // Spec 08, Limits on each call and Effort. Quick batches and the Merchant lookup send no effort.
     // The models are in the app's price table, so each use that has an effort sends it.
@@ -388,9 +432,15 @@ describe("an AI call", () => {
 
     // A model with only a Member's price may refuse the option, and its AI provider the whole call.
     it.each([
-      ["anthropic", { quick: "claude-haiku-4-5", writer: "claude-sonnet-4-5" }],
-      ["openai", { quick: "gpt-4.1-mini", writer: "gpt-4o" }],
-      ["openrouter", { quick: "openai/gpt-4.1-mini", writer: "openai/gpt-4o" }],
+      [
+        "anthropic",
+        { quick: "claude-haiku-4-5", writer: "claude-sonnet-4-5", chat: "claude-opus-4-1" },
+      ],
+      ["openai", { quick: "gpt-4.1-mini", writer: "gpt-4o", chat: "gpt-4.1" }],
+      [
+        "openrouter",
+        { quick: "openai/gpt-4.1-mini", writer: "openai/gpt-4o", chat: "openai/gpt-4.1" },
+      ],
     ] as [AiProviderName, TierModels][])(
       "sends %s no effort for a model with only a Member's price",
       async (provider, models) => {
@@ -398,7 +448,7 @@ describe("an AI call", () => {
 
         for (const [call, model] of [
           [{ use: "insight cards", summary: SUMMARY, task: "Cards." }, models.writer],
-          [{ use: "chat", summary: SUMMARY, task: "Answer." }, models.writer],
+          [{ use: "chat", summary: SUMMARY, task: "Answer." }, models.chat],
           [{ use: "reading a goal", task: "Read." }, models.quick],
         ] satisfies [AiCall, string][]) {
           expect(await ai.generate(call)).toMatchObject({ ready: true });
@@ -518,7 +568,7 @@ describe("an AI call", () => {
                 : [],
             ),
       );
-    const batchCalls = () => stub.prompts.slice(2).map(rowsOf);
+    const batchCalls = () => stub.prompts.slice(3).map(rowsOf);
     const askAll = (ai: ReturnType<typeof householdAi>, items: { merchant: string }[]) =>
       generateBatch(ai, items, (asked) => ({
         use: "category fix",
@@ -677,7 +727,7 @@ describe("an AI call", () => {
   describe("AI errors", () => {
     it("ends a call with no reply after 120 seconds as a timeout", async () => {
       const { ai } = await connect();
-      stub.answers.writer = "hang";
+      stub.answers.chat = "hang";
       let answering = () => {};
       const called = new Promise<void>((resolve) => {
         answering = resolve;
@@ -741,7 +791,7 @@ describe("an AI call", () => {
 
     it("never retries Chat or reading a Goal by itself", async () => {
       const { ai } = await connect();
-      stub.answers = { quick: "fail", writer: "fail" };
+      stub.answers = { quick: "fail", writer: "fail", chat: "fail" };
 
       expect(await ai.generate(readingAGoal)).toEqual({ ready: false, failed: "server error" });
       expect(await ai.generate({ use: "chat", summary: SUMMARY, task: "Answer." })).toEqual({
@@ -760,7 +810,7 @@ describe("an AI call", () => {
       const { ai } = await connect();
       stub.reply = "Your secret reply text.";
       await ai.generate({ use: "chat", summary: SUMMARY, task: "Answer the private question." });
-      stub.answers = { quick: "fail", writer: "rate limit" };
+      stub.answers = { quick: "fail", writer: "rate limit", chat: "rate limit" };
       await ai.generate({ use: "chat", summary: SUMMARY, task: "Answer the private question." });
       await ai.generate(categoryFix());
 
@@ -946,7 +996,7 @@ describe("an AI call", () => {
   describe("a rejected key", () => {
     it.each([
       ["category fix", "quick"],
-      ["chat", "writer"],
+      ["chat", "chat"],
     ] as const)(
       "pauses AI after a 401 for %s, with one System notice and no retry",
       async (use, tier) => {
@@ -967,7 +1017,7 @@ describe("an AI call", () => {
         expect(raised).toHaveLength(1);
 
         // A Member saves a key that works: the notice ends, and AI calls again.
-        stub.answers = { quick: "work", writer: "work" };
+        stub.answers = { quick: "work", writer: "work", chat: "work" };
         expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
           saved: true,
         });
@@ -986,19 +1036,19 @@ describe("an AI call", () => {
       const before = await storedKey();
 
       // A network error on each check says nothing about the key.
-      stub.answers = { quick: "throw", writer: "throw" };
+      stub.answers = { quick: "throw", writer: "throw", chat: "throw" };
       expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
         saved: true,
-        check: { quick: "failed", writer: "failed" },
+        check: { quick: "failed", writer: "failed", chat: "failed" },
         ai: { status: { state: "key rejected" } },
       });
       expect(await storedKey()).not.toEqual(before);
       expect(ended).toEqual([]);
       expect(await ai.generate(readingAGoal)).toEqual({ ready: false, pause: "key rejected" });
-      expect(modelCalls()).toHaveLength(1 + 2);
+      expect(modelCalls()).toHaveLength(1 + 3);
 
       // One tier's check works: the key works, and the notice ends.
-      stub.answers = { quick: "work", writer: "throw" };
+      stub.answers = { quick: "work", writer: "throw", chat: "throw" };
       expect(await settings.save(settingsFor("anthropic"))).toMatchObject({
         saved: true,
         ai: { status: { state: "on" } },

@@ -129,6 +129,7 @@ export function makeFetchModels(base: typeof fetch = fetch): AiModelMaker {
         return {
           quick: anthropic(models.quick),
           writer: anthropic(models.writer),
+          chat: anthropic(models.chat),
           // The reply's schema goes as Anthropic's own output format, never as a forced tool, which
           // would leave no turn for the search.
           lookup: withRequestOptions(anthropic(models.quick), {
@@ -147,6 +148,7 @@ export function makeFetchModels(base: typeof fetch = fetch): AiModelMaker {
         return {
           quick: withStoreOff(openai.chat(models.quick)),
           writer: withStoreOff(openai.chat(models.writer)),
+          chat: withStoreOff(openai.chat(models.chat)),
           // Chat Completions has no web search tool: the lookup uses the Responses API, with at
           // most 2 searches.
           lookup: withStoreOff(
@@ -173,6 +175,7 @@ export function makeFetchModels(base: typeof fetch = fetch): AiModelMaker {
         return {
           quick: openrouter.chat(models.quick, settings),
           writer: openrouter.chat(models.writer, settings),
+          chat: openrouter.chat(models.chat, settings),
           // The web plugin with the Exa engine runs one search before the model answers, with at
           // most 5 results, for one flat fee (src/ai/prices.ts).
           lookup: openrouter.chat(models.quick, {
@@ -193,7 +196,11 @@ export function makeFetchModels(base: typeof fetch = fetch): AiModelMaker {
           headers,
           fetch: guarded,
         });
-        return { quick: endpoint(models.quick), writer: endpoint(models.writer) };
+        return {
+          quick: endpoint(models.quick),
+          writer: endpoint(models.writer),
+          chat: endpoint(models.chat),
+        };
       }
     }
   };

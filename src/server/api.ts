@@ -492,7 +492,15 @@ const aiSettingsBody = z.object({
   gatewayToken: aiSecret.nullable().optional(),
   quickModel: modelId,
   writerModel: modelId,
-  prices: z.object({ quick: enteredPrice.optional(), writer: enteredPrice.optional() }).optional(),
+  // Left out, Chat uses the Writer model.
+  chatModel: modelId.optional(),
+  prices: z
+    .object({
+      quick: enteredPrice.optional(),
+      writer: enteredPrice.optional(),
+      chat: enteredPrice.optional(),
+    })
+    .optional(),
 });
 
 // The AI cost cap, in whole cents.
@@ -538,7 +546,7 @@ const SAVE_REFUSALS = {
   },
 } as const;
 
-const TIER_NAMES = { quick: "Quick model", writer: "Writer model" } as const;
+const TIER_NAMES = { quick: "Quick model", writer: "Writer model", chat: "Chat model" } as const;
 
 // A JSON route takes only JSON bodies, so a form on another site cannot post to it.
 function sentJson(c: { req: { header(name: string): string | undefined } }): boolean {

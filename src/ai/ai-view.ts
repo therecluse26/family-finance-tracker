@@ -14,18 +14,25 @@ export const AI_PROVIDER_LABELS: Record<AiProviderName, string> = {
 };
 
 // Spec 08, Model tiers.
-export type AiTier = "quick" | "writer";
+export type AiTier = "quick" | "writer" | "chat";
+
+export const AI_TIERS = ["quick", "writer", "chat"] as const satisfies readonly AiTier[];
 
 export type TierModels = Record<AiTier, string>;
 
-// Haiku 5.5 and Sonnet 5.5, and GPT-6 Luna and GPT-6.1 Terra, by each provider's published model
-// ID (plan call 13). OpenRouter serves the Anthropic pair under its own IDs. An OpenAI-compatible
-// endpoint has no defaults: the Member names both models. This is the one place the app names a
-// model; change the defaults here.
+// Haiku 5.5, Opus 5.5 and Sonnet 5.5, and GPT-6 Luna and GPT-6.1 Terra, by each provider's
+// published model ID (plan call 13, D44). OpenRouter serves the Anthropic models under its own IDs.
+// OpenAI's Chat model is its Writer model. An OpenAI-compatible endpoint has no defaults: the
+// Member names each model, and the Chat model starts as the Writer model. This is the one place
+// the app names a model; change the defaults here.
 export const DEFAULT_MODELS: Record<AiProviderName, TierModels | undefined> = {
-  anthropic: { quick: "claude-haiku-5-5", writer: "claude-sonnet-5-5" },
-  openai: { quick: "gpt-6-luna", writer: "gpt-6.1-terra" },
-  openrouter: { quick: "anthropic/claude-haiku-5.5", writer: "anthropic/claude-sonnet-5.5" },
+  anthropic: { quick: "claude-haiku-5-5", writer: "claude-opus-5-5", chat: "claude-sonnet-5-5" },
+  openai: { quick: "gpt-6-luna", writer: "gpt-6.1-terra", chat: "gpt-6.1-terra" },
+  openrouter: {
+    quick: "anthropic/claude-haiku-5.5",
+    writer: "anthropic/claude-opus-5.5",
+    chat: "anthropic/claude-sonnet-5.5",
+  },
   "openai-compatible": undefined,
 };
 
@@ -195,7 +202,8 @@ export const AI_USE_LABELS: Record<AiUse, string> = {
   "key test": "Key test",
 };
 
-// Spec 08, Model tiers. The check on save calls both tiers, and the key test the Quick tier.
+// Spec 08, Model tiers. The check on save calls each tier's model, and the key test the Quick
+// tier.
 export type ModelUse = Exclude<AiUse, "check on save" | "key test">;
 
 export const USE_TIERS: Record<ModelUse, AiTier> = {
@@ -209,7 +217,7 @@ export const USE_TIERS: Record<ModelUse, AiTier> = {
   "budget tailoring": "writer",
   "insight cards": "writer",
   "monthly review": "writer",
-  chat: "writer",
+  chat: "chat",
 };
 
 // Background AI is every use except Chat and reading a Goal. A Member starts those two, and at
@@ -285,6 +293,7 @@ export type AiView = {
   gatewayTokenSet: boolean;
   quickModel: string;
   writerModel: string;
+  chatModel: string;
   prices: Record<AiTier, PriceSource>;
   status: AiStatus;
   webLookup: WebLookupView;
@@ -304,7 +313,10 @@ export type AiSettingsInput = {
   gatewayToken?: string | null;
   quickModel: string;
   writerModel: string;
-  // For a model not in the price table. Left out, the prices stored for that model stay.
+  // Left out, Chat uses the Writer model.
+  chatModel?: string;
+  // For a model not in the price table. Left out, the prices stored for that model stay. A tier
+  // left out takes the prices entered for another tier with the same model.
   prices?: Partial<Record<AiTier, EnteredPrice>>;
 };
 

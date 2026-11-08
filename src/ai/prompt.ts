@@ -29,8 +29,8 @@ export type BatchItem = Readonly<Record<string, string | number | boolean | null
 export type AiSchema<OUTPUT> = z.ZodType<OUTPUT>;
 
 // One AI call. The fixed rules come first, and no call changes them. Then:
-// - summary: the Household summary, as one text or as its pieces. Every Writer use has it, and no
-//   Quick use does.
+// - summary: the Household summary, as one text or as its pieces. Every Writer use and Chat have it,
+//   and no Quick use does.
 // - task: what this use asks, which stays the same from call to call, such as the instructions
 //   and the fixed Category list. App-built.
 // - batch: a Quick batch's Transactions, at most 100. Each goes out as its own text, a JSON object
@@ -314,8 +314,8 @@ export function checkCall(call: AiCall<unknown>): void {
     if (call.use !== "chat") throw new TypeError("Only Chat takes tools.");
     checkTools(call.tools);
   }
-  if ((call.summary !== undefined) !== (tier === "writer")) {
-    throw new TypeError("Every Writer use, and no Quick use, has the Household summary.");
+  if ((call.summary !== undefined) !== (tier !== "quick")) {
+    throw new TypeError("Every Writer use and Chat, and no Quick use, has the Household summary.");
   }
   if (
     call.batch !== undefined &&
