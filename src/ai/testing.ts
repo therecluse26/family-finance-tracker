@@ -151,6 +151,8 @@ export class StubModels {
   readonly offered: { tools: string[]; toolChoice: string | undefined }[] = [];
   // The messages of each request, as the model got them.
   readonly prompts: StubMessage[][] = [];
+  // The JSON schema each request asked its reply to fit, or undefined for a text reply.
+  readonly schemas: unknown[] = [];
   usage: StubUsage = { noCache: 5, cacheRead: 0, cacheWrite: 0, output: 1 };
   providerMetadata: ProviderMetadata | undefined;
   readonly connections: AiConnection[] = [];
@@ -190,6 +192,9 @@ export class StubModels {
             ...effortSent(connection, options.providerOptions),
           });
           this.prompts.push(options.prompt as StubMessage[]);
+          this.schemas.push(
+            options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined,
+          );
           this.offered.push({
             tools: (options.tools ?? []).map((each) => each.name),
             toolChoice: options.toolChoice?.type,
@@ -212,6 +217,9 @@ export class StubModels {
             ...effortSent(connection, options.providerOptions),
           });
           this.prompts.push(options.prompt as StubMessage[]);
+          this.schemas.push(
+            options.responseFormat?.type === "json" ? options.responseFormat.schema : undefined,
+          );
           this.offered.push({
             tools: (options.tools ?? []).map((each) => each.name),
             toolChoice: options.toolChoice?.type,

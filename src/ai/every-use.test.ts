@@ -202,6 +202,7 @@ describe("the demo Household through every AI use", () => {
       if (has(INSIGHT_CARDS_TASK)) {
         return JSON.stringify({
           cards: [1, 2, 3, 4].map((n) => ({
+            check: `Card ${n}: 40 + ${n}.`,
             group: "worth_acting_on",
             about: `Topic ${n}`,
             figure: 40 + n,
@@ -463,7 +464,7 @@ describe("the demo Household through every AI use", () => {
       "reading a goal": "low",
       "alert advice": "low",
       chat: "low",
-      "insight cards": "medium",
+      "insight cards": "low",
       "monthly review": "medium",
       "budget tailoring": "medium",
     };

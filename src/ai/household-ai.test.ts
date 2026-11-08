@@ -337,7 +337,7 @@ describe("an AI call", () => {
       [{ use: "alert advice", task: "Advise.", alerts: 3 }, 3_000, "low"],
       [{ use: "alert advice", task: "Advise.", alerts: 4 }, 4_000, "low"],
       [{ use: "alert advice", task: "Advise.", alerts: 9 }, 4_000, "low"],
-      [{ use: "insight cards", summary: SUMMARY, task: "Cards." }, 8_000, "medium"],
+      [{ use: "insight cards", summary: SUMMARY, task: "Cards." }, 8_000, "low"],
       [{ use: "monthly review", summary: SUMMARY, task: "Review." }, 16_000, "medium"],
       [{ use: "budget tailoring", summary: SUMMARY, task: "Tailor." }, 8_000, "medium"],
       [{ use: "chat", summary: SUMMARY, task: "Answer." }, 8_000, "low"],
@@ -378,7 +378,7 @@ describe("an AI call", () => {
           DEFAULT_MODELS[provider],
         );
 
-        await ai.generate({ use: "insight cards", summary: SUMMARY, task: "Cards." });
+        await ai.generate({ use: "monthly review", summary: SUMMARY, task: "Review." });
         expect(effortFields(capture.requests.at(-1)?.body)).toEqual(sent);
         // A Quick batch sends none, on every AI provider.
         await ai.generate(categoryFix());

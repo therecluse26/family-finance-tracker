@@ -13,6 +13,7 @@ import {
   draftBudgets,
   fitToIncome,
   readDraftTerms,
+  withinHalfOf,
 } from "../budgets/index.ts";
 import { CATEGORIES, type Category, categoryGroupOf } from "../categories/index.ts";
 import type { Database } from "../db/index.ts";
@@ -54,9 +55,9 @@ export type TailoringReply = z.infer<typeof tailoringReply>;
 // The task: the same words on every call. Which run it is comes with the facts.
 export const TAILORING_TASK = [
   "Task: Budget tailoring. Adjust the flexible Budgets for the Household's active Goals.",
-  "- The facts after this task name the run: the first draft, a Tailoring run, a redraft, or a Goal run. They list each flexible Category's Budget and the formula's figure, with its Benchmark or no good Benchmark, and the Bills Budgets.",
+  "- The facts after this task name the run: the first draft, a Tailoring run, a redraft, or a Goal run. They list each flexible Category's Budget and the formula's figure, its allowed range, with its Benchmark or no good Benchmark, and the Bills Budgets.",
   "- Give an amount in whole dollars and a one-sentence reason for each flexible Category you change. Leave out a Category you keep as it is.",
-  "- Keep each amount from 50% to 150% of the formula's figure. The app moves any amount outside to the nearer end.",
+  "- Keep each amount within its allowed range, as the facts give it: from 50% to 150% of the formula's figure, and in a run that makes a Proposal, of the current Budget too. The app moves any amount outside to the nearer end.",
   "- Never change a Bills Budget or the Interest and fees Budget.",
   "- For a Category with no good Benchmark whose Budget looks high, say so in its reason.",
   "- In a Goal run, change only the flexible Categories that Goal touches. Give `goalAmount` when the facts ask for one: for a spend less Goal, a monthly Spending amount below its baseline; for a save Goal, a balance above its balance now. Give `goalReason` as one sentence for it. Otherwise both are null.",
@@ -98,6 +99,28 @@ const plain = (text: string) =>
   text.toWellFormed().replace(CONTROL, " ").replace(/ {2,}/g, " ").trim();
 
 const isBills = (category: Category) => categoryGroupOf(category) === "Bills";
+
+// The lowest and highest amount the app keeps for a Category, in whole cents, by the same rule as
+// its clamp (src/budgets/first-draft.ts, src/tailoring/runs.ts): from 50% to 150% of the formula's
+// figure, and in a run that makes a Proposal, of the current Budget too. Undefined for a Category
+// the run cannot change: one with no Budget, outside the first draft. Null when no amount is
+// within both.
+function allowedRange(
+  run: TailoringRun,
+  figure: CategoryFigure,
+): { low: number; high: number } | null | undefined {
+  const ends = (base: number) => ({
+    low: withinHalfOf(base, 0),
+    high: withinHalfOf(base, Number.MAX_SAFE_INTEGER),
+  });
+  if (run.kind === "first draft") return ends(figure.formula ?? 0);
+  if (figure.budget === null) return undefined;
+  const formula = ends(figure.formula ?? figure.budget);
+  const budget = ends(figure.budget);
+  const low = Math.max(formula.low, budget.low);
+  const high = Math.min(formula.high, budget.high);
+  return low <= high ? { low, high } : null;
+}
 
 // The facts of one call, as pieces: text, and each amount the app made.
 export function tailoringFacts(input: {
@@ -143,6 +166,11 @@ export function tailoringFacts(input: {
     else add("Budget ", ...amount(budget, period));
     if (run.kind !== "first draft" && formula !== null && !isBills(category)) {
       add("; the formula's figure ", ...amount(formula, period));
+    }
+    const range = isBills(category) ? undefined : allowedRange(run, figure);
+    if (range === null) add("; no change allowed");
+    else if (range !== undefined) {
+      add("; allowed ", ...amount(range.low, period), " to ", ...amount(range.high, period));
     }
     const benchmark = benchmarks.get(category);
     if (benchmark?.amount != null) add("; Benchmark ", typedAmount(benchmark.amount), " a month");
