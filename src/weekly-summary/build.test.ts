@@ -5,10 +5,10 @@ import { newTestBank, type TestBank } from "../bank/testing.ts";
 import { type Category, categoryGroupOf } from "../categories/index.ts";
 import {
   addReviewItems,
+  type FoundRecurringCharge,
   type NewBudget,
   type NewPart,
   replaceRecurringCharges,
-  type StoredRecurringCharge,
   storeAlerts,
   storeDecisions,
   storeFirstDraft,
@@ -131,8 +131,8 @@ describe("the weekly summary's text", () => {
     merchantName: string,
     nextExpectedDate: string,
     dollars: number,
-    status: StoredRecurringCharge["status"] = "active",
-  ): StoredRecurringCharge => {
+    status: FoundRecurringCharge["status"] = "active",
+  ): FoundRecurringCharge => {
     made += 1;
     return {
       id: `charge-${made}`,
@@ -151,7 +151,7 @@ describe("the weekly summary's text", () => {
     };
   };
 
-  const storeCharges = async (charges: StoredRecurringCharge[]) => {
+  const storeCharges = async (charges: FoundRecurringCharge[]) => {
     const [account] = (
       await bank.database.$client.execute("SELECT id FROM household_accounts LIMIT 1")
     ).rows;

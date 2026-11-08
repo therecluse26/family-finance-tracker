@@ -1,11 +1,19 @@
 // The recurring module's interface (spec 06, Recurring charges; spec 05, Steady Income). Other
 // modules import from here.
 export {
+  addChargeTransaction,
+  type ChargeEdit,
+  type ChargeEdits,
+  chargeCandidates,
   chargeSchedule,
+  deleteChargePriceChange,
+  editCharge,
   endCharge,
   findRecurringCharges,
   type RecurringCharge,
   recurringCharges,
+  removeChargeTransaction,
+  setChargePriceChange,
   startRecurringCharges,
 } from "./charges.ts";
 export { type ComingUp, type ComingUpRow, comingUp } from "./coming-up.ts";

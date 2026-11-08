@@ -187,6 +187,7 @@ describe("the money-movement routes", () => {
         description: "FAKE save-in",
         merchantName: null,
         merchant: "FAKE save-in",
+        recurringChargeName: null,
         parts: [TRANSFER_PART],
       },
       decision: { step: "3", provisionalUntil: null, parts: [TRANSFER_PART] },

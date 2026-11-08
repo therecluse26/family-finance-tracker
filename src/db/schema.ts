@@ -1215,6 +1215,7 @@ export const transactionParts = sqliteTable(
       enum: [
         "hand-set",
         "Category rule",
+        "Recurring charge",
         "provider",
         "Merchant history",
         "AI",
@@ -1385,7 +1386,8 @@ export const merchantLookupMonths = sqliteTable("merchant_lookup_months", {
 
 // Recurring charges (spec 06, What the app stores): Spending with one Merchant that repeats on a
 // schedule at a similar amount. The checks after each sync find them again from posted Spending,
-// except one a Member marked ended, which never changes again.
+// except one a Member marked ended, which never changes again, and one a Member edited, whose edits
+// they keep (spec 06, Member edits). Its Transactions are in recurring_charge_transactions.
 export const recurringCharges = sqliteTable(
   "recurring_charges",
   {
@@ -1395,14 +1397,22 @@ export const recurringCharges = sqliteTable(
     merchantName: text("merchant_name").notNull(),
     // The Category of its last Transaction.
     category: text("category"),
+    // A Member's edits (spec 06, Member edits): the name the pages show with the Merchant's, the
+    // Category that covers its Transactions not set by hand, and the price band in tenths of a
+    // percent, in place of the default. Null when no Member set one.
+    name: text("name"),
+    handSetCategory: text("hand_set_category"),
+    priceBand: integer("price_band"),
     schedule: text("schedule", {
       enum: ["weekly", "every 2 weeks", "monthly", "yearly"],
     }).notNull(),
     nextExpectedDate: calendarDate("next_expected_date").notNull(),
     // The amount of its last Transaction, in whole cents spent.
     latestAmount: cents("latest_amount").notNull(),
-    // Each Transaction's ID, posted date, and amount in whole cents spent, oldest first, as JSON.
-    priceHistory: text("price_history", { mode: "json" })
+    // The price history from before recurring_charge_transactions held it: each Transaction's ID,
+    // posted date, and amount in whole cents spent, as JSON. The start moves it into that table and
+    // leaves it empty.
+    oldPriceHistory: text("price_history", { mode: "json" })
       .$type<{ transactionId: string; date: string; amount: number }[]>()
       .notNull(),
     // The Account its last Transaction landed on.
@@ -1416,6 +1426,57 @@ export const recurringCharges = sqliteTable(
   },
   // Delete history deletes by Account.
   (table) => [index("recurring_charges_account_id").on(table.accountId)],
+);
+
+// Each Recurring charge's Transactions, with the posted date and the amount in whole cents spent
+// (spec 06, What the app stores). `byHand` is "added" for one a Member added, which the checks never
+// drop, and "removed" for one a Member removed, which never joins that Recurring charge again by
+// itself. A Transaction is in at most one Recurring charge.
+export const recurringChargeTransactions = sqliteTable(
+  "recurring_charge_transactions",
+  {
+    chargeId: text("charge_id")
+      .notNull()
+      .references(() => recurringCharges.id, { onDelete: "cascade" }),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    date: calendarDate("date").notNull(),
+    amount: cents("amount").notNull(),
+    byHand: text("by_hand", { enum: ["added", "removed"] }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chargeId, table.transactionId] }),
+    // Cascade step 2 reads a Transaction's Recurring charge (spec 04), and a deleted Transaction
+    // deletes its rows.
+    index("recurring_charge_transactions_transaction_id").on(table.transactionId),
+    uniqueIndex("recurring_charge_transactions_in_one")
+      .on(table.transactionId)
+      .where(sql`${table.byHand} IS NOT 'removed'`),
+  ],
+);
+
+// Each Recurring charge's price changes (spec 06, Member edits): a new amount in whole cents spent,
+// from a date. A Member's (`byHand`) judges the Transactions from its date on. The checks find the
+// others again each run, from the Transactions that changed the price.
+export const recurringChargePriceChanges = sqliteTable(
+  "recurring_charge_price_changes",
+  {
+    id: text("id").primaryKey(),
+    chargeId: text("charge_id")
+      .notNull()
+      .references(() => recurringCharges.id, { onDelete: "cascade" }),
+    fromDate: calendarDate("from_date").notNull(),
+    amount: cents("amount").notNull(),
+    byHand: integer("by_hand", { mode: "boolean" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("recurring_charge_price_changes_one_a_day").on(
+      table.chargeId,
+      table.byHand,
+      table.fromDate,
+    ),
+  ],
 );
 
 // Income series (spec 05, Steady Income): Income from one payer that repeats on a schedule at a

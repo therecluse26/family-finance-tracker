@@ -142,10 +142,25 @@ describe("the month's Budgets", () => {
       endedAt: null,
       endedBy: null,
     });
-    await replaceRecurringCharges(bank.database, [
+    const charges = [
       charge("electric", "Utilities", electric),
       charge("internet", "Phone and internet", internet),
-    ]);
+    ];
+    // A Recurring charge holds only Transactions that app.db holds. Each bill gets a hidden stand-in,
+    // a copy of a loaded Transaction, so it adds no Spending.
+    for (const entry of charges.flatMap((each) => each.priceHistory)) {
+      await bank.database.$client.batch([
+        "CREATE TEMP TABLE IF NOT EXISTS stand_in AS SELECT * FROM transactions WHERE 0",
+        "DELETE FROM stand_in",
+        "INSERT INTO stand_in SELECT * FROM transactions LIMIT 1",
+        {
+          sql: "UPDATE stand_in SET id = ?, provider_transaction_id = ?, hidden_reason = 'removed by provider'",
+          args: [entry.transactionId, entry.transactionId],
+        },
+        "INSERT OR IGNORE INTO transactions SELECT * FROM stand_in",
+      ]);
+    }
+    await replaceRecurringCharges(bank.database, charges);
   };
   const electricTo = (last: string) =>
     monthly("2026-06", 6, "01")

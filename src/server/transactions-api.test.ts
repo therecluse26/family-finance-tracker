@@ -183,6 +183,7 @@ describe("the Transactions page's routes", () => {
       description: "CORNER BISTRO",
       merchantName: "Corner Bistro",
       merchant: "Corner Bistro",
+      recurringChargeName: null,
       parts: [
         {
           type: "Spending",

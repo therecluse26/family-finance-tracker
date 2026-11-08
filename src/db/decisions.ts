@@ -739,3 +739,25 @@ export async function storePartCategories(
     }
   });
 }
+
+// Clears the Category each part of these Transactions has, as a new Matching decision does, so the
+// categorization cascade chooses it again. A Category that Money movement names stays for the
+// cascade to read, and step 1 gives a hand-set one back. One statement for each 500 Transactions.
+export async function clearCascadeCategories(
+  database: Queries,
+  transactionIds: readonly string[],
+): Promise<void> {
+  for (const chunk of chunks([...new Set(transactionIds)])) {
+    await database
+      .update(transactionParts)
+      .set({
+        category: sql`CASE WHEN ${transactionParts.categorySource} IS NULL
+          OR ${transactionParts.categorySource} = 'money movement'
+          THEN ${transactionParts.category} END`,
+        categorySource: null,
+        categoryConfidence: null,
+        categoryNeedsAi: false,
+      })
+      .where(inArray(transactionParts.transactionId, chunk));
+  }
+}

@@ -257,6 +257,7 @@ export {
   type CategoryConfidence,
   type CategoryRecord,
   type CategorySource,
+  clearCascadeCategories,
   type DecisionAccount,
   type DecisionRecord,
   inProportion,
@@ -579,12 +580,25 @@ export {
   storeMerchantNameAnswers,
 } from "./quick-tier.ts";
 export {
+  deleteMemberPriceChange,
+  editRecurringCharge,
   endRecurringCharge,
+  type FoundRecurringCharge,
   listPostedSpending,
   listRecurringCharges,
+  listShownTransactionIds,
+  markChargeTransaction,
+  moveOldPriceHistories,
   type PostedSpendingRow,
+  type RecurringChargeEdits,
+  readChargeNames,
+  readChargeOfTransaction,
+  readRecurringCharge,
   replaceRecurringCharges,
+  type StoredChargeEntry,
+  type StoredPriceChange,
   type StoredRecurringCharge,
+  storeMemberPriceChange,
 } from "./recurring-charges.ts";
 export {
   listRefundPurchases,

@@ -3,6 +3,10 @@ import { fakeTxn } from "../../bank/fake.ts";
 import { syncConnection, type TxnRecord } from "../../bank/index.ts";
 import { runFollowUp } from "../../follow-up/index.ts";
 import { addMonths, findRecurringCharges } from "../../recurring/index.ts";
+import type {
+  RecurringChargeCandidatesView,
+  RecurringChargeView,
+} from "../../server/recurring-views.ts";
 import { timedCase } from "../index.ts";
 
 const NOW = () => new Date("2026-11-02T14:00:00.000Z");
@@ -60,4 +64,37 @@ timedCase("a masked Merchant's 5 years", async (history, time) => {
     "SELECT count(*) AS n FROM transactions WHERE merchant_clean_name = 'Privacy.com'",
   );
   expect(Number(named.rows[0]?.n)).toBe(added.length);
+
+  // A Member names the $17.99 one. The checks then continue it as an edited one, beside the
+  // Merchant's other series, and a Member looks for an old one-off at one exact amount.
+  const { charges } = (await (await history.browser.get("/api/recurring-charges")).json()) as {
+    charges: RecurringChargeView[];
+  };
+  const kept = charges.find(
+    (charge) => charge.merchantName === "Privacy.com" && charge.latestAmount === 1_799,
+  );
+  if (kept === undefined) throw new Error("No $17.99 Privacy.com Recurring charge.");
+  const path = `/api/recurring-charges/${kept.id}`;
+  await history.browser.send("PUT", path, { name: "Streaming" });
+  await time.job("Recurring charge checks with a named masked Merchant", 20_000, () =>
+    findRecurringCharges(history.database, NOW()),
+  );
+  const oneOff = added.find((txn) => txn.id === "lh-masked-one-90");
+  const amount = -(oneOff?.amount ?? 0);
+  const page = (await time.request(
+    "GET /api/recurring-charges/:id/candidates?amount= (masked Merchant)",
+    () => history.browser.get(`${path}/candidates?amount=${amount}`),
+  )) as RecurringChargeCandidatesView;
+  expect(page.candidates.length).toBeGreaterThan(0);
+  expect(page.candidates.every((each) => each.amount === amount)).toBe(true);
+  const newest = (await (
+    await history.browser.get(`${path}/candidates`)
+  ).json()) as RecurringChargeCandidatesView;
+  expect(newest.more).toBe(true);
+  const older = (await time.request(
+    "GET /api/recurring-charges/:id/candidates?before= (masked Merchant)",
+    () =>
+      history.browser.get(`${path}/candidates?before=${newest.candidates.at(-1)?.transactionId}`),
+  )) as RecurringChargeCandidatesView;
+  expect(older.candidates).toHaveLength(50);
 });

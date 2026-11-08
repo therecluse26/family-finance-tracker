@@ -8,15 +8,19 @@ import { ErrorLine } from "../components/Fields.tsx";
 import { Page, PageHeading } from "../components/Page.tsx";
 import { Pill } from "../components/Pill.tsx";
 import { browserZone } from "./Accounts.tsx";
+import { RecurringChargeEdit } from "./RecurringChargeEdit.tsx";
 
 // The Recurring charges page (spec 07, Recurring charges page): each Recurring charge by next
-// expected date. Tapping a row opens its price history. Inactive ones sit in a collapsed "Inactive"
-// section, with those a Member marked ended. A Member may mark one ended; it never comes back by
-// itself (spec 06, Inactive and ended).
+// expected date. Tapping a row opens its edits and its price history (spec 06, Member edits).
+// Inactive ones sit in a collapsed "Inactive" section, with those a Member marked ended. A Member
+// may mark one ended; it never comes back by itself (spec 06, Inactive and ended).
+
+// The name a Member gave it, else the Merchant's.
+export const chargeName = (charge: RecurringChargeView) => charge.name ?? charge.merchantName;
 
 const byNextDate = (a: RecurringChargeView, b: RecurringChargeView) =>
   a.nextExpectedDate.localeCompare(b.nextExpectedDate) ||
-  a.merchantName.localeCompare(b.merchantName, "en-US", { sensitivity: "base" });
+  chargeName(a).localeCompare(chargeName(b), "en-US", { sensitivity: "base" });
 
 // The active Recurring charges, then the rest for the "Inactive" section; each by next date.
 export function recurringSections(charges: readonly RecurringChargeView[]): {
@@ -56,7 +60,7 @@ function PriceBars(props: { history: RecurringChargeView["priceHistory"] }) {
         const tall = Math.max(2, Math.round((Math.max(entry.amount, 0) / top) * height));
         return (
           <rect
-            key={entry.date}
+            key={entry.transactionId}
             className={index === shown.length - 1 ? "fill-accent" : "fill-accent/40"}
             x={index * 20}
             y={height - tall}
@@ -83,10 +87,13 @@ export type ChargeActions = {
   askEnd(charge: RecurringChargeView): void;
   end(charge: RecurringChargeView): void;
   keep(charge: RecurringChargeView): void;
+  // A Member's edit answered with the Recurring charge after it.
+  changed(charge: RecurringChargeView): void;
 };
 
-// Each row: the next date, the Merchant with its marks and its interval and Category, and the
-// amount. The row is one button that opens the price history; "Mark ended" sits beside it.
+// Each row: the next date, the name with its marks, the Merchant under a name a Member gave, its
+// interval and Category, and the amount. The row is one button that opens the edits and the price
+// history; "Mark ended" sits beside it.
 export function RecurringChargeRow(props: {
   charge: RecurringChargeView;
   state: ChargeState;
@@ -114,7 +121,7 @@ export function RecurringChargeRow(props: {
           </span>
           <span className="min-w-0">
             <span className="font-semibold text-ink group-hover:text-accent group-hover:underline">
-              {charge.merchantName}
+              {chargeName(charge)}
             </span>
             {charge.onCard ? (
               <>
@@ -128,6 +135,9 @@ export function RecurringChargeRow(props: {
                 <Pill>ended</Pill>
               </>
             ) : null}
+            {charge.name === null ? null : (
+              <span className="mt-0.5 block text-small text-muted">{charge.merchantName}</span>
+            )}
             <span className="mt-0.5 block text-small text-muted first-letter:uppercase">
               {chargeFacts(charge)}
             </span>
@@ -173,20 +183,9 @@ export function RecurringChargeRow(props: {
         </div>
       </div>
       {state.open === true ? (
-        <div id={historyId} className="mt-3 rounded-control bg-page p-3 sm:ml-[6.5rem]">
-          <p className="mb-1.5 text-small font-semibold">Price history</p>
+        <div id={historyId} className="mt-3 grid gap-3 rounded-control bg-page p-3 sm:ml-[6.5rem]">
           <PriceBars history={charge.priceHistory} />
-          <ul
-            className="mt-2 grid grid-cols-2 gap-x-6 gap-y-0.5 text-small tabular-nums sm:grid-cols-3"
-            aria-label="Price history"
-          >
-            {[...charge.priceHistory].reverse().map((entry) => (
-              <li key={entry.date}>
-                {dateLabel(entry.date, props.today)} ·{" "}
-                <span className="whitespace-nowrap">{dollarsAndCents(-entry.amount)}</span>
-              </li>
-            ))}
-          </ul>
+          <RecurringChargeEdit charge={charge} today={props.today} onChange={actions.changed} />
         </div>
       ) : null}
       <ErrorLine error={state.error} />
@@ -270,6 +269,8 @@ export function RecurringCharges() {
     toggle: (charge) => update(charge.id, { open: states[charge.id]?.open !== true }),
     askEnd: (charge) => update(charge.id, { confirming: true, error: undefined }),
     keep: (charge) => update(charge.id, { confirming: false }),
+    changed: (changed) =>
+      setCharges((all) => all?.map((each) => (each.id === changed.id ? changed : each))),
     async end(charge) {
       update(charge.id, { busy: true, error: undefined });
       try {

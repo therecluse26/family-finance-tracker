@@ -83,6 +83,7 @@ const row = (id: string, fields: Partial<TransactionRowView> = {}): TransactionR
   description: "CORNER BISTRO #12",
   merchantName: "Corner Bistro",
   merchant: "Corner Bistro",
+  recurringChargeName: null,
   parts: [part()],
   ...fields,
 });

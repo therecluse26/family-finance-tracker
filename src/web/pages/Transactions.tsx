@@ -378,6 +378,9 @@ function TransactionRow(props: { txn: TransactionRowView; account: string; today
           {merchantOf(txn)}
           <span className="sr-only">{`, ${date}, ${amount}`}</span>
         </Link>
+        {txn.recurringChargeName === null ? null : (
+          <span className="text-muted">{` · ${txn.recurringChargeName}`}</span>
+        )}
         {txn.pending ? (
           <>
             {" "}

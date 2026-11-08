@@ -9,9 +9,10 @@ import type {
 import { isMaskedMerchant, type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
 
 // The categorization cascade (spec 04, The categorization cascade). Each Spending Transaction
-// takes the first answer it gets: 1 hand-set, 2 a Category rule, 3 a confident provider category,
-// 4 the Merchant's own history, 5 the AI, 6 the best guess. Step 2 belongs to Category rules, which
-// registers it here; an empty step gives no answer. Step 5 asks the AI in batches, so the
+// takes the first answer it gets: 1 hand-set, 2 a Member's Category on its Recurring charge, then a
+// Category rule, 3 a confident provider category, 4 the Merchant's own history, 5 the AI, 6 the best
+// guess. Step 2 belongs to Recurring charges and Category rules, which register it here; an empty
+// step gives no answer. Step 5 asks the AI in batches, so the
 // Categorization step runs it (src/categorization/categorize.ts).
 
 // A Category and the step that chose it, with that step's confidence (spec 04, Provenance).
@@ -31,11 +32,13 @@ export type CascadeInput = {
 // A registered step's answer. A Category rule is certain.
 export type CascadeAnswer = { category: Category; confidence: CategoryConfidence };
 export type CascadeStep = (txn: CascadeInput) => Promise<CascadeAnswer | undefined>;
-export type RegisteredStep = "Category rule";
+export type RegisteredStep = "Recurring charge" | "Category rule";
 
 const registered = new Map<RegisteredStep, CascadeStep>();
 
-// Registers step 2 (T32, Category rules). Returns a function that removes it again.
+// Registers a part of step 2: a Member's Category on the Recurring charge the Transaction is in
+// (X31), which comes first, then the Merchant's Category rule (T32). Returns a function that
+// removes it again.
 export function registerCascadeStep(source: RegisteredStep, step: CascadeStep): () => void {
   if (registered.has(source)) throw new Error(`The cascade's ${source} step already has a rule.`);
   registered.set(source, step);
@@ -60,9 +63,14 @@ function handSet(txn: CascadeInput): Choice | undefined {
     : undefined;
 }
 
-// Steps 1 and 2: the answers that win over a Category a Money movement rule names.
+// Steps 1 and 2: the answers that win over a Category a Money movement rule names. In step 2, a
+// Member's Category on the Transaction's Recurring charge comes before the Merchant's Category rule.
 export async function handSetOrRule(txn: CascadeInput): Promise<Choice | undefined> {
-  return handSet(txn) ?? (await registeredAnswer("Category rule", txn));
+  return (
+    handSet(txn) ??
+    (await registeredAnswer("Recurring charge", txn)) ??
+    (await registeredAnswer("Category rule", txn))
+  );
 }
 
 // One Spending Transaction in a Merchant's history. Its Category is null while it waits for the

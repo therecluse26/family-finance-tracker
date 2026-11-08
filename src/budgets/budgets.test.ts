@@ -7,9 +7,9 @@ import type { Category } from "../categories/index.ts";
 import {
   addManualLoan,
   claimHistoryWaitEnd,
+  type FoundRecurringCharge,
   type NewPart,
   replaceRecurringCharges,
-  type StoredRecurringCharge,
   storeDecisions,
   storeOtherLink,
   storeProposal,
@@ -159,11 +159,11 @@ describe("Budget drafts", () => {
   });
   const charge = (
     name: string,
-    fields: Pick<StoredRecurringCharge, "category" | "schedule" | "nextExpectedDate"> & {
+    fields: Pick<FoundRecurringCharge, "category" | "schedule" | "nextExpectedDate"> & {
       paid: [string, string, number][];
-      status?: StoredRecurringCharge["status"];
+      status?: FoundRecurringCharge["status"];
     },
-  ): StoredRecurringCharge => ({
+  ): FoundRecurringCharge => ({
     id: `charge-${name}`,
     merchantId: null,
     merchantName: name,
