@@ -16,6 +16,7 @@ import {
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
+import { isMaskedMerchant } from "../merchants/index.ts";
 import { registerDecidedAgain } from "../money-movement/index.ts";
 import { registerRedoStep } from "../redo/index.ts";
 import { type ReviewItem, type ReviewKind, registerReviewKind } from "../review/index.ts";
@@ -295,6 +296,9 @@ export async function chooseCategories(
                   account: fact === undefined ? null : (names.get(fact.accountId) ?? null),
                   providerCategory: record.providerCategory,
                   mcc: fact?.mcc ?? null,
+                  ...(txn.merchant !== null && isMaskedMerchant(txn.merchant)
+                    ? { masked: true }
+                    : {}),
                 };
               }),
             );

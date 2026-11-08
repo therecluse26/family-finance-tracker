@@ -6,7 +6,7 @@ import type {
   CategorySource,
   MerchantHistoryRow,
 } from "../db/index.ts";
-import { type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
+import { isMaskedMerchant, type Merchant, merchantKey, sameMerchant } from "../merchants/index.ts";
 
 // The categorization cascade (spec 04, The categorization cascade). Each Spending Transaction
 // takes the first answer it gets: 1 hand-set, 2 a Category rule, 3 a confident provider category,
@@ -160,11 +160,13 @@ function providerCategory(txn: CascadeInput): Choice | undefined {
 
 // Step 4: the Merchant's last 3 Spending Transactions before this one all have one Category. A
 // Category from step 6 does not count. With fewer than 3, the step gives no answer. "waits" when
-// one of the 3 still waits for the AI's answer, which decides the step.
+// one of the 3 still waits for the AI's answer, which decides the step. A masked Merchant, such as
+// Privacy.com, gets no answer: its Transactions are many shops.
 function merchantHistory(
   txn: CascadeInput,
   history: MerchantHistory,
 ): Choice | undefined | "waits" {
+  if (txn.merchant !== null && isMaskedMerchant(txn.merchant)) return undefined;
   const last = history
     .before(txn)
     .filter((entry) => entry.source !== "best guess")
@@ -181,12 +183,15 @@ function merchantHistory(
 // Step 6, when no AI answers: the Category the provider's code maps to, even when lossy or low;
 // with no provider category, the Merchant's most recent Category; with neither, Miscellaneous. A
 // provider category with no confidence level is only a hint to the AI, so it counts as none here.
+// A masked Merchant, such as Privacy.com, never takes its most recent Category: its Transactions are
+// many shops.
 export function bestGuess(txn: CascadeInput, history: MerchantHistory): Choice {
   const match =
     txn.providerCategory === null || txn.providerCategoryConfidence === null
       ? undefined
       : mapPlaidCategory(txn.providerCategory, txn.merchant);
-  const latest = history.before(txn).find((entry) => entry.category !== null);
+  const masked = txn.merchant !== null && isMaskedMerchant(txn.merchant);
+  const latest = masked ? undefined : history.before(txn).find((entry) => entry.category !== null);
   const category =
     match?.kind === "category" ? match.category : (latest?.category ?? "Miscellaneous");
   return { category, source: "best guess", confidence: "low" };

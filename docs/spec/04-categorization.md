@@ -75,6 +75,10 @@ Upkeep stays with what it maintains: home repairs in Home and garden, and car re
 - Clean names compare without case, spaces, or punctuation.
 - Every "same Merchant" in the spec uses this identity: Category rules, Merchant history, Refund links, Recurring charges, Anomalies, and Top Merchants.
 - In a payment-app or Zelle line that names a person, that person is the Merchant. When the line names no person, such as `VENMO PAYMENT`, the payment app is the Merchant.
+- A masked Merchant is a card service whose bank line shows its own name, not the shop's. The app keeps a built-in list of them, which starts with Privacy.com.
+  - A line that names one as whole words, in any case, has it as its Merchant, under its clean name, such as "Privacy.com". Examples: `PRIVACY.COM`, `PWP*PRIVACY.COM`, `PRIVACYCOM*SHOP`.
+  - This holds when the provider sends no Merchant name, or sends the masked Merchant's name. A provider Merchant name of another shop wins, as usual.
+  - One masked Merchant holds many shops. So it makes no Category rule ([Category rules](#category-rules)), steps 4 and 5 treat it apart ([The categorization cascade](#the-categorization-cascade)), its best guess at step 6 skips its history, and its Recurring charges match only exact cents ([Anomalies and Alerts](06-anomalies-and-alerts.md#a-masked-merchants-series)).
 - v1 has no Merchant merge and no Merchant rename.
 
 ## The categorization cascade
@@ -95,13 +99,16 @@ Each Spending Transaction takes the first answer it gets, in this order:
   - `UNKNOWN` counts as `LOW`.
   - A provider category with no confidence level is only a hint to the AI.
 - **Step 4.** The last 3 Transactions are the 3 most recent Spending Transactions with that Merchant, before this one. A Category from step 6 does not count. With fewer than 3, the step gives no answer.
+  - A masked Merchant gets no answer at step 4: its Transactions are many shops.
 - **Step 5.** The AI gets the provider's category as a hint. It answers with one of the 30 Categories and a confidence: high, medium, or low.
   - The answer always applies.
   - Below "high", the AI counts as unsure.
   - At "low", the Transaction also goes on the Review list.
   - At "medium", the Category counts as decided. It stays off the Review list, and the Transactions page shows an "AI unsure" tag on it ([Dashboard and pages](07-dashboard-and-pages.md#transactions-page)).
   - Step 5 starts with the Web lookup's cache ([Web lookup](#web-lookup)). A Category kept for the Merchant decides at once, with no AI call and no search.
+  - For a masked Merchant, the AI is told that the Merchant is masked, and its confidence is capped at "medium". A "high" answer counts as "medium", so it shows the "AI unsure" tag and stays off the Review list. A masked Merchant is never looked up.
 - **Step 6.** The best guess is the Category the provider's code maps to, even when lossy or at low confidence. With no provider category, it is the Merchant's most recent Category. With neither, it is Miscellaneous. The Transaction also goes on the Review list.
+  - A masked Merchant never takes its most recent Category at step 6. Its best guess is the provider's category, or Miscellaneous.
 - The cascade runs after matching ([Money movement](03-money-movement.md#order-of-decisions)). It works through Transactions oldest first, so Merchant history builds in date order.
 - An unlinked Refund goes through the cascade as if it were Spending. It takes the Category its Merchant would get.
 
@@ -130,6 +137,7 @@ A Member often looks up an unknown Merchant on the web to learn what it sells. T
 - **Never looked up:**
   - a payment-app or Zelle line to or from a person, or one that names no one ([Identity](#identity));
   - a Transfer, a loan payment, or a card payment, by the provider's category;
+  - a masked Merchant, such as Privacy.com ([Identity](#identity)): its name is the card service's, not the shop's;
   - a line with no clean Merchant name.
 - **The lookup** asks the AI provider's own web search, with the clean Merchant name alone ([AI](08-ai.md#merchant-web-lookup)). It answers with one Category, a confidence, and a one-line description of the business.
 - **Outcome.** The lookup's answer takes the place of the AI's, with the source "Web lookup". At "high", it decides. Below "high", it still applies, as an unsure AI answer does: at "low" the Transaction goes on the Review list, and at "medium" it counts as decided, with the "AI unsure" tag.
@@ -168,6 +176,7 @@ A Member often looks up an unknown Merchant on the web to learn what it sells. T
 - A rule sets only the Category. It never changes a Transaction's type.
 - A person can have a rule when the bank shows the person's name, as Zelle lines do. A correction on a line with no name, such as `VENMO PAYMENT`, changes only that Transaction.
 - A correction on a Transaction with no Merchant, such as a paper check, changes only that Transaction.
+- A correction on a masked Merchant, such as Privacy.com, changes only that Transaction ([Identity](#identity)). So does accepting a guess about one on the Review list.
 - A split part makes no Category rule.
 - Giving a Category to a Transfer, Income, or Saving also sets its type to Spending by hand.
 - Settings lists every Category rule, with Delete. Deleting a rule runs the cascade again on that Merchant's Transactions not set by hand.
@@ -220,7 +229,7 @@ The Review list is optional. Each Category below already counts, so nothing wait
   - An answer writes only the Transactions still on the card when it is saved. A Transaction a Member changed on its row, split or made Money movement by hand, one the provider removed, or one that is no longer of the card's kind or Merchant keeps what it has, even if the page still showed it. While a row saves, the card's answers wait, and the other way round.
   - Under the card, a folded list shows each Transaction: its date, amount, Account, and Category. Each row has "Change", which sets that Transaction's Category alone, as "only this Transaction" does. The changed Transaction leaves the card at once.
   - A new Transaction of that kind for a Merchant with an open card joins the card. A Transaction leaves its card when its Category is no longer of that kind, such as when a later answer is "medium" or "high", a Category rule answers, it becomes Money movement, or a Member sets its Category, split or type by hand. The card closes when no Transaction is left.
-  - A Transaction with no Merchant that may have a rule, such as a paper check or a bare `VENMO PAYMENT`, keeps an item of its own.
+  - A Transaction with no Merchant that may have a rule, such as a paper check, a bare `VENMO PAYMENT`, or a masked Merchant, keeps an item of its own.
   - The Review list's count counts cards, not Transactions.
 - **Items from before cards.** The first Categorization run after the update groups the open items: the earlier items of one Merchant close as "grouped by Merchant", and one card holds their Transactions. Open items about a "medium" answer close as decided. Running it again changes nothing.
 

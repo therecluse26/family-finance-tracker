@@ -22,7 +22,7 @@ import {
 } from "../db/index.ts";
 import { registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
-import { isPaymentApp, merchantKey } from "../merchants/index.ts";
+import { isMaskedMerchant, isPaymentApp, merchantKey } from "../merchants/index.ts";
 import { endCondition, raiseNotice } from "../notify/index.ts";
 import {
   addDays,
@@ -237,11 +237,13 @@ const isEarlier = (a: Spent, b: Spent, dateOf: (txn: Spent) => string) =>
 // at that amount in the 60 days before the earlier one. Never for a Transaction of a Duplicate
 // charge a Member marked "Not a problem": it is cleared. Never when the Merchant is the payment app,
 // as in a payment-app line that names no person or shop: two of those for one amount are often
-// payments to different people (spec 06, A payment app as the Merchant). The pair, earlier first.
+// payments to different people (spec 06, A payment app as the Merchant). Nor when the Merchant is
+// a masked one, such as Privacy.com: two of its lines for one amount are often two shops (spec 06,
+// A masked Merchant). The pair, earlier first.
 function duplicateOf(txn: Spent, facts: Facts): [Spent, Spent] | undefined {
-  if (txn.group === null || (txn.merchant !== null && isPaymentApp(txn.merchant))) {
-    return undefined;
-  }
+  const { merchant } = txn;
+  const hidesParty = merchant !== null && (isPaymentApp(merchant) || isMaskedMerchant(merchant));
+  if (txn.group === null || hidesParty) return undefined;
   const sameAmount = facts.byAmount.get(amountKey(txn.group, txn.amount)) ?? [];
   const near = between(
     sameAmount,
@@ -290,7 +292,9 @@ function priceFrom(increase: { base: number; recurringCharge: string }, facts: F
 // and fees, or a frequent purchase: 3 or more other Transactions at that Merchant, at any amount,
 // in the 60 days before or after the earlier one, outside its Recurring charges and the pair. The
 // window looks after the earlier one too, as for a frequent shop (spec 06, Finding a series), so a
-// shop's pair at the start of a history, where nothing comes before, fires nothing.
+// shop's pair at the start of a history, where nothing comes before, fires nothing. A masked
+// Merchant, such as Privacy.com, has no frequent purchase: its pair is at the same amount to the
+// cent instead, as its new series are (spec 06, A masked Merchant's series).
 function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: string } | undefined {
   if (txn.group === null || facts.inCharges.has(txn.id) || txn.category === INTEREST_AND_FEES) {
     return undefined;
@@ -312,7 +316,8 @@ function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: stri
   )
     .filter((other) => other.id !== txn.id && !facts.inCharges.has(other.id))
     .map((other) => ({ ...other, date: other.postedDate }));
-  const fits = earlierOnSchedule({ ...txn, date: txn.postedDate }, before);
+  const masked = txn.merchant !== null && isMaskedMerchant(txn.merchant);
+  const fits = earlierOnSchedule({ ...txn, date: txn.postedDate }, before, { masked });
   const [only] = fits;
   if (only === undefined || fits.length !== 1) return undefined;
   const earlier = facts.spent.get(only.txn.id);
@@ -323,7 +328,7 @@ function newChargeOf(txn: Spent, facts: Facts): { earlier: Spent; nextDate: stri
     other.id !== earlier.id && other.id !== txn.id && !facts.inCharges.has(other.id);
   const from = addDays(earlier.postedDate, -FREQUENT_DAYS);
   const to = addDays(earlier.postedDate, FREQUENT_DAYS);
-  if (frequentWithin(merchantTxns, byPostedDate, from, to, visit)) return undefined;
+  if (!masked && frequentWithin(merchantTxns, byPostedDate, from, to, visit)) return undefined;
   return { earlier, nextDate: nextExpected(only.schedule, txn.postedDate) };
 }
 

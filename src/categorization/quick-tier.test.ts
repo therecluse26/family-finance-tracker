@@ -322,6 +322,42 @@ describe("the Quick tier in the categorization step", () => {
       expect(JSON.stringify(call?.texts)).not.toMatch(new RegExp(ids.join("|")));
     });
 
+    it("tells the AI a masked Merchant is masked, and caps its answer at medium", async () => {
+      await connectAi();
+      await sync({
+        added: [
+          buy("masked", "2026-10-03", { merchantName: null, description: "PWP*PRIVACY.COM" }),
+          buy("named", "2026-10-04", { merchantName: "Privacy.com", description: "PRIVACY.COM" }),
+          buy("shop", "2026-10-05"),
+        ],
+      });
+
+      const [call] = callsOf("category fix");
+      expect(call?.rows.map((row) => [row.merchant, row.masked])).toEqual([
+        ["Privacy.com", true],
+        ["Privacy.com", true],
+        ["Merchant shop", undefined],
+      ]);
+      for (const providerId of ["masked", "named"]) {
+        expect(await partOf(providerId)).toMatchObject({ source: "AI", confidence: "medium" });
+      }
+      expect(await partOf("shop")).toMatchObject({ source: "AI", confidence: "high" });
+      expect(await itemsOf(AI_UNSURE_KIND)).toEqual([]);
+
+      // A low answer stays low.
+      answerCategory = () => ({ category: "Pets", confidence: "low" });
+      await sync({
+        changed: [
+          buy("masked", "2026-10-03", {
+            merchantName: null,
+            description: "PWP*PRIVACY.COM",
+            amount: -2_600,
+          }),
+        ],
+      });
+      expect(await partOf("masked")).toMatchObject({ source: "AI", confidence: "low" });
+    });
+
     it("counts a medium answer as decided, off the Review list, and shows it as AI, unsure", async () => {
       await connectAi();
       answerCategory = () => ({ category: "Pets", confidence: "medium" });

@@ -8,7 +8,7 @@ import {
 } from "../db/index.ts";
 import { registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
-import { type Merchant, merchantKey } from "../merchants/index.ts";
+import { isMaskedMerchant, type Merchant, merchantKey } from "../merchants/index.ts";
 import { findIncomeSeries } from "./income.ts";
 import { groupOf, householdToday } from "./merchant-days.ts";
 import {
@@ -20,6 +20,7 @@ import {
 } from "./schedules.ts";
 import {
   factsOf,
+  MASKED_CHARGE_RULE,
   RECURRING_CHARGE_RULE,
   replayMerchant,
   type SeriesTxn,
@@ -91,7 +92,9 @@ export async function findRecurringCharges(database: Database, now = new Date())
   const kept = new Set<string>();
   const charges: StoredRecurringCharge[] = [];
   for (const { merchant, txns } of merchants.values()) {
-    for (const series of replayMerchant(txns, claimed, today, RECURRING_CHARGE_RULE)) {
+    // A masked Merchant's series match only exact cents (spec 06, A masked Merchant's series).
+    const rule = isMaskedMerchant(merchant) ? MASKED_CHARGE_RULE : RECURRING_CHARGE_RULE;
+    for (const series of replayMerchant(txns, claimed, today, rule)) {
       const previous = series.txns
         .map((txn) => earlier.get(txn.id))
         .find((charge) => charge !== undefined && !kept.has(charge.id));

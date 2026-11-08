@@ -680,6 +680,159 @@ describe("Recurring charges", () => {
     });
   });
 
+  // A masked Merchant hides many shops (spec 06, A masked Merchant's series): it ignores the
+  // frequent-shop rule, and its series form, continue, and change price only at exact cents.
+  describe("a masked Merchant", () => {
+    const masked = (id: string, postedDate: string, spent: number, description = "PRIVACY.COM") =>
+      charge(id, postedDate, spent, { merchantName: null, description });
+    // $15.49 on the 12th for 8 months, from July 2025 to February 2026.
+    const eight = Array.from({ length: 8 }, (_, at) =>
+      masked(`p${at}`, addMonths("2025-07-12", at), 1_549),
+    );
+    const prices = async () =>
+      (await charges()).map((each) => [
+        each.merchant.name,
+        each.status,
+        each.priceHistory.map((entry) => `${entry.date.slice(0, 7)} ${entry.amount}`),
+      ]);
+    const before = eight.map((txn) => `${txn.postedDate.slice(0, 7)} 1549`);
+
+    it("holds 3 interleaved series at different amounts and days", async () => {
+      const months = ["2026-07", "2026-08", "2026-09", "2026-10"];
+      await sync(
+        ...months.flatMap((month, at) => [
+          masked(`a${at}`, `${month}-03`, 999, "PWP*PRIVACY.COM"),
+          masked(`b${at}`, `${month}-12`, 1_549, "PRIVACYCOM*SHOP"),
+          masked(`c${at}`, `${month}-20`, 5_400, "Privacy.com"),
+        ]),
+      );
+
+      expect(await prices()).toEqual(
+        [999, 1_549, 5_400].map((amount) => [
+          "Privacy.com",
+          "active",
+          months.map((month) => `${month} ${amount}`),
+        ]),
+      );
+    });
+
+    it("joins a price change that 2 charges in a row show, in one pass, and never a one-off", async () => {
+      now = new Date("2026-05-20T14:00:00.000Z");
+      await sync(
+        ...eight,
+        masked("march", "2026-03-12", 1_799),
+        masked("april", "2026-04-12", 1_799),
+        // A one-off on the 12th, outside the band and with no charge after it.
+        masked("one-off", "2026-05-12", 6_000),
+      );
+
+      // May's one-off does not continue it, so it goes inactive.
+      expect(await prices()).toEqual([
+        ["Privacy.com", "inactive", [...before, "2026-03 1799", "2026-04 1799"]],
+      ]);
+    });
+
+    it("keeps a price change in the last charge out until the next charge shows it", async () => {
+      now = new Date("2026-03-13T14:00:00.000Z");
+      await sync(...eight, masked("march", "2026-03-12", 1_799));
+      expect(await prices()).toEqual([["Privacy.com", "active", before]]);
+
+      now = new Date("2026-04-13T14:00:00.000Z");
+      await sync(masked("april", "2026-04-12", 1_799));
+      expect(await prices()).toEqual([
+        ["Privacy.com", "active", [...before, "2026-03 1799", "2026-04 1799"]],
+      ]);
+    });
+
+    it("joins no price change whose next charge is off its price or a missed month later", async () => {
+      now = new Date("2026-06-20T14:00:00.000Z");
+      await sync(
+        ...eight,
+        masked("march", "2026-03-12", 1_799),
+        masked("april", "2026-04-12", 6_000),
+        // May is missed: June's charge at March's price does not show the change.
+        masked("june", "2026-06-12", 1_799),
+      );
+
+      expect(await prices()).toEqual([["Privacy.com", "inactive", before]]);
+    });
+
+    it("finds 3 interleaved subscriptions among 5 years of daily one-offs, and no false series", {
+      timeout: 60_000,
+    }, async () => {
+      // One one-off a day at a random amount from $3 to $200, from a fixed seed.
+      let seed = 7;
+      const random = () => {
+        seed = (seed * 48_271) % 2_147_483_647;
+        return seed / 2_147_483_647;
+      };
+      const oneOffs = Array.from({ length: 1_800 }, (_, day) =>
+        masked(
+          `one-${day}`,
+          new Date(Date.UTC(2021, 10, 1 + day)).toISOString().slice(0, 10),
+          300 + Math.floor(random() * 19_700),
+          "PWP*PRIVACY.COM",
+        ),
+      );
+      const months = Array.from({ length: 60 }, (_, at) => at);
+      const subscriptions = months.flatMap((at) => [
+        masked(`a-${at}`, addMonths("2021-11-03", at), 999),
+        masked(`b-${at}`, addMonths("2021-11-12", at), at < 40 ? 1_549 : 1_799),
+        masked(`c-${at}`, addMonths("2021-11-20", at), 5_400),
+      ]);
+      await sync(...subscriptions, ...oneOffs);
+
+      const amounts = (day: string, price: (at: number) => number) =>
+        months.map((at) => `${addMonths(`2021-11-${day}`, at).slice(0, 7)} ${price(at)}`);
+      expect(await prices()).toEqual([
+        ["Privacy.com", "active", amounts("03", () => 999)],
+        ["Privacy.com", "active", amounts("12", (at) => (at < 40 ? 1_549 : 1_799))],
+        ["Privacy.com", "active", amounts("20", () => 5_400)],
+      ]);
+    });
+
+    it("forms, continues, revives, and changes price with no charge 1 cent off", async () => {
+      now = new Date("2026-08-20T14:00:00.000Z");
+      await sync(
+        // 1 cent off in the third month: no series forms.
+        masked("f1", "2026-01-05", 2_500),
+        masked("f2", "2026-02-05", 2_500),
+        masked("f3", "2026-03-05", 2_501),
+        // 1 cent off continues nothing, and the series revives at its own price.
+        masked("c1", "2026-01-12", 1_549),
+        masked("c2", "2026-02-12", 1_549),
+        masked("c3", "2026-03-12", 1_549),
+        masked("c4", "2026-04-12", 1_550),
+        masked("c5", "2026-05-12", 1_549),
+        // A price change whose second charge is 1 cent off joins nothing.
+        masked("c6", "2026-06-12", 1_799),
+        masked("c7", "2026-07-12", 1_800),
+        // 1 cent off revives nothing.
+        masked("c8", "2026-08-12", 1_550),
+      );
+
+      expect(await prices()).toEqual([
+        [
+          "Privacy.com",
+          "inactive",
+          ["2026-01 1549", "2026-02 1549", "2026-03 1549", "2026-05 1549"],
+        ],
+      ]);
+    });
+
+    it("continues another Merchant's series at any amount, as before", async () => {
+      now = new Date("2026-05-20T14:00:00.000Z");
+      await sync(
+        ...eight.map((txn) => ({ ...txn, merchantName: "Streamly" })),
+        charge("march", "2026-03-12", 6_000),
+      );
+
+      expect((await prices()).map(([name, , history]) => [name, history])).toEqual([
+        ["Streamly", [...before, "2026-03 6000"]],
+      ]);
+    });
+  });
+
   describe("a monthly series", () => {
     // Each Recurring charge's fixed day, next expected date, and status.
     const dates = async () =>

@@ -8,7 +8,13 @@ import {
   readMerchantLookups,
   storeMerchantLookup,
 } from "../db/index.ts";
-import { isPaymentApp, type Merchant, merchantKey, paymentAppLine } from "../merchants/index.ts";
+import {
+  isMaskedMerchant,
+  isPaymentApp,
+  type Merchant,
+  merchantKey,
+  paymentAppLine,
+} from "../merchants/index.ts";
 import { merchantOf } from "./cascade.ts";
 import type { AiConfidence } from "./quick-tier.ts";
 
@@ -89,13 +95,14 @@ const NOT_A_PURCHASE = /^(?:TRANSFER_IN|TRANSFER_OUT|LOAN_PAYMENTS)(?:_|$)/;
 const CARD_PAYMENT_NAME = /(?:^|\s)card payment$/i;
 
 // Whether a Transaction is never looked up (spec 04, Web lookup): a payment-app or Zelle line to or from a person or naming no one, a Transfer, a loan
-// payment, a card payment, or a line with no clean Merchant name.
+// payment, a card payment, a masked Merchant, whose name is the card service's and not the shop's,
+// or a line with no clean Merchant name.
 export function skipsLookup(line: LookupLine): boolean {
   const { merchant } = line;
   if (merchant === null || keptKey(merchant) === undefined) return true;
   if (line.providerCategory !== null && NOT_A_PURCHASE.test(line.providerCategory)) return true;
   if (CARD_PAYMENT_NAME.test(merchant.name.trim())) return true;
-  if (isPaymentApp(merchant)) return true;
+  if (isPaymentApp(merchant) || isMaskedMerchant(merchant)) return true;
   const app = paymentAppLine({
     description: line.description,
     providerCategory: line.providerCategory,
