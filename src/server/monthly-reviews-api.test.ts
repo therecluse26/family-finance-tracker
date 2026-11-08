@@ -184,6 +184,7 @@ describe("the Reviews page and the review link", () => {
         gatewayToken: null,
         quickModel: "test-quick",
         writerModel: "test-writer",
+        chatModel: "chat-model",
         keyRejectedAt: null,
       },
       0,

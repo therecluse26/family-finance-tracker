@@ -140,7 +140,7 @@ The AI provider is optional. Core data works without it.
 
 - The AI runs rarely and gets summaries, not raw history.
 - The AI cost cap stops background AI at a monthly amount. The default is $10 a month.
-- The expected cost is about $2.60 a month on Anthropic and about $1.30 on OpenAI ([AI](08-ai.md)).
+- The expected cost is about $3.20 a month on Anthropic and about $1.30 on OpenAI ([AI](08-ai.md)).
 
 ### 14. One vocabulary
 

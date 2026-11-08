@@ -201,6 +201,7 @@ describe("fft restore", { timeout: 30_000 }, () => {
         gatewayToken: null,
         quickModel: "quick-model",
         writerModel: "writer-model",
+        chatModel: "chat-model",
         keyRejectedAt: null,
       },
       0,
@@ -613,7 +614,13 @@ describe("fft restore", { timeout: 30_000 }, () => {
       const tables = await readEveryTable(database);
       expect(tables.plaid_settings).toMatchObject([{ client_id: "client-id", secret: null }]);
       expect(tables.ai_settings).toMatchObject([
-        { provider: "anthropic", api_key: null, gateway_token: null, quick_model: "quick-model" },
+        {
+          provider: "anthropic",
+          api_key: null,
+          gateway_token: null,
+          quick_model: "quick-model",
+          chat_model: "chat-model",
+        },
       ]);
       for (const table of [
         "smtp_settings",

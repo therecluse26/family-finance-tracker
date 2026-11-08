@@ -291,6 +291,39 @@ describe("counting AI cost", () => {
     expect(stub.calls).toHaveLength(before);
   });
 
+  it("makes no call with a Chat model that has no price, and prices each tier's model on its own", async () => {
+    const custom = anthropic({ chatModel: "claude-chat-9" });
+
+    expect(await settings.save(custom)).toEqual({
+      saved: false,
+      refusal: "price needed",
+      tier: "chat",
+    });
+    expect(stub.calls).toEqual([]);
+
+    const priced = { ...custom, prices: { chat: { input: 300_000, output: 600_000 } } };
+    expect(await settings.save(priced)).toMatchObject({
+      saved: true,
+      ai: {
+        chatModel: "claude-chat-9",
+        prices: { writer: { source: "table" }, chat: { source: "member", input: 300_000 } },
+      },
+    });
+    await call("chat", { noCache: 10, cacheRead: 20, cacheWrite: 30, output: 40 });
+    expect((await settings.usage()).calls[0]).toMatchObject({
+      use: "chat",
+      model: "claude-chat-9",
+      costNanos: 42_000,
+    });
+
+    // Chat pauses for its own model's price, and the Writer uses do not.
+    await test.database.$client.execute("UPDATE ai_settings SET chat_model = 'claude-chat-10'");
+    const before = stub.calls.length;
+    expect(await calls.modelFor("chat")).toEqual({ ready: false, pause: "no price" });
+    expect(stub.calls).toHaveLength(before);
+    expect(await calls.modelFor("insight cards")).toMatchObject({ ready: true });
+  });
+
   it("checks the AI status before every use", async () => {
     expect(await calls.modelFor("chat")).toEqual({ ready: false, pause: "no AI provider" });
     await settings.save(anthropic());

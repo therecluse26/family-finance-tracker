@@ -10,7 +10,7 @@ import { CapturingFetch, newAiKey } from "./testing.ts";
 // Each AI provider's models, as their requests leave the app (spec 08, AI providers and their
 // data-use settings), on a fetch that captures each request. No test calls an AI provider.
 
-const MODELS = { quick: "quick-model", writer: "writer-model" };
+const MODELS = { quick: "quick-model", writer: "writer-model", chat: "chat-model" };
 const GATEWAY = "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id";
 
 const connection = (provider: AiProviderName, more: Partial<AiConnection> = {}): AiConnection => ({
@@ -22,10 +22,10 @@ const connection = (provider: AiProviderName, more: Partial<AiConnection> = {}):
 });
 
 // One call to each tier's model, as a later AI use makes it, and the requests that left.
-async function callBoth(to: AiConnection, callerOptions: Record<string, unknown> = {}) {
+async function callEach(to: AiConnection, callerOptions: Record<string, unknown> = {}) {
   const capture = new CapturingFetch();
   const models = makeFetchModels(capture.fetch)(to, MODELS);
-  for (const model of [models.quick, models.writer]) {
+  for (const model of [models.quick, models.writer, models.chat]) {
     await generateText({
       model,
       prompt: "Hello",
@@ -39,24 +39,27 @@ async function callBoth(to: AiConnection, callerOptions: Record<string, unknown>
 
 describe("the AI providers' models", () => {
   it("sends store: false to OpenAI on every call, even when a caller asks to store", async () => {
-    const requests = await callBoth(connection("openai"), {
+    const requests = await callEach(connection("openai"), {
       providerOptions: { openai: { store: true } },
     });
 
     expect(requests.map((request) => request.url)).toEqual([
       "https://api.openai.com/v1/chat/completions",
       "https://api.openai.com/v1/chat/completions",
+      "https://api.openai.com/v1/chat/completions",
     ]);
     expect(requests.map((request) => [request.body.model, request.body.store])).toEqual([
       ["quick-model", false],
       ["writer-model", false],
+      ["chat-model", false],
     ]);
   });
 
   it('sends provider: { data_collection: "deny" } to OpenRouter on every call, and asks for its cost', async () => {
-    const requests = await callBoth(connection("openrouter"));
+    const requests = await callEach(connection("openrouter"));
 
     expect(requests.map((request) => request.url)).toEqual([
+      "https://openrouter.ai/api/v1/chat/completions",
       "https://openrouter.ai/api/v1/chat/completions",
       "https://openrouter.ai/api/v1/chat/completions",
     ]);
@@ -68,9 +71,10 @@ describe("the AI providers' models", () => {
 
   it("sends Anthropic the key and no feedback setting", async () => {
     const to = connection("anthropic");
-    const requests = await callBoth(to);
+    const requests = await callEach(to);
 
     expect(requests.map((request) => request.url)).toEqual([
+      "https://api.anthropic.com/v1/messages",
       "https://api.anthropic.com/v1/messages",
       "https://api.anthropic.com/v1/messages",
     ]);
@@ -81,8 +85,8 @@ describe("the AI providers' models", () => {
 
   it("sends an OpenAI-compatible endpoint its base URL, with a key only when one is set", async () => {
     const withKey = connection("openai-compatible");
-    const [keyed] = await callBoth(withKey);
-    const [keyless] = await callBoth(connection("openai-compatible", { apiKey: undefined }));
+    const [keyed] = await callEach(withKey);
+    const [keyless] = await callEach(connection("openai-compatible", { apiKey: undefined }));
 
     expect(keyed?.url).toBe("http://ollama.local:11434/v1/chat/completions");
     expect(keyed?.headers.authorization).toBe(`Bearer ${withKey.apiKey}`);
@@ -95,9 +99,9 @@ describe("the AI providers' models", () => {
         baseUrl: `${GATEWAY}/${provider}`,
         gatewayToken: newAiKey(),
       });
-      const requests = await callBoth(to);
+      const requests = await callEach(to);
 
-      expect(requests).toHaveLength(2);
+      expect(requests).toHaveLength(3);
       for (const request of requests) {
         expect(request.url.startsWith(`${GATEWAY}/${provider}/`)).toBe(true);
         expect(request.headers["cf-aig-collect-log-payload"]).toBe("false");
@@ -107,8 +111,8 @@ describe("the AI providers' models", () => {
   });
 
   it("sends the gateway header with no token, and no gateway header to any other base URL", async () => {
-    const [gateway] = await callBoth(connection("openai", { baseUrl: `${GATEWAY}/openai` }));
-    const [proxy] = await callBoth(
+    const [gateway] = await callEach(connection("openai", { baseUrl: `${GATEWAY}/openai` }));
+    const [proxy] = await callEach(
       connection("openai", { baseUrl: "https://gateway.ai.cloudflare.com.evil.example/v1" }),
     );
 
@@ -119,8 +123,8 @@ describe("the AI providers' models", () => {
 
   it("asks fetch to follow no redirect, for every AI provider", async () => {
     for (const provider of ["anthropic", "openai", "openrouter", "openai-compatible"] as const) {
-      const requests = await callBoth(connection(provider));
-      expect(requests.map((request) => request.redirect)).toEqual(["error", "error"]);
+      const requests = await callEach(connection(provider));
+      expect(requests.map((request) => request.redirect)).toEqual(["error", "error", "error"]);
     }
   });
 });

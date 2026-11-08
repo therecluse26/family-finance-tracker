@@ -238,9 +238,9 @@ describe("the one AI call path", () => {
     });
     const models = privateModels(
       test.database,
-      () => ({ quick: model, writer: model }),
+      () => ({ quick: model, writer: model, chat: model }),
       { ...CONNECTION, apiKey: newAiKey() },
-      { quick: "q", writer: "w" },
+      { quick: "q", writer: "w", chat: "c" },
       countedAs([]),
     );
 
@@ -294,9 +294,9 @@ describe("the one AI call path", () => {
     });
     const models = privateModels(
       test.database,
-      () => ({ quick: model, writer: model }),
+      () => ({ quick: model, writer: model, chat: model }),
       { ...CONNECTION, apiKey: newAiKey() },
-      { quick: "q", writer: "w" },
+      { quick: "q", writer: "w", chat: "c" },
       countedAs(events),
     );
 

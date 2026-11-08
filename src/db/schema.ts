@@ -506,7 +506,7 @@ export const aiSettings = sqliteTable(
   "ai_settings",
   {
     id: integer("id").primaryKey(),
-    // Empty, with both models, after Remove AI provider.
+    // Empty, with each model, after Remove AI provider.
     provider: text("provider", {
       enum: ["anthropic", "openai", "openrouter", "openai-compatible"],
     }),
@@ -518,6 +518,7 @@ export const aiSettings = sqliteTable(
     gatewayToken: text("gateway_token"),
     quickModel: text("quick_model"),
     writerModel: text("writer_model"),
+    chatModel: text("chat_model"),
     // When the AI provider last answered 401 or 403. Empty once a call works again.
     keyRejectedAt: moment("key_rejected_at"),
     // Goes up by 1 on each save and each Remove AI provider. A save writes only when the row is
@@ -534,7 +535,7 @@ export const aiSettings = sqliteTable(
     check("ai_settings_one_row", sql`${table.id} = 1`),
     check(
       "ai_settings_whole",
-      sql`(${table.provider} IS NULL) = (${table.quickModel} IS NULL) AND (${table.provider} IS NULL) = (${table.writerModel} IS NULL)`,
+      sql`(${table.provider} IS NULL) = (${table.quickModel} IS NULL) AND (${table.provider} IS NULL) = (${table.writerModel} IS NULL) AND (${table.provider} IS NULL) = (${table.chatModel} IS NULL)`,
     ),
   ],
 );

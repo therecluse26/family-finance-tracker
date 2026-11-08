@@ -134,7 +134,7 @@ type StreamPart =
 export type StubToolCall = { toolName: string; input: unknown };
 
 export class StubModels {
-  answers: Record<AiTier, StubAnswer> = { quick: "work", writer: "work" };
+  answers: Record<AiTier, StubAnswer> = { quick: "work", writer: "work", chat: "work" };
   // What each reply that works says, and its usage and provider metadata.
   reply = OK_REPLY;
   // When set, makes each reply that works from the request's messages in place of `reply`, such as
@@ -296,6 +296,7 @@ export class StubModels {
     return {
       quick: model("quick"),
       writer: model("writer"),
+      chat: model("chat"),
       ...(connection.provider === "openai-compatible" ? {} : { lookup: model("quick", true) }),
     };
   };

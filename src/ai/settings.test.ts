@@ -68,31 +68,59 @@ describe("the AI settings", () => {
     (await test.database.$client.execute("SELECT * FROM ai_settings")).rows;
 
   it("makes one call to each model with a 1-token reply on save, and shows that each worked", async () => {
-    const input = anthropic();
+    const input = anthropic({ writerModel: "claude-opus-5-5", chatModel: "claude-sonnet-5-5" });
 
     const saved = await ai.save(input);
 
     expect(stub.calls).toEqual([
       { tier: "quick", modelId: "claude-haiku-5-5", maxOutputTokens: 1 },
-      { tier: "writer", modelId: "claude-sonnet-5-5", maxOutputTokens: 1 },
+      { tier: "writer", modelId: "claude-opus-5-5", maxOutputTokens: 1 },
+      { tier: "chat", modelId: "claude-sonnet-5-5", maxOutputTokens: 1 },
     ]);
     expect(saved).toEqual({
       saved: true,
-      check: { quick: "worked", writer: "worked" },
+      check: { quick: "worked", writer: "worked", chat: "worked" },
       ai: {
         provider: "anthropic",
         keySet: true,
         baseUrl: null,
         gatewayTokenSet: false,
         quickModel: "claude-haiku-5-5",
-        writerModel: "claude-sonnet-5-5",
-        prices: { quick: { source: "table" }, writer: { source: "table" } },
+        writerModel: "claude-opus-5-5",
+        chatModel: "claude-sonnet-5-5",
+        prices: {
+          quick: { source: "table" },
+          writer: { source: "table" },
+          chat: { source: "table" },
+        },
         status: { state: "on" },
-
         webLookup: { on: true, unavailable: null },
       },
     });
     expect(JSON.stringify(saved)).not.toContain(input.apiKey);
+  });
+
+  it("checks a model that two tiers share once, and stores Chat as the Writer model when left out", async () => {
+    const saved = await ai.save(anthropic());
+
+    expect(stub.calls).toEqual([
+      { tier: "quick", modelId: "claude-haiku-5-5", maxOutputTokens: 1 },
+      { tier: "writer", modelId: "claude-sonnet-5-5", maxOutputTokens: 1 },
+    ]);
+    expect(saved).toMatchObject({
+      check: { quick: "worked", writer: "worked", chat: "worked" },
+      ai: { writerModel: "claude-sonnet-5-5", chatModel: "claude-sonnet-5-5" },
+    });
+    expect(await storedRow()).toMatchObject([
+      { writer_model: "claude-sonnet-5-5", chat_model: "claude-sonnet-5-5" },
+    ]);
+
+    // A Chat model that the key cannot use marks the key rejected, as another tier's does.
+    stub.answers = { quick: "work", writer: "work", chat: "reject" };
+    expect(await ai.save(anthropic({ chatModel: "claude-opus-5-5" }))).toMatchObject({
+      check: { quick: "worked", writer: "worked", chat: "key rejected" },
+      ai: { chatModel: "claude-opus-5-5", status: { state: "key rejected" } },
+    });
   });
 
   it("checks through the real provider instance, with max_tokens 1 in each request", async () => {
@@ -214,7 +242,7 @@ describe("the AI settings", () => {
   });
 
   it("saves, and shows that the AI provider rejected the key, when a call answers 401", async () => {
-    stub.answers = { quick: "work", writer: "reject" };
+    stub.answers = { quick: "work", writer: "reject", chat: "work" };
 
     const saved = await ai.save(anthropic());
 
@@ -224,14 +252,14 @@ describe("the AI settings", () => {
       ai: { status: { state: "key rejected" } },
     });
 
-    stub.answers = { quick: "work", writer: "work" };
+    stub.answers = { quick: "work", writer: "work", chat: "work" };
     const { apiKey: _key, ...kept } = anthropic();
     expect(await ai.save(kept)).toMatchObject({ ai: { status: { state: "on" } } });
   });
 
   it("keeps the key out of every log line and answer when the AI provider's error holds it", async () => {
     const input = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
-    stub.answers = { quick: "fail", writer: "throw" };
+    stub.answers = { quick: "fail", writer: "throw", chat: "throw" };
 
     const saved = await ai.save(input);
 
@@ -254,7 +282,7 @@ describe("the AI settings", () => {
 
   it("makes the logger refuse the key and the token as soon as they are given", async () => {
     const input = anthropic({ baseUrl: GATEWAY, gatewayToken: newAiKey() });
-    stub.answers = { quick: "reject", writer: "reject" };
+    stub.answers = { quick: "reject", writer: "reject", chat: "reject" };
 
     await ai.save(input);
 

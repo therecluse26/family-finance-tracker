@@ -130,6 +130,7 @@ export function privateModels(
   return {
     quick: privateModel(models.quick, database, countedAs("quick")),
     writer: privateModel(models.writer, database, countedAs("writer")),
+    chat: privateModel(models.chat, database, countedAs("chat")),
     ...(models.lookup === undefined
       ? {}
       : { lookup: privateModel(models.lookup, database, countedAs("quick")) }),

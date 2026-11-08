@@ -289,8 +289,8 @@ describe("Chat", () => {
       await answered(id, "And Ravi\tOkafor?", RAVI);
 
       expect(modelCalls()).toEqual([
-        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000 },
-        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000 },
+        { tier: "chat", modelId: "writer-model", maxOutputTokens: 8_000 },
+        { tier: "chat", modelId: "writer-model", maxOutputTokens: 8_000 },
       ]);
       const [system, summary, task, ...turns] = prompts().at(-1) ?? [];
       expect(system).toEqual({ role: "system", content: FIXED_RULES });
@@ -384,7 +384,7 @@ describe("Chat", () => {
     });
 
     it("shows an error with no retry when the AI provider fails, stores no answer, and answers again on Try again", async () => {
-      stub.answers.writer = "fail";
+      stub.answers.chat = "fail";
       const id = await started("How are we doing?");
 
       const parts = await answered(id, null);
@@ -395,7 +395,7 @@ describe("Chat", () => {
         "Member",
       ]);
 
-      stub.answers.writer = "work";
+      stub.answers.chat = "work";
       expect(textOf(await answered(id, null))).toBe("O");
       expect((await listChatMessages(test.database, id)).map((row) => row.author)).toEqual([
         "Member",
@@ -558,13 +558,13 @@ describe("Chat", () => {
       await answered(id, null);
       for (const turn of [3, 5, 7]) await answered(id, `Turn ${turn}`);
       // A 9th message whose answer fails: the next call sends all 9.
-      stub.answers.writer = "fail";
+      stub.answers.chat = "fail";
       await answered(id, "Turn 9");
       const nine = await talk.thread(id);
       expect(nine?.messages).toHaveLength(9);
       expect(nine?.firstSent).toBeNull();
 
-      stub.answers.writer = "work";
+      stub.answers.chat = "work";
       await answered(id, null);
       const ten = await talk.thread(id);
       expect(ten?.messages).toHaveLength(10);

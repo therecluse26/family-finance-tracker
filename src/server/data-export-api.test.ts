@@ -209,6 +209,7 @@ describe("Download my data", () => {
         gatewayToken: seal(made("gateway"), AI_SETTINGS_ROW, "ai_settings.gateway_token"),
         quickModel: "quick-model",
         writerModel: "writer-model",
+        chatModel: "chat-model",
         keyRejectedAt: null,
       },
       0,
@@ -541,6 +542,7 @@ describe("Download my data", () => {
         quick_model: "quick-model",
         web_lookup: true,
         writer_model: "writer-model",
+        chat_model: "chat-model",
       },
     ]);
     for (const name of [

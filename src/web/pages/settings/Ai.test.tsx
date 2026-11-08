@@ -35,7 +35,8 @@ const OPENAI: AiView = {
   gatewayTokenSet: false,
   quickModel: "gpt-6-luna",
   writerModel: "gpt-6.1-terra",
-  prices: { quick: { source: "table" }, writer: { source: "table" } },
+  chatModel: "gpt-6.1-terra",
+  prices: { quick: { source: "table" }, writer: { source: "table" }, chat: { source: "table" } },
   status: { state: "on" },
   webLookup: { on: true, unavailable: null },
 };
@@ -142,7 +143,7 @@ describe("Settings → AI", () => {
 
   it("offers each priced model of the AI provider, Opus 5.5 among them, while the defaults stay", () => {
     const anthropic = renderToString(<AiProviderForm ai={null} onSaved={() => {}} />);
-    expect(anthropic.match(/list="ai-priced-models"/g)).toHaveLength(2);
+    expect(anthropic.match(/list="ai-priced-models"/g)).toHaveLength(3);
     expect(anthropic).toContain('<option value="claude-opus-5-5">');
     expect(anthropic).toContain('<option value="claude-haiku-5-5">');
     expect(anthropic).toContain('value="claude-sonnet-5-5"');
@@ -153,7 +154,8 @@ describe("Settings → AI", () => {
           ...OPENAI,
           provider: "openrouter",
           quickModel: "anthropic/claude-haiku-5.5",
-          writerModel: "anthropic/claude-sonnet-5.5",
+          writerModel: "anthropic/claude-opus-5.5",
+          chatModel: "anthropic/claude-sonnet-5.5",
         }}
         onSaved={() => {}}
       />,
@@ -181,6 +183,7 @@ describe("Settings → AI", () => {
           baseUrl: "http://ollama.local:11434/v1",
           quickModel: "llama-small",
           writerModel: "llama-large",
+          chatModel: "llama-large",
         }}
         onSaved={() => {}}
       />,
@@ -222,6 +225,7 @@ describe("Settings → AI", () => {
           prices: {
             quick: { source: "member", input: 50_000, output: 250_000 },
             writer: { source: "table" },
+            chat: { source: "table" },
           },
         }}
         onSaved={() => {}}
@@ -236,6 +240,45 @@ describe("Settings → AI", () => {
     expect(custom).toContain('value="0.25"');
   });
 
+  it("shows a Chat model beside the Quick and Writer models, with its own prices", () => {
+    const html = renderToString(
+      <AiProviderForm
+        ai={{
+          ...OPENAI,
+          chatModel: "llama-chat",
+          prices: { ...OPENAI.prices, chat: { source: "member", input: 300_000, output: 0 } },
+        }}
+        onSaved={() => {}}
+      />,
+    );
+
+    expect(text(html)).toContain("The Chat model answers in Chat.");
+    expect(html).toContain('value="llama-chat"');
+    expect(text(html)).toContain("Chat model (llama-chat): input price");
+    expect(html).toContain('value="0.3"');
+    expect(text(html)).not.toContain("Writer model (gpt-6.1-terra)");
+  });
+
+  it("asks once for the prices of a model that two tiers share", () => {
+    const html = renderToString(
+      <AiProviderForm
+        ai={{
+          ...OPENAI,
+          provider: "openai-compatible",
+          baseUrl: "http://ollama.local:11434/v1",
+          quickModel: "llama-small",
+          writerModel: "llama-large",
+          chatModel: "llama-large",
+        }}
+        onSaved={() => {}}
+      />,
+    );
+
+    expect(text(html)).toContain("Quick model (llama-small): input price");
+    expect(text(html)).toContain("Writer model (llama-large): input price");
+    expect(text(html)).not.toContain("Chat model (llama-large)");
+  });
+
   it("reads prices and the cap as a Member types them", () => {
     expect(priceOfText("0.50")).toBe(500_000);
     expect(priceOfText("$2")).toBe(2_000_000);
@@ -246,15 +289,30 @@ describe("Settings → AI", () => {
     expect(centsOfText("$12.50")).toBe(1250);
     expect(centsOfText("12.505")).toBeUndefined();
 
-    const models = { quick: "llama-small", writer: "gpt-6.1-terra" };
+    const models = { quick: "llama-small", writer: "gpt-6.1-terra", chat: "gpt-6.1-terra" };
     const empty = { input: "", output: "" };
+    const zero = { input: "0", output: "0" };
+    expect(enteredPrices("openai", models, { quick: zero, writer: empty, chat: empty })).toEqual({
+      quick: { input: 0, output: 0 },
+    });
+    expect(enteredPrices("openai", models, { quick: empty, writer: empty, chat: empty })).toEqual(
+      {},
+    );
     expect(
-      enteredPrices("openai", models, { quick: { input: "0", output: "0" }, writer: empty }),
-    ).toEqual({ quick: { input: 0, output: 0 } });
-    expect(enteredPrices("openai", models, { quick: empty, writer: empty })).toEqual({});
-    expect(
-      enteredPrices("openai", models, { quick: { input: "0.1", output: "" }, writer: empty }),
+      enteredPrices("openai", models, {
+        quick: { input: "0.1", output: "" },
+        writer: empty,
+        chat: empty,
+      }),
     ).toBe("bad");
+    // A Chat model that is not in the price table has its own prices.
+    expect(
+      enteredPrices(
+        "openai",
+        { ...models, chat: "llama-chat" },
+        { quick: zero, writer: empty, chat: { input: "1", output: "2" } },
+      ),
+    ).toEqual({ quick: { input: 0, output: 0 }, chat: { input: 1_000_000, output: 2_000_000 } });
   });
 
   it("shows the AI cost cap, the month's total against it, and a link to the AI usage page", () => {

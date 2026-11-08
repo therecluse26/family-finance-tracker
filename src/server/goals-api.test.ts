@@ -135,6 +135,7 @@ describe("the Goal routes", () => {
         gatewayToken: null,
         quickModel: "test-quick",
         writerModel: "test-writer",
+        chatModel: "chat-model",
         keyRejectedAt: null,
       },
       0,

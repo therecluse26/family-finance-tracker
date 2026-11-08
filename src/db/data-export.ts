@@ -234,7 +234,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   // app's own state about the AI provider.
   exported(
     schema.aiSettings,
-    ["provider", "quickModel", "writerModel", "webLookup"],
+    ["provider", "quickModel", "writerModel", "chatModel", "webLookup"],
     ["id", "apiKey", "gatewayToken", "baseUrl", "keyRejectedAt", "webSearchRefused", "generation"],
   ),
   // Each Merchant's Web lookup: its Category and the line about the business.

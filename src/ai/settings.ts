@@ -21,6 +21,7 @@ import { type Logger, log, registerSecretValue } from "../log.ts";
 import { endCondition, type NewNotice, raiseNotice } from "../notify/index.ts";
 import type { SecretPlace, Secrets } from "../secrets/index.ts";
 import {
+  AI_TIERS,
   type AiProviderName,
   type AiSettings,
   type AiStatus,
@@ -36,6 +37,7 @@ import {
   type ModelUse,
   onGateway,
   type PriceSource,
+  type TierModels,
   USE_TIERS,
   type WebLookupView,
 } from "./ai-view.ts";
@@ -58,7 +60,12 @@ void sameUses;
 const KEY_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.api_key" };
 const TOKEN_PLACE: SecretPlace = { rowId: AI_SETTINGS_ROW, column: "ai_settings.gateway_token" };
 
-const TIERS = ["quick", "writer"] as const;
+// Each tier's model, as the AI settings store them.
+const tierModels = (stored: StoredAiSettings): TierModels => ({
+  quick: stored.quickModel,
+  writer: stored.writerModel,
+  chat: stored.chatModel,
+});
 
 // The Quick model as the Web lookup remembers a refused search for it: "provider:model".
 export const webSearchModel = (stored: { provider: AiProviderName; quickModel: string }) =>
@@ -248,9 +255,11 @@ export function aiSettings(options: AiOptions): AiSettings {
       gatewayTokenSet: stored.gatewayToken !== null,
       quickModel: stored.quickModel,
       writerModel: stored.writerModel,
+      chatModel: stored.chatModel,
       prices: {
         quick: await priceSource(stored.provider, stored.quickModel),
         writer: await priceSource(stored.provider, stored.writerModel),
+        chat: await priceSource(stored.provider, stored.chatModel),
       },
       status: await status(stored),
       webLookup: {
@@ -306,7 +315,7 @@ export function aiSettings(options: AiOptions): AiSettings {
         database,
         makeModels,
         { provider: stored.provider, apiKey, baseUrl: stored.baseUrl, gatewayToken },
-        { quick: stored.quickModel, writer: stored.writerModel },
+        tierModels(stored),
         () => ({
           use: "key test",
           provider: stored.provider,
@@ -363,13 +372,20 @@ export function aiSettings(options: AiOptions): AiSettings {
       }
 
       // The app makes no call with a model that has no price, the check on save included.
-      const modelOf: Record<AiTier, string> = {
+      // Chat left out uses the Writer model.
+      const modelOf: TierModels = {
         quick: input.quickModel,
         writer: input.writerModel,
+        chat: input.chatModel ?? input.writerModel,
       };
+      // One model has one price: a tier takes the prices entered for the first tier with its model.
+      const enteredFor = (tier: AiTier): EnteredPrice | undefined =>
+        AI_TIERS.filter((other) => modelOf[other] === modelOf[tier])
+          .map((other) => input.prices?.[other])
+          .find((entered) => entered !== undefined);
       const prices = {} as Record<AiTier, ModelPrice>;
-      for (const tier of TIERS) {
-        const price = await priceOf(database, input.provider, modelOf[tier], input.prices?.[tier]);
+      for (const tier of AI_TIERS) {
+        const price = await priceOf(database, input.provider, modelOf[tier], enteredFor(tier));
         if (price === undefined) return { saved: false, refusal: "price needed", tier };
         prices[tier] = price;
       }
@@ -412,16 +428,25 @@ export function aiSettings(options: AiOptions): AiSettings {
         gate: async () => undefined,
         cost,
       }));
-      const [quick, writer] = await Promise.all([
-        checkModel(models.quick, logger),
-        checkModel(models.writer, logger),
+      // One call to each model: a tier with the same model as an earlier one shares its answer.
+      const checks = new Map<string, Promise<ModelCheck>>();
+      const checkOf = (tier: AiTier) => {
+        const made = checks.get(modelOf[tier]) ?? checkModel(models[tier], logger);
+        checks.set(modelOf[tier], made);
+        return made;
+      };
+      const [quick, writer, chat] = await Promise.all([
+        checkOf("quick"),
+        checkOf("writer"),
+        checkOf("chat"),
       ]);
-      const check: Record<AiTier, ModelCheck> = { quick, writer };
+      const check: Record<AiTier, ModelCheck> = { quick, writer, chat };
+      const answers = Object.values(check);
       // A rejected key stays rejected until a check answers that the key works. A check that only
       // failed, such as on a network error, says nothing about the key: AI stays paused, with its
       // System notice, and the save still stores the key.
-      const rejected = quick === "key rejected" || writer === "key rejected";
-      const works = !rejected && (quick === "worked" || writer === "worked");
+      const rejected = answers.includes("key rejected");
+      const works = !rejected && answers.includes("worked");
       const keptRejection = works ? null : (stored?.keyRejectedAt ?? null);
 
       const written = await storeAiSettings(
@@ -434,6 +459,7 @@ export function aiSettings(options: AiOptions): AiSettings {
             gatewayToken === undefined ? null : secrets.encrypt(gatewayToken, TOKEN_PLACE),
           quickModel: input.quickModel,
           writerModel: input.writerModel,
+          chatModel: modelOf.chat,
           keyRejectedAt: rejected ? new Date() : keptRejection,
         },
         generation,
@@ -442,8 +468,8 @@ export function aiSettings(options: AiOptions): AiSettings {
       if (!written) return { saved: false, refusal: "changed" };
       // A key that works ends the paused AI's System notice.
       if (stored?.keyRejectedAt != null && works) await endKeyRejected();
-      for (const tier of TIERS) {
-        const entered = input.prices?.[tier];
+      for (const tier of AI_TIERS) {
+        const entered = enteredFor(tier);
         if (entered !== undefined && tablePrice(input.provider, modelOf[tier]) === undefined) {
           await storeMemberPrice(database, input.provider, modelOf[tier], entered);
         }
@@ -524,7 +550,8 @@ export function aiCalls(options: AiOptions): AiCalls {
       const { settings: stored, generation } = await readAiSettingsVersion(database);
       if (stored === undefined) return { ready: false, pause: "no AI provider" };
       const tier = USE_TIERS[use];
-      const model = tier === "quick" ? stored.quickModel : stored.writerModel;
+      const tiers = tierModels(stored);
+      const model = tiers[tier];
       const price = await priceOf(database, stored.provider, model);
       if (price === undefined) return { ready: false, pause: "no price" };
       const lookup = use === "merchant lookup";
@@ -533,7 +560,7 @@ export function aiCalls(options: AiOptions): AiCalls {
         database,
         makeModels,
         decryptConnection(stored, secrets),
-        { quick: stored.quickModel, writer: stored.writerModel },
+        tiers,
         () => ({
           use,
           provider: stored.provider,

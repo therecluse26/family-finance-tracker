@@ -127,7 +127,8 @@ describe('the AI box, "This week"', () => {
     gatewayTokenSet: false,
     quickModel: "gpt-6-luna",
     writerModel: "gpt-6.1-terra",
-    prices: { quick: { source: "table" }, writer: { source: "table" } },
+    chatModel: "gpt-6.1-terra",
+    prices: { quick: { source: "table" }, writer: { source: "table" }, chat: { source: "table" } },
     status,
     webLookup: { on: true, unavailable: null },
   });

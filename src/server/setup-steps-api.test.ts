@@ -125,6 +125,7 @@ describe("the first-run wizard, steps 5 and 6", () => {
         gatewayToken: null,
         quickModel: "test-quick",
         writerModel: "test-writer",
+        chatModel: "chat-model",
         keyRejectedAt: null,
       },
       0,
