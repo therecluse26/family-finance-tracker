@@ -30,8 +30,11 @@ import {
   datesKeyDown,
   datesLine,
   datesToggled,
+  draftApplier,
+  shownQuery,
   TransactionFilterForm,
   TransactionRows,
+  TYPING_DELAY_MS,
 } from "./Transactions.tsx";
 
 // The Transactions page and its detail view (spec 07, Transactions page): the filters and each
@@ -192,14 +195,14 @@ describe("the Transactions page", () => {
 
   it("edits each filter, then shows or clears them", () => {
     const onDraft = vi.fn();
-    const onShow = vi.fn();
+    const onApplyNow = vi.fn();
     const onClear = vi.fn();
     const draft = { merchant: "Corner Bistro" };
     const form = TransactionFilterForm({
       draft,
       accounts: ACCOUNTS,
       onDraft,
-      onShow,
+      onApplyNow,
       onClear,
       today: TODAY,
     });
@@ -237,6 +240,86 @@ describe("the Transactions page", () => {
     expect(text(html)).toContain("Everyday Checking ··1234");
   });
 
+  it("has no Show button: Enter in a typed field applies the filters at once", () => {
+    const onApplyNow = vi.fn();
+    const form = TransactionFilterForm({
+      draft: { merchant: "bist" },
+      accounts: ACCOUNTS,
+      onDraft: vi.fn(),
+      onApplyNow,
+      onClear: vi.fn(),
+      today: TODAY,
+    });
+
+    expect([...controlsOf(form).buttons.keys()]).toEqual(["Clear the filters"]);
+    const merchant = elementsOf(form).find((each) => each.props.name === "merchant");
+    const onKeyDown = merchant?.props.onKeyDown as (e: unknown) => void;
+    expect(onKeyDown).toBeTypeOf("function");
+    const press = (key: string) => {
+      const preventDefault = vi.fn();
+      onKeyDown({ key, preventDefault });
+      return preventDefault.mock.calls.length;
+    };
+    expect(press("a")).toBe(0);
+    expect(onApplyNow).not.toHaveBeenCalled();
+    expect(press("Enter")).toBe(1);
+    expect(onApplyNow).toHaveBeenCalledOnce();
+  });
+
+  it("applies a chosen filter at once, and a typed one after a pause, with every other filter as it then stands", () => {
+    vi.useFakeTimers();
+    try {
+      const applied: [string, boolean][] = [];
+      const applier = draftApplier((filters, { replace }) =>
+        applied.push([shownQuery(filters), replace]),
+      );
+
+      applier.change({}, { category: "Groceries" });
+      expect(applied).toEqual([["category=Groceries", false]]);
+
+      // Each key starts the wait again; only the last text applies, replacing the address.
+      applier.change({ category: "Groceries" }, { category: "Groceries", merchant: "c" });
+      vi.advanceTimersByTime(TYPING_DELAY_MS - 1);
+      applier.change(
+        { category: "Groceries", merchant: "c" },
+        { category: "Groceries", merchant: "co" },
+      );
+      vi.advanceTimersByTime(TYPING_DELAY_MS - 1);
+      expect(applied).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(applied).toEqual([
+        ["category=Groceries", false],
+        ["category=Groceries&merchant=co", true],
+      ]);
+
+      // A date typed in a date field waits too.
+      applier.change({}, { from: "2026-10-01" });
+      expect(applied).toHaveLength(2);
+      // A chosen filter while a typed one waits applies both at once, and ends the wait.
+      applier.change({ from: "2026-10-01" }, { from: "2026-10-01", type: "Refund" });
+      vi.advanceTimersByTime(TYPING_DELAY_MS * 2);
+      expect(applied.slice(2)).toEqual([["type=Refund&from=2026-10-01", false]]);
+
+      // Enter applies at once and ends the wait; a dropped wait applies nothing.
+      applier.change({}, { merchant: "bistro" });
+      applier.now({ merchant: "bistro" });
+      vi.advanceTimersByTime(TYPING_DELAY_MS * 2);
+      applier.change({}, { merchant: "corner" });
+      applier.cancel();
+      vi.advanceTimersByTime(TYPING_DELAY_MS * 2);
+      expect(applied.slice(3)).toEqual([["merchant=bistro", false]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives two drafts that show the same Transactions the same query", () => {
+    expect(shownQuery({ merchant: "corner " })).toBe("merchant=corner");
+    expect(shownQuery({ merchant: " corner" })).toBe(shownQuery({ merchant: "corner" }));
+    expect(shownQuery({ merchant: "corner bistro" })).toBe("merchant=corner+bistro");
+    expect(shownQuery({ merchant: "  ", category: "" })).toBe("");
+  });
+
   it("puts the filters in one row from 640 px, with the dates folded into one Dates control", () => {
     const form = (draft: Parameters<typeof TransactionFilterForm>[0]["draft"]) =>
       inRouter(
@@ -244,7 +327,7 @@ describe("the Transactions page", () => {
           draft,
           accounts: ACCOUNTS,
           onDraft: vi.fn(),
-          onShow: vi.fn(),
+          onApplyNow: vi.fn(),
           onClear: vi.fn(),
           today: TODAY,
         }),
@@ -256,7 +339,7 @@ describe("the Transactions page", () => {
     const dates = html.slice(html.indexOf('data-slot="dates">') + 'data-slot="dates">'.length);
     expect(dates).toMatch(/<details[^>]*><summary/);
     for (const name of ["from", "to", "month"]) expect(dates).toContain(`name="${name}"`);
-    expect(text(dates)).toBe("Dates Dates: Oct 2026 From To Month Show Clear the filters");
+    expect(text(dates)).toBe("Dates Dates: Oct 2026 From To Month Clear the filters");
     expect(text(form({}))).toContain("Dates: Any dates");
     // The control closes on Escape and on a click outside it.
     expect(dates).toMatch(/<details[^>]*>/);
@@ -265,7 +348,7 @@ describe("the Transactions page", () => {
         draft: {},
         accounts: ACCOUNTS,
         onDraft: vi.fn(),
-        onShow: vi.fn(),
+        onApplyNow: vi.fn(),
         onClear: vi.fn(),
         today: TODAY,
       }),
