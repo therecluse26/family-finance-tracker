@@ -460,7 +460,7 @@ describe("writing the Monthly review", () => {
     expect(await check(NOON)).toBe("written");
 
     expect(stub.calls.slice(-1)).toEqual([
-      { tier: "writer", modelId: "writer-model", maxOutputTokens: 16_000, effort: "medium" },
+      { tier: "writer", modelId: "writer-model", maxOutputTokens: 16_000 },
     ]);
     const prompt = stub.prompts.at(-1) ?? [];
     expect(JSON.stringify(prompt)).not.toContain("cacheControl");

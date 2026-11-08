@@ -279,7 +279,7 @@ describe("Redraft Proposals", () => {
       stub.reply = reply();
       expect(await runWaitingTailoring()).toBe(1);
       expect(stub.calls).toEqual([
-        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000, effort: "medium" },
+        { tier: "writer", modelId: "writer-model", maxOutputTokens: 8_000 },
       ]);
       expect(promptTheModelRead(stub)).toContain("This run: a redraft of the flexible Budgets.");
       const restaurants = await figureOf("Restaurants");

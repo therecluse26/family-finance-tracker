@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as z from "zod";
 import { readAiRedo, readAiRetry } from "../db/index.ts";
 import { createLogger } from "../log.ts";
-import type { AiProviderName, AiSettingsInput } from "./ai-view.ts";
+import {
+  type AiProviderName,
+  type AiSettingsInput,
+  DEFAULT_MODELS,
+  type TierModels,
+} from "./ai-view.ts";
 import { type AiCost, aiCost } from "./cost.ts";
 import { BAD_REPLIES_IN_A_ROW, generateBatch, householdAi } from "./household-ai.ts";
 import { type AiCall, batchReply, buildPrompt } from "./prompt.ts";
@@ -70,21 +75,25 @@ describe("an AI call", () => {
     },
   });
 
-  const settingsFor = (provider: AiProviderName): AiSettingsInput => ({
+  const settingsFor = (
+    provider: AiProviderName,
+    models: TierModels = { quick: "quick-model", writer: "writer-model" },
+  ): AiSettingsInput => ({
     provider,
     apiKey: newAiKey(),
     baseUrl: provider === "openai-compatible" ? "http://ollama.local:11434/v1" : null,
-    quickModel: "quick-model",
-    writerModel: "writer-model",
+    quickModel: models.quick,
+    writerModel: models.writer,
     prices: { quick: PRICE, writer: PRICE },
   });
 
   async function connect(
     provider: AiProviderName = "anthropic",
     makeModels: AiModelMaker = stub.makeModels,
+    models?: TierModels,
   ) {
     const settings = aiSettings(options(makeModels));
-    expect(await settings.save(settingsFor(provider))).toMatchObject({
+    expect(await settings.save(settingsFor(provider, models))).toMatchObject({
       saved: true,
     });
     return { ai: householdAi(options(makeModels)), settings };
@@ -316,6 +325,7 @@ describe("an AI call", () => {
 
   describe("reply limits and effort", () => {
     // Spec 08, Limits on each call and Effort. Quick batches and the Merchant lookup send no effort.
+    // The models are in the app's price table, so each use that has an effort sends it.
     it.each([
       [{ use: "category fix", task: TASK, batch: [{ amount: 1 }] }, 12_000, undefined],
       [{ use: "merchant cleanup", task: TASK, batch: [{ amount: 1 }] }, 12_000, undefined],
@@ -334,7 +344,7 @@ describe("an AI call", () => {
     ] as [AiCall, number, string | undefined][])(
       "gives %j a limit of %i reply tokens and effort %s",
       async (call, limit, effort) => {
-        const { ai } = await connect();
+        const { ai } = await connect("anthropic", stub.makeModels, DEFAULT_MODELS.anthropic);
 
         expect(await ai.generate(call)).toMatchObject({ ready: true });
 
@@ -362,7 +372,11 @@ describe("an AI call", () => {
     ] as [AiProviderName, Record<string, unknown>][])(
       "sends %s the effort under its own option name only",
       async (provider, sent) => {
-        const { ai } = await connect(provider, makeFetchModels(capture.fetch));
+        const { ai } = await connect(
+          provider,
+          makeFetchModels(capture.fetch),
+          DEFAULT_MODELS[provider],
+        );
 
         await ai.generate({ use: "insight cards", summary: SUMMARY, task: "Cards." });
         expect(effortFields(capture.requests.at(-1)?.body)).toEqual(sent);
@@ -372,8 +386,30 @@ describe("an AI call", () => {
       },
     );
 
+    // A model with only a Member's price may refuse the option, and its AI provider the whole call.
+    it.each([
+      ["anthropic", { quick: "claude-haiku-4-5", writer: "claude-sonnet-4-5" }],
+      ["openai", { quick: "gpt-4.1-mini", writer: "gpt-4o" }],
+      ["openrouter", { quick: "openai/gpt-4.1-mini", writer: "openai/gpt-4o" }],
+    ] as [AiProviderName, TierModels][])(
+      "sends %s no effort for a model with only a Member's price",
+      async (provider, models) => {
+        const { ai } = await connect(provider, makeFetchModels(capture.fetch), models);
+
+        for (const [call, model] of [
+          [{ use: "insight cards", summary: SUMMARY, task: "Cards." }, models.writer],
+          [{ use: "chat", summary: SUMMARY, task: "Answer." }, models.writer],
+          [{ use: "reading a goal", task: "Read." }, models.quick],
+        ] satisfies [AiCall, string][]) {
+          expect(await ai.generate(call)).toMatchObject({ ready: true });
+          expect(capture.requests.at(-1)?.body).toMatchObject({ model });
+          expect(effortFields(capture.requests.at(-1)?.body)).toEqual({});
+        }
+      },
+    );
+
     it("keeps OpenAI's explicit cache mode beside the effort on a one-shot prompt", async () => {
-      const { ai } = await connect("openai", makeFetchModels(capture.fetch));
+      const { ai } = await connect("openai", makeFetchModels(capture.fetch), DEFAULT_MODELS.openai);
 
       await ai.generate({ use: "monthly review", summary: SUMMARY, task: "Review." });
 

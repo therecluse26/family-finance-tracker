@@ -253,8 +253,9 @@ describe("the demo Household through every AI use", () => {
       provider: "anthropic",
       apiKey: newAiKey(),
       baseUrl: null,
-      quickModel: "quick-model",
-      writerModel: "writer-model",
+      // Both models are in the app's price table, so each use that has an effort sends it.
+      quickModel: "claude-haiku-5-5",
+      writerModel: "claude-sonnet-5-5",
       prices: { quick: PRICE, writer: PRICE },
     });
     expect(saved).toMatchObject({ saved: true });

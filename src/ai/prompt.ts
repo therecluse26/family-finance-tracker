@@ -1,6 +1,6 @@
 import type { JSONValue, ModelMessage, TextPart } from "ai";
 import * as z from "zod";
-import { type ModelUse, USE_TIERS } from "./ai-view.ts";
+import { type AiUse, type ModelUse, USE_TIERS } from "./ai-view.ts";
 import type { TypedValue } from "./typed.ts";
 import { FIXED_RULES } from "./voice.ts";
 
@@ -109,8 +109,9 @@ const ALERT_TOKENS = 1_000;
 const ALERT_CALL_TOKENS = 4_000;
 
 // Spec 08, Effort: how much each use's model thinks before it answers, sent on every call of the
-// use. A model that thinks by default spends its thinking from the reply limit. Quick batches and
-// the Merchant lookup send none, and keep each model's own default.
+// use to a model in the app's price table (src/ai/call.ts). A model that thinks by default spends
+// its thinking from the reply limit. Quick batches and the Merchant lookup send none, and keep each
+// model's own default.
 export type Effort = "low" | "medium";
 export const EFFORT: Record<ModelUse, Effort | undefined> = {
   "category fix": undefined,
@@ -126,11 +127,14 @@ export const EFFORT: Record<ModelUse, Effort | undefined> = {
   chat: "low",
 };
 
-// The effort under each AI provider package's own option name, from its installed types: Anthropic
-// sends it as output_config.effort, OpenAI's Chat Completions as reasoning_effort, and OpenRouter
-// as reasoning.effort. Each package reads only its own key. An OpenAI-compatible endpoint reads
-// none of these, so it gets nothing.
-function effortOptions(effort: Effort) {
+// A use's effort under each AI provider package's own option name, from its installed types:
+// Anthropic sends it as output_config.effort, OpenAI's Chat Completions as reasoning_effort, and
+// OpenRouter as reasoning.effort. Each package reads only its own key. An OpenAI-compatible
+// endpoint reads none of these, so it gets nothing. Undefined for a use that sends none, and for
+// the check on save and the key test.
+export function effortOptions(use: AiUse): Record<string, Record<string, JSONValue>> | undefined {
+  const effort = Object.hasOwn(EFFORT, use) ? EFFORT[use as ModelUse] : undefined;
+  if (effort === undefined) return undefined;
   return {
     anthropic: { effort },
     openai: { reasoningEffort: effort },
@@ -420,22 +424,8 @@ export function buildPrompt(call: AiCall<unknown>): BuiltPrompt {
     system: FIXED_RULES,
     messages,
     maxOutputTokens: replyTokens(call),
-    providerOptions: callOptions(call.use, markAfter === undefined),
+    providerOptions: markAfter === undefined ? NO_AUTOMATIC_CACHE : undefined,
   };
-}
-
-// The call's provider options: its use's effort, and for a one-shot prompt, OpenAI's explicit
-// cache mode. Undefined when it has neither.
-function callOptions(
-  use: ModelUse,
-  oneShot: boolean,
-): Record<string, Record<string, JSONValue>> | undefined {
-  const effort = EFFORT[use];
-  if (effort === undefined) return oneShot ? NO_AUTOMATIC_CACHE : undefined;
-  const options = effortOptions(effort);
-  return oneShot
-    ? { ...options, openai: { ...options.openai, ...NO_AUTOMATIC_CACHE.openai } }
-    : options;
 }
 
 // Whether the answers hold each row of a batch of `rows` once.
