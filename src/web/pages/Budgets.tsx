@@ -8,6 +8,7 @@ import { api } from "../api.ts";
 import { browserZone } from "../browser-zone.ts";
 import {
   acceptAll,
+  averageLine,
   type BudgetRow,
   type BudgetRows,
   type BudgetStatusShown,
@@ -166,7 +167,7 @@ function FollowTheBill(props: {
   );
 }
 
-// One row: the Category, its Spending and status, a meter of Spending against the Budget, and the
+// One row: the Category, its Spending, its average Spending, and its status, a meter of Spending against the Budget, and the
 // Budget's box. From 640 px the four sit in a line, as on the board; on a phone the meter and the
 // box each take a line under the Category, and a Category with no Budget drops its empty meter. A
 // Category with no Budget says "no Budget" under its Spending, and its box is empty.
@@ -177,6 +178,8 @@ function BudgetLine(props: {
   category: string;
   spending: number;
   spent: string;
+  // The Category's average Spending, as averageLine words it, or undefined with none.
+  average: string | undefined;
   budget: MonthBudgetView | undefined;
   today: number | undefined;
   facts: ReactNode;
@@ -201,6 +204,11 @@ function BudgetLine(props: {
       </div>
       <div className="col-start-2 row-start-1 flex flex-col items-end gap-1 text-right sm:col-start-4 sm:items-start sm:text-left">
         <span className="tabular-nums">{props.spent}</span>
+        {props.average === undefined ? null : (
+          <span className="text-small text-muted tabular-nums" data-slot="average">
+            {props.average}
+          </span>
+        )}
         {budget === undefined ? (
           <span className="text-small text-muted">no Budget</span>
         ) : (
@@ -247,6 +255,7 @@ export function BudgetRowItem(props: {
       category={row.category}
       spending={row.spending}
       spent={`${wholeDollars(row.spending)} spent`}
+      average={averageLine(row.category, row.average)}
       budget={budget}
       today={flexible ? props.monthGone : undefined}
       facts={
@@ -271,6 +280,8 @@ export function BudgetRowItem(props: {
 // passed. It is never On pace (spec 05, Yearly Budgets). Its tick is the share of the year.
 export function YearlyBudgetItem(props: {
   budget: MonthBudgetView;
+  // The Category's average Spending per month, or undefined with none.
+  average?: number | undefined;
   state: RowState;
   actions: BudgetActions;
 }) {
@@ -280,6 +291,7 @@ export function YearlyBudgetItem(props: {
       category={budget.category}
       spending={budget.spending}
       spent={`${wholeDollars(budget.spending)} spent this year`}
+      average={averageLine(budget.category, props.average)}
       budget={budget}
       today={budget.shareOfYear ?? undefined}
       facts={
@@ -507,6 +519,7 @@ export function BudgetsReport(props: {
               <YearlyBudgetItem
                 key={budget.category}
                 budget={budget}
+                average={view.averages?.[budget.category]}
                 state={stateOf(budget.category)}
                 actions={actions}
               />

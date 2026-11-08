@@ -83,6 +83,7 @@ const travel = budget("Travel", "Leisure", {
 
 const VIEW: BudgetsView = {
   month: "2026-11",
+  averages: null,
   notice: null,
   fitNote: null,
   drafted: true,
@@ -360,6 +361,33 @@ describe("the Budgets page", () => {
       "Gifts and donations $50 spent no Budget Gifts and donations Budget per year Save",
     );
     expect(boxValue(html, "budget-gifts-and-donations")).toBe("");
+  });
+
+  it("shows each Category's average Spending under this month's, per year for a yearly Category", () => {
+    const html = report({
+      ...VIEW,
+      averages: {
+        Groceries: 61_200,
+        Restaurants: 28_049,
+        Travel: 15_000,
+        "Gifts and donations": 0,
+      },
+    });
+    const sections = sectionsOf(html);
+    const words = (section: string, category: string) =>
+      sections[section]?.find((row) => row.category === category)?.words;
+
+    expect(words("Shopping", "Groceries")).toBe(
+      "Groceries $421 spent averages $612 a month no Budget Groceries Budget per month Save",
+    );
+    expect(words("Leisure", "Restaurants")).toContain("$210 spent averages $280 a month ◆");
+    expect(words("Yearly Budgets", "Travel")).toContain(
+      "$1,800 spent this year averages $1,800 a year ✓ On track",
+    );
+    expect(words("Other", "Gifts and donations")).toContain("$50 spent averages $0 a year");
+    // A Category the averages leave out, and every row with no history, show no average.
+    expect(words("Shopping", "Superstores")).not.toContain("averages");
+    expect(report(VIEW)).not.toContain('data-slot="average"');
   });
 
   it("gives a Category with no Budget its first Budget from its empty box", async () => {

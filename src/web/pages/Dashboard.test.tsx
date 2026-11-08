@@ -109,6 +109,7 @@ const group = (
 // stay out of the big number.
 const BUDGETS: BudgetsView = {
   month: "2026-10",
+  averages: null,
   notice: null,
   fitNote: null,
   drafted: true,

@@ -64,7 +64,14 @@ describe("the Budget route", () => {
   it("has no Budget before the first draft", async () => {
     const view = await budgets("2026-11");
 
-    expect(view).toMatchObject({ month: "2026-11", notice, drafted: false, budgets: [] });
+    // With no history, no Category has an average.
+    expect(view).toMatchObject({
+      month: "2026-11",
+      notice,
+      drafted: false,
+      budgets: [],
+      averages: null,
+    });
     expect(view.groups.map(({ categoryGroup }) => categoryGroup)).toEqual([
       "Bills",
       "Shopping",

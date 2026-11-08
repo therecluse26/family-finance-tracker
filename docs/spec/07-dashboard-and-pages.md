@@ -235,6 +235,8 @@ Using this page is never required.
 ### Budgets page
 
 - Every Category grouped by Category group, with this month's Spending, its Budget, and its status. Yearly Budgets have their own section at the end.
+- Under this month's Spending, each Category shows its average Spending: "averages $612 a month". It is A(c), the Spending over the history window ÷ n ([Formula terms](05-budgets-benchmarks-goals.md#formula-terms)). A yearly Category shows 12 times it: "averages $1,800 a year". With no complete month of history, no average shows.
+- A Category with no Budget shows "no Budget" and an empty Budget box. A Member's amount there is its first Budget.
 - A Member edits any Budget here. Each Bills Budget has a "Follow the bill" switch. "Accept all" accepts the whole draft with one click. The rules for each are in [Budgets, Benchmarks, and Goals](05-budgets-benchmarks-goals.md).
 - Each Bills Budget shows its Benchmark context, as in "A usual month".
 

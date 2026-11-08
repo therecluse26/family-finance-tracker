@@ -5,10 +5,16 @@ import {
   budgetsForMonth,
   editBudget,
   followTheBill,
+  historyWindow,
   YEARLY_CATEGORIES,
 } from "../budgets/index.ts";
-import { CATEGORY_GROUPS, type Category, categoryGroupOf } from "../categories/index.ts";
-import type { Database } from "../db/index.ts";
+import {
+  CATEGORIES,
+  CATEGORY_GROUPS,
+  type Category,
+  categoryGroupOf,
+} from "../categories/index.ts";
+import { type Database, readHistoryStart } from "../db/index.ts";
 import { totalsByMonth } from "../money-movement/index.ts";
 import type { BudgetRoutes, UsualMonthView } from "./budgets-views.ts";
 import { median, monthsBefore } from "./usual.ts";
@@ -53,6 +59,27 @@ async function usualMonth(database: Database, month: string): Promise<UsualMonth
   return { usual: median(complete.map(spendingIn)), groups };
 }
 
+// Each Category's average Spending per month in the history window before `month`, A(c) (spec 05,
+// Formula terms): its Spending over the window ÷ n, in whole cents, and never below $0. Null with
+// no complete month of history (n = 0).
+async function averageSpending(
+  database: Database,
+  month: string,
+): Promise<Record<string, number> | null> {
+  const window = new Set(historyWindow(month, await readHistoryStart(database)));
+  if (window.size === 0) return null;
+  const sums = new Map<Category, number>(CATEGORIES.map(({ name }) => [name, 0]));
+  for (const { month: each, byCategory } of await totalsByMonth(database)) {
+    if (!window.has(each)) continue;
+    for (const [category, spent] of Object.entries(byCategory) as [Category, number][]) {
+      sums.set(category, (sums.get(category) ?? 0) + spent);
+    }
+  }
+  return Object.fromEntries(
+    [...sums].map(([category, sum]) => [category, Math.max(0, Math.round(sum / window.size))]),
+  );
+}
+
 // Each monthly Budget's Benchmark context line, by Category (spec 05, Context for Bills Budgets).
 // Only a Bills Budget has a context Benchmark, so the Benchmarks are read only when one is in
 // effect.
@@ -90,8 +117,10 @@ export function budgetRoutes(database: Database): BudgetRoutes {
       );
       const spending = await budgetSpending(database, month, budgets);
       const context = await contextLines(database, budgets);
+      const averages = await averageSpending(database, month);
       return {
         month,
+        averages,
         notice: notice ?? null,
         fitNote: fitNote ?? null,
         drafted,

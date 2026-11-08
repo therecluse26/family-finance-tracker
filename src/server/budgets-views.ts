@@ -54,6 +54,10 @@ export type BudgetsView = {
   // Each Category's Budget in effect that month, in Category list order. A Category with no Budget
   // is left out. Empty before the first draft's month.
   budgets: MonthBudgetView[];
+  // Each Category's average Spending per month, A(c) (spec 05, Formula terms): its Spending over
+  // the history window ÷ n, in whole cents, for every Category. Null with no complete month of
+  // history. The page shows it beside the month's Spending, so a Budget can be set early in a month.
+  averages: Record<string, number> | null;
   // Each Category with Spending that month and no Budget. It has no status.
   unbudgeted: {
     category: string;
