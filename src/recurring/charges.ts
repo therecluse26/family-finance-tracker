@@ -34,6 +34,7 @@ import {
   amountOn,
   continueKept,
   factsOf,
+  type KeptCharge,
   MASKED_CHARGE_RULE,
   type PriceChange,
   priceChangesIn,
@@ -257,6 +258,13 @@ export async function findRecurringCharges(
     }
     return owned;
   };
+  const prepared: {
+    charge: StoredRecurringCharge;
+    merchant: Merchant;
+    kept: KeptCharge;
+    added: SeriesTxn[];
+    removed: Set<string>;
+  }[] = [];
   for (const charge of kept) {
     const merchant = merchantOfStored(charge);
     const stillShown = (entry: StoredRecurringCharge["priceHistory"][number]): SeriesTxn[] => {
@@ -282,24 +290,54 @@ export async function findRecurringCharges(
       gone.push(charge.id);
       continue;
     }
-    const removed = new Set(charge.removedByHand);
-    const candidates = (merchants.get(groupOf(merchant))?.txns ?? []).filter(
-      (txn) => !claimed.has(txn.id) && !removed.has(txn.id),
-    );
     const schedule: ChargeSchedule =
       charge.schedule === "monthly"
         ? { fixedDay: fixedDayOf(members.map((txn) => txn.date)) }
         : charge.schedule;
-    const owned = ownedByOthers(groupOf(merchant), merchant);
-    const series = continueKept(
-      {
+    prepared.push({
+      charge,
+      merchant,
+      kept: {
         schedule,
         members,
         priceChanges: memberChanges(charge),
         band: charge.priceBand ?? undefined,
       },
-      candidates,
-      (txn) => owned.has(txn.id),
+      added,
+      removed: new Set(charge.removedByHand),
+    });
+  }
+  const candidatesOf = (each: (typeof prepared)[number]) =>
+    (merchants.get(groupOf(each.merchant))?.txns ?? []).filter(
+      (txn) => !claimed.has(txn.id) && !each.removed.has(txn.id),
+    );
+  // Each kept one's own continuation at its own amount, with no price change, from the same
+  // Transactions, so the order of the kept ones changes nothing. Another kept one's price change
+  // never takes these, so 2 edited series never merge (spec 06, Kept by hand).
+  const keptOwners = new Map<string, Set<string>>();
+  for (const each of prepared) {
+    const own = continueKept(
+      each.kept,
+      candidatesOf(each),
+      () => true,
+      today,
+      ruleOf(each.merchant),
+    );
+    for (const txn of own.txns) {
+      const owners = keptOwners.get(txn.id) ?? new Set();
+      owners.add(each.charge.id);
+      keptOwners.set(txn.id, owners);
+    }
+  }
+  for (const each of prepared) {
+    const { charge, merchant, added } = each;
+    const owned = ownedByOthers(groupOf(merchant), merchant);
+    const ownedByOther = (txn: SeriesTxn) =>
+      owned.has(txn.id) || [...(keptOwners.get(txn.id) ?? [])].some((id) => id !== charge.id);
+    const series = continueKept(
+      each.kept,
+      candidatesOf(each),
+      ownedByOther,
       today,
       ruleOf(merchant),
     );
@@ -343,7 +381,8 @@ export async function findRecurringCharges(
     await followUpAgain(database, again);
     // The cascade chooses their Categories again now, so the steps after the checks in this job
     // read the new ones (spec 04, Re-runs). Step 2 answers with no AI call. One that needs the AI
-    // waits for the follow-up job.
+    // waits for the next follow-up job with no Category, and so does each one after it by date: the
+    // steps after the checks in this job see it with none.
     await clearCascadeCategories(database, again);
     const dateOf = (id: string) => posted.get(id)?.date ?? "";
     await categorize(

@@ -319,6 +319,27 @@ describe("a Member's edits to a Recurring charge", () => {
     });
   });
 
+  it("never lists a Transaction in an ended Recurring charge among the charges to add", async () => {
+    await sync(
+      ...[0, 1, 2, 3].map((at) => masked(`a${at}`, addMonths("2026-07-05", at), 2_500)),
+      ...[0, 1, 2, 3].map((at) => masked(`b${at}`, addMonths("2026-07-20", at), 4_500)),
+      masked("one-off", "2026-09-12", 1_234),
+    );
+    const all = await charges();
+    const a = all.find((each) => each.latestAmount === 2_500);
+    const b = all.find((each) => each.latestAmount === 4_500);
+    if (a === undefined || b === undefined) throw new Error("Expected 2 Recurring charges.");
+    const listed = async () => {
+      const page = await chargeCandidates(bank.database, a.id);
+      if (page === undefined || typeof page === "string") throw new Error("No page.");
+      return providerIds(page.candidates.map((each) => each.transactionId));
+    };
+    expect(await listed()).toEqual(["b3", "b2", "one-off", "b1", "b0"]);
+
+    await endCharge(bank.database, b.id, MEMBER, now);
+    expect(await listed()).toEqual(["one-off"]);
+  });
+
   it("lists the charges to add a page at a time: removed ones first, then 50, newest first, at one amount", async () => {
     // Privacy.com lines at other amounts, one a day back from Oct 31, and 3 at $12.34.
     const lines = Array.from({ length: 130 }, (_, at) => {
@@ -483,30 +504,56 @@ describe("a Member's edits to a Recurring charge", () => {
     expect(await chosen("a4")).toBe("Hobbies (hand-set)");
   });
 
-  it.each([
+  // Two Privacy.com series: A at $25 from Jul 5, and B at $45 from 0, 1 or 2 days later. One of
+  // them stops after Oct while the other goes on. The one that stops is named, or both are, and
+  // either A or B stops, so the edited ones are checked in both orders.
+  const MERGE_CASES = [
     ["on the same day", "2026-07-05"],
     ["a day apart", "2026-07-06"],
     ["2 days apart", "2026-07-07"],
-  ])(
-    "never takes another masked series' charges as a price change once named, %s",
-    async (_, from) => {
+  ].flatMap(([apart, from]) =>
+    (["A", "B"] as const).flatMap((stops) =>
+      (["the one that stops", "both"] as const).map(
+        (names) =>
+          [`${apart}, ${stops} stops, ${names} named`, { from: from ?? "", stops, names }] as const,
+      ),
+    ),
+  );
+  it.each(MERGE_CASES)(
+    "never takes another masked series' charges as a price change: %s",
+    async (_, { from, stops, names }) => {
       now = new Date("2027-01-20T14:00:00.000Z");
-      const a = [0, 1, 2, 3].map((at) => masked(`a${at}`, addMonths("2026-07-05", at), 2_500));
+      const a = [0, 1, 2, 3, 4, 5, 6].map((at) =>
+        masked(`a${at}`, addMonths("2026-07-05", at), 2_500),
+      );
       const b = [0, 1, 2, 3, 4, 5, 6].map((at) => masked(`b${at}`, addMonths(from, at), 4_500));
-      await sync(...a, ...b.slice(0, 4));
-      const named = (await charges()).find((each) => each.latestAmount === 2_500);
-      edited(await editCharge(bank.database, named?.id ?? "", { name: "Visible Wireless" }, now));
+      const [stopping, going] = stops === "A" ? [a, b] : [b, a];
+      const amountOf = (txns: TxnRecord[]) => -(txns[0]?.amount ?? 0);
+      await sync(...a.slice(0, 4), ...b.slice(0, 4));
+      const byAmount = async (txns: TxnRecord[]) => {
+        const found = (await charges()).find((each) => each.latestAmount === amountOf(txns));
+        if (found === undefined) throw new Error("Expected the series' Recurring charge.");
+        return found;
+      };
+      const stopped = await byAmount(stopping);
+      const goes = await byAmount(going);
+      edited(await editCharge(bank.database, stopped.id, { name: "Visible Wireless" }, now));
+      if (names === "both") {
+        edited(await editCharge(bank.database, goes.id, { name: "Streaming" }, now));
+      }
       await runAsked();
 
-      await sync(...b.slice(4));
+      await sync(...going.slice(4));
       const after = await charges();
-      const visible = after.find((each) => each.id === named?.id);
-      const other = after.find((each) => each.id !== named?.id);
+      const stoppedAfter = after.find((each) => each.id === stopped.id);
+      const goesAfter = after.find((each) => each.id === goes.id);
       expect(after).toHaveLength(2);
-      expect(visible?.status).toBe("inactive");
-      expect(await members(visible)).toEqual(["a0 2500", "a1 2500", "a2 2500", "a3 2500"]);
-      expect(other?.status).toBe("active");
-      expect(await members(other)).toEqual(b.map((txn) => `${txn.id} 4500`));
+      expect(stoppedAfter?.status).toBe("inactive");
+      expect(await members(stoppedAfter)).toEqual(
+        stopping.slice(0, 4).map((txn) => `${txn.id} ${amountOf(stopping)}`),
+      );
+      expect(goesAfter?.status).toBe("active");
+      expect(await members(goesAfter)).toEqual(going.map((txn) => `${txn.id} ${amountOf(going)}`));
     },
   );
 

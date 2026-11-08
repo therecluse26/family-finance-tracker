@@ -79,7 +79,7 @@ A Member may edit a Recurring charge on the [Recurring charges page](07-dashboar
 **Kept by hand.** A Recurring charge with any Member edit keeps it through every check after:
 
 - The checks never delete, merge or split it, and never drop a Transaction in it. They never re-add a removed one.
-- They still add each new Transaction that fits, on an expected date that has none. A price change of 2 in a row never takes a Transaction that another of the Merchant's series takes with 2 of its own before it, so it never merges another series.
+- They still add each new Transaction that fits, on an expected date that has none. A price change of 2 in a row never takes a Transaction that another of the Merchant's series takes with 2 of its own before it, or that another edited one takes at its own amount, so it never merges another series.
 - An added Transaction leaves only when it is hidden, such as removed by the bank.
 - Inactive and ended still apply.
 - A Transaction that leaves the Recurring charge, or joins one with a Member's Category, goes through the cascade again in the same follow-up job, before the steps after the checks read it.
