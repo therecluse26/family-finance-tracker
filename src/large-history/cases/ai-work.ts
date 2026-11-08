@@ -33,6 +33,7 @@ const charsOf = (messages: StubMessage[]) =>
 
 const insightCards = JSON.stringify({
   cards: [1, 2, 3, 4].map((n) => ({
+    check: `Topic ${n}: ${n} this month.`,
     group: "heads_up",
     about: `Topic ${n}`,
     figure: n,
