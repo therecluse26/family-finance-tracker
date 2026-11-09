@@ -213,6 +213,10 @@ Small items left open after the T107 notes triage, for after the first release (
 - N313 (S, polish) The one-Merchant bench row's label reads `&merchant=` with no key. In: src/large-history/cases/reports-merchants.ts.
 - N314 (S, polish) Top Merchants rows do not link to the Merchants report with their Merchant set. In: src/web/pages/TopMerchants.tsx.
 
+## Amazon orders
+
+- N315 (L, feature) Link Amazon orders to their Transactions, so a Transaction shows its items and can split into Category parts by item. Owner request, 2026-11-09. Source: the owner's Amazon "Request Your Data" export, uploaded as a file on a new import page; no Amazon sign-in and no new dependency. Spike result, 2026-11-09: `amazon-orders` 5.3.0 (MIT, plain HTTP) failed at sign-in with Amazon's JavaScript challenge, so it needs Playwright and Chromium; the owner judged that a worse experience than a file import. Check a real export first: its file names, columns (order ID, order date, ship date, item name, quantity, unit price, tax, total owed, payment type) and the refunds file. Match each shipment to a card Transaction by amount and a window of days after the ship date; unsure matches go to the Review list. A re-import of an overlapping export adds nothing twice. Item names reach the AI provider. In: new `src/amazon/`, an import page, spec 02 or a new spec section.
+
 ## Backups, export, jobs and start-up
 
 - N12 (S, polish) A job cut off by a stop can wait about an hour to run again (Sidequest's stale-job defaults); meets the spec, check the timing. In: src/jobs/sidequest.ts.
