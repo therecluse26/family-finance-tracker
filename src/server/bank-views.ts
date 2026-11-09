@@ -96,6 +96,8 @@ export type TransactionQuery = {
   to?: string;
   // The Merchant's clean name.
   merchant?: string;
+  // The provider's Merchant ID, matched exactly.
+  merchantId?: string;
   // A Transaction shows when one of its parts has the type, the Category, and the month that are
   // set. A linked Refund or Reimbursement part has its Spending's Categories and month.
   type?: TransactionPartView["type"];

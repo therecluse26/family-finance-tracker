@@ -196,6 +196,23 @@ Small items left open after the T107 notes triage, for after the first release (
 - N270 (S, polish) A failed Household time-zone read hides a Settings page's times until the next page load, with no retry and no message. In: src/web/household-zone.ts.
 - N281 (S, polish) No test pins the 128 MiB `MAX_ZIP_ENTRY_BYTES` default. In: scripts/zip-table.ts.
 
+## Reports
+
+- N301 (S, polish) A report's range starts at the first posted date, but totals use the month of purchase, so a first Transaction bought Oct 31 and posted Nov 2 leaves October out of every range. In: src/server/reports.ts, src/db/budgets.ts (`readHistoryStart`).
+- N302 (S, polish) Spending over time's Budget line sums only monthly Budgets, but its bars include yearly-Budget Categories such as Travel, so a big Travel month sits far above the line. In: src/reports/spending.ts.
+- N303 (S, polish) "Change from the range before" and the usual line treat the history's first month differently, so they can be one month apart at the start of the history. In: src/reports/spending.ts.
+- N304 (S, polish) A "No Category yet" row with Spending only in the range before is dropped, so its change does not show. In: src/reports/spending.ts.
+- N305 (S, polish) Balances and debt reads a synced card's or loan's daily balances twice per request. In: src/server/reports-balances.ts.
+- N306 (S, polish) Credit use falls back to the Account's current credit limit when a day's saved row has none, not to the last saved limit. In: src/reports/balances.ts.
+- N307 (S, polish) The "No Account has this ID" state hides the Account filter, so it gives no way back to all Accounts. In: src/web/pages/reports/Balances.tsx.
+- N308 (S, polish) The test that keeps Unconnected accounts out of Cash on hand cannot fail on the connection check, because those Accounts are another kind. In: src/reports/balances.test.ts.
+- N309 (S, polish) Cash on hand and Debt drill down by month only, so the Transactions list also shows Excluded Accounts' Transactions. In: src/web/pages/reports/Balances.tsx.
+- N310 (S, polish) A linked Refund counts in its Spending's month on the Merchants report, but the Transactions page's `month` filter lists it in its own month, so the list may not add up to the bar. In: src/reports/merchants.ts, src/db/bank-data.ts.
+- N311 (S, polish) A Merchant group with no provider Merchant ID drills down by the words of its latest name, so names that differ only by punctuation ("Trader Joe's", "Trader Joes") can miss rows. In: src/web/pages/reports/merchant-words.ts.
+- N312 (S, polish) The Recurring report picks the year-ago payment by posted-date order but compares purchase dates, so near the cut-off day it can pick the wrong payment. In: src/reports/recurring.ts.
+- N313 (S, polish) The one-Merchant bench row's label reads `&merchant=` with no key. In: src/large-history/cases/reports-merchants.ts.
+- N314 (S, polish) Top Merchants rows do not link to the Merchants report with their Merchant set. In: src/web/pages/TopMerchants.tsx.
+
 ## Backups, export, jobs and start-up
 
 - N12 (S, polish) A job cut off by a stop can wait about an hour to run again (Sidequest's stale-job defaults); meets the spec, check the timing. In: src/jobs/sidequest.ts.

@@ -9,7 +9,7 @@ import { drillDownHref } from "./reports/drill-down.ts";
 import { ReportFrame } from "./reports/ReportFrame.tsx";
 
 // The Reports page's frame (spec 07, Reports): its range presets, its four sections, the shared
-// report card, and the drill-down links. The reports themselves are not built yet.
+// report card, and the drill-down links. Each report's own tests are in pages/reports/.
 
 const render = (path: string) => {
   const router = createMemoryRouter([{ path: "/reports", element: <Reports /> }], {
@@ -52,8 +52,8 @@ describe("the Reports page", () => {
       "Balances and debt",
       "Merchants and Recurring charges",
     ]);
-    // Spending over time, Cash flow and Balances and debt load their views after the page draws.
-    expect(html.match(/Coming soon/g)).toHaveLength(1);
+    // Every report loads its view after the page draws; none says "Coming soon".
+    expect(html).not.toContain("Coming soon");
   });
 
   it("offers the range presets as links that keep every other parameter", () => {

@@ -85,6 +85,7 @@ const transactionFilters = z
     from: z.string().regex(CALENDAR_DATE).optional(),
     to: z.string().regex(CALENDAR_DATE).optional(),
     merchant: z.string().max(200).optional(),
+    merchantId: z.string().max(200).optional(),
     category: z
       .string()
       .refine((name) => CATEGORY_NAMES.has(name))
@@ -344,7 +345,6 @@ const merchantsReportQuery = reportQuery.extend({
 });
 const REPORT_QUERY_REFUSED =
   'Choose a range of "3m", "12m", "24m" or "all", and a Category group from the list.';
-const REPORT_NOT_BUILT = "This report is not built yet.";
 
 // A split (spec 04, Splits): its parts, in whole cents spent, each with a Category.
 const splitBody = z.object({
@@ -1087,17 +1087,18 @@ export const api = new Hono<ServerEnv>()
     if (report === undefined) return c.json({ error: "Not found" }, 404);
     return c.json(report, 200);
   })
-  // Spending at the top Merchants, or at one.
+  // Spending at the top Merchants, or at one. A Merchant key that names no Merchant group gets an
+  // empty series.
   .get("/reports/merchants", async (c) => {
     const query = merchantsReportQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
-    return c.json({ error: REPORT_NOT_BUILT }, 501);
+    return c.json(await c.var.reports.merchants(query.data), 200);
   })
   // Recurring charges over time.
   .get("/reports/recurring", async (c) => {
     const query = reportQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
-    return c.json({ error: REPORT_NOT_BUILT }, 501);
+    return c.json(await c.var.reports.recurring(query.data), 200);
   })
   // The AI box, "This week" (spec 07, 1. AI box): every current note, in three groups.
   .get("/ai-box", async (c) => c.json(await c.var.aiBox.view()))

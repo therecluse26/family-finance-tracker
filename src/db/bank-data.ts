@@ -1122,6 +1122,9 @@ export type TransactionFilter = {
   to?: string;
   // A Member's search of the Merchant name the row shows (merchant-search.ts).
   merchant?: string;
+  // The provider's Merchant ID, matched exactly: one Merchant, as identity knows it (spec 04,
+  // Identity). The Reports page's drill-down sets it.
+  merchantId?: string;
   // A Transaction shows when one of its parts has the type, the Category, and the month, YYYY-MM,
   // each that is set. A part's month comes from the purchase date, else the posted date (spec 04,
   // Which month a Transaction counts in). A linked Refund or Reimbursement part has its Spending's
@@ -1154,6 +1157,7 @@ function filtered(database: Queries, filter: TransactionFilter): SQL[] {
   if (filter.from !== undefined) where.push(gte(transactions.postedDate, filter.from));
   if (filter.to !== undefined) where.push(lte(transactions.postedDate, filter.to));
   if (filter.merchant !== undefined) where.push(...merchantSearch(filter.merchant));
+  if (filter.merchantId !== undefined) where.push(eq(transactions.merchantId, filter.merchantId));
   const { type, category, month } = filter;
   if (type === undefined && category === undefined && month === undefined) return where;
   const spent = aliasedTable(transactions, "spent");

@@ -174,6 +174,8 @@ export function TransactionFilterForm(props: {
   onClear: () => void;
   // Today in the browser's zone, for the dates the "Dates" control shows.
   today: string;
+  // The name of the one Merchant a set `merchantId` names, when a listed row shows it.
+  merchantName?: string | undefined;
 }) {
   const { draft, onDraft } = props;
   const set = (name: keyof TransactionFilters) => (value: string) =>
@@ -285,6 +287,24 @@ export function TransactionFilterForm(props: {
         </details>
       </div>
       <div className="col-span-2 flex flex-wrap items-end gap-2">
+        {/* A Reports drill-down's one Merchant has no field of its own: it shows here, and its
+            button removes it. */}
+        {draft.merchantId === undefined ? null : (
+          <span
+            className="inline-flex h-[38px] items-center gap-1 rounded-full bg-line-soft pr-1 pl-3 text-sm font-semibold text-ink-soft"
+            data-slot="merchant-id-filter"
+          >
+            {props.merchantName ?? "One Merchant"}
+            <button
+              type="button"
+              aria-label="Remove the Merchant filter"
+              className="flex size-7 items-center justify-center rounded-full hover:bg-white focus-visible:outline-2 focus-visible:outline-accent"
+              onClick={() => onDraft({ ...draft, merchantId: undefined })}
+            >
+              ×
+            </button>
+          </span>
+        )}
         <button type="button" className={buttonClass("outlined")} onClick={props.onClear}>
           Clear the filters
         </button>
@@ -555,6 +575,7 @@ export function Transactions() {
           applier.now({});
         }}
         today={today}
+        merchantName={rows?.find((row) => row.merchant !== null)?.merchant ?? undefined}
       />
       <ErrorLine error={error} />
       {rows === undefined ? null : (

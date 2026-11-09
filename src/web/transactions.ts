@@ -27,6 +27,8 @@ export type TransactionFilters = {
   account?: string;
   category?: string;
   merchant?: string;
+  // The provider's Merchant ID, matched exactly, as the Reports page's drill-down sets it.
+  merchantId?: string;
   type?: TransactionType;
   from?: string;
   to?: string;
@@ -37,6 +39,7 @@ export const FILTER_NAMES = [
   "account",
   "category",
   "merchant",
+  "merchantId",
   "type",
   "from",
   "to",

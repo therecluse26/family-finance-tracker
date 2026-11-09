@@ -63,8 +63,3 @@ export function ReportFrame(props: {
     </Card>
   );
 }
-
-// A report that is not built yet.
-export function ComingSoon() {
-  return <p className="text-muted">Coming soon</p>;
-}

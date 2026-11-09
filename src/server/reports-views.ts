@@ -100,13 +100,85 @@ export type BalancesReportView = ReportFrameView & {
   loans: (BalancesReportAccount & { points: PrincipalPoint[] })[];
 };
 
-// Spending at the top Merchants, or at one Merchant group (R3).
+// Spending at the top Merchants, or at one Merchant group (R3). `merchant` is a Merchant group's
+// key, as Top Merchants gives it: "id <provider Merchant ID>" or "name <clean name key>".
 export type MerchantsReportQuery = { range: ReportRange; merchant?: string };
-export type MerchantsReportView = ReportFrameView;
+
+// One Merchant group's Spending in each month of the range, net of its Refunds and
+// Reimbursements, as Top Merchants counts it. `byMonth` follows `months`; `total` is their sum.
+export type MerchantSeriesView = {
+  key: string;
+  // The provider's Merchant ID of a group keyed by it, else null.
+  merchantId: string | null;
+  merchantName: string;
+  total: number;
+  byMonth: number[];
+};
+
+export type MerchantsReportView = ReportFrameView & {
+  // The Merchant group the filter names, or null for the top 10.
+  merchant: string | null;
+  // What the filter offers: the top 10 Merchant groups, then the one it names when that is not
+  // among them.
+  choices: { key: string; merchantName: string }[];
+  // The top 10, most Spending first; or the one group the filter names; or none for a key that
+  // names no group in the range.
+  series: MerchantSeriesView[];
+  // With one group: the median of its months in the range, its usual month. Else null.
+  usual: number | null;
+};
 
 // Recurring charges over time (R3).
 export type RecurringReportQuery = { range: ReportRange };
-export type RecurringReportView = ReportFrameView;
+
+// One Recurring charge's payments in each month of the range, in whole cents spent. `name` is a
+// Member's name for it, else its Merchant's.
+export type RecurringSeriesView = {
+  id: string;
+  name: string;
+  // The charge's Merchant: the provider's Merchant ID, when it has one, and the clean name.
+  merchantId: string | null;
+  merchantName: string;
+  total: number;
+  byMonth: number[];
+};
+
+// A price change in the range, shown in the month of its date. `before` is the amount of the
+// charge's last payment before that date, or null with none.
+export type RecurringPriceChangeView = {
+  chargeId: string;
+  name: string;
+  merchantName: string;
+  month: string;
+  fromDate: string;
+  amount: number;
+  before: number | null;
+};
+
+// A Recurring charge's amount now and a year ago. `now` is null for an ended one; `yearAgo` is
+// null when it had no payment by that day; `change` is null when either is.
+export type RecurringChangeView = {
+  id: string;
+  name: string;
+  merchantName: string;
+  status: "active" | "inactive" | "ended";
+  now: number | null;
+  yearAgo: number | null;
+  change: number | null;
+};
+
+export type RecurringReportView = ReportFrameView & {
+  // The 8 charges with the most payments in the range, most first, each with its own colour.
+  charges: RecurringSeriesView[];
+  // Every other charge with a payment in the range, summed by month, and how many they are.
+  other: { count: number; byMonth: number[] };
+  // Every charge's payments, summed by month.
+  totals: number[];
+  // Oldest first.
+  priceChanges: RecurringPriceChangeView[];
+  // Each charge with a payment in the range, in the chart's order.
+  changes: RecurringChangeView[];
+};
 
 export type ReportRoutes = {
   // The months `range` covers on the Household's data: up to its current month, and from no
@@ -116,4 +188,6 @@ export type ReportRoutes = {
   cashFlow(query: CashFlowReportQuery, now?: Date): Promise<CashFlowReportView>;
   // Balances and debt. Undefined when no Account has the ID `account`.
   balances(query: BalancesReportQuery, now?: Date): Promise<BalancesReportView | undefined>;
+  merchants(query: MerchantsReportQuery, now?: Date): Promise<MerchantsReportView>;
+  recurring(query: RecurringReportQuery, now?: Date): Promise<RecurringReportView>;
 };

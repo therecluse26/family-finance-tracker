@@ -528,3 +528,54 @@ export async function moveOldPriceHistories(database: Database): Promise<void> {
       .where(ne(recurringCharges.oldPriceHistory, sql`'[]'`));
   });
 }
+
+// What the Reports page's Recurring charges report reads (spec 07, Reports), in 3 reads: every
+// Recurring charge; every payment, oldest first by posted date, which is each posted Transaction in
+// a charge that still shows, with its purchase date (else its posted date) and amount in whole
+// cents spent; and every price change. A Transaction a Member removed is no payment.
+export async function listRecurringReportRows(database: Queries): Promise<{
+  charges: Pick<
+    ChargeRow,
+    "id" | "name" | "merchantId" | "merchantName" | "status" | "latestAmount"
+  >[];
+  payments: { chargeId: string; date: string; postedDate: string; amount: number }[];
+  priceChanges: { chargeId: string; fromDate: string; amount: number; byHand: boolean }[];
+}> {
+  const charges = await database
+    .select({
+      id: recurringCharges.id,
+      name: recurringCharges.name,
+      merchantId: recurringCharges.merchantId,
+      merchantName: recurringCharges.merchantName,
+      status: recurringCharges.status,
+      latestAmount: recurringCharges.latestAmount,
+    })
+    .from(recurringCharges);
+  const payments = await database
+    .select({
+      chargeId: recurringChargeTransactions.chargeId,
+      date: sql<string>`coalesce(${transactions.authorizedDate}, ${transactions.postedDate})`,
+      postedDate: transactions.postedDate,
+      amount: recurringChargeTransactions.amount,
+    })
+    .from(recurringChargeTransactions)
+    .innerJoin(transactions, eq(transactions.id, recurringChargeTransactions.transactionId))
+    .where(
+      and(
+        sql`${recurringChargeTransactions.byHand} IS NOT 'removed'`,
+        eq(transactions.pending, false),
+        isNull(transactions.hiddenReason),
+      ),
+    )
+    .orderBy(asc(transactions.postedDate), asc(transactions.id));
+  const priceChanges = await database
+    .select({
+      chargeId: recurringChargePriceChanges.chargeId,
+      fromDate: recurringChargePriceChanges.fromDate,
+      amount: recurringChargePriceChanges.amount,
+      byHand: recurringChargePriceChanges.byHand,
+    })
+    .from(recurringChargePriceChanges)
+    .orderBy(asc(recurringChargePriceChanges.fromDate));
+  return { charges, payments, priceChanges };
+}

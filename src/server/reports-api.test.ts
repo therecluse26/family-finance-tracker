@@ -13,8 +13,7 @@ import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
 // The Reports routes (spec 07, Reports) through the app's HTTP interface, on a fake clock: Nov 7,
-// 2026. With no Household time zone yet, the date is UTC's. A report that is not built yet answers
-// a good query with 501.
+// 2026. With no Household time zone yet, the date is UTC's.
 
 const APP_URL = "http://nas.local:8080";
 const NOW = new Date("2026-11-07T17:00:00.000Z");
@@ -83,21 +82,6 @@ describe("the Reports routes", () => {
     for (const group of ["Groceries", "bills", "Everything", ""]) {
       const res = await browser.get(`/api/reports/spending?group=${encodeURIComponent(group)}`);
       expect(res.status).toBe(400);
-    }
-  });
-
-  it("answers 501 to a good query, with or without a range", async () => {
-    const built = ["/api/reports/spending", "/api/reports/cash-flow", "/api/reports/balances"];
-    const unbuilt = ROUTES.filter((route) => !built.includes(route));
-    const good = [
-      ...unbuilt,
-      ...unbuilt.map((route) => `${route}?range=3m`),
-      "/api/reports/merchants?range=12m&merchant=streamly",
-    ];
-    for (const route of good) {
-      const res = await browser.get(route);
-      expect(res.status).toBe(501);
-      expect(await res.json()).toEqual({ error: "This report is not built yet." });
     }
   });
 

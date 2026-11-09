@@ -589,6 +589,7 @@ export {
   type FoundRecurringCharge,
   listPostedSpending,
   listRecurringCharges,
+  listRecurringReportRows,
   listShownTransactionIds,
   markChargeTransaction,
   moveOldPriceHistories,

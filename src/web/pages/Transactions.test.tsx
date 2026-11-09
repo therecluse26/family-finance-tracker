@@ -241,6 +241,45 @@ describe("the Transactions page", () => {
     expect(text(html)).toContain("Everyday Checking ··1234");
   });
 
+  it("shows a Reports drill-down's one Merchant as a filter a Member can remove", () => {
+    expect(filtersOf(new URLSearchParams("merchantId=m-tj&month=2026-10"))).toEqual({
+      merchantId: "m-tj",
+      month: "2026-10",
+    });
+    expect(transactionsPath({ merchantId: "m-tj", month: "2026-10" })).toBe(
+      "/transactions?merchantId=m-tj&month=2026-10",
+    );
+    const onDraft = vi.fn();
+    const form = (merchantName?: string) =>
+      TransactionFilterForm({
+        draft: { merchantId: "m-tj", month: "2026-10" },
+        accounts: ACCOUNTS,
+        onDraft,
+        onApplyNow: vi.fn(),
+        onClear: vi.fn(),
+        today: TODAY,
+        merchantName,
+      });
+    const pill = (html: string) =>
+      text(/data-slot="merchant-id-filter"[^>]*>(.*?)<\/span>/s.exec(html)?.[1] ?? "");
+
+    expect(pill(inRouter(form("Trader Joe's")))).toBe("Trader Joe's ×");
+    expect(pill(inRouter(form()))).toBe("One Merchant ×");
+    expect(inRouter(form())).toContain('aria-label="Remove the Merchant filter"');
+    controlsOf(form()).buttons.get("×")?.();
+    expect(onDraft).toHaveBeenCalledWith({ merchantId: undefined, month: "2026-10" });
+    // With no Merchant ID set, there is no such filter.
+    const none = TransactionFilterForm({
+      draft: {},
+      accounts: ACCOUNTS,
+      onDraft,
+      onApplyNow: vi.fn(),
+      onClear: vi.fn(),
+      today: TODAY,
+    });
+    expect(inRouter(none)).not.toContain("merchant-id-filter");
+  });
+
   it("has no Show button: Enter in a typed field applies the filters at once", () => {
     const onApplyNow = vi.fn();
     const form = TransactionFilterForm({

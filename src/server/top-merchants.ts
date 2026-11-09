@@ -23,6 +23,19 @@ type Sum = {
   byCategory: Map<string, number>;
 };
 
+// The Merchant group a Spending, Refund or Reimbursement part counts in, as identity knows it, or
+// null for a part in no group: one with no Merchant, such as a paper check, or with no provider
+// Merchant ID and a clean name with no letter or digit. The Reports page groups the same way.
+export function merchantGroupOfPart(part: {
+  merchantId: string | null;
+  merchantName: string | null;
+}): { key: string; merchantName: string } | null {
+  if (part.merchantName === null) return null;
+  const merchant = { id: part.merchantId, name: part.merchantName };
+  if (merchant.id === null && merchantKey(merchant.name) === "") return null;
+  return { key: merchantGroupOf(merchant), merchantName: merchant.name };
+}
+
 // The Category that holds most of the Merchant's Spending; on a tie, the first by name.
 function categoryOf(byCategory: Map<string, number>): string | null {
   let found: { category: string; spending: number } | null = null;
@@ -46,14 +59,13 @@ export function topMerchantRoutes(database: Database): TopMerchantRoutes {
 
       const sums = new Map<string, Sum>();
       for (const part of await listSpendingPartsSince(database, from)) {
-        if (part.merchantName === null) continue;
-        const merchant = { id: part.merchantId, name: part.merchantName };
-        if (merchant.id === null && merchantKey(merchant.name) === "") continue;
-        const key = merchantGroupOf(merchant);
+        const group = merchantGroupOfPart(part);
+        if (group === null) continue;
+        const { key, merchantName } = group;
         let sum = sums.get(key);
         if (sum === undefined) {
           sum = {
-            merchantName: merchant.name,
+            merchantName,
             namedOn: part.date,
             spending: 0,
             transactions: new Set(),
@@ -61,7 +73,7 @@ export function topMerchantRoutes(database: Database): TopMerchantRoutes {
           };
           sums.set(key, sum);
         } else if (part.date > sum.namedOn) {
-          sum.merchantName = merchant.name;
+          sum.merchantName = merchantName;
           sum.namedOn = part.date;
         }
         // Spending is money out, so its parts are negative and a Refund's are positive.
