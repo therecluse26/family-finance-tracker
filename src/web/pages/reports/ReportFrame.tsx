@@ -18,6 +18,8 @@ export function ReportFrame(props: {
   table?: ReactNode;
   // Whether the table shows when the page first draws.
   initialTable?: boolean;
+  // What always shows under the chart and its table, such as a report's totals.
+  summary?: ReactNode;
 }) {
   const [asTable, setAsTable] = useState(props.initialTable ?? false);
   const headingId = `${props.id}-heading`;
@@ -52,6 +54,11 @@ export function ReportFrame(props: {
             {props.table}
           </div>
         </>
+      )}
+      {props.summary === undefined ? null : (
+        <div className="mt-4" data-slot="report-summary">
+          {props.summary}
+        </div>
       )}
     </Card>
   );

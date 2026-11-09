@@ -1071,13 +1071,13 @@ export const api = new Hono<ServerEnv>()
   .get("/reports/spending", async (c) => {
     const query = spendingReportQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
-    return c.json({ error: REPORT_NOT_BUILT }, 501);
+    return c.json(await c.var.reports.spending(query.data), 200);
   })
   // Cash flow: Income, Spending and Saving by month.
   .get("/reports/cash-flow", async (c) => {
     const query = reportQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
-    return c.json({ error: REPORT_NOT_BUILT }, 501);
+    return c.json(await c.var.reports.cashFlow(query.data), 200);
   })
   // Balances and total Debt over time, for every Account or one.
   .get("/reports/balances", async (c) => {

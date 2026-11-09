@@ -172,9 +172,12 @@ export {
 } from "./budget-tailoring.ts";
 export {
   type BudgetInputs,
+  type BudgetVersion,
+  budgetsInEffectAmong,
   countMonthStartFailure,
   type DraftAcceptance,
   listBudgetsInEffect,
+  listBudgetVersions,
   listSpendingTransactions,
   type MonthBudget,
   type MonthStart,

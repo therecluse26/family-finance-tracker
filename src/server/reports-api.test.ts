@@ -13,8 +13,8 @@ import { loadSecurity } from "./security-mode.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
 // The Reports routes (spec 07, Reports) through the app's HTTP interface, on a fake clock: Nov 7,
-// 2026. With no Household time zone yet, the date is UTC's. The reports are not built yet, so a
-// good query gets 501.
+// 2026. With no Household time zone yet, the date is UTC's. A report that is not built yet answers
+// a good query with 501.
 
 const APP_URL = "http://nas.local:8080";
 const NOW = new Date("2026-11-07T17:00:00.000Z");
@@ -87,10 +87,10 @@ describe("the Reports routes", () => {
   });
 
   it("answers 501 to a good query, with or without a range", async () => {
+    const unbuilt = ROUTES.slice(2);
     const good = [
-      ...ROUTES,
-      ...ROUTES.map((route) => `${route}?range=3m`),
-      "/api/reports/spending?range=all&group=Health%20and%20care",
+      ...unbuilt,
+      ...unbuilt.map((route) => `${route}?range=3m`),
       "/api/reports/balances?range=24m&account=acc-checking",
       "/api/reports/merchants?range=12m&merchant=streamly",
     ];
@@ -99,6 +99,21 @@ describe("the Reports routes", () => {
       expect(res.status).toBe(501);
       expect(await res.json()).toEqual({ error: "This report is not built yet." });
     }
+  });
+
+  it("answers Spending over time and Cash flow with their views, with or without a range", async () => {
+    for (const route of [
+      "/api/reports/spending",
+      "/api/reports/spending?range=all&group=Health%20and%20care",
+      "/api/reports/cash-flow?range=3m",
+    ]) {
+      const res = await browser.get(route);
+      expect(res.status).toBe(200);
+      // No posted Transaction yet: no months.
+      expect(await res.json()).toMatchObject({ months: [], bars: [] });
+    }
+    const spending = await (await browser.get("/api/reports/spending?group=Leisure")).json();
+    expect(spending).toMatchObject({ range: "12m", group: "Leisure", usual: null, rows: [] });
   });
 
   it("covers the months of a range from the first posted Transaction to the Household's month", async () => {

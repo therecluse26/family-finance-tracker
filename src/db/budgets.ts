@@ -154,11 +154,41 @@ async function newestRows(
       ),
     )
     .orderBy(desc(budgets.takesEffect), desc(budgets.id));
-  const newest = new Map<string, StoredBudget & { noBudget: boolean }>();
+  return newestIn(rows, month);
+}
+
+// A Budget row, or a row that ends a Category's Budget, as listBudgetVersions gives it.
+export type BudgetVersion = StoredBudget & { noBudget: boolean };
+
+// Each Category's newest row in `month` among `rows`, which run newest first: by the month or year
+// they take effect, then by ID.
+function newestIn(rows: readonly BudgetVersion[], month: string): Map<string, BudgetVersion> {
+  const newest = new Map<string, BudgetVersion>();
   for (const row of rows) {
-    if (!newest.has(row.category)) newest.set(row.category, row);
+    const from = row.period === "monthly" ? month : month.slice(0, 4);
+    if (row.takesEffect <= from && !newest.has(row.category)) newest.set(row.category, row);
   }
   return newest;
+}
+
+// Every Budget row, and every row that ends a Budget, newest first, so a report reads them once
+// for all its months and picks each month's with budgetsInEffectAmong.
+export async function listBudgetVersions(database: Queries): Promise<BudgetVersion[]> {
+  return database
+    .select({ ...BUDGET_COLUMNS, noBudget: budgets.noBudget })
+    .from(budgets)
+    .orderBy(desc(budgets.takesEffect), desc(budgets.id));
+}
+
+// Each Category's Budget in effect in `month` (YYYY-MM) among `versions`, from
+// listBudgetVersions. A Category whose newest row ends its Budget has none.
+export function budgetsInEffectAmong(
+  versions: readonly BudgetVersion[],
+  month: string,
+): StoredBudget[] {
+  return [...newestIn(versions, month).values()].flatMap(({ noBudget, ...row }) =>
+    noBudget ? [] : [row],
+  );
 }
 
 // Each Category's Budget in effect in `month` (YYYY-MM). A Category whose newest row ends its
@@ -167,9 +197,7 @@ export async function listBudgetsInEffect(
   database: Queries,
   month: string,
 ): Promise<StoredBudget[]> {
-  return [...(await newestRows(database, month)).values()].flatMap(({ noBudget, ...row }) =>
-    noBudget ? [] : [row],
-  );
+  return budgetsInEffectAmong([...(await newestRows(database, month)).values()], month);
 }
 
 // A Budget the formula sets for a month (spec 05, When the app drafts; Changing Budgets).

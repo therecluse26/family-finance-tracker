@@ -56,6 +56,7 @@ export {
 export {
   type Budget,
   budgetsForMonth,
+  budgetsForMonths,
   FIXED_COSTS_PASS_INCOME,
   type MonthBudgets,
 } from "./stored.ts";

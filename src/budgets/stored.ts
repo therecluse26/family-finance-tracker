@@ -8,8 +8,10 @@ import {
   isCategory,
 } from "../categories/index.ts";
 import {
+  budgetsInEffectAmong,
   type Database,
   listBudgetsInEffect,
+  listBudgetVersions,
   readBudgetInputs,
   readDraftAcceptance,
   type StoredBudget,
@@ -55,6 +57,33 @@ export type MonthBudgets = {
   groups: { categoryGroup: CategoryGroup; monthly: number; yearly: number }[];
 };
 
+// The stored Budgets of the Category list, in its order.
+function inListOrder(stored: readonly StoredBudget[]): Budget[] {
+  const budgets = stored
+    .filter((row): row is StoredBudget & { category: Category } => isCategory(row.category))
+    .map(budgetOf);
+  return budgets.sort((a, b) => LIST_ORDER.indexOf(a.category) - LIST_ORDER.indexOf(b.category));
+}
+
+// Each Category's Budget in each of `months`, each written YYYY-MM, by the rules of
+// budgetsForMonth: before the first draft's month there is none. It reads every Budget version
+// once, for a report over many months.
+export async function budgetsForMonths(
+  database: Database,
+  months: readonly string[],
+): Promise<Map<string, Budget[]>> {
+  const inputs = await readBudgetInputs(database);
+  const versions = inputs === undefined ? [] : await listBudgetVersions(database);
+  return new Map(
+    months.map((month) => [
+      month,
+      inputs === undefined || month < inputs.firstDraftMonth
+        ? []
+        : inListOrder(budgetsInEffectAmong(versions, month)),
+    ]),
+  );
+}
+
 // Each Category's Budget for `month`, written YYYY-MM. Before the first draft's month there is
 // none.
 export async function budgetsForMonth(database: Database, month: string): Promise<MonthBudgets> {
@@ -65,10 +94,7 @@ export async function budgetsForMonth(database: Database, month: string): Promis
     inputs === undefined || month < inputs.firstDraftMonth
       ? []
       : await listBudgetsInEffect(database, month);
-  const budgets = stored
-    .filter((row): row is StoredBudget & { category: Category } => isCategory(row.category))
-    .map(budgetOf);
-  budgets.sort((a, b) => LIST_ORDER.indexOf(a.category) - LIST_ORDER.indexOf(b.category));
+  const budgets = inListOrder(stored);
   const groups = CATEGORY_GROUPS.map(({ name }) => ({
     categoryGroup: name,
     monthly: 0,
