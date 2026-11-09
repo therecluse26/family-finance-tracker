@@ -95,9 +95,9 @@ describe("charts", () => {
         expect(off, `${tag} in ${path}`).toBe(true);
       }
     }
-    // The Dashboard's two, the balance chart, the pictures' two, and Spending over time and Cash
-    // flow on the Reports page.
-    expect(charts).toBeGreaterThanOrEqual(7);
+    // The Dashboard's two, the balance chart, the pictures' two, Spending over time and Cash flow,
+    // and Balances and debt's lines on the Reports page.
+    expect(charts).toBeGreaterThanOrEqual(8);
   });
 
   it("does not count a comment, and finds a chart under another name", () => {

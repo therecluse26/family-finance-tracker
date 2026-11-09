@@ -1083,7 +1083,9 @@ export const api = new Hono<ServerEnv>()
   .get("/reports/balances", async (c) => {
     const query = balancesReportQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
-    return c.json({ error: REPORT_NOT_BUILT }, 501);
+    const report = await c.var.reports.balances(query.data);
+    if (report === undefined) return c.json({ error: "Not found" }, 404);
+    return c.json(report, 200);
   })
   // Spending at the top Merchants, or at one.
   .get("/reports/merchants", async (c) => {

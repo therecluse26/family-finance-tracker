@@ -37,6 +37,7 @@ import {
   totalsByMonth,
 } from "../money-movement/index.ts";
 import type {
+  AccountDayEndsView,
   AccountView,
   BalanceQuery,
   BalancesView,
@@ -51,20 +52,62 @@ import { lastDayOf, median, monthsBefore } from "./usual.ts";
 // A Connection that needs a Member or is Broken does not poll (spec 02, Connections).
 const polls = (health: Health) => health === "healthy" || health === "retrying";
 
-// An Account's balance at the end of each day in `days`, oldest first: its last point on or before
-// that day, or undefined before its first point. `points` are oldest first.
+// An Account's balance at the end of each day in `days`, oldest first: its last point with a
+// balance on or before that day, with that point's mark, or undefined before its first point.
+// `points` are oldest first.
 function balancesOn(
   points: BalancesView["points"],
   days: readonly string[],
-): (number | undefined)[] {
+): ({ balance: number; estimated: boolean } | undefined)[] {
   let next = 0;
-  let last: number | undefined;
+  let last: { balance: number; estimated: boolean } | undefined;
   return days.map((day) => {
     for (; next < points.length && (points[next]?.date ?? "") <= day; next++) {
-      last = points[next]?.currentBalance ?? last;
+      const point = points[next];
+      if (point !== undefined && point.currentBalance !== null) {
+        last = { balance: point.currentBalance, estimated: point.estimated };
+      }
     }
     return last;
   });
+}
+
+// The Accounts each balance total counts (spec 07, 4. Number tiles): Excluded and Closed Accounts
+// count in no balance. Cash on hand is the synced checking and savings Accounts, so no Unconnected
+// account; Debt is every card and loan, Manual loans too.
+export function balanceSets(accounts: readonly AccountView[]) {
+  const counted = accounts.filter((account) => !account.closed && !account.excluded);
+  return {
+    counted,
+    cash: counted.filter(
+      (account) => account.kind === "depository" && account.connectionId !== null,
+    ),
+    debts: counted.filter((account) => account.kind === "credit" || account.kind === "loan"),
+  };
+}
+
+// The sum of `lines`' balances at the end of each of `count` days, in the Transaction sign. A day
+// is estimated when any Account's balance that day is, and before a first sync when any synced
+// Account's is.
+export function sumDayEnds(
+  lines: readonly AccountDayEndsView[],
+  count: number,
+): { amount: number; estimated: boolean; beforeFirstSync: boolean }[] {
+  const sums = Array.from({ length: count }, () => ({
+    amount: 0,
+    estimated: false,
+    beforeFirstSync: false,
+  }));
+  for (const { ends } of lines) {
+    ends.forEach((end, index) => {
+      const sum = sums[index];
+      if (sum === undefined) return;
+      sum.amount += end.balance;
+      sum.estimated ||= end.estimated;
+      sum.beforeFirstSync ||= end.beforeFirstSync;
+    });
+  }
+  return sums;
 }
 
 // The bank API's reads from app.db, and a Member's changes to Accounts. Hidden Transactions are
@@ -166,11 +209,42 @@ export function bankViews(database: Database): BankViews {
     return balance - (days.find((day) => day.date === first.date)?.total ?? 0);
   }
 
+  // Each of `counted`'s balances at the end of each of `days`, oldest first. Each Account counts at
+  // every one of those days, before its first balance too: its first balance with that day's
+  // Transactions undone holds back. A day before a synced Account's first sync is estimated.
+  async function dayEndBalances(
+    counted: readonly AccountView[],
+    days: readonly string[],
+  ): Promise<AccountDayEndsView[]> {
+    const lines: AccountDayEndsView[] = [];
+    for (const account of counted) {
+      const { points = [] } = (await balances(account.id, {})) ?? {};
+      const first = points[0];
+      if (first === undefined) continue;
+      // A synced Account's saved balances start at its first sync. A Manual loan's are the app's
+      // own estimates, which the Debt tile counts on its own.
+      const synced = account.connectionId !== null;
+      const firstSync = synced ? points.find((point) => !point.estimated)?.date : undefined;
+      const before = await balanceBefore(account, first);
+      const ends = balancesOn(points, days).map((end, index) => {
+        const date = days[index] ?? "";
+        const beforeFirstSync = synced && (firstSync === undefined || date < firstSync);
+        return {
+          date,
+          balance: end?.balance ?? before,
+          estimated: end === undefined || end.estimated || beforeFirstSync,
+          beforeFirstSync,
+        };
+      });
+      lines.push({ account, ends });
+    }
+    return lines;
+  }
+
   // Cash on hand or Debt (spec 07, 4. Number tiles): today's current balances of `counted`, and
   // their sum at each of the 12 month-ends before `month` from `start`, the Household's first month
-  // of history, on. Each Account counts at every one of those month-ends, before its first balance
-  // too. A month-end before a synced Account's first sync is estimated, and so is the usual then.
-  // Debt is what is owed, so `owed` turns the sign.
+  // of history, on. A month-end before a synced Account's first sync is estimated, and so is the
+  // usual then. Debt is what is owed, so `owed` turns the sign.
   async function balanceTile(
     counted: readonly AccountView[],
     month: string,
@@ -181,28 +255,8 @@ export function bankViews(database: Database): BankViews {
     const shown = (cents: number) => (owed ? 0 - cents : cents);
     const months = monthsBefore(month, 12);
     const known = months.filter((each) => start !== undefined && each >= start);
-    const ends = known.map(lastDayOf);
-    const sums = ends.map(() => 0);
-    let estimatedUsual = false;
-    for (const account of counted) {
-      const { points = [] } = (await balances(account.id, {})) ?? {};
-      const first = points[0];
-      if (first === undefined) continue;
-      // A synced Account's saved balances start at its first sync. A Manual loan's are the app's
-      // own estimates, which the Debt tile counts on its own.
-      const firstSync = points.find((point) => !point.estimated)?.date;
-      if (
-        account.connectionId !== null &&
-        ends.some((end) => firstSync === undefined || end < firstSync)
-      ) {
-        estimatedUsual = true;
-      }
-      const before = await balanceBefore(account, first);
-      balancesOn(points, ends).forEach((balance, index) => {
-        sums[index] = (sums[index] ?? 0) + (balance ?? before);
-      });
-    }
-    const monthEnds = known.map((at, index) => ({ at, amount: shown(sums[index] ?? 0) }));
+    const sums = sumDayEnds(await dayEndBalances(counted, known.map(lastDayOf)), known.length);
+    const monthEnds = known.map((at, index) => ({ at, amount: shown(sums[index]?.amount ?? 0) }));
     const amount = shown(counted.reduce((sum, account) => sum + (account.currentBalance ?? 0), 0));
     // The trend line: the last 11 month-ends, then today.
     const recent = monthEnds.filter((point) => point.at >= (months[1] ?? ""));
@@ -210,7 +264,7 @@ export function bankViews(database: Database): BankViews {
       amount,
       usual: median(monthEnds.map((point) => point.amount)),
       trend: [...recent, { at: today, amount }],
-      estimatedUsual,
+      estimatedUsual: sums.some((sum) => sum.beforeFirstSync),
     };
   }
 
@@ -240,11 +294,7 @@ export function bankViews(database: Database): BankViews {
       };
     };
 
-    const counted = (await accounts()).filter((account) => !account.closed && !account.excluded);
-    const cash = counted.filter(
-      (account) => account.kind === "depository" && account.connectionId !== null,
-    );
-    const debts = counted.filter((account) => account.kind === "credit" || account.kind === "loan");
+    const { cash, debts } = balanceSets(await accounts());
     return {
       lastMonth,
       spending: monthTile((each) => each.spending),
@@ -263,6 +313,7 @@ export function bankViews(database: Database): BankViews {
     accounts,
     numberTiles,
     balances,
+    dayEndBalances,
 
     unconnectedAccounts() {
       return listUnconnectedAccounts(database);

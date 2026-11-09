@@ -87,11 +87,11 @@ describe("the Reports routes", () => {
   });
 
   it("answers 501 to a good query, with or without a range", async () => {
-    const unbuilt = ROUTES.slice(2);
+    const built = ["/api/reports/spending", "/api/reports/cash-flow", "/api/reports/balances"];
+    const unbuilt = ROUTES.filter((route) => !built.includes(route));
     const good = [
       ...unbuilt,
       ...unbuilt.map((route) => `${route}?range=3m`),
-      "/api/reports/balances?range=24m&account=acc-checking",
       "/api/reports/merchants?range=12m&merchant=streamly",
     ];
     for (const route of good) {
@@ -114,6 +114,25 @@ describe("the Reports routes", () => {
     }
     const spending = await (await browser.get("/api/reports/spending?group=Leisure")).json();
     expect(spending).toMatchObject({ range: "12m", group: "Leisure", usual: null, rows: [] });
+  });
+
+  it("gives an empty Balances and debt report with no history, and 404 for an unknown Account", async () => {
+    const res = await browser.get("/api/reports/balances?range=all");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      range: "all",
+      months: [],
+      today: "2026-11-07",
+      accounts: [],
+      account: null,
+      cashOnHand: [],
+      debt: [],
+      creditUse: { cards: [], all: [] },
+      loans: [],
+    });
+    expect((await browser.get("/api/reports/balances?range=24m&account=acc-checking")).status).toBe(
+      404,
+    );
   });
 
   it("covers the months of a range from the first posted Transaction to the Household's month", async () => {

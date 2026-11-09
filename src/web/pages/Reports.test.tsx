@@ -52,8 +52,8 @@ describe("the Reports page", () => {
       "Balances and debt",
       "Merchants and Recurring charges",
     ]);
-    // Spending over time and Cash flow load their views after the page draws.
-    expect(html.match(/Coming soon/g)).toHaveLength(2);
+    // Spending over time, Cash flow and Balances and debt load their views after the page draws.
+    expect(html.match(/Coming soon/g)).toHaveLength(1);
   });
 
   it("offers the range presets as links that keep every other parameter", () => {

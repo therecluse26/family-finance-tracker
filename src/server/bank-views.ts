@@ -130,6 +130,19 @@ export type MonthEndView = {
 
 export type BalancesView = { points: BalancePointView[]; monthEnds: MonthEndView[] };
 
+// An Account's balance at the end of one day, in whole cents; money owed is negative. It is
+// estimated when that day's balance is an estimate, or is held back from before the Account's
+// first balance. `beforeFirstSync` marks a synced Account's day before its first sync.
+export type DayEndBalanceView = {
+  date: string;
+  balance: number;
+  estimated: boolean;
+  beforeFirstSync: boolean;
+};
+
+// One Account's balances at the end of each asked-for day, in the same order.
+export type AccountDayEndsView = { account: AccountView; ends: DayEndBalanceView[] };
+
 // Calendar dates are written YYYY-MM-DD, and both ends are included.
 export type BalanceQuery = { from?: string; to?: string };
 
@@ -202,6 +215,12 @@ export type BankViews = {
   transactions(query: TransactionQuery): Promise<TransactionListView | undefined>;
   // Undefined when no Account has the ID.
   balances(accountId: string, query: BalanceQuery): Promise<BalancesView | undefined>;
+  // Each of `counted`'s balances at the end of each of `days`, oldest first, as the number tiles
+  // count them. An Account with no balance yet is left out.
+  dayEndBalances(
+    counted: readonly AccountView[],
+    days: readonly string[],
+  ): Promise<AccountDayEndsView[]>;
   connections(): Promise<ConnectionView[]>;
   // True when the fake adapter runs, as under `pnpm dev`: Settings then offers its fake bank.
   fakeBank(): boolean;

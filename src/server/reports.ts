@@ -1,6 +1,7 @@
 import { type Database, readHistoryStart } from "../db/index.ts";
 import { householdToday } from "../recurring/index.ts";
 import { type ReportRange, reportMonths } from "../reports/range.ts";
+import { balancesReports } from "./reports-balances.ts";
 import { spendingReports } from "./reports-spending.ts";
 import type { ReportRoutes } from "./reports-views.ts";
 
@@ -17,5 +18,6 @@ export function reportRoutes(database: Database): ReportRoutes {
   return {
     months,
     ...spendingReports(database, months),
+    ...balancesReports(database, months),
   };
 }
