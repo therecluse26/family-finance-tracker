@@ -11,13 +11,14 @@ import type {
 } from "../bank/connect-view.ts";
 import { PLAID_ITEM_LIMIT } from "../bank/plaid-view.ts";
 import { UNCONNECTED_KINDS } from "../bank/unconnected-kinds.ts";
-import { CATEGORIES } from "../categories/list.ts";
+import { CATEGORIES, CATEGORY_GROUPS, type CategoryGroup } from "../categories/list.ts";
 import { timeLabel } from "../format.ts";
 import { HAND_SET_TYPES, MAX_SPLIT_PARTS, MIN_SPLIT_PARTS } from "../money-movement/types.ts";
 import type { SendProblem, SmtpRefusal } from "../notify/email-view.ts";
 import type { DeviceRefusal } from "../notify/push-view.ts";
 import { pictureChoice } from "../pictures/choice.ts";
 import { AI_WORK_REFUSALS, type AiWorkKind, retryWaitRefusal } from "../redo/work-view.ts";
+import { DEFAULT_REPORT_RANGE, REPORT_RANGES } from "../reports/range.ts";
 import { aiActivityStream } from "./ai-activity.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
@@ -328,6 +329,22 @@ const transactionCategoryBody = z.object({
   category: z.string().refine((name) => CATEGORY_NAMES.has(name)),
   onlyThisTransaction: z.boolean().optional(),
 });
+
+// A report's range and its one filter (spec 07, Reports). With no range, a report covers 12 months.
+const CATEGORY_GROUP_NAMES = new Set<string>(CATEGORY_GROUPS.map((group) => group.name));
+const reportQuery = z.object({ range: z.enum(REPORT_RANGES).default(DEFAULT_REPORT_RANGE) });
+const spendingReportQuery = reportQuery.extend({
+  group: z
+    .custom<CategoryGroup>((name) => typeof name === "string" && CATEGORY_GROUP_NAMES.has(name))
+    .optional(),
+});
+const balancesReportQuery = reportQuery.extend({ account: z.string().min(1).max(100).optional() });
+const merchantsReportQuery = reportQuery.extend({
+  merchant: z.string().min(1).max(200).optional(),
+});
+const REPORT_QUERY_REFUSED =
+  'Choose a range of "3m", "12m", "24m" or "all", and a Category group from the list.';
+const REPORT_NOT_BUILT = "This report is not built yet.";
 
 // A split (spec 04, Splits): its parts, in whole cents spent, each with a Category.
 const splitBody = z.object({
@@ -1047,6 +1064,38 @@ export const api = new Hono<ServerEnv>()
       return c.json({ error: 'Choose "This month" or "Last 12 months".' }, 400);
     }
     return c.json(await c.var.topMerchants.view(period.data), 200);
+  })
+  // The Reports page (spec 07, Reports): read-only, over the months of a range. Each route checks
+  // its range and its filter. The reports themselves come in R1 to R3.
+  // Spending over time, for every Category group or one.
+  .get("/reports/spending", async (c) => {
+    const query = spendingReportQuery.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
+    return c.json({ error: REPORT_NOT_BUILT }, 501);
+  })
+  // Cash flow: Income, Spending and Saving by month.
+  .get("/reports/cash-flow", async (c) => {
+    const query = reportQuery.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
+    return c.json({ error: REPORT_NOT_BUILT }, 501);
+  })
+  // Balances and total Debt over time, for every Account or one.
+  .get("/reports/balances", async (c) => {
+    const query = balancesReportQuery.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
+    return c.json({ error: REPORT_NOT_BUILT }, 501);
+  })
+  // Spending at the top Merchants, or at one.
+  .get("/reports/merchants", async (c) => {
+    const query = merchantsReportQuery.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
+    return c.json({ error: REPORT_NOT_BUILT }, 501);
+  })
+  // Recurring charges over time.
+  .get("/reports/recurring", async (c) => {
+    const query = reportQuery.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: REPORT_QUERY_REFUSED }, 400);
+    return c.json({ error: REPORT_NOT_BUILT }, 501);
   })
   // The AI box, "This week" (spec 07, 1. AI box): every current note, in three groups.
   .get("/ai-box", async (c) => c.json(await c.var.aiBox.view()))

@@ -113,7 +113,7 @@ Four tiles in a row (two by two on a phone):
 - **Direction:** "▲ $X above usual" or "▼ $X below usual". Within 2% of the usual, the tile shows "● about usual" instead.
 - **Trend line:** a small line of 12 points. For Spending and Income, the last 12 complete months. For Cash on hand and Debt, the last 11 month-ends and today.
 - Debt counts Manual loan balances, which are the app's own estimates. When any Manual loan exists, the tile says "Debt includes N estimated loans". Balances before an Account's first sync are estimated too ([Accounts and bank sync](02-accounts-and-bank-sync.md)). When any month-end balance behind the usual of Cash on hand or Debt is from before an Account's first sync, the direction says "estimated usual" in place of "usual", as in "▲ $X above estimated usual" or "● about estimated usual".
-- Tapping Spending opens [Top Merchants](#top-merchants). Tapping Income opens the [Transactions page](#transactions-page) for last month's Income. Tapping Cash on hand or Debt opens the [Account list](#account-list).
+- Each tile opens its report on the [Reports page](#reports), over 12 months. Tapping Spending opens Spending over time. Tapping Income opens Cash flow. Tapping Cash on hand or Debt opens Balances and debt.
 
 ### 5. "A usual month"
 
@@ -127,7 +127,7 @@ Four tiles in a row (two by two on a phone):
   - a dashed line at the group's Budget. A past month uses the Budget in effect that month. Months before the first draft have no line.
 - **Scope:** this box counts the same Categories as Left to spend. Travel and Gifts and donations stay out; the yearly rows show them. The "Spending" tile still counts all Spending.
 - A group's Budget is the sum of its Categories' monthly Budgets.
-- **Tapping a group** opens "<Group> Budgets" under the charts, as thin rows, with "Close". Each row shows:
+- **Tapping a group** opens "<Group> Budgets" under the charts, as thin rows, with "Close". Its header links to "<Group> over time": Spending over time on the [Reports page](#reports), over 12 months, with that group set. Each row shows:
   - the Category and "$spent / $Budget";
   - a thin meter. Only a flexible Category (not in the Bills group) gets a "today" tick;
   - for a Category that is not on track: "▲ $X over" or "◆ on pace for $X";
@@ -165,7 +165,7 @@ Four tiles in a row (two by two on a phone):
 
 ### Main menu
 
-The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with its open count), and Settings. A "More" section holds Budgets, Goals, Accounts, Alert list, Recurring charges, and Top Merchants.
+The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with its open count), and Settings. A "More" section holds Reports, Budgets, Goals, Accounts, Alert list, Recurring charges, and Top Merchants.
 
 - **Live AI status:** while background AI works, a small sign shows in the main menu, such as "● AI working: Categories", in the accent color. It links to Settings, AI. With no work, it is not there. Its words, when it shows, and its feed are in [AI](08-ai.md#live-ai-status).
   - From 900 px wide, it sits in the menu column, under the app's name.
@@ -227,6 +227,24 @@ Using this page is never required.
 - A simple ranked list of Merchants by Spending, with a switch: "This month" or "Last 12 months".
 - Each row: the Merchant, its Spending, its number of Transactions, and its Category.
 - Tapping a row opens the Transactions page for that Merchant.
+
+### Reports
+
+One page in the "More" section, with four reports, one under another (owner decision, 2026-11-08). Each report has one filter:
+
+| Report | What it shows | Filter |
+|---|---|---|
+| Spending over time | Spending by month, by Category group | a Category group, or all groups |
+| Cash flow | Income, Spending and Saving by month, and what is left over | none |
+| Balances and debt | Account balances and total Debt by month | an Account, or all Accounts |
+| Merchants and Recurring charges | Spending at the top Merchants by month, and Recurring charges over time | a Merchant, or the top 10 |
+
+- **Range:** one switch for the page: 3 months, 12 months, 24 months, or All. 12 months is the default. The range ends with the Household's current month. It starts no earlier than the month of the first posted Transaction, so a range longer than the history shows only the history, and "All" starts at that month. With no posted Transaction there are no months. The range and the filter live in the page's address, so a link can open a report as set.
+- **Drill-down:** tapping a bar or a point opens the [Transactions page](#transactions-page) with the filters that match it, such as its month and its Category or Merchant.
+- **Show as table:** every chart has a "Show as table" switch under it. The table holds the chart's numbers. It is there for screen readers with the switch off.
+- No net-worth figure ([Out of scope](13-out-of-scope.md)). Account balances and total Debt over time are allowed.
+- The app draws every number and chart from its own data. The AI writes nothing on this page.
+- The owner chose to build this page before the open backlog, ahead of D22 ("Real bugs first").
 
 ### Account list
 

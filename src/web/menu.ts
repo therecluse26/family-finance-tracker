@@ -14,6 +14,7 @@ export const MAIN_MENU: readonly MenuItem[] = [
 
 // The "More" section.
 export const MORE_MENU: readonly MenuItem[] = [
+  { label: "Reports", path: "/reports" },
   { label: "Budgets", path: "/budgets" },
   { label: "Goals", path: "/goals" },
   { label: "Accounts", path: "/accounts" },

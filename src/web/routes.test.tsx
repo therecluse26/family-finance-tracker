@@ -64,6 +64,7 @@ describe("the app shell", () => {
       "Settings",
     ]);
     expect(MORE_MENU.map((item) => item.label)).toEqual([
+      "Reports",
       "Budgets",
       "Goals",
       "Accounts",

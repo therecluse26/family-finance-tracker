@@ -393,14 +393,10 @@ describe("the dashboard on the demo household", () => {
     expect(view.spending.amount).toBeGreaterThan(0);
     expect(view.income.amount).toBeGreaterThan(0);
     expect(numberTiles(view).map(({ label, moreIs, to }) => ({ label, moreIs, to }))).toEqual([
-      { label: "Spending in September", moreIs: "bad", to: "/top-merchants" },
-      {
-        label: "Income in September",
-        moreIs: "good",
-        to: "/transactions?type=Income&month=2026-09",
-      },
-      { label: "Cash on hand", moreIs: "good", to: "/accounts" },
-      { label: "Debt", moreIs: "bad", to: "/accounts" },
+      { label: "Spending in September", moreIs: "bad", to: "/reports?range=12m#spending" },
+      { label: "Income in September", moreIs: "good", to: "/reports?range=12m#cash-flow" },
+      { label: "Cash on hand", moreIs: "good", to: "/reports?range=12m#balances" },
+      { label: "Debt", moreIs: "bad", to: "/reports?range=12m#balances" },
     ]);
   });
 

@@ -789,11 +789,12 @@ describe("the number tiles", () => {
       "Cash on hand $12,345 ▼ $655 below usual",
       "Debt $8,200 ▲ $200 above usual Debt includes 2 estimated loans",
     ]);
+    // Each tile opens its report on the Reports page, over 12 months.
     expect(hrefs(tiles ?? "")).toEqual([
-      "/top-merchants",
-      "/transactions?type=Income&month=2026-09",
-      "/accounts",
-      "/accounts",
+      "/reports?range=12m#spending",
+      "/reports?range=12m#cash-flow",
+      "/reports?range=12m#balances",
+      "/reports?range=12m#balances",
     ]);
     // More Spending or Debt is bad (orange); less Cash on hand is bad too; no change is grey.
     expect(tiles).toContain('class="block text-sm text-serious">▲ $120 above usual');
@@ -1080,13 +1081,14 @@ describe('"A usual month"', () => {
     const html = render(data({ budgets: USUAL_BUDGETS }), "Shopping");
     const panel = slotHtml(html, "group-budgets");
 
-    expect(text(panel)).toMatch(/^Shopping Budgets Close /);
+    expect(text(panel)).toMatch(/^Shopping Budgets Shopping over time Close /);
     expect(listItems(panel, "Shopping Budgets")).toEqual([
       "Groceries $610 / $500 ▲ $110 over",
       "Clothing $150 / $200 ◆ on pace for $260",
       "Superstores $40 no Budget",
     ]);
     expect(hrefs(panel)).toEqual([
+      "/reports?range=12m&group=Shopping#spending",
       "/transactions?category=Groceries&month=2026-10",
       "/transactions?category=Clothing&month=2026-10",
       "/transactions?category=Superstores&month=2026-10",
@@ -1105,6 +1107,18 @@ describe('"A usual month"', () => {
     ]);
     expect(panel.match(/data-slot="row-meter"/g)).toHaveLength(2);
     expect(panel).not.toContain('data-slot="today"');
+  });
+
+  it("links a group's header to its Spending over time on the Reports page", () => {
+    const bills = slotHtml(render(data({ budgets: USUAL_BUDGETS }), "Bills"), "group-budgets");
+    expect(hrefs(bills)[0]).toBe("/reports?range=12m&group=Bills#spending");
+    expect(bills).toMatch(/data-slot="group-report"[^>]*>Bills over time</);
+
+    const shopping = slotHtml(
+      render(data({ budgets: USUAL_BUDGETS }), "Shopping"),
+      "group-budgets",
+    );
+    expect(hrefs(shopping)[0]).toBe("/reports?range=12m&group=Shopping#spending");
   });
 });
 

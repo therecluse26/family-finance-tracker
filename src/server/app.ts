@@ -44,6 +44,7 @@ import { noticeRoutes } from "./notices.ts";
 import { pictureRoutes } from "./pictures.ts";
 import { proposalRoutes } from "./proposals.ts";
 import { recurringRoutes } from "./recurring.ts";
+import { reportRoutes } from "./reports.ts";
 import { reviewRoutes } from "./review.ts";
 import { safetyHeaders } from "./safety-headers.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
@@ -227,6 +228,7 @@ export function createApp(
   const weeklySummary = weeklySummarySettings(database);
   const aiRequestLog = services.aiRequestLog ?? aiRequestLogRoutes({ database });
   const topMerchants = topMerchantRoutes(database);
+  const reports = reportRoutes(database);
   const aiBox = aiBoxRoutes(database, services.ai);
   const proposals = proposalRoutes(database);
   const monthlyReviews = monthlyReviewRoutes(database);
@@ -289,6 +291,7 @@ export function createApp(
         c.set("weeklySummary", weeklySummary);
         c.set("aiRequestLog", aiRequestLog);
         c.set("topMerchants", topMerchants);
+        c.set("reports", reports);
         c.set("aiBox", aiBox);
         c.set("proposals", proposals);
         c.set("monthlyReviews", monthlyReviews);

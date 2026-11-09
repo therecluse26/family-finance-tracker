@@ -33,6 +33,7 @@ import type { MonthlyReviewRoutes } from "./monthly-reviews-views.ts";
 import type { NoticeRoutes } from "./notice-views.ts";
 import type { ProposalRoutes } from "./proposals-views.ts";
 import type { RecurringRoutes } from "./recurring-views.ts";
+import type { ReportRoutes } from "./reports-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
 import type { SetupRoutes } from "./setup-views.ts";
 import type { TopMerchantRoutes } from "./top-merchants-views.ts";
@@ -99,6 +100,8 @@ export type ServerEnv = {
     comingUp: ComingUpRoutes;
     // Top Merchants, ranked by Spending.
     topMerchants: TopMerchantRoutes;
+    // The Reports page: the months of each report's range.
+    reports: ReportRoutes;
     // The dashboard's AI box, "This week".
     aiBox: AiBoxRoutes;
     // Accept, Edit, Skip, and Undo on Proposals.

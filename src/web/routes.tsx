@@ -10,6 +10,7 @@ import { Join } from "./pages/Join.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
 import { RecurringCharges } from "./pages/RecurringCharges.tsx";
+import { Reports } from "./pages/Reports.tsx";
 import { Reset } from "./pages/Reset.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
 import { MonthlyReviewPage, Reviews } from "./pages/Reviews.tsx";
@@ -63,6 +64,7 @@ const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/chat": Chat,
   "/goals": Goals,
   "/recurring-charges": RecurringCharges,
+  "/reports": Reports,
   "/review-list": ReviewList,
   "/reviews": Reviews,
   "/top-merchants": TopMerchants,

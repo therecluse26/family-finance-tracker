@@ -26,8 +26,8 @@ import { loadAiBox } from "./ai-box.ts";
 import { api } from "./api.ts";
 import { browserZone } from "./browser-zone.ts";
 import { type GoalsAnswer, loadGoals } from "./goals.ts";
+import { reportsPath } from "./reports.ts";
 import { SignedOut } from "./requests.ts";
-import { transactionsPath } from "./transactions.ts";
 
 // The dashboard's numbers and words (spec 07, The dashboard): its header, its status lines, Left
 // to spend, Goals, the number tiles, "A usual month", and "Coming up". The app draws every number
@@ -325,8 +325,9 @@ export type NumberTile = {
   estimatedUsual: boolean;
 };
 
-// The four tiles in their order (spec 07, 4. Number tiles). Spending opens Top Merchants; Income
-// opens the Transactions page for last month's Income; Cash on hand and Debt open the Account list.
+// The four tiles in their order (spec 07, 4. Number tiles). Each opens its report on the Reports
+// page, over 12 months: Spending opens Spending over time; Income opens Cash flow; Cash on hand and
+// Debt open Balances and debt.
 export function numberTiles(view: NumberTilesView): NumberTile[] {
   const last = monthName(view.lastMonth);
   const loans = view.debt.estimatedLoans;
@@ -336,7 +337,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       label: `Spending in ${last}`,
       tile: view.spending,
       moreIs: "bad",
-      to: "/top-merchants",
+      to: reportsPath("spending", { range: "12m" }),
       estimatedUsual: false,
     },
     {
@@ -344,7 +345,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       label: `Income in ${last}`,
       tile: view.income,
       moreIs: "good",
-      to: transactionsPath({ type: "Income", month: view.lastMonth }),
+      to: reportsPath("cash-flow", { range: "12m" }),
       estimatedUsual: false,
     },
     {
@@ -352,7 +353,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       label: "Cash on hand",
       tile: view.cashOnHand,
       moreIs: "good",
-      to: "/accounts",
+      to: reportsPath("balances", { range: "12m" }),
       estimatedUsual: view.cashOnHand.estimatedUsual,
     },
     {
@@ -360,7 +361,7 @@ export function numberTiles(view: NumberTilesView): NumberTile[] {
       label: "Debt",
       tile: view.debt,
       moreIs: "bad",
-      to: "/accounts",
+      to: reportsPath("balances", { range: "12m" }),
       estimatedUsual: view.debt.estimatedUsual,
       ...(loans === 0
         ? {}

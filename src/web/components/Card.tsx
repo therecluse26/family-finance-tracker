@@ -13,12 +13,14 @@ export function Card(props: {
   padding?: keyof typeof PADDING;
   as?: "section" | "div" | "article";
   className?: string;
+  id?: string;
   "aria-labelledby"?: string;
 }) {
   const Tag = props.as ?? "section";
   return (
     <Tag
       className={`rounded-card border border-line bg-white ${PADDING[props.padding ?? "normal"]} ${props.className ?? ""}`}
+      id={props.id}
       aria-labelledby={props["aria-labelledby"]}
     >
       {props.children}

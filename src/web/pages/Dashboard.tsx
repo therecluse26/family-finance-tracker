@@ -31,6 +31,7 @@ import {
   SET_UP_AI,
   worthActingOnHeading,
 } from "../ai-box.ts";
+import { BUDGET_LINE_COLOR, FULL_COLOR, MUTED_COLOR, TREND_COLOR } from "../chart-colors.ts";
 import { askAboutAlertNote, askAboutInsightCard, askAboutPath, askAboutProposal } from "../chat.ts";
 import { buttonClass } from "../components/Button.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
@@ -85,6 +86,7 @@ import {
 } from "../goals.ts";
 import { markReviewLinkDone, reviewLinkTitle } from "../monthly-review.ts";
 import { answerOrder, type PollPlan, type PollState, usePolling } from "../polling.ts";
+import { reportsPath } from "../reports.ts";
 import { SignedOut } from "../requests.ts";
 import { FINISH_SETUP_LINKS } from "../setup-gate.ts";
 import { transactionsPath } from "../transactions.ts";
@@ -428,14 +430,6 @@ export function GoalsBox(props: { answer: GoalsAnswer }) {
 
 // --- Number tiles ------------------------------------------------------------------------------
 
-// The boards' chart colors: blue (the accent) for this month, the input-border grey for past months,
-// a lighter grey for a tile's trend line, and the muted grey for a Budget's dashed line. Recharts
-// takes colors, not classes.
-const FULL_COLOR = "#1D4ED8";
-const MUTED_COLOR = "#C6CBD2";
-const TREND_COLOR = "#9AA3AE";
-const BUDGET_LINE_COLOR = "#5B6470";
-
 // A tile's trend line: 12 points, drawn by the app from its own data. The tile's words carry its
 // meaning, so the line is hidden from screen readers.
 function TrendLine(props: { trend: NumberTile["tile"]["trend"] }) {
@@ -767,8 +761,15 @@ export function UsualMonthBox(props: {
           className="mt-3.5 border-t border-line-soft pt-3"
           data-slot="group-budgets"
         >
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-sm font-semibold">{shown.categoryGroup} Budgets</h3>
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            <h3 className="flex-1 text-sm font-semibold">{shown.categoryGroup} Budgets</h3>
+            <Link
+              className={`text-small ${TEXT_LINK}`}
+              data-slot="group-report"
+              to={reportsPath("spending", { range: "12m", group: shown.categoryGroup })}
+            >
+              {`${shown.categoryGroup} over time`}
+            </Link>
             <button
               type="button"
               className={`text-small ${TEXT_LINK}`}
