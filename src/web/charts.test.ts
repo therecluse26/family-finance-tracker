@@ -95,9 +95,10 @@ describe("charts", () => {
         expect(off, `${tag} in ${path}`).toBe(true);
       }
     }
-    // The Dashboard's two, the balance chart, the pictures' two, and the Reports page's six: Spending
-    // over time, Cash flow, Balances and debt, and the Merchants report's three.
-    expect(charts).toBeGreaterThanOrEqual(11);
+    // The Dashboard's two, the balance chart, the pictures' two, and the Reports page's five: Spending
+    // over time, Cash flow, Balances and debt, one Merchant's months, and Recurring charges. The top 10
+    // Merchants are a ranked list, whose small lines are plain SVG.
+    expect(charts).toBeGreaterThanOrEqual(10);
   });
 
   it("does not count a comment, and finds a chart under another name", () => {

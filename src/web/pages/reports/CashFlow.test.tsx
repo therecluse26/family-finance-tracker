@@ -2,7 +2,7 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { CashFlowReportView } from "../../../server/reports-views.ts";
-import { CashFlowReportBody } from "./CashFlow.tsx";
+import { CashFlowReportBody, cashFlowRows, cashFlowTooltip } from "./CashFlow.tsx";
 
 // Cash flow on the Reports page (spec 07, Reports). Server rendering draws no chart, so these read
 // the table, which holds the chart's numbers and links.
@@ -79,5 +79,40 @@ describe("Cash flow", () => {
     expect(text(html)).toContain("No posted Transactions yet.");
     expect(html).not.toContain("recharts");
     expect(html).not.toContain("report-table");
+  });
+});
+
+describe("Cash flow's card", () => {
+  const slot = (html: string, name: string) =>
+    text(new RegExp(`data-slot="${name}"[^>]*>(.*?)</p>`, "s").exec(html)?.[1] ?? "");
+
+  it("opens with Left over across the range, and what it is left over from", () => {
+    const html = render({ ...VIEW, total: { ...VIEW.total, leftOver: 30_000 } });
+
+    expect(slot(html, "report-headline")).toBe("$300 left over");
+    expect(slot(html, "report-line")).toBe("$6,000 Income, less $5,700 Spending, less $300 Saving");
+    expect(html).toMatch(/class="text-good">\$6,000 Income/);
+    expect(render({ ...VIEW, total: { ...VIEW.total, leftOver: -1 } })).toMatch(
+      /class="text-serious">\$6,000 Income/,
+    );
+  });
+
+  it("hovers a month with its three bars and its Left over", () => {
+    expect(cashFlowTooltip(VIEW, "2026-11")).toEqual({
+      title: "November 2026 so far",
+      rows: [
+        { name: "Income", amount: "$1,000", color: "#C6CBD2" },
+        { name: "Spending", amount: "$2,500", color: "#5B6470" },
+        { name: "Saving", amount: "−$200", color: "#0A9182" },
+      ],
+      total: { name: "Left over", amount: "−$1,300" },
+    });
+  });
+
+  it("joins the current month's Left over to the line by a dotted stretch, never as a fall", () => {
+    expect(cashFlowRows(VIEW).map(({ month, full, soFar }) => ({ month, full, soFar }))).toEqual([
+      { month: "2026-10", full: 130_000, soFar: 130_000 },
+      { month: "2026-11", full: null, soFar: -130_000 },
+    ]);
   });
 });

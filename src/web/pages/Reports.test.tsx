@@ -3,13 +3,15 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import { CATEGORY_GROUPS } from "../../categories/list.ts";
 import { GROUP_COLORS } from "../chart-colors.ts";
-import { reportsPath } from "../reports.ts";
+import { REPORT_SECTIONS, reportsPath } from "../reports.ts";
 import { Reports } from "./Reports.tsx";
 import { drillDownHref } from "./reports/drill-down.ts";
 import { ReportFrame } from "./reports/ReportFrame.tsx";
+import { ReportTable } from "./reports/ReportTable.tsx";
 
-// The Reports page's frame (spec 07, Reports): its range presets, its four sections, the shared
-// report card, and the drill-down links. Each report's own tests are in pages/reports/.
+// The Reports page's frame (spec 07, Reports): its range presets, its jump links, its five
+// sections, the shared report card and table, and the drill-down links. Each report's own tests
+// are in pages/reports/.
 
 const render = (path: string) => {
   const router = createMemoryRouter([{ path: "/reports", element: <Reports /> }], {
@@ -34,26 +36,53 @@ const text = (html: string) =>
     .trim();
 
 describe("the Reports page", () => {
-  it("shows its four reports, each in its own section", () => {
+  it("shows its five reports, each in its own section", () => {
     const html = render("/reports");
 
     expect([...html.matchAll(/<h1[^>]*>(.*?)<\/h1>/g)].map((match) => match[1])).toEqual([
       "Reports",
     ]);
     expect([...html.matchAll(/<section[^>]* id="([^"]*)"/g)].map((match) => match[1])).toEqual([
+      ...REPORT_SECTIONS,
+    ]);
+    expect(REPORT_SECTIONS).toEqual([
       "spending",
       "cash-flow",
       "balances",
       "merchants",
+      "recurring",
     ]);
     expect([...html.matchAll(/<h2[^>]*>(.*?)<\/h2>/g)].map((match) => match[1])).toEqual([
       "Spending over time",
       "Cash flow",
       "Balances and debt",
-      "Merchants and Recurring charges",
+      "Merchants",
+      "Recurring charges",
     ]);
     // Every report loads its view after the page draws; none says "Coming soon".
     expect(html).not.toContain("Coming soon");
+  });
+
+  it("jumps to each report from one row of links under the heading", () => {
+    const html = render("/reports?range=3m");
+    const nav = /<nav aria-label="Reports on this page"[^>]*>(.*?)<\/nav>/s.exec(html)?.[1] ?? "";
+
+    expect(text(nav)).toBe(
+      "Spending over time Cash flow Balances and debt Merchants Recurring charges",
+    );
+    // A bare hash keeps the range and every filter in the address.
+    expect(hrefs(nav)).toEqual([
+      "#spending",
+      "#cash-flow",
+      "#balances",
+      "#merchants",
+      "#recurring",
+    ]);
+    // On a phone the row scrolls inside itself.
+    expect(nav).toMatch(/<ul class="[^"]*overflow-x-auto[^"]*" data-slot="jump-links">/);
+    // It comes after the range presets and before the first report.
+    expect(html.indexOf('aria-label="Range"')).toBeLessThan(html.indexOf("Reports on this page"));
+    expect(html.indexOf("Reports on this page")).toBeLessThan(html.indexOf('id="spending"'));
   });
 
   it("offers the range presets as links that keep every other parameter", () => {
@@ -124,29 +153,114 @@ describe("a report's card", () => {
       />,
     );
 
-  it("keeps the table for screen readers under the chart, with the switch off", () => {
+  it("keeps the table for screen readers under the chart, with the numbers closed", () => {
     const html = frame();
 
     expect(html).toMatch(/<section[^>]*id="cash-flow"[^>]*aria-labelledby="cash-flow-heading"/);
     expect(html).toMatch(/aria-hidden="true"[^>]*data-slot="report-chart"/);
     expect(html).toContain('data-slot="chart-drawing"');
-    expect(html).toMatch(/<input type="checkbox"\/>Show as table/);
-    expect(html).toMatch(/class="sr-only" data-slot="report-table"><table aria-label="Cash flow/);
+    expect(html).toMatch(
+      /<button type="button" aria-controls="cash-flow-numbers" aria-expanded="false"[^>]*>Show the numbers<\/button>/,
+    );
+    expect(html).toMatch(
+      /id="cash-flow-numbers" class="sr-only" data-slot="report-table"><table aria-label="Cash flow/,
+    );
+    expect(html).not.toContain('type="checkbox"');
   });
 
-  it("shows the table in the chart's place, with the switch on", () => {
+  it("shows the table under the chart, with the numbers open", () => {
     const html = frame(true);
 
-    expect(html).not.toContain('data-slot="report-chart"');
-    expect(html).toMatch(/<input type="checkbox" checked=""\/>Show as table/);
+    expect(html).toMatch(/aria-hidden="true"[^>]*data-slot="report-chart"/);
+    expect(html).toMatch(/aria-expanded="true"[^>]*>Hide the numbers<\/button>/);
     expect(html).toMatch(/class="mt-3" data-slot="report-table"><table/);
+    expect(html.indexOf("report-chart")).toBeLessThan(html.indexOf("report-table"));
   });
 
-  it("has no switch without a table", () => {
+  it("has no button without a table, and hides no chart", () => {
     const html = renderToString(<ReportFrame id="spending" title="Spending" chart="Coming soon" />);
 
-    expect(html).not.toContain("Show as table");
+    expect(html).not.toContain("the numbers");
     expect(html).not.toContain("aria-hidden");
+  });
+
+  it("reads as a dashboard card: grey label, big number, colored line, filter, chart, caption", () => {
+    const html = renderToString(
+      <ReportFrame
+        id="cash-flow"
+        title="Cash flow"
+        filter={<select data-slot="the-filter" />}
+        headline={{
+          amount: "$1,752",
+          unit: "left over",
+          line: ["From ", { tone: "good", text: "$5,087 Income" }],
+        }}
+        chart={<svg data-slot="chart-drawing" />}
+        caption="Pale bar: November so far."
+        table={<table aria-label="Cash flow by month" />}
+      />,
+    );
+
+    expect(html).toMatch(
+      /<h2 id="cash-flow-heading" class="text-small font-semibold text-muted">Cash flow<\/h2>/,
+    );
+    expect(text(/data-slot="report-headline">(.*?)<\/p>/s.exec(html)?.[1] ?? "")).toBe(
+      "$1,752 left over",
+    );
+    expect(html).toMatch(/data-slot="report-line"><span>From <\/span><span class="text-good">/);
+    expect(html).toMatch(/data-slot="report-caption">Pale bar: November so far.<\/p>/);
+    const order = ["cash-flow-heading", "report-headline", "the-filter", "report-chart"];
+    expect(order.map((slot) => html.indexOf(slot))).toEqual(
+      order.map((slot) => html.indexOf(slot)).sort((a, b) => a - b),
+    );
+  });
+
+  it("chart that reads its own numbers, such as a ranked list, stays for screen readers", () => {
+    const html = renderToString(
+      <ReportFrame
+        id="merchants"
+        title="Merchants"
+        chart={<ol />}
+        chartReads
+        table={<table aria-label="By month" />}
+      />,
+    );
+    expect(html).not.toMatch(/aria-hidden="true"[^>]*data-slot="report-chart"/);
+  });
+});
+
+describe("a report's table", () => {
+  const draw = (change: (number | null)[]) =>
+    renderToString(
+      <ReportTable
+        label="Spending over the range"
+        head="Category group"
+        columns={[
+          { key: "total", name: "Total" },
+          { key: "change", name: "Change from the range before" },
+        ]}
+        rows={change.map((cents, at) => ({
+          key: String(at),
+          head: `Group ${at}`,
+          cells: ["$10", cents === null ? "" : `$${cents}`],
+        }))}
+      />,
+    );
+
+  it("leaves out a column with no words in any row, and keeps one with words in any", () => {
+    expect(text(draw([null, null]))).toBe("Category group Total Group 0 $10 Group 1 $10");
+    expect(text(draw([null, 5]))).toBe(
+      "Category group Total Change from the range before Group 0 $10 Group 1 $10 $5",
+    );
+  });
+
+  it("scrolls sideways inside its card, with its first column in view, and amounts at the right", () => {
+    const html = draw([5]);
+
+    expect(html).toMatch(/^<div class="max-w-full overflow-x-auto"/);
+    expect(html).toMatch(/<th scope="col" class="[^"]*sticky left-0[^"]*">Category group/);
+    expect(html).toMatch(/<th scope="row" class="[^"]*sticky left-0[^"]*">Group 0/);
+    expect(html).toMatch(/<td class="[^"]*tabular-nums[^"]*text-right[^"]*">\$10<\/td>/);
   });
 });
 

@@ -1,6 +1,8 @@
 import { Link, useNavigate } from "react-router";
 import {
   Bar,
+  CartesianGrid,
+  Cell,
   ComposedChart,
   Line,
   ReferenceLine,
@@ -9,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { CATEGORY_GROUPS, type CategoryGroup } from "../../../categories/list.ts";
-import { monthLabel, wholeDollars } from "../../../format.ts";
+import { directionAgainstUsual, monthLabel, wholeDollars } from "../../../format.ts";
 import type { ReportRange } from "../../../reports/range.ts";
 import {
   NO_CATEGORY_YET,
@@ -17,17 +19,37 @@ import {
   type SpendingReportView,
 } from "../../../server/reports-views.ts";
 import { api } from "../../api.ts";
-import { BUDGET_LINE_COLOR, GROUP_COLORS, TREND_COLOR } from "../../chart-colors.ts";
-import { ErrorLine, FIELD } from "../../components/Fields.tsx";
+import {
+  BUDGET_LINE_COLOR,
+  GROUP_COLORS,
+  SO_FAR_OPACITY,
+  SURFACE_COLOR,
+  TREND_COLOR,
+} from "../../chart-colors.ts";
+import { ErrorLine } from "../../components/Fields.tsx";
 import type { ReportSectionProps } from "../../reports.ts";
 import { drillDownHref } from "./drill-down.ts";
-import { ReportFrame } from "./ReportFrame.tsx";
-import { CELL_LINK, TABLE, TD, TD_NUMBER, TH, TH_NUMBER, useReportView } from "./report-view.ts";
+import {
+  CHART_BOX,
+  ChartKey,
+  GRID,
+  isCurrentMonth,
+  monthName,
+  reportTooltip,
+  soFarCaption,
+  type TooltipContent,
+  tooltipContent,
+  X_AXIS,
+  Y_AXIS,
+} from "./ReportChart.tsx";
+import { type Headline, type LinePart, ReportFrame } from "./ReportFrame.tsx";
+import { ReportTable } from "./ReportTable.tsx";
+import { CELL_LINK, FILTER_LABEL, FILTER_SELECT, useReportView } from "./report-view.ts";
 
 // Spending over time (spec 07, Reports): one stacked bar per month, one color per Category group,
-// or per Category of the chosen group, with a dashed line at each month's Budget and a dashed line
-// at the usual month. The table under it holds each group's or Category's total, its average per
-// month, and its change from the range before.
+// or per Category of the chosen group, with a dashed line at each month's Budget and a dotted line
+// at the usual month. The current month's bar is pale, as "so far". The summary under it holds
+// each group's or Category's total, its average per month, and its change from the range before.
 
 const GROUP_NAMES: readonly CategoryGroup[] = CATEGORY_GROUPS.map(({ name }) => name);
 const isGroup = (name: string): name is CategoryGroup =>
@@ -67,10 +89,10 @@ export const spendingRequests = {
 function GroupFilter(props: { params: URLSearchParams; group: CategoryGroup | null }) {
   const navigate = useNavigate();
   return (
-    <label className="flex items-center gap-2 text-sm">
-      Category group
+    <label className={FILTER_LABEL}>
+      Group
       <select
-        className={`${FIELD} mt-0 w-auto py-1.5`}
+        className={FILTER_SELECT}
         value={props.group ?? ""}
         onChange={(event) => void navigate(groupHref(props.params, event.target.value))}
       >
@@ -85,73 +107,114 @@ function GroupFilter(props: { params: URLSearchParams; group: CategoryGroup | nu
   );
 }
 
-type ChartRow = SpendingReportBar & { label: string };
+// A month's hover label: its segments with Spending, top first as the bar stacks them, their total,
+// and its Budget.
+export function spendingTooltip(view: SpendingReportView, month: string): TooltipContent | null {
+  const bar = view.bars.find((each) => each.month === month);
+  if (bar === undefined) return null;
+  const content = tooltipContent({
+    month,
+    current: isCurrentMonth(view.months, month),
+    items: [...view.segments].reverse().map((name) => ({
+      name,
+      cents: bar.segments[name] || null,
+      color: segmentColor(view, name),
+    })),
+    total: "Spending",
+  });
+  if (bar.budget === null) return content;
+  return {
+    ...content,
+    rows: [...content.rows, { name: "Budget", amount: wholeDollars(bar.budget) }],
+  };
+}
+
+// A Budget with no Budget in the month before or after has no line to draw, such as a Budget set
+// this month. It gets a short dash across its bar instead.
+export function loneBudget(view: SpendingReportView, index: number | undefined): boolean {
+  if (index === undefined || (view.bars[index]?.budget ?? null) === null) return false;
+  const near = [view.bars[index - 1], view.bars[index + 1]];
+  return near.every((bar) => (bar?.budget ?? null) === null);
+}
+
+function BudgetMark(props: { cx?: number; cy?: number; lone: boolean }) {
+  const { cx, cy } = props;
+  if (!props.lone || cx === undefined || cy === undefined) return <g />;
+  return (
+    <line x1={cx - 10} x2={cx + 10} y1={cy} y2={cy} stroke={BUDGET_LINE_COLOR} strokeWidth={2} />
+  );
+}
 
 function SpendingChart(props: { view: SpendingReportView }) {
   const navigate = useNavigate();
   const { view } = props;
-  const rows: ChartRow[] = view.bars.map((bar) => ({
-    ...bar,
-    label: monthLabel(`${bar.month}-01`),
-  }));
+  const last = view.bars.length - 1;
+  const budget = view.bars.some((bar) => bar.budget !== null);
   return (
     <>
-      <div className="h-64 w-full">
+      <div className={CHART_BOX}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             accessibilityLayer={false}
-            data={rows}
-            margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+            data={view.bars}
+            margin={{ top: 8, right: 4, bottom: 0, left: 0 }}
           >
-            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-            <YAxis
-              width={64}
-              tick={{ fontSize: 12 }}
-              tickFormatter={(cents: number) => wholeDollars(cents)}
-            />
+            <CartesianGrid {...GRID} />
+            <XAxis {...X_AXIS} />
+            <YAxis {...Y_AXIS} />
+            {reportTooltip(({ month }) => spendingTooltip(view, month), { cursor: "band" })}
             {view.segments.map((name) => (
               <Bar
                 key={name}
                 name={name}
-                dataKey={(row: ChartRow) => row.segments[name] ?? 0}
+                dataKey={(row: SpendingReportBar) => row.segments[name] ?? 0}
                 stackId="spending"
                 fill={segmentColor(view, name)}
+                stroke={SURFACE_COLOR}
+                strokeWidth={1}
                 cursor="pointer"
                 isAnimationActive={false}
                 onClick={(item) => {
-                  const month = (item.payload as ChartRow | undefined)?.month;
+                  const month = (item.payload as SpendingReportBar | undefined)?.month;
                   if (month !== undefined) void navigate(segmentHref(view, name, month));
                 }}
-              />
+              >
+                {view.bars.map((bar, at) => (
+                  <Cell key={bar.month} fillOpacity={at === last ? SO_FAR_OPACITY : 1} />
+                ))}
+              </Bar>
             ))}
-            <Line
-              name="Budget"
-              dataKey="budget"
-              stroke={BUDGET_LINE_COLOR}
-              strokeWidth={1.5}
-              strokeDasharray="5 4"
-              dot={false}
-              isAnimationActive={false}
-            />
+            {budget ? (
+              <Line
+                name="Budget"
+                dataKey="budget"
+                stroke={BUDGET_LINE_COLOR}
+                strokeWidth={1.5}
+                strokeDasharray="5 4"
+                dot={(dot: { cx?: number; cy?: number; index?: number }) => (
+                  <BudgetMark key={dot.index} {...dot} lone={loneBudget(view, dot.index)} />
+                )}
+                activeDot={false}
+                isAnimationActive={false}
+              />
+            ) : null}
             {view.usual === null ? null : (
-              <ReferenceLine y={view.usual} stroke={TREND_COLOR} strokeDasharray="3 3" />
+              <ReferenceLine y={view.usual} stroke={TREND_COLOR} strokeDasharray="2 3" />
             )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-small text-muted">
-        {view.segments.map((name) => (
-          <li key={name} className="flex items-center gap-1.5">
-            <span
-              className="inline-block size-2.5 rounded-sm"
-              style={{ backgroundColor: segmentColor(view, name) }}
-            />
-            {name}
-          </li>
-        ))}
-        <li>– – Budget</li>
-        {view.usual === null ? null : <li>··· Usual month: {wholeDollars(view.usual)}</li>}
-      </ul>
+      <ChartKey
+        items={[
+          ...view.segments.map((name) => ({ name, color: segmentColor(view, name) })),
+          ...(budget
+            ? [{ name: "Budget", color: BUDGET_LINE_COLOR, mark: "dashed" as const }]
+            : []),
+          ...(view.usual === null
+            ? []
+            : [{ name: "Usual month", color: TREND_COLOR, mark: "dotted" as const }]),
+        ]}
+      />
     </>
   );
 }
@@ -161,87 +224,80 @@ function SpendingChart(props: { view: SpendingReportView }) {
 export function SpendingTable(props: { view: SpendingReportView }) {
   const { view } = props;
   return (
-    <div className="overflow-x-auto">
-      <table className={TABLE} aria-label="Spending by month">
-        {view.usual === null ? null : (
-          <caption className="text-left text-small text-muted">
-            Usual month: {wholeDollars(view.usual)}
-          </caption>
-        )}
-        <thead>
-          <tr>
-            <th className={TH}>Month</th>
-            {view.segments.map((name) => (
-              <th key={name} className={TH_NUMBER}>
-                {name}
-              </th>
-            ))}
-            <th className={TH_NUMBER}>Spending</th>
-            <th className={TH_NUMBER}>Budget</th>
-          </tr>
-        </thead>
-        <tbody>
-          {view.bars.map((bar) => (
-            <tr key={bar.month}>
-              <th scope="row" className={`${TD} text-left font-normal`}>
-                {monthLabel(`${bar.month}-01`)}
-              </th>
-              {view.segments.map((name) => (
-                <td key={name} className={TD_NUMBER}>
-                  <Link className={CELL_LINK} to={segmentHref(view, name, bar.month)}>
-                    {wholeDollars(bar.segments[name] ?? 0)}
-                  </Link>
-                </td>
-              ))}
-              <td className={TD_NUMBER}>
-                <Link
-                  className={CELL_LINK}
-                  to={drillDownHref({ type: "Spending", month: bar.month })}
-                >
-                  {wholeDollars(bar.spending)}
-                </Link>
-              </td>
-              <td className={TD_NUMBER}>{bar.budget === null ? "" : wholeDollars(bar.budget)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ReportTable
+      label="Spending by month"
+      {...(view.usual === null ? {} : { caption: `Usual month: ${wholeDollars(view.usual)}` })}
+      head="Month"
+      columns={[
+        ...view.segments.map((name) => ({ key: name, name })),
+        { key: "spending", name: "Spending" },
+        { key: "budget", name: "Budget" },
+      ]}
+      rows={view.bars.map((bar) => ({
+        key: bar.month,
+        head: monthLabel(`${bar.month}-01`),
+        cells: [
+          ...view.segments.map((name) => (
+            <Link key={name} className={CELL_LINK} to={segmentHref(view, name, bar.month)}>
+              {wholeDollars(bar.segments[name] ?? 0)}
+            </Link>
+          )),
+          <Link
+            key="spending"
+            className={CELL_LINK}
+            to={drillDownHref({ type: "Spending", month: bar.month })}
+          >
+            {wholeDollars(bar.spending)}
+          </Link>,
+          bar.budget === null ? "" : wholeDollars(bar.budget),
+        ],
+      }))}
+    />
   );
 }
 
 // Each group's or Category's total over the range, its average per month, and its change from the
-// range before. With no whole range before, the change is empty.
+// range before. With no whole range before, the change is empty, and its column is left out.
 export function SpendingSummary(props: { view: SpendingReportView }) {
   const { view } = props;
   return (
-    <div className="overflow-x-auto">
-      <table className={TABLE} aria-label="Spending over the range">
-        <thead>
-          <tr>
-            <th className={TH}>{view.group === null ? "Category group" : "Category"}</th>
-            <th className={TH_NUMBER}>Total</th>
-            <th className={TH_NUMBER}>Per month</th>
-            <th className={TH_NUMBER}>Change from the range before</th>
-          </tr>
-        </thead>
-        <tbody>
-          {view.rows.map((row) => (
-            <tr key={row.name}>
-              <th scope="row" className={`${TD} text-left font-normal`}>
-                {row.name}
-              </th>
-              <td className={TD_NUMBER}>{wholeDollars(row.total)}</td>
-              <td className={TD_NUMBER}>{wholeDollars(row.average)}</td>
-              <td className={TD_NUMBER}>
-                {row.change === null ? "" : wholeDollars(row.change, { signed: true })}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ReportTable
+      label="Spending over the range"
+      head={view.group === null ? "Category group" : "Category"}
+      columns={[
+        { key: "total", name: "Total" },
+        { key: "average", name: "Per month" },
+        { key: "change", name: "Change from the range before" },
+      ]}
+      rows={view.rows.map((row) => ({
+        key: row.name,
+        head: row.name,
+        cells: [
+          wholeDollars(row.total),
+          wholeDollars(row.average),
+          row.change === null ? "" : wholeDollars(row.change, { signed: true }),
+        ],
+      }))}
+    />
   );
+}
+
+const monthsWord = (count: number) => (count === 1 ? "1 month" : `${count} months`);
+
+// The big number: the range's average per month. Its line: the range's total, and the latest
+// full month against the usual month, as the dashboard's Spending tile says it.
+export function spendingHeadline(view: SpendingReportView): Headline {
+  const total = view.rows.reduce((sum, row) => sum + row.total, 0);
+  const average = view.rows.reduce((sum, row) => sum + row.average, 0);
+  const line: LinePart[] = [`${wholeDollars(total)} over ${monthsWord(view.months.length)}`];
+  const full = view.bars.length >= 2 ? view.bars.at(-2) : undefined;
+  if (full !== undefined && view.usual !== null) {
+    line.push(
+      ` · ${monthName(full.month)} ${wholeDollars(full.spending)}, `,
+      directionAgainstUsual(full.spending - view.usual, "bad"),
+    );
+  }
+  return { amount: wholeDollars(average), unit: "a month on average", line };
 }
 
 // The report as drawn from its view.
@@ -263,7 +319,9 @@ export function SpendingReportBody(props: {
   return (
     <ReportFrame
       {...frame}
+      headline={spendingHeadline(view)}
       chart={<SpendingChart view={view} />}
+      caption={`${soFarCaption(view.months)} Choose a bar to see its Transactions.`}
       table={<SpendingTable view={view} />}
       summary={<SpendingSummary view={view} />}
     />

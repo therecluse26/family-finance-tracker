@@ -2,7 +2,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { BalancesReportView } from "../../../server/reports-views.ts";
-import { accountHref, BalancesReportBody } from "./Balances.tsx";
+import { accountHref, BalancesReportBody, estimateNote } from "./Balances.tsx";
 
 // Balances and debt's section (spec 07, Reports), drawn from a fake answer. Server rendering draws
 // no chart, so these read the tables, which hold the charts' numbers, and their links.
@@ -202,5 +202,48 @@ describe("Balances and debt", () => {
       "/transactions?account=acc-checking&month=2026-10",
     ]);
     expect(html).toMatch(/<option value="acc-checking" selected="">Interest Checking<\/option>/);
+    expect(text(/data-slot="report-headline"[^>]*>(.*?)<\/p>/s.exec(html)?.[1] ?? "")).toBe(
+      "$980 Interest Checking",
+    );
+  });
+});
+
+describe("Balances and debt's card", () => {
+  const slot = (html: string, name: string) =>
+    text(new RegExp(`data-slot="${name}"[^>]*>(.*?)</p>`, "s").exec(html)?.[1] ?? "");
+
+  it("opens with Cash on hand now, and Debt now with its change since the range's start", () => {
+    const html = render(VIEW);
+
+    expect(slot(html, "report-headline")).toBe("$3,980 Cash on hand");
+    expect(slot(html, "report-line")).toBe("Debt $21,200, ▼ $300 since Sep 2026");
+    // Less Debt is the good direction.
+    expect(html).toMatch(/class="text-good">▼ \$300 since Sep 2026/);
+  });
+
+  it("marks an estimated Cash on hand", () => {
+    const html = render({
+      ...VIEW,
+      cashOnHand: VIEW.cashOnHand.map((point) => ({ ...point, estimated: true })),
+    });
+    expect(slot(html, "report-headline")).toBe("$3,980 Cash on hand estimated");
+  });
+
+  it("draws a line estimated from end to end solid, and says it is estimated", () => {
+    const points = (estimated: [boolean, boolean]) =>
+      MONTHS.map((month, at) => ({ month, value: 100, estimated: estimated[at] ?? false }));
+    const line = (estimated: [boolean, boolean]) => ({
+      id: "cash",
+      name: "Cash on hand",
+      color: "#1D4ED8",
+      points: points(estimated),
+    });
+
+    expect(estimateNote([line([true, true])])).toBe("Estimated from your Transactions.");
+    expect(estimateNote([line([true, false])])).toBe("Dashed: estimated month-ends.");
+    expect(estimateNote([line([true, true]), line([false, true])])).toBe(
+      "Estimated from your Transactions. Dashed: estimated month-ends.",
+    );
+    expect(estimateNote([line([false, false])])).toBeUndefined();
   });
 });

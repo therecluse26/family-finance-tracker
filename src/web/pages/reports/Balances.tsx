@@ -1,35 +1,38 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { dollarsAndCents, monthLabel, percent, wholeDollars } from "../../../format.ts";
 import type { BalancesReportView } from "../../../server/reports-views.ts";
 import { api } from "../../api.ts";
-import { BUDGET_LINE_COLOR, FULL_COLOR, GROUP_COLORS } from "../../chart-colors.ts";
+import { BUDGET_LINE_COLOR, FULL_COLOR, GROUP_COLORS, INK_COLOR } from "../../chart-colors.ts";
 import { BalanceChart, chartRows } from "../../components/BalanceChart.tsx";
 import { ErrorLine } from "../../components/Fields.tsx";
 import type { ReportSectionProps } from "../../reports.ts";
 import { drillDownHref } from "./drill-down.ts";
-import { ReportFrame } from "./ReportFrame.tsx";
+import {
+  CHART_BOX,
+  ChartKey,
+  GRID,
+  monthWords,
+  reportTooltip,
+  type TooltipContent,
+  X_AXIS,
+  Y_AXIS,
+} from "./ReportChart.tsx";
+import { type Headline, type LinePart, ReportFrame } from "./ReportFrame.tsx";
+import { ReportTable } from "./ReportTable.tsx";
+import { CELL_LINK, FILTER_LABEL, FILTER_SELECT } from "./report-view.ts";
 
 // Balances and debt (spec 07, Reports): Cash on hand and Debt at each month-end of the range, each
-// credit card's credit use, and each loan's pay-down, or one Account's balance line. Estimated
-// stretches are dashed, and a caption names them. A tap on a point opens that month's
+// credit card's credit use, and each loan's pay-down, or one Account's balance line. A stretch
+// estimated next to known month-ends is dashed, and a caption names it; a line estimated from end
+// to end stays solid, and the caption says it is estimated. A tap on a point opens that month's
 // Transactions. No net worth (spec 13).
 
-const DEBT_COLOR = "#C2457A";
 const LINE_COLORS = Object.values(GROUP_COLORS);
-const LINK = "text-accent hover:text-accent-dark hover:underline";
 
-// A month, YYYY-MM, as the charts and tables write it: "Oct 2025".
-const monthName = (month: string) => monthLabel(`${month}-01`);
+// A month, YYYY-MM, as the tables write it: "Oct 2025".
+const monthText = (month: string) => monthLabel(`${month}-01`);
 
 // The Reports page with `account` set, or with no Account for "All Accounts", keeping the range
 // and every other filter.
@@ -53,21 +56,70 @@ type Series = {
   bold?: boolean;
 };
 
+// Whether every point of a series with a value is estimated: then the whole line is an estimate,
+// and dashing it all would say nothing.
+const allEstimated = (series: Series) => {
+  const valued = series.points.filter((point) => point.value !== null);
+  return valued.length > 0 && valued.every((point) => point.estimated);
+};
+
+// The words under a chart for its estimates.
+export function estimateNote(series: readonly Series[]): string | undefined {
+  const whole = series.some(allEstimated);
+  const dashed = series.some(
+    (each) => !allEstimated(each) && each.points.some((point) => point.estimated),
+  );
+  const words = [
+    whole ? "Estimated from your Transactions." : "",
+    dashed ? "Dashed: estimated month-ends." : "",
+  ].filter((part) => part !== "");
+  return words.length === 0 ? undefined : words.join(" ");
+}
+
+// A month's hover label: each line's value, marked when it is an estimate next to known ones.
+function linesTooltip(
+  series: readonly Series[],
+  month: string,
+  last: string | undefined,
+  format: (value: number) => string,
+): TooltipContent | null {
+  const rows = series.flatMap((each) => {
+    const point = each.points.find((candidate) => candidate.month === month);
+    if (point === undefined || point.value === null) return [];
+    const marked = point.estimated && !allEstimated(each);
+    return [
+      {
+        name: marked ? `${each.name} (estimated)` : each.name,
+        amount: format(point.value),
+        color: each.color,
+      },
+    ];
+  });
+  if (rows.length === 0) return null;
+  return { title: `${monthWords(month)}${month === last ? ", today" : ""}`, rows };
+}
+
 // Each series is two lines in one color, as in BalanceChart: known month-ends solid and estimated
-// ones dashed. The legend under it names each series, and a caption names the dashed line.
-function MonthLinesChart(props: { series: readonly Series[]; format: (value: number) => string }) {
+// ones dashed. A series estimated from end to end is drawn solid. The key under it names each
+// series, and a caption says what is estimated.
+function MonthLinesChart(props: {
+  series: readonly Series[];
+  format: (value: number) => string;
+  tick: (value: number) => string;
+}) {
   const navigate = useNavigate();
   const months = props.series[0]?.points.map((point) => point.month) ?? [];
-  const split = props.series.map((series) =>
-    chartRows(
+  const split = props.series.map((series) => {
+    const whole = allEstimated(series);
+    return chartRows(
       series.points.map((point) => ({
         date: point.month,
         currentBalance: point.value,
         availableBalance: null,
-        estimated: point.estimated,
+        estimated: whole ? false : point.estimated,
       })),
-    ),
-  );
+    );
+  });
   const rows = months.map((month, index) => {
     const row: Record<string, string | number | null> = { month };
     split.forEach((each, at) => {
@@ -76,35 +128,23 @@ function MonthLinesChart(props: { series: readonly Series[]; format: (value: num
     });
     return row;
   });
-  const estimated = props.series.some((series) => series.points.some((point) => point.estimated));
-  const nameOf = (key: string) => props.series[Number(key.slice(1))]?.name ?? "";
+  const note = estimateNote(props.series);
   return (
     <figure>
-      <div className="h-64 w-full">
+      <div className={CHART_BOX}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             accessibilityLayer={false}
             data={rows}
-            margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+            margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
           >
-            <CartesianGrid stroke="#e5e7eb" vertical={false} />
-            <XAxis
-              dataKey="month"
-              tickFormatter={(month) => monthName(String(month))}
-              tick={{ fill: "#4b5563", fontSize: 12 }}
-            />
-            <YAxis
-              tickFormatter={(value: number) => props.format(value)}
-              tick={{ fill: "#4b5563", fontSize: 12 }}
-              width={80}
-            />
-            <Tooltip
-              labelFormatter={(month) => monthName(String(month))}
-              formatter={(value, key) => [
-                props.format(Number(value)),
-                `${nameOf(String(key))}${String(key).startsWith("e") ? " (estimated)" : ""}`,
-              ]}
-            />
+            <CartesianGrid {...GRID} />
+            <XAxis {...X_AXIS} />
+            <YAxis {...Y_AXIS} tickFormatter={(value: number) => props.tick(value)} />
+            {reportTooltip(
+              ({ month }) => linesTooltip(props.series, month, months.at(-1), props.format),
+              { cursor: "line" },
+            )}
             {props.series.flatMap((series, at) =>
               (["s", "e"] as const).map((kind) => (
                 <Line
@@ -113,11 +153,11 @@ function MonthLinesChart(props: { series: readonly Series[]; format: (value: num
                   name={`${kind}${at}`}
                   type="linear"
                   stroke={series.color}
-                  strokeWidth={series.bold ? 3 : 2}
+                  strokeWidth={series.bold ? 2.5 : 2}
                   strokeDasharray={kind === "e" ? "4 4" : undefined}
                   dot={false}
                   activeDot={{
-                    r: 5,
+                    r: 4,
                     cursor: series.href === undefined ? undefined : "pointer",
                     onClick: (_event: unknown, dot: unknown) => {
                       const month = (dot as { payload?: { month?: unknown } }).payload?.month;
@@ -133,20 +173,19 @@ function MonthLinesChart(props: { series: readonly Series[]; format: (value: num
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <figcaption className="mt-1 text-sm text-gray-600">
-        <ul className="flex flex-wrap gap-x-4">
-          {props.series.map((series) => (
-            <li key={series.id} className="flex items-center gap-1.5">
-              <span
-                aria-hidden="true"
-                className="inline-block h-0.5 w-4"
-                style={{ backgroundColor: series.color }}
-              />
-              {series.name}
-            </li>
-          ))}
-        </ul>
-        {estimated ? <p>The dashed line marks estimated month-ends.</p> : null}
+      <figcaption>
+        <ChartKey
+          items={props.series.map((series) => ({
+            name: series.name,
+            color: series.color,
+            mark: "line" as const,
+          }))}
+        />
+        {note === undefined ? null : (
+          <p className="mt-1 text-small text-muted" data-slot="estimate-note">
+            {note}
+          </p>
+        )}
       </figcaption>
     </figure>
   );
@@ -154,8 +193,8 @@ function MonthLinesChart(props: { series: readonly Series[]; format: (value: num
 
 function Part(props: { title: string; children: ReactNode }) {
   return (
-    <div className="mt-4 first:mt-0">
-      <h3 className="font-semibold">{props.title}</h3>
+    <div className="mt-6 first:mt-0">
+      <h3 className="text-sm font-semibold">{props.title}</h3>
       <div className="mt-2">{props.children}</div>
     </div>
   );
@@ -174,45 +213,27 @@ function MonthTable(props: {
   }[];
 }) {
   return (
-    <table aria-label={props.label} className="mt-2 w-full border-collapse text-sm first:mt-0">
-      <caption className="text-left font-semibold">{props.label}</caption>
-      <thead>
-        <tr>
-          <th scope="col" className="text-left">
-            Month
-          </th>
-          {props.columns.map((column) => (
-            <th key={column.name} scope="col" className="text-right">
-              {column.name}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {props.months.map((month, index) => (
-          <tr key={month} className="border-t border-line-soft">
-            <th scope="row" className="text-left font-normal">
-              {monthName(month)}
-            </th>
-            {props.columns.map((column) => {
-              const cell = column.cells[index];
-              const text = cell === undefined ? "" : marked(cell.text, cell.estimated);
-              return (
-                <td key={column.name} className="text-right tabular-nums">
-                  {column.href === undefined || cell === undefined ? (
-                    text
-                  ) : (
-                    <Link className={LINK} to={column.href(month)}>
-                      {text}
-                    </Link>
-                  )}
-                </td>
-              );
-            })}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ReportTable
+      label={props.label}
+      caption={props.label}
+      head="Month"
+      columns={props.columns.map((column) => ({ key: column.name, name: column.name }))}
+      rows={props.months.map((month, index) => ({
+        key: month,
+        head: monthText(month),
+        cells: props.columns.map((column) => {
+          const cell = column.cells[index];
+          const text = cell === undefined ? "" : marked(cell.text, cell.estimated);
+          return column.href === undefined || cell === undefined ? (
+            text
+          ) : (
+            <Link key={column.name} className={CELL_LINK} to={column.href(month)}>
+              {text}
+            </Link>
+          );
+        }),
+      }))}
+    />
   );
 }
 
@@ -241,7 +262,7 @@ function allAccounts(view: BalancesReportView): { chart: ReactNode; table: React
           {
             id: "all-cards",
             name: "All cards",
-            color: BUDGET_LINE_COLOR,
+            color: INK_COLOR,
             bold: true,
             points: view.creditUse.all.map((point) => ({ ...point, value: point.share })),
           },
@@ -255,12 +276,14 @@ function allAccounts(view: BalancesReportView): { chart: ReactNode; table: React
   }));
   const dollars = (value: number) => wholeDollars(value);
   const shares = (value: number) => percent(value);
+  const dollarTicks = Y_AXIS.tickFormatter;
 
   const chart = (
     <>
       <Part title="Cash on hand and Debt">
         <MonthLinesChart
           format={dollars}
+          tick={dollarTicks}
           series={[
             {
               id: "cash",
@@ -272,7 +295,7 @@ function allAccounts(view: BalancesReportView): { chart: ReactNode; table: React
             {
               id: "debt",
               name: "Debt",
-              color: DEBT_COLOR,
+              color: BUDGET_LINE_COLOR,
               points: amounts(view.debt),
               href: monthHref,
             },
@@ -283,14 +306,14 @@ function allAccounts(view: BalancesReportView): { chart: ReactNode; table: React
         {creditSeries.length === 0 ? (
           <p className="text-muted">No credit card with a credit limit.</p>
         ) : (
-          <MonthLinesChart format={shares} series={creditSeries} />
+          <MonthLinesChart format={shares} tick={shares} series={creditSeries} />
         )}
       </Part>
       <Part title="Loan pay-down">
         {loans.length === 0 ? (
           <p className="text-muted">No loan to show.</p>
         ) : (
-          <MonthLinesChart format={dollars} series={loans} />
+          <MonthLinesChart format={dollars} tick={dollarTicks} series={loans} />
         )}
       </Part>
     </>
@@ -299,7 +322,7 @@ function allAccounts(view: BalancesReportView): { chart: ReactNode; table: React
   const money = (points: BalancesReportView["cashOnHand"]) =>
     points.map((point) => ({ text: dollarsAndCents(point.amount), estimated: point.estimated }));
   const table = (
-    <>
+    <div className="flex flex-col gap-4">
       <MonthTable
         label="Cash on hand and Debt by month"
         months={view.months}
@@ -345,18 +368,56 @@ function allAccounts(view: BalancesReportView): { chart: ReactNode; table: React
           }))}
         />
       )}
-    </>
+    </div>
   );
   return { chart, table };
+}
+
+// The big number: Cash on hand now. Its line: Debt now, and its change since the range's first
+// month-end, green when it fell.
+export function balancesHeadline(view: BalancesReportView): Headline | undefined {
+  const cash = view.cashOnHand.at(-1);
+  if (cash === undefined) return undefined;
+  const debt = view.debt.at(-1);
+  const first = view.debt[0];
+  const line: LinePart[] = [];
+  if (debt !== undefined) {
+    const words = `Debt ${wholeDollars(debt.amount)}${debt.estimated ? " (estimated)" : ""}`;
+    const change = first === undefined || first === debt ? 0 : debt.amount - first.amount;
+    const amount = wholeDollars(Math.abs(change));
+    if (first === undefined || first === debt || amount === "$0") line.push(words);
+    else {
+      line.push(`${words}, `, {
+        tone: change < 0 ? "good" : "serious",
+        text: `${change < 0 ? "▼" : "▲"} ${amount} since ${monthText(first.month)}`,
+      });
+    }
+  }
+  return {
+    amount: wholeDollars(cash.amount),
+    unit: "Cash on hand",
+    estimated: cash.estimated,
+    line,
+  };
 }
 
 // One Account's balance line, and its month-ends as a table.
 function oneAccount(
   view: BalancesReportView,
   account: NonNullable<BalancesReportView["account"]>,
-): { chart: ReactNode; table: ReactNode } {
+): { chart: ReactNode; table: ReactNode; headline?: Headline } {
   const months = account.monthEnds.map((end) => end.month);
+  const latest = account.points.findLast((point) => point.currentBalance !== null);
   return {
+    ...(latest?.currentBalance == null
+      ? {}
+      : {
+          headline: {
+            amount: wholeDollars(latest.currentBalance),
+            unit: account.name,
+            estimated: latest.estimated,
+          },
+        }),
     chart: <BalanceChart points={account.points} today={view.today} />,
     table:
       months.length === 0 ? undefined : (
@@ -385,11 +446,11 @@ export function AccountFilter(props: {
 }) {
   const navigate = useNavigate();
   return (
-    <label className="flex items-center gap-2 text-sm">
+    <label className={FILTER_LABEL}>
       Account
       <select
         name="account"
-        className="rounded-control border border-field bg-white px-2 py-1.5"
+        className={FILTER_SELECT}
         value={props.params.get("account") ?? ""}
         onChange={(event) => void navigate(accountHref(props.params, event.target.value))}
       >
@@ -404,6 +465,8 @@ export function AccountFilter(props: {
   );
 }
 
+const CAPTION = "Choose a point to see that month's Transactions.";
+
 // The report drawn from its answer.
 export function BalancesReportBody(props: {
   view: BalancesReportView;
@@ -412,13 +475,14 @@ export function BalancesReportBody(props: {
 }) {
   const { view } = props;
   const filter = <AccountFilter params={props.params} accounts={view.accounts} />;
-  const frame = (parts: { chart: ReactNode; table?: ReactNode }) => (
+  const frame = (parts: { chart: ReactNode; table?: ReactNode; headline?: Headline }) => (
     <ReportFrame
       id="balances"
       title="Balances and debt"
       filter={filter}
       chart={parts.chart}
-      {...(parts.table === undefined ? {} : { table: parts.table })}
+      {...(parts.headline === undefined ? {} : { headline: parts.headline })}
+      {...(parts.table === undefined ? {} : { table: parts.table, caption: CAPTION })}
       {...(props.initialTable === undefined ? {} : { initialTable: props.initialTable })}
     />
   );
@@ -426,7 +490,8 @@ export function BalancesReportBody(props: {
   if (view.months.length === 0) {
     return frame({ chart: <p className="text-muted">No balances yet.</p> });
   }
-  return frame(allAccounts(view));
+  const headline = balancesHeadline(view);
+  return frame({ ...allAccounts(view), ...(headline === undefined ? {} : { headline }) });
 }
 
 type Loaded =

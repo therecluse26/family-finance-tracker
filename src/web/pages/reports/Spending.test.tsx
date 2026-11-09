@@ -2,7 +2,9 @@ import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { NO_CATEGORY_YET, type SpendingReportView } from "../../../server/reports-views.ts";
-import { groupHref, SpendingReportBody } from "./Spending.tsx";
+import { groupHref, loneBudget, SpendingReportBody, spendingTooltip } from "./Spending.tsx";
+
+type SpendingBar = SpendingReportView["bars"][number];
 
 // Spending over time on the Reports page (spec 07, Reports). Server rendering draws no chart, so
 // these read the table, which holds the chart's numbers and links.
@@ -146,9 +148,8 @@ describe("Spending over time", () => {
       "Other $0 $0 $0",
       "No Category yet $25 $13 +$25",
     ]);
-    expect(rows(render(GROUP), "Spending over the range")[0]).toBe(
-      "Category Total Per month Change from the range before",
-    );
+    // With no change in any row, as with no whole range before, the column is left out.
+    expect(rows(render(GROUP), "Spending over the range")[0]).toBe("Category Total Per month");
   });
 
   it("opens a group's segment at the month's Spending, and a Category's at its Category", () => {
@@ -206,5 +207,70 @@ describe("Spending over time", () => {
     });
     expect(text(quiet)).toContain("No Spending yet.");
     expect(quiet).not.toContain("report-table");
+  });
+});
+
+describe("Spending over time's card", () => {
+  const slot = (html: string, name: string) =>
+    text(new RegExp(`data-slot="${name}"[^>]*>(.*?)</p>`, "s").exec(html)?.[1] ?? "");
+
+  it("opens with the average month, the range's total, and the last full month against usual", () => {
+    const html = render(ALL);
+
+    expect(slot(html, "report-headline")).toBe("$1,313 a month on average");
+    expect(slot(html, "report-line")).toBe(
+      "$2,625 over 2 months · October $2,525, ▲ $125 above usual",
+    );
+    // More Spending than usual is the bad direction.
+    expect(html).toMatch(/class="text-serious">▲ \$125 above usual/);
+    expect(slot(html, "report-caption")).toBe(
+      "Pale bar: November so far. Choose a bar to see its Transactions.",
+    );
+  });
+
+  it("gives no comparison without a full month or a usual month", () => {
+    expect(slot(render(GROUP), "report-line")).toBe("$60 over 1 month");
+  });
+
+  it("labels its filter in one short word", () => {
+    expect(text(/<label[^>]*>(.*?)<select/s.exec(render(ALL))?.[1] ?? "")).toBe("Group");
+  });
+
+  it("hovers a month with its groups, top first, their total, and its Budget", () => {
+    expect(spendingTooltip(ALL, "2026-10")).toEqual({
+      title: "October 2026",
+      rows: [
+        { name: NO_CATEGORY_YET, amount: "$25", color: "#9AA3AE" },
+        { name: "Leisure", amount: "$50", color: "#7B5CD6" },
+        { name: "Shopping", amount: "$450", color: "#0A9182" },
+        { name: "Bills", amount: "$2,000", color: "#3B6FD8" },
+        { name: "Budget", amount: "$2,600" },
+      ],
+      total: { name: "Spending", amount: "$2,525" },
+    });
+    expect(spendingTooltip(ALL, "2026-11")?.title).toBe("November 2026 so far");
+    expect(spendingTooltip(ALL, "2026-09")).toBeNull();
+  });
+
+  it("marks a Budget with no Budget beside it, which has no line to draw", () => {
+    const budgets = (cents: (number | null)[]) => ({
+      ...ALL,
+      bars: cents.map((budget, at) => ({
+        ...(ALL.bars[0] as SpendingBar),
+        month: `m${at}`,
+        budget,
+      })),
+    });
+
+    // A Budget set this month only.
+    expect([0, 1].map((at) => loneBudget(budgets([null, 375_700]), at))).toEqual([false, true]);
+    // A line runs between two months with a Budget.
+    expect([0, 1, 2].map((at) => loneBudget(budgets([260_000, 260_000, null]), at))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(loneBudget(budgets([260_000, null, 260_000]), 2)).toBe(true);
+    expect(loneBudget(ALL, undefined)).toBe(false);
   });
 });

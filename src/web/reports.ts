@@ -4,8 +4,23 @@ import { DEFAULT_REPORT_RANGE, REPORT_RANGES, type ReportRange } from "../report
 // query, so a link can open a report as set; the hash names the report's section.
 
 // The page's sections, in order, as their ids.
-export const REPORT_SECTIONS = ["spending", "cash-flow", "balances", "merchants"] as const;
+export const REPORT_SECTIONS = [
+  "spending",
+  "cash-flow",
+  "balances",
+  "merchants",
+  "recurring",
+] as const;
 export type ReportSection = (typeof REPORT_SECTIONS)[number];
+
+// Each section's name, as its card and its jump link say it.
+export const REPORT_TITLES: Readonly<Record<ReportSection, string>> = Object.freeze({
+  spending: "Spending over time",
+  "cash-flow": "Cash flow",
+  balances: "Balances and debt",
+  merchants: "Merchants",
+  recurring: "Recurring charges",
+});
 
 // The range presets' words.
 export const RANGE_LABELS: Readonly<Record<ReportRange, string>> = Object.freeze({
