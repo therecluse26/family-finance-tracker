@@ -88,6 +88,14 @@ _Avoid_: Super-category, parent category
 A rule that gives every Transaction with one Merchant the same Category. A Member's correction creates it. It covers past and future Transactions, except those a Member set by hand.
 _Avoid_: Payee rule, auto-rule, filter
 
+**Line item**:
+One product on a store order, such as one product on an Amazon order. It links to the Transaction that paid for it, and has its own Category.
+_Avoid_: Order item, product line, receipt line
+
+**Item rule**:
+A rule that gives every Line item of one product the same Category. A Member's correction of a Line item creates it. It covers past and future Line items, except those a Member set by hand.
+_Avoid_: Product rule, ASIN rule
+
 ## Targets and warnings
 
 **Budget**:

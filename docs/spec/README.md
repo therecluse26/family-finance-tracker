@@ -32,6 +32,7 @@ Three rules shape everything else:
 | [11 Backup, restore, and export](11-backup-restore-export.md) | Automatic backups, restore, and data export |
 | [12 Install and first-run setup](12-install-and-first-run.md) | The image, the Compose folder, `fft` commands, HTTPS, hosting, the first-run wizard, updates |
 | [13 Out of scope](13-out-of-scope.md) | What v1 does not do, and why |
+| [14 Line items and Amazon orders](14-line-items.md) | Amazon's order file, Line items, linking them to Transactions, Item rules, and splits from Line items |
 
 ## Architecture decisions
 

@@ -215,7 +215,7 @@ Small items left open after the T107 notes triage, for after the first release (
 
 ## Amazon orders
 
-- N315 (L, feature) Link Amazon orders to their Transactions, so a Transaction shows its items and can split into Category parts by item. Owner request, 2026-11-09. Source: the owner's Amazon "Request Your Data" export, uploaded as a file on a new import page; no Amazon sign-in and no new dependency. Spike result, 2026-11-09: `amazon-orders` 5.3.0 (MIT, plain HTTP) failed at sign-in with Amazon's JavaScript challenge, so it needs Playwright and Chromium; the owner judged that a worse experience than a file import. Check a real export first: its file names, columns (order ID, order date, ship date, item name, quantity, unit price, tax, total owed, payment type) and the refunds file. Match each shipment to a card Transaction by amount and a window of days after the ship date; unsure matches go to the Review list. A re-import of an overlapping export adds nothing twice. Item names reach the AI provider. In: new `src/amazon/`, an import page, spec 02 or a new spec section.
+- N315 (L, feature) Line items and Amazon orders: spec written in [14 Line items](spec/14-line-items.md) (2026-11-09). The parser waits for a real Amazon export from the owner, to fix the file name and columns. In: new `src/line-items/`, an Amazon page in Settings, the Transactions detail view.
 
 ## Backups, export, jobs and start-up
 

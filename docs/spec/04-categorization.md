@@ -88,6 +88,7 @@ Each Spending Transaction takes the first answer it gets, in this order:
 | Step | Source | It answers when |
 |---|---|---|
 | 1 | Hand-set | A Member set the Category by hand. |
+| 1a | Line items | It has linked Line items. One Category among them sets the Category; two or more split it ([Line items](14-line-items.md#splits-from-line-items)). |
 | 2 | Recurring charge, then Category rule | It is in a Recurring charge with a Category a Member set ([Anomalies and Alerts](06-anomalies-and-alerts.md#member-edits)). Otherwise a Category rule matches its Merchant. |
 | 3 | Provider category | The provider's category maps cleanly to one Category, and Plaid's `confidence_level` is `VERY_HIGH` or `HIGH`. |
 | 4 | Merchant history | The Merchant's last 3 Transactions all have the same Category. |
@@ -185,12 +186,13 @@ A Member often looks up an unknown Merchant on the web to learn what it sells. T
 ## Splits
 
 - Each Transaction gets one Category. A Member may split one Spending Transaction by amount across Categories. This is optional.
+- The app also splits a Spending Transaction whose linked Line items have two or more Categories ([Line items](14-line-items.md#splits-from-line-items)). A hand split wins over it.
 - The parts add up to the Transaction's amount.
 - Each part counts in its own Category, and all parts count in the Transaction's month.
 - A split part makes no Category rule.
 - A Refund reduces the parts in proportion to their amounts. A Reimbursement does the same.
   - Example: a $120 Target purchase is split into $80 Groceries and $40 Clothing. A $30 Refund reduces Groceries by $20 and Clothing by $10.
-- The cascade never changes a split. When a Member removes the split, the Transaction goes back to the cascade.
+- The cascade never changes a hand split. When a Member removes the split, the Transaction goes back to the cascade.
 - When the provider changes a split Transaction's amount, the app scales each part in proportion.
 
 ## Which month a Transaction counts in
@@ -222,6 +224,8 @@ The Review list is optional. Each Category below already counts, so nothing wait
 |---|---|---|
 | A Category the AI or a Web lookup chose with confidence "low" | The AI was unsure | Accepting makes a Category rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this Transaction". |
 | A best guess made without AI | No AI was available | Same as above |
+
+Line items add two more kinds: an Amazon shipment that fits two or more Transactions, and a Line item Category the AI chose with confidence "low" ([Line items](14-line-items.md#review-list-items)).
 
 - **One card per Merchant.** Each kind above has one open item per Merchant, by [Identity](#identity), that holds all of the Merchant's Transactions of that kind.
   - The card reads like "Marathon · 14 Transactions · The AI chose Gas, but it was unsure."

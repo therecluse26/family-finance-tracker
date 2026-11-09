@@ -110,9 +110,9 @@ The restore still brings back all history. Every Master-key secret is lost, with
 
 Any Member can download one ZIP file from settings, at any time. The export asks for no code: the app asks for TOTP only at sign-in ([Members, login, and security](09-members-login-security.md#signing-in)).
 
-**CSV files:** Transactions, Accounts, Budgets, Goals, and Category rules.
+**CSV files:** Transactions, Accounts, Budgets, Goals, Category rules, Line items, and Item rules.
 
-- The files are `transactions.csv`, `accounts.csv`, `budgets.csv`, `goals.csv`, and `category-rules.csv`.
+- The files are `transactions.csv`, `accounts.csv`, `budgets.csv`, `goals.csv`, `category-rules.csv`, `line-items.csv`, and `item-rules.csv`. The last two are present only when the Household has Line items ([Line items](14-line-items.md#data-and-privacy)).
 - Each file is UTF-8, with a header row and comma separators.
 - Dates are `YYYY-MM-DD`. Amounts are dollars with 2 decimals and no currency sign. Money out is negative; money in is positive.
 - Each Transaction row has these columns:
