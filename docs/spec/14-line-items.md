@@ -109,7 +109,11 @@ Amazon charges a card when it ships, not when the order is placed. So the app li
 - When no shipment of an order fits alone, the app tries the whole order's total the same way. Amazon sometimes charges an order once.
 - Exactly one Transaction fits, and it has no Line items yet: the app links the shipment to it.
   - When that Transaction is also the only one that fits another shipment, neither links yet. Each waits, since their own charges are likely still to come.
-- Two or more Transactions fit: the app links nothing, and puts a Review list item up ([Review list items](#review-list-items)).
+- A tie (owner decision, 2026-11-10): two or more shipments and as many Transactions, where each of those shipments fits exactly those Transactions, and no other shipment the app could link (unlinked, and not paid in part by gift card) fits any of them. Every amount in a tie is the same, so a swap between them moves no money. The app links a tie in date order: the shipments by ship time, then order ID; the Transactions by purchase date, then posted date, then Transaction ID; the first with the first, and so on. Each is an app link, so Undo works as on any app link, and the app never makes that pair again.
+  - With two Amazon accounts and many one-item orders at common prices, two shipments often have the same total and ship 0 or 1 day apart. Before this rule, each such shipment put a Review list item up.
+  - Every filter above still applies, so a card, a refused link, or a Transaction that holds another order's Line items can change the group, or leave no tie. Three shipments and two Transactions, or a shipment outside the group that also fits one of its Transactions, is not a tie.
+  - The app looks for ties among single shipments, not whole orders. A sync tries a tie as it tries any shipment, and also when one of its shipments has an open Review list item. That item then closes ([Review list items](#review-list-items)).
+- Two or more Transactions fit, and the shipment is not in a tie: the app links nothing, and puts a Review list item up ([Review list items](#review-list-items)).
 - No Transaction fits: the shipment waits. The app tries again after each sync, until 60 days after the ship date. After that, it counts as "not matched", or as "before your bank history" when its window ends before the banks' first posted Transaction ([The Store orders page in Settings](#the-store-orders-page-in-settings)).
   - A gift card, points, or a promotion often changes the amount charged. Such a shipment usually ends as "not matched". A Member may link it by hand.
   - A payment method that names a gift card means the card charge is less than the total. The app does not try such a shipment. It counts as "paid in part by gift card", and a Member may link it by hand.
@@ -191,11 +195,12 @@ Each Line item takes the first answer it gets, in this order:
 
 | Item | Why it is there | What a Member's answer does |
 |---|---|---|
-| An Amazon shipment that fits two or more Transactions | The app could not tell which Transaction paid for it | Picking one makes a hand link. "None of these" leaves it unlinked, and the app never offers those Transactions for it again. |
+| An Amazon shipment that fits two or more Transactions, and is not in a tie ([The app's link](#the-apps-link)) | The app could not tell which Transaction paid for it | Picking one makes a hand link. "None of these" leaves it unlinked, and the app never offers those Transactions for it again. |
 | A Line item Category the AI chose with confidence "low" | The AI was unsure | Accepting makes an Item rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this item". |
 
 - Line item Category items group into one card per product, as Category items group per Merchant ([Categorization](04-categorization.md#review-list-items)).
 - A shipment item closes by itself when a Member links the shipment by hand, or when only one of its Transactions is left. The app then links the shipment to that one.
+- A shipment item also closes by itself, as "linked as a tie", when its shipment is in a tie. The app then links the tie in date order.
 - An item covers one shipment, or a whole order when only the order's total fits. Its card lists each Transaction with **This one**, and **None of these**.
 
 ## The Store orders page in Settings

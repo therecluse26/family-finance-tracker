@@ -104,6 +104,7 @@ export type LinkTransaction = {
   accountId: string;
   amount: number;
   purchaseDate: string;
+  postedDate: string;
   pending: boolean;
   hiddenReason: StoredTransactionHiddenReason;
   description: string;
@@ -118,6 +119,7 @@ const LINK_TRANSACTION_FIELDS = {
   accountId: transactions.accountId,
   amount: transactions.amount,
   purchaseDate,
+  postedDate: transactions.postedDate,
   pending: transactions.pending,
   hiddenReason: transactions.hiddenReason,
   description: transactions.description,

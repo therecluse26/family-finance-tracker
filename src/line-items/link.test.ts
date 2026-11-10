@@ -656,10 +656,282 @@ describe("Linking Amazon shipments", () => {
     await sync({ added: [charge("t-amzn", -1350)] });
     await upload(row("111-0000001-0000001", 1350), row("111-0000002-0000002", 1350));
     expect(await links()).toEqual(["111-0000001-0000001 → none", "111-0000002-0000002 → none"]);
-    // Their own charges come later: each fits two shipments now, so each shipment asks.
+    expect(await openItems()).toEqual([]);
+    // Their own charges come later: two shipments and two charges that fit only each other are a
+    // tie, which links in date order.
     await sync({ added: [charge("t-amzn-2", -1350, "2026-05-04")] });
-    expect(await links()).toEqual(["111-0000001-0000001 → none", "111-0000002-0000002 → none"]);
-    expect(await openItems()).toHaveLength(2);
+    expect(await links()).toEqual([
+      "111-0000001-0000001 → t-amzn (app)",
+      "111-0000002-0000002 → t-amzn-2 (app)",
+    ]);
+    expect(await openItems()).toEqual([]);
+  });
+
+  describe("with a tie: shipments and as many charges that fit only each other", () => {
+    // Order 2 ships before order 1, so the date order is not the order IDs' order.
+    const one = (ship = "2026-05-02T15:00:00Z", fields: { payment?: string } = {}) =>
+      row("111-0000001-0000001", 1350, { ship, ...fields });
+    const two = (ship = "2026-05-02T09:15:00Z", fields: { payment?: string } = {}) =>
+      row("111-0000002-0000002", 1350, { ship, ...fields });
+    const three = (ship = "2026-05-02T20:00:00Z") => row("111-0000003-0000003", 1350, { ship });
+    const reasons = async () =>
+      (await rows("SELECT closed_reason AS reason FROM review_items ORDER BY created_at, id")).map(
+        (item) => item.reason,
+      );
+    const allNone = async () => (await links()).every((line) => line.endsWith("→ none"));
+
+    it("links a 2-tie on the same day as app links in date order, and the next run changes nothing (K4)", async () => {
+      await sync({ added: [charge("t-late", -1350, "2026-05-04"), charge("t-early", -1350)] });
+      await upload(one(), two());
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-late (app)",
+        "111-0000002-0000002 → t-early (app)",
+      ]);
+      expect(await openItems()).toEqual([]);
+      expect(await counts()).toMatchObject({ linked: 2, onReviewList: 0, waiting: 0 });
+
+      const asked = bank.followUpsAsked();
+      const ids = [await idOf("t-late"), await idOf("t-early")];
+      expect(
+        await runLinking(bank.database, { after: "sync", unhandled: new Set(ids) }, now),
+      ).toEqual({ linked: 0, ended: 0, transactionIds: [] });
+      expect(await runLinking(bank.database, { after: "import" }, now)).toEqual({
+        linked: 0,
+        ended: 0,
+        transactionIds: [],
+      });
+      expect(bank.followUpsAsked()).toBe(asked);
+    });
+
+    it("takes the purchase date first, then the posted date", async () => {
+      await sync({
+        added: [
+          charge("t-posted-late", -1350, "2026-05-05", { authorizedDate: "2026-05-03" }),
+          charge("t-posted-early", -1350, "2026-05-04", { authorizedDate: "2026-05-03" }),
+          charge("t-bought-first", -1350, "2026-05-06", { authorizedDate: "2026-05-02" }),
+        ],
+      });
+      await upload(one(), two(), three());
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-posted-early (app)",
+        "111-0000002-0000002 → t-bought-first (app)",
+        "111-0000003-0000003 → t-posted-late (app)",
+      ]);
+    });
+
+    it("links a 2-tie across a month boundary: August 31 to August 31", async () => {
+      now = new Date("2026-09-10T14:00:00.000Z");
+      await sync({
+        added: [charge("t-sep-1", -1350, "2026-09-01"), charge("t-aug-31", -1350, "2026-08-31")],
+      });
+      await upload(one("2026-09-01T09:15:00Z"), two("2026-08-31T09:15:00Z"));
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-sep-1 (app)",
+        "111-0000002-0000002 → t-aug-31 (app)",
+      ]);
+    });
+
+    it("links a 3-tie in date order", async () => {
+      await sync({
+        added: [
+          charge("t-3", -1350, "2026-05-04"),
+          charge("t-1", -1350, "2026-05-02"),
+          charge("t-2", -1350, "2026-05-03"),
+        ],
+      });
+      await upload(three(), one(), two());
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-2 (app)",
+        "111-0000002-0000002 → t-1 (app)",
+        "111-0000003-0000003 → t-3 (app)",
+      ]);
+      expect(await openItems()).toEqual([]);
+    });
+
+    describe("puts one Review list item up for each shipment of what is not a tie (K2)", () => {
+      it("two shipments and three charges", async () => {
+        await sync({
+          added: [
+            charge("t-1", -1350, "2026-05-02"),
+            charge("t-2", -1350, "2026-05-03"),
+            charge("t-3", -1350, "2026-05-04"),
+          ],
+        });
+        await upload(one(), two());
+        expect(await allNone()).toBe(true);
+        expect(await openItems()).toHaveLength(2);
+      });
+
+      it("three shipments and two charges", async () => {
+        await sync({
+          added: [charge("t-1", -1350, "2026-05-02"), charge("t-2", -1350, "2026-05-03")],
+        });
+        await upload(one(), two(), three());
+        expect(await allNone()).toBe(true);
+        expect(await openItems()).toHaveLength(3);
+      });
+
+      it("a shipment outside the two that also fits one of their charges", async () => {
+        // The early shipment's window ends on May 3: it fits t-out and t-1, but not t-2.
+        await sync({
+          added: [
+            charge("t-out", -1350, "2026-04-26"),
+            charge("t-1", -1350, "2026-05-02"),
+            charge("t-2", -1350, "2026-05-04"),
+          ],
+        });
+        await upload(one(), two(), three("2026-04-26T09:15:00Z"));
+        expect(await allNone()).toBe(true);
+        expect(await openItems()).toHaveLength(3);
+      });
+
+      it("a pair a Member refused with Undo", async () => {
+        await sync({ added: [charge("t-1", -1350, "2026-05-02")] });
+        await upload(one());
+        expect(await undoShipmentLinks(bank.database, await idOf("t-1"), MEMBER)).toBe(true);
+        await runFollowUp(() => now);
+        await sync({
+          added: [charge("t-2", -1350, "2026-05-03"), charge("t-3", -1350, "2026-05-04")],
+        });
+        await upload(one(), two(), three());
+        expect(await allNone()).toBe(true);
+        expect(await openItems()).toHaveLength(3);
+      });
+    });
+
+    it('closes the open items of a tie as "linked as a tie" and links it, past 60 days too', async () => {
+      now = new Date("2026-07-02T14:00:00.000Z");
+      await sync({
+        added: [
+          charge("t-1", -1350, "2026-05-02"),
+          charge("t-2", -1350, "2026-05-03"),
+          charge("t-3", -1350, "2026-05-04"),
+        ],
+      });
+      await upload(one(), two());
+      expect(await openItems()).toHaveLength(2);
+      // The bank removes t-3. A sync tries no shipment past 60 days whose charges did not change,
+      // but each open item asks about its shipment again.
+      await sync({ removed: [{ id: "t-3" }] });
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-2 (app)",
+        "111-0000002-0000002 → t-1 (app)",
+      ]);
+      expect(await openItems()).toEqual([]);
+      expect(await reasons()).toEqual(["linked as a tie", "linked as a tie"]);
+    });
+
+    it("tries a tie with no open item past 60 days only when one of its charges is new or changed (K2)", async () => {
+      now = new Date("2026-07-02T14:00:00.000Z");
+      await sync({
+        added: [
+          charge("t-1", -1350, "2026-05-02"),
+          charge("t-2", -1350, "2026-05-03"),
+          charge("t-3", -1350, "2026-05-04"),
+        ],
+      });
+      await upload(one(), two());
+      await bank.database.$client.execute(
+        "UPDATE review_items SET closed_at = 1, closed_reason = 'made-up' WHERE closed_at IS NULL",
+      );
+      await sync({ removed: [{ id: "t-3" }] });
+      expect(await allNone()).toBe(true);
+      await sync({
+        changed: [charge("t-1", -1350, "2026-05-02", { description: "AMAZON MKTPL*CHANGED" })],
+      });
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-2 (app)",
+        "111-0000002-0000002 → t-1 (app)",
+      ]);
+      expect(await openItems()).toEqual([]);
+    });
+
+    it("never links a pair again after Undo, and the group goes to the Review list (K12)", async () => {
+      await sync({
+        added: [
+          charge("t-1", -1350, "2026-05-02"),
+          charge("t-2", -1350, "2026-05-03"),
+          charge("t-3", -1350, "2026-05-04"),
+        ],
+      });
+      await upload(one(), two(), three());
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-2 (app)",
+        "111-0000002-0000002 → t-1 (app)",
+        "111-0000003-0000003 → t-3 (app)",
+      ]);
+      // Undo of one link: its shipment fits no charge that is free, so it waits.
+      expect(await undoShipmentLinks(bank.database, await idOf("t-2"), MEMBER)).toBe(true);
+      await runFollowUp(() => now);
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → none",
+        "111-0000002-0000002 → t-1 (app)",
+        "111-0000003-0000003 → t-3 (app)",
+      ]);
+      expect(await openItems()).toEqual([]);
+      // Undo of the others: each shipment fits the two charges it was not linked to.
+      expect(await undoShipmentLinks(bank.database, await idOf("t-1"), MEMBER)).toBe(true);
+      expect(await undoShipmentLinks(bank.database, await idOf("t-3"), MEMBER)).toBe(true);
+      await runFollowUp(() => now);
+      await upload(one(), two(), three());
+      expect(await allNone()).toBe(true);
+      const names = new Map([
+        [await idOf("t-1"), "t-1"],
+        [await idOf("t-2"), "t-2"],
+        [await idOf("t-3"), "t-3"],
+      ]);
+      expect(
+        (await openItems())
+          .map((item) => ({
+            shipment: item.bestAnswer.value.split("|")[1],
+            fits: item.subjectIds.map((id) => names.get(id)).sort(),
+          }))
+          .sort((a, b) => String(a.shipment).localeCompare(String(b.shipment))),
+      ).toEqual([
+        { shipment: "111-0000001-0000001", fits: ["t-1", "t-3"] },
+        { shipment: "111-0000002-0000002", fits: ["t-2", "t-3"] },
+        { shipment: "111-0000003-0000003", fits: ["t-1", "t-2"] },
+      ]);
+    });
+
+    it("lets the card filter decide before the date order (K2)", async () => {
+      await sync({
+        added: [
+          charge("t-other-card", -1350, "2026-05-03", { accountId: OTHER_CARD.id }),
+          charge("t-card", -1350, "2026-05-04"),
+        ],
+      });
+      await upload(one(), two(undefined, { payment: "Visa - 9999" }));
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-card (app)",
+        "111-0000002-0000002 → t-other-card (app)",
+      ]);
+    });
+
+    it("leaves out a charge that holds another order: the two left are a tie (K2)", async () => {
+      await sync({
+        added: [
+          charge("t-held", -1350, "2026-05-02"),
+          charge("t-1", -1350, "2026-05-03"),
+          charge("t-2", -1350, "2026-05-04"),
+        ],
+      });
+      const other = row("111-0000009-0000009", 999, { ship: "2026-04-01T10:00:00Z" });
+      await upload(other);
+      expect(
+        await linkShipmentByHand(bank.database, await idOf("t-held"), {
+          orderId: "111-0000009-0000009",
+          shipTime: "2026-04-01T10:00:00Z",
+        }),
+      ).toBe("linked");
+      await upload(other, one(), two());
+      expect(await links()).toEqual([
+        "111-0000001-0000001 → t-2 (app)",
+        "111-0000002-0000002 → t-1 (app)",
+        "111-0000009-0000009 → t-held (hand)",
+      ]);
+      expect(await openItems()).toEqual([]);
+    });
   });
 
   describe("hand links and Undo", () => {
@@ -1109,9 +1381,10 @@ describe("Linking at scale (K3)", () => {
     bank.close();
   });
 
-  // Copies of one decided Spending charge, as `count` Amazon charges of 10.00 + i cents, ten a day
-  // from 2021-06-01: the same columns, with their own IDs, amounts, and dates.
-  async function copies(templateId: string, count: number) {
+  // Copies of one decided Spending charge, as `count` Amazon charges of `cents` (10.00 + i cents
+  // unless given), ten a day from 2021-06-01: the same columns, with their own IDs, amounts, and
+  // dates.
+  async function copies(templateId: string, count: number, cents = "1000 + i") {
     const client = bank.database.$client;
     const columns = async (table: string) =>
       (await client.execute(`SELECT name FROM pragma_table_info('${table}')`)).rows.map((one) =>
@@ -1131,14 +1404,14 @@ describe("Linking at scale (K3)", () => {
     await copy("transactions", "id", {
       id: "'copy-' || i",
       provider_transaction_id: "'copy-' || i",
-      amount: "-(1000 + i)",
+      amount: `-(${cents})`,
       posted_date: day,
       authorized_date: "NULL",
     });
     await copy("transaction_decisions", "transaction_id", { transaction_id: "'copy-' || i" });
     await copy("transaction_parts", "transaction_id", {
       transaction_id: "'copy-' || i",
-      amount: "CASE WHEN t.amount < 0 THEN -(1000 + i) ELSE 1000 + i END",
+      amount: `CASE WHEN t.amount < 0 THEN -(${cents}) ELSE ${cents} END`,
     });
   }
 
@@ -1182,6 +1455,69 @@ describe("Linking at scale (K3)", () => {
     expect(run.linked).toBe(2_500);
 
     // A follow-up run over every Transaction changes nothing.
+    const ids = (await bank.database.$client.execute("SELECT id FROM transactions")).rows.map(
+      (one) => String(one.id),
+    );
+    const again = performance.now();
+    expect(
+      await runLinking(bank.database, { after: "sync", unhandled: new Set(ids) }, now),
+    ).toEqual({ linked: 0, ended: 0, transactionIds: [] });
+    const followUp = performance.now() - again;
+    expect(linking).toBeLessThan(5_000);
+    expect(followUp).toBeLessThan(3_000);
+  }, 60_000);
+
+  it("links 1,000 tied pairs in date order in a few seconds", async () => {
+    const connection = await bank.connect(BANK, "Birch Bank");
+    bank.fake.addPages(connection, {
+      accounts: [CARD],
+      added: [charge("template", -1000, "2021-05-01")],
+      historyLoaded: true,
+    });
+    const now = new Date("2026-12-31T14:00:00.000Z");
+    await syncConnection(connection, () => now);
+    await runFollowUp(() => now);
+    const [template] = (
+      await bank.database.$client.execute("SELECT id FROM transactions")
+    ).rows.map((one) => String(one.id));
+    // Copies 2k and 2k + 1 are both 10.00 + k cents, on the same day.
+    await copies(template ?? "", 2_000, "1000 + i / 2");
+
+    // Pair k: two shipments of 10.00 + k cents on copy 2k's day, the later one first by order ID.
+    // Each fits copies 2k and 2k + 1, and nothing else.
+    const lines: AmazonRow[] = [];
+    for (let k = 0; k < 1_000; k += 1) {
+      const day = Date.parse("2021-06-01T00:00:00Z") + Math.floor((2 * k) / 10) * 86_400_000;
+      const at = (hours: number) =>
+        new Date(day + hours * 3_600_000).toISOString().replace(/\.\d+Z$/, "Z");
+      const order = String(k).padStart(7, "0");
+      lines.push(row(`114-${order}-0000001`, 1000 + k, { ship: at(13) }));
+      lines.push(row(`114-${order}-0000002`, 1000 + k, { ship: at(12) }));
+    }
+    const imported = await importOrderFile(
+      bank.database,
+      { bytes: new TextEncoder().encode(amazonCsv(lines)), kind: "csv" },
+      { memberId: MEMBER, at: now, logger: quiet },
+    );
+    expect(imported.outcome).toBe("imported");
+
+    const started = performance.now();
+    const run = await runLinking(bank.database, { after: "import" }, now);
+    const linking = performance.now() - started;
+    expect(run.linked).toBe(2_000);
+    // The same posted day: the copy IDs settle it, and the earlier shipment takes copy 2k.
+    const wrong = (
+      await bank.database.$client.execute(
+        `SELECT order_id, transaction_id FROM line_items WHERE link_kind = 'app'`,
+      )
+    ).rows.filter((one) => {
+      const [, k = "", n] = String(one.order_id).split("-");
+      const copy = 2 * Number(k) + (n === "0000002" ? 0 : 1);
+      return one.transaction_id !== `copy-${copy}`;
+    });
+    expect(wrong).toEqual([]);
+    expect(await listOpenReviewItemsOfKind(bank.database, AMAZON_SHIPMENT_KIND)).toEqual([]);
+
     const ids = (await bank.database.$client.execute("SELECT id FROM transactions")).rows.map(
       (one) => String(one.id),
     );

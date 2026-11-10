@@ -44,9 +44,10 @@ import { registerLineItemsImported, registerLineItemsRemoved } from "./seams.ts"
 // Linking Amazon shipments to the card Transactions that paid for them (spec 14, Linking Line items
 // to Transactions). Amazon charges a card when it ships, so the app links by shipment: one order's
 // Line items with one ship time.
-// - The app's link: an unlinked shipment and exactly one Spending charge that fits it. Two or more
-//   that fit put a Review list item up. None waits, and counts as "not matched" 60 days after the
-//   ship date.
+// - The app's link: an unlinked shipment and exactly one Spending charge that fits it. A tie (two or
+//   more shipments and as many charges that fit only each other) links in date order. Two or more
+//   that fit otherwise put a Review list item up. None waits, and counts as "not matched" 60 days
+//   after the ship date.
 // - A Member links a shipment by hand, and undoes any link. The app never makes an undone link
 //   again.
 // - When the bank removes, hides, or changes a Transaction, its links end as the spec says.
@@ -137,6 +138,48 @@ function shipmentsOf(items: readonly LinkingItem[]): Map<string, Shipment> {
     if (item.shipDate < found.shipDate) found.shipDate = item.shipDate;
   }
   return shipments;
+}
+
+// A tie (spec 14, The app's link): two or more shipments and as many Transactions, where each
+// shipment fits exactly those Transactions, and no other shipment fits any of them. Every amount
+// is equal, so a swap between them moves no money.
+type Tie = { shipments: Shipment[]; fits: LinkTransaction[] };
+
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const byShipTime = (a: Shipment, b: Shipment) =>
+  compare(a.shipTime, b.shipTime) || compare(a.orderId, b.orderId);
+const byPurchaseDate = (a: LinkTransaction, b: LinkTransaction) =>
+  compare(a.purchaseDate, b.purchaseDate) ||
+  compare(a.postedDate, b.postedDate) ||
+  compare(a.id, b.id);
+
+// The ties among shipments, each with the Transactions that fit it alone, in date order: the
+// shipments by ship time, then order ID; the Transactions by purchase date, then posted date, then
+// ID. Shipments group by the IDs of their fits, and each Transaction counts the shipments that fit
+// it, once, so this stays near linear.
+function tiesOf(fitting: ReadonlyMap<Shipment, readonly LinkTransaction[]>): Tie[] {
+  const fitters = new Map<string, number>();
+  const groups = new Map<string, Tie>();
+  for (const [shipment, fits] of fitting) {
+    for (const txn of fits) fitters.set(txn.id, (fitters.get(txn.id) ?? 0) + 1);
+    if (fits.length < 2) continue;
+    const key = fits
+      .map((txn) => txn.id)
+      .sort()
+      .join("|");
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, { shipments: [shipment], fits: [...fits] });
+    else group.shipments.push(shipment);
+  }
+  const ties: Tie[] = [];
+  for (const { shipments, fits } of groups.values()) {
+    // Each shipment of the group fits each Transaction, so a count of exactly as many shipments
+    // means no other shipment fits it.
+    if (shipments.length !== fits.length) continue;
+    if (fits.some((txn) => fitters.get(txn.id) !== shipments.length)) continue;
+    ties.push({ shipments: shipments.sort(byShipTime), fits: fits.sort(byPurchaseDate) });
+  }
+  return ties;
 }
 
 // What a run is for: after an import, every unlinked shipment is tried. In a follow-up job, a
@@ -385,8 +428,8 @@ async function planLinks(
   const planned = new Set<string>();
 
   // The open items first: one whose shipment is linked closes, and one with a single Transaction
-  // left links it (spec 14, Review list items).
-  const asked = new Set<string>();
+  // left links it (spec 14, Review list items). The rest ask about their shipments, by key.
+  const asked = new Map<string, string[]>();
   const byOrder = new Map<string, Shipment[]>();
   for (const shipment of shipments.values()) {
     const order = byOrder.get(shipment.orderId);
@@ -420,7 +463,8 @@ async function planLinks(
     } else if (left.length === 0) {
       plan.close.push({ id: item.id, reason: "no Transaction left" });
     } else {
-      for (const shipment of group) asked.add(shipment.key);
+      for (const shipment of group)
+        asked.set(shipment.key, [...(asked.get(shipment.key) ?? []), item.id]);
     }
   }
 
@@ -445,6 +489,27 @@ async function planLinks(
     }
     if (made === 0) break;
   }
+
+  // Ties link in date order, the first shipment with the first Transaction (owner decision,
+  // 2026-11-10). Each shipment the run could link counts, so a shipment outside a tie that fits
+  // one of its Transactions breaks it. A run tries a tie as any link, and always when one of its
+  // shipments has an open item, which it closes.
+  const fitting = new Map<Shipment, LinkTransaction[]>();
+  for (const shipment of tried) {
+    if (!planned.has(shipment.key)) fitting.set(shipment, fitsOf([shipment]));
+  }
+  const closing = new Set<string>();
+  for (const tie of tiesOf(fitting)) {
+    const isAsked = tie.shipments.some((shipment) => asked.has(shipment.key));
+    if (!isAsked && !isTried(tie.shipments, tie.fits)) continue;
+    tie.shipments.forEach((shipment, index) => {
+      const txn = tie.fits[index];
+      if (txn === undefined) return;
+      link({ orderId: shipment.orderId, shipTime: shipment.shipTime }, [shipment], txn.id);
+      for (const id of asked.get(shipment.key) ?? []) closing.add(id);
+    });
+  }
+  for (const id of closing) plan.close.push({ id, reason: "linked as a tie" });
 
   // What is left: two or more fits put a Review list item up. An order none of whose shipments
   // fits alone is tried as one charge for the whole order.
