@@ -50,7 +50,8 @@ function ownerOf(pkg: string): string | undefined {
 }
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SKIPPED_DIRS = new Set(["node_modules", "dist", "coverage"]);
+// spikes/ holds throwaway probe scripts that run outside the app, so no module seam applies to them.
+const SKIPPED_DIRS = new Set(["node_modules", "dist", "coverage", "spikes"]);
 const SOURCE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
 type SourceFile = { path: string; code: string };
