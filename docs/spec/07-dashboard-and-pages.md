@@ -165,7 +165,7 @@ Four tiles in a row (two by two on a phone):
 
 ### Main menu
 
-The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with its open count), and Settings. A "More" section holds Reports, Budgets, Goals, Accounts, Alert list, Recurring charges, and Top Merchants.
+The main menu holds: Dashboard, Transactions, Chat, Reviews, Review list (with its open count), and Settings. A "More" section holds Reports, Budgets, Goals, Accounts, Alert list, Recurring charges, and Top Merchants. After v1, it also holds the Shopping list ([Deal finder](15-deal-finder.md#pages)).
 
 - **Live AI status:** while background AI works, a small sign shows in the main menu, such as "● AI working: Categories", in the accent color. It links to Settings, AI. With no work, it is not there. Its words, when it shows, and its feed are in [AI](08-ai.md#live-ai-status).
   - From 900 px wide, it sits in the menu column, under the app's name.
@@ -314,6 +314,7 @@ Settings has one section per area. Each owner file holds the rules.
 | Store orders | One card per store; today only Amazon: the steps to get Amazon's order file, Upload, import and link counts, "Delete all Amazon data" | [14](14-line-items.md#the-store-orders-page-in-settings) |
 | Alerts | Weekly cap, my channels, the weekly summary email, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
 | AI | AI provider, key, models, prices, AI cost cap, base URL, the AI usage page, and the AI request log | [08](08-ai.md#ai-settings-page) |
+| Price sources (after v1) | The Scraping service token and cost cap, Kroger keys, Open Food Facts, the ZIP switch, Stores and Home stores, "Delete all deal finder data" | [15](15-deal-finder.md#the-price-sources-page-in-settings) |
 | Backups and data | "Back up now", last backup, "Check my Master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |
 | About | Version, "Source code" link, "Data sources" page, "Update available", the update-check switch | [12](12-install-and-first-run.md) |
 

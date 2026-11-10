@@ -232,7 +232,7 @@ The Amazon card holds:
 
 ## Not in this version
 
-- Signing in to Amazon, or any scraping. Amazon's sign-in needs a browser, and the owner judged that worse than a file upload (spike, 2026-11-09).
+- Signing in to Amazon, or reading Amazon's order pages. Amazon's sign-in needs a browser, and the owner judged that worse than a file upload (spike, 2026-11-09).
 - Amazon's digital orders and returns files. A returned item's Refund reduces every part in proportion, not only that item's Category.
 - Other stores, and scanned receipts. The Line item source field leaves room for them.
 - "Also apply to similar items" on an Item rule, such as other sizes of one product.
