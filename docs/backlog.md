@@ -216,6 +216,13 @@ Small items left open after the T107 notes triage, for after the first release (
 ## Amazon orders
 
 - N315 (L, feature) Line items and Amazon orders: spec written in [14 Line items](spec/14-line-items.md) (2026-11-09). The file name and columns are fixed from a real export (2026-11-09). In: new `src/line-items/`, an Amazon page in Settings, the Transactions detail view. Tickets (2026-11-09): X41 the data model, file reading, import, Settings Amazon page, item list on the detail view and export files; then, in parallel, X42 linking Line items to Transactions, and X43 Line item Categories, Item rules and splits from Line items.
+- N316 (S, hardening) An Amazon amount written with commas has no length cap, and quantity × price in the total check can pass 2^53. Cap the comma groups and the product. Only a Member's own made-up file can reach it (X41 review). In: src/line-items/amazon.ts.
+- N317 (S, hardening) A ZIP bomb entry is inflated up to the 200 MB archive limit (about 0.5 s) before it is refused. Stop at the entry's stated size + 1 (X41 review). In: src/line-items/zip.ts.
+- N318 (S, bug) Line items linked to a hidden Transaction get no Category again after their Item rule is deleted, because step 1a reads only shown Transactions (X43 review). In: src/line-items/item-rules.ts, src/categorization/.
+- N319 (S, bug) A Review list answer on a Line item Category runs outside the Item rules one-at-a-time queue, so it can run beside a detail-view change; parallel libSQL transactions can stall (X43 review). In: src/line-items/item-rules.ts.
+- N320 (S, polish) If the linking run after an import throws, shipments older than 60 days are tried again only on the next import or a new fitting charge. Say so in spec 14, or retry (X42 review). In: src/line-items/link.ts.
+- N321 (S, tests) No parallel test for Undo racing a hand link, or the import's link run racing the job's; the re-reads in `storePlan` have no test (X42 review). In: src/line-items/link.test.ts.
+- N322 (S, polish) Delete history sets `line_items.transaction_id` to null through the foreign key but leaves `link_kind`. Nothing reads it today; clear it, or never read it alone (X42 review). In: src/db/line-items.ts.
 
 ## Backups, export, jobs and start-up
 
