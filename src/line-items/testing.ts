@@ -1,4 +1,7 @@
 import { crc32, deflateRawSync } from "node:zlib";
+import type { Database } from "../db/index.ts";
+import { lineItems } from "../db/schema.ts";
+import { cleanItemName } from "./amazon.ts";
 
 // Test support: made-up Amazon order files in the form of Amazon's own export (spec 14, The order
 // file), and ZIP files to hold them. Every name, order ID, and card number here is invented.
@@ -171,4 +174,65 @@ export function zipOf(entries: readonly ZipEntryFixture[]): Uint8Array {
     at += part.byteLength;
   }
   return out;
+}
+
+// One made-up Line item as app.db stores it, for tests that start after an import. `total` is in
+// whole cents; the price fields follow from it.
+export type TestLineItem = {
+  id: string;
+  name?: string;
+  productId?: string | null;
+  quantity?: number;
+  total: number;
+  orderId?: string;
+  orderDate?: string;
+  transactionId?: string | null;
+  category?: string | null;
+  categorySource?: "hand-set" | "Item rule" | "AI" | "Transaction" | null;
+  categoryConfidence?: "certain" | "high" | "medium" | "low" | null;
+  categoryNeedsAi?: boolean;
+};
+
+// Stores the Line items, 500 a statement. The clean name follows the name as the import makes it.
+export async function addTestLineItems(
+  database: Database,
+  items: readonly TestLineItem[],
+): Promise<void> {
+  const at = new Date("2026-05-04T00:00:00.000Z");
+  const rows = items.map((item) => {
+    const name = item.name ?? `Test item ${item.id}`;
+    const quantity = item.quantity ?? 1;
+    const orderId = item.orderId ?? "111-0000001-0000001";
+    return {
+      id: item.id,
+      source: "amazon" as const,
+      key: JSON.stringify([orderId, item.productId ?? name, item.id]),
+      orderId,
+      orderDate: item.orderDate ?? "2026-05-01",
+      shipDate: item.orderDate ?? "2026-05-02",
+      shipTime: "2026-05-02T09:15:00Z",
+      productId: item.productId === undefined ? `B${item.id.padStart(9, "0")}` : item.productId,
+      name,
+      cleanName: cleanItemName(name),
+      quantity,
+      unitPrice: Math.round(item.total / quantity),
+      unitTax: 0,
+      shippingCharge: 0,
+      discounts: 0,
+      total: item.total,
+      cardLast4: null,
+      place: 0,
+      category: item.category ?? null,
+      categorySource: item.categorySource ?? null,
+      categoryConfidence: item.categoryConfidence ?? null,
+      categoryNeedsAi: item.categoryNeedsAi ?? false,
+      transactionId: item.transactionId ?? null,
+      linkKind: item.transactionId == null ? null : ("app" as const),
+      addedAt: at,
+      updatedAt: at,
+    };
+  });
+  for (let start = 0; start < rows.length; start += 500) {
+    await database.insert(lineItems).values(rows.slice(start, start + 500));
+  }
 }

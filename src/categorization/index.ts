@@ -18,6 +18,14 @@ export {
   chooseCategories,
   startCategorization,
 } from "./categorize.ts";
+export { categoryChoiceValue, readCategoryChoice } from "./category-choice.ts";
+export { partsFromLineItems } from "./line-item-parts.ts";
+export {
+  type LineItemAi,
+  type LineItemCategorizer,
+  registerLineItemCategorizer,
+  transactionStepCategory,
+} from "./line-item-step.ts";
 export {
   type CategoryRule,
   type Correction,

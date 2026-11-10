@@ -12,7 +12,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Database } from "./client.ts";
-import { aiRedo, reviewItems, transactionParts, transactions } from "./schema.ts";
+import { aiRedo, lineItems, reviewItems, transactionParts, transactions } from "./schema.ts";
 
 // The first AI run and the redo of no-AI work in app.db (spec 08, Runs that reuse these uses;
 // Redo of no-AI work). The redo module decides; these functions store and read. Each claim is one
@@ -99,7 +99,8 @@ export async function recordAiRedoRun(database: Database, run: AiRedoRun): Promi
 }
 
 // The marked items that wait for the AI: each shown Transaction with a marked Merchant name, each
-// shown Transaction with a marked Category, and each open marked Review list item. One read.
+// shown Transaction with a marked Category, each open marked Review list item, and each marked
+// Line item Category. One read.
 export async function countMarkedItems(database: Database): Promise<number> {
   const result = await database.get<{ n: number }>(sql`SELECT
       (SELECT count(*) FROM ${transactions}
@@ -108,7 +109,8 @@ export async function countMarkedItems(database: Database): Promise<number> {
         JOIN ${transactions} ON ${transactions.id} = ${transactionParts.transactionId}
         WHERE ${transactionParts.categoryNeedsAi} = 1 AND ${transactions.hiddenReason} IS NULL)
     + (SELECT count(*) FROM ${reviewItems}
-        WHERE ${reviewItems.needsAi} = 1 AND ${reviewItems.closedAt} IS NULL) AS n`);
+        WHERE ${reviewItems.needsAi} = 1 AND ${reviewItems.closedAt} IS NULL)
+    + (SELECT count(*) FROM ${lineItems} WHERE ${lineItems.categoryNeedsAi} = 1) AS n`);
   return Number(result?.n ?? 0);
 }
 

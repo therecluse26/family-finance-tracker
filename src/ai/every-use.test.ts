@@ -24,6 +24,12 @@ import { runFollowUp } from "../follow-up/index.ts";
 import { goalWriting } from "../goals/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
 import { INSIGHT_CARDS_TASK, writeInsightCards } from "../insights/index.ts";
+import {
+  categorizeUnlinked,
+  LINE_ITEM_CATEGORY_TASK,
+  startLineItemCategories,
+} from "../line-items/index.ts";
+import { addTestLineItems } from "../line-items/testing.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { checkMonthlyReview, markReviewDue, startMonthlyReview } from "../monthly-review/index.ts";
 import { householdSummary } from "../summary/index.ts";
@@ -156,6 +162,11 @@ describe("the demo Household through every AI use", () => {
         .filter((text) => text.startsWith('{"row":'))
         .map((text) => JSON.parse(text) as { row: number; kind?: string });
       const has = (words: string) => texts.some((text) => text.includes(words));
+      if (has(LINE_ITEM_CATEGORY_TASK)) {
+        return JSON.stringify({
+          answers: rows.map(({ row }) => ({ row, category: "Pets", confidence: "high" })),
+        });
+      }
       if (has("Choose one Category for each Transaction")) {
         // The first row is unsure of a Merchant it does not know, so it is looked up.
         return JSON.stringify({
@@ -276,6 +287,7 @@ describe("the demo Household through every AI use", () => {
         startJob: async () => undefined,
       }).stop,
       startMonthlyReview({ database: bank.database, ai, now: NOW }).stop,
+      startLineItemCategories({ database: bank.database, ai }).stop,
     ];
   });
 
@@ -378,6 +390,13 @@ describe("the demo Household through every AI use", () => {
     await checkMonthlyReview(NOW());
     await writeInsightCards({ database: bank.database, ai, now: NOW });
 
+    // Amazon Line items with no Transaction yet (spec 14, Line item Categories).
+    await addTestLineItems(bank.database, [
+      { id: "li-1", name: "Dog food, 30 lb", total: 4_599 },
+      { id: "li-2", name: "Cat litter, 2 pack", quantity: 2, total: 2_598 },
+    ]);
+    await categorizeUnlinked(bank.database, ai);
+
     // Chat about an Alert note, with every lookup tool and both Proposal tools.
     const talk = chat({
       database: bank.database,
@@ -454,6 +473,7 @@ describe("the demo Household through every AI use", () => {
       "merchant cleanup": 12_000,
       "unclear transfer": 12_000,
       "reimbursement linking": 12_000,
+      "line item category": 12_000,
       "merchant lookup": 2_000,
       "reading a goal": 2_000,
       "insight cards": 8_000,

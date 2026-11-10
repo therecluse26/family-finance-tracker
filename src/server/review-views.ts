@@ -19,12 +19,29 @@ export type ReviewTransactionView = {
   categories: string[];
 };
 
+// A Line item as a Line item Category card shows it (spec 14, Review list items).
+export type ReviewLineItemView = {
+  id: string;
+  name: string;
+  quantity: number;
+  // Whole cents, as the order file gives it.
+  total: number;
+  orderDate: string;
+  category: string | null;
+};
+
 export type ReviewItemView = {
   id: string;
   kind: string;
-  subject: { type: "transactions"; transactionIds: string[] } | { type: "loan"; accountId: string };
-  // The Transactions it is about that still show, in the subject's order. Empty for a loan.
+  subject:
+    | { type: "transactions"; transactionIds: string[] }
+    | { type: "loan"; accountId: string }
+    | { type: "line items"; lineItemIds: string[] };
+  // The Transactions it is about that still show, in the subject's order. Empty for a loan and for
+  // Line items.
   transactions: ReviewTransactionView[];
+  // The Line items it is about that are still there, in the subject's order. Empty for the rest.
+  lineItems: ReviewLineItemView[];
   // The loan's name, for an item about a loan; else null.
   loanName: string | null;
   // The name a card of several Transactions shows in place of its first Transaction's Merchant,

@@ -46,6 +46,7 @@ const ITEM: LineItemView = {
   quantity: 2,
   total: 1_350,
   category: "Home and garden",
+  aiUnsure: false,
   orderId: "111-0000001-0000001",
   orderDate: "2026-10-10",
   linkKind: "app",

@@ -1,5 +1,5 @@
 import { type HouseholdAi, QUICK_BATCH_SIZE } from "../ai/index.ts";
-import { isCategory } from "../categories/index.ts";
+import { type Category, isCategory } from "../categories/index.ts";
 import {
   type CategoryConfidence,
   type CategoryRecord,
@@ -12,7 +12,9 @@ import {
   readCategoryFixFacts,
   readCategoryRecords,
   setHandSetCategory,
+  storeLineItemParts,
   storePartCategories,
+  storeTransactionStepCategories,
 } from "../db/index.ts";
 import { askForFollowUp, followUpAgain, registerFollowUpStep } from "../follow-up/index.ts";
 import { log } from "../log.ts";
@@ -31,6 +33,8 @@ import {
   merchantOf,
   registerCascadeStep,
 } from "./cascade.ts";
+import { type PartFromLineItems, partsFromLineItems } from "./line-item-parts.ts";
+import { type LineItemTotals, lineItemTotals, transactionStepCategory } from "./line-item-step.ts";
 import {
   type CategoryFixAnswer,
   type CategoryFixRow,
@@ -116,6 +120,30 @@ async function choosePart(
   return rest();
 }
 
+// Whether step 1a may answer for the Transaction (spec 14, Splits from Line items): Spending, money
+// out, in one part the cascade has not chosen yet, with no hand-set Category and no hand split. A
+// part of a tracked loan payment, a Refund, and a Transaction a Member made Income, a Transfer or
+// Saving keep their Line items unused.
+function takesLineItems(record: CategoryRecord, unchosen: (part: RecordPart) => boolean): boolean {
+  const [only] = record.parts;
+  const { category, split } = record.handSet;
+  return (
+    !record.hidden &&
+    record.parts.length === 1 &&
+    only !== undefined &&
+    only.type === "Spending" &&
+    !only.keepsCategory &&
+    !only.linked &&
+    only.amount < 0 &&
+    unchosen(only) &&
+    typeof category !== "string" &&
+    !Array.isArray(split)
+  );
+}
+
+// A Transaction step 1a splits, with its one part's amount when the cascade read it.
+type LineItemSplit = { transactionId: string; amount: number; parts: PartFromLineItems[] };
+
 // One Transaction waiting for the AI's answer, with the parts that answer decides.
 type Waiting = {
   record: CategoryRecord;
@@ -190,6 +218,19 @@ export async function chooseCategories(
   let waiting: Waiting[] = [];
   // The run's Web lookups, started at the first batch the AI answers.
   let lookups: WebLookups | undefined;
+  // Step 1a (spec 14, Splits from Line items), per batch: the Line item totals of each Transaction
+  // that may take them, the Transactions it splits, and those whose Line items follow the
+  // Transaction's own Category, which the cascade chooses first.
+  let lineItems = new Map<string, LineItemTotals>();
+  let takers = new Set<string>();
+  let lineItemsAgain: Date | undefined;
+  let splits: LineItemSplit[] = [];
+  let owning: {
+    record: CategoryRecord;
+    amount: number;
+    byCategory: Map<Category, number>;
+    own: number;
+  }[] = [];
 
   // `needsAi` marks a Category whose Web lookup an AI error or the AI cost cap stopped, for the redo
   // of no-AI work.
@@ -368,12 +409,98 @@ export async function chooseCategories(
     }
   }
 
+  // Step 1a for the Transactions whose Line items follow the Transaction's own Category (spec 14,
+  // Step 4): the cascade chose that Category, and those Line items count in it. With two or more
+  // Categories, the Transaction splits in place of the cascade's choice. Returns the Category each
+  // such Line item takes, which is never one a Line item cannot take.
+  function followOwnCategory(): { transactionId: string; category: Category }[] {
+    const followed: { transactionId: string; category: Category }[] = [];
+    if (owning.length === 0) return followed;
+    const places = new Map(
+      choices.map((choice, place) => [`${choice.transactionId}/${choice.part}`, place]),
+    );
+    const replaced = new Set<number>();
+    for (const { record, amount, byCategory, own } of owning) {
+      const part = record.parts[0]?.part ?? 0;
+      const place = places.get(`${record.id}/${part}`);
+      const choice = place === undefined ? undefined : choices[place];
+      // Left for the AI's retry or the follow-up job.
+      if (place === undefined || choice?.category == null || !isCategory(choice.category)) continue;
+      // The Category these Line items store, which their part takes too: never Superstores, Cash
+      // or Payments to people.
+      const category = transactionStepCategory(choice.category);
+      followed.push({ transactionId: record.id, category });
+      const totals = new Map(byCategory);
+      totals.set(category, (totals.get(category) ?? 0) + own);
+      const parts = partsFromLineItems(amount, totals);
+      if (parts.length < 2) continue;
+      replaced.add(place);
+      splits.push({ transactionId: record.id, amount, parts });
+      remember(record.id, undefined);
+    }
+    if (replaced.size > 0) choices = choices.filter((_, place) => !replaced.has(place));
+    return followed;
+  }
+
+  // The Line items of a Transaction that does not take them, such as one with a hand-set Category,
+  // a hand split or a Transfer, still follow what the Transaction would get without them (spec 14,
+  // Step 4): its Spending Category, else its hand-set Category, else Miscellaneous. They change no
+  // total.
+  function followUnused(records: readonly CategoryRecord[]) {
+    return records.flatMap((record) => {
+      const totals = lineItems.get(record.id);
+      if (takers.has(record.id) || typeof totals !== "object" || totals.own === null) return [];
+      const spending = record.parts.find((part) => part.type === "Spending")?.category;
+      const hand = record.handSet.category;
+      const category =
+        spending != null && isCategory(spending)
+          ? spending
+          : typeof hand === "string" && isCategory(hand)
+            ? hand
+            : "Miscellaneous";
+      return [{ transactionId: record.id, category: transactionStepCategory(category) }];
+    });
+  }
+
   // Chooses the Category of each covered part of one Transaction, or of none: "later" when step 5
   // is left for the follow-up job.
   async function decide(record: CategoryRecord): Promise<"done" | "later"> {
     if (record.hidden) {
       decided.push(record.id);
       return "done";
+    }
+    const fromLineItems = takers.has(record.id) ? lineItems.get(record.id) : undefined;
+    const [only] = record.parts;
+    if (fromLineItems !== undefined && only !== undefined) {
+      if (fromLineItems === "waits") {
+        // A Line item waits for the AI: for the follow-up job, or for the AI's retry.
+        if (ai === "follow-up job") return "later";
+        if (lineItemsAgain !== undefined) {
+          if (again === undefined || lineItemsAgain < again) again = lineItemsAgain;
+          return "later";
+        }
+      } else if (fromLineItems.own === null) {
+        const parts = partsFromLineItems(only.amount, fromLineItems.byCategory);
+        const [first] = parts;
+        if (first !== undefined) {
+          if (parts.length > 1)
+            splits.push({ transactionId: record.id, amount: only.amount, parts });
+          else {
+            const choice: Choice = {
+              category: first.category,
+              source: "Line items",
+              confidence: "certain",
+            };
+            choose(record, only.part, choice, new Map());
+          }
+          remember(record.id, undefined);
+          decided.push(record.id);
+          return "done";
+        }
+      } else {
+        const { byCategory, own } = fromLineItems;
+        owning.push({ record, amount: only.amount, byCategory, own });
+      }
     }
     const txn: CascadeInput = { ...record, merchant: merchantOf(record) };
     let won: Promise<Choice | undefined> | undefined;
@@ -435,7 +562,19 @@ export async function chooseCategories(
       left.push(...chunk);
       continue;
     }
-    for (const record of await readCategoryRecords(database, chunk)) {
+    const records = await readCategoryRecords(database, chunk);
+    // Every shown Transaction's Line items get their Categories here, in each follow-up job (spec
+    // 08, Every AI use); only those of a Transaction that may take them decide it.
+    const shown = records.filter((record) => !record.hidden);
+    takers = new Set(
+      shown.filter((record) => takesLineItems(record, unchosen)).map(({ id }) => id),
+    );
+    ({ totals: lineItems, again: lineItemsAgain } = await lineItemTotals(
+      database,
+      shown.map((record) => record.id),
+      ai,
+    ));
+    for (const record of records) {
       if (stopped) {
         left.push(record.id);
         continue;
@@ -446,8 +585,13 @@ export async function chooseCategories(
       }
     }
     await flush();
+    const followed = [...followOwnCategory(), ...followUnused(shown)];
     await storePartCategories(database, choices);
+    await storeLineItemParts(database, splits);
+    await storeTransactionStepCategories(database, followed);
     choices = [];
+    splits = [];
+    owning = [];
   }
   // Merchants past the run's cap of lookups wait for the redo, which this makes due.
   if (lookups?.waitsPastCap === true && typeof ai === "object") await ai.lookupsWait();

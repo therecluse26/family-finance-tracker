@@ -9,5 +9,7 @@ export {
   categoryGroupOf,
   categoryGroupTotals,
   isCategory,
+  LINE_ITEM_CATEGORIES,
+  NOT_FOR_LINE_ITEMS,
 } from "./list.ts";
 export { isSuperstore, SUPERSTORES } from "./superstores.ts";

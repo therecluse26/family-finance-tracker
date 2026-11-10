@@ -546,6 +546,7 @@ export const aiSettings = sqliteTable(
 // Quick model when a Member presses "Test the key".
 export const AI_USE_NAMES = [
   "category fix",
+  "line item category",
   "merchant cleanup",
   "merchant lookup",
   "unclear transfer",
@@ -1224,6 +1225,8 @@ export const transactionParts = sqliteTable(
         "Web lookup",
         "best guess",
         "money movement",
+        // Cascade step 1a: the Transaction's linked Line items (spec 14, Splits from Line items).
+        "Line items",
       ],
     }),
     categoryConfidence: text("category_confidence", {
@@ -1276,9 +1279,9 @@ export const reviewItems = sqliteTable(
     id: text("id").primaryKey(),
     // The kind of item, such as "category guess". Each kind registers its choices and its answer.
     kind: text("kind").notNull(),
-    // What the item is about: Transactions, or a loan Account.
-    subjectType: text("subject_type", { enum: ["transactions", "loan"] }).notNull(),
-    // The Transaction IDs, or the loan Account's ID, as JSON.
+    // What the item is about: Transactions, a loan Account, or Line items.
+    subjectType: text("subject_type", { enum: ["transactions", "loan", "line items"] }).notNull(),
+    // The Transaction IDs, the loan Account's ID, or the Line item IDs, as JSON.
     subjectIds: text("subject_ids", { mode: "json" }).$type<string[]>().notNull(),
     // What the app decided, or could not settle, in words.
     decided: text("decided").notNull(),

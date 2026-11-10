@@ -39,6 +39,7 @@ import { type GoalWriting, goalWriting, startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { requestInsightCardCheck, startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
+import { retryLineItemCategories, startLineItemCategories } from "../line-items/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startMonthlyReview } from "../monthly-review/index.ts";
@@ -261,6 +262,12 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
             },
           ]),
         ),
+        // Line items with no Transaction try again here; the follow-up job handles the linked ones.
+        "line item category": async () => {
+          await askForFollowUp();
+          await retryRedo();
+          await retryLineItemCategories();
+        },
         // Budget tailoring retries in its own job, which runs each waiting run.
         "budget tailoring": requestTailoringJob,
         // The Insight cards retry in the Insight card check job, as a run the 6 AM check started
@@ -277,6 +284,7 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     const ai = householdAi({ database, secrets, cost, aiBack: requestRedo });
     const moneyMovement = startMoneyMovement({ database, ai });
     const categorization = startCategorization({ database, ai });
+    const lineItemCategories = startLineItemCategories({ database, ai });
     const recurring = startRecurringCharges({ database });
     const anomalies = startAnomalyChecks({ database });
     // Budget tailoring: the AI's part in the first draft, and its Tailoring and Goal runs.
@@ -315,6 +323,7 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
       tailoring.stop();
       anomalies.stop();
       recurring.stop();
+      lineItemCategories.stop();
       categorization.stop();
       moneyMovement.stop();
       aiRetries.stop();
@@ -333,6 +342,13 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
         errorName: error instanceof Error ? error.name : typeof error,
       });
     }
+    // Line items an import left with no Category take theirs in the background, as AI calls can be
+    // slow.
+    lineItemCategories.atStart().catch((error: unknown) => {
+      log.error("Line item Categories could not run at start-up", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    });
     // Each price history from before Recurring charges kept their Transactions in their own table
     // moves there once, before any job runs. A failure tries again at the next start.
     try {

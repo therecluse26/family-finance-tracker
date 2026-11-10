@@ -7,6 +7,7 @@ import {
   listLineItemsOf,
   readLastLineItemImport,
 } from "../db/index.ts";
+import { followUpAgain } from "../follow-up/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import {
@@ -140,7 +141,11 @@ export function amazonRoutes(
       if (busy) return { outcome: "busy" };
       busy = true;
       try {
-        const deleted = await deleteLineItemData(database, "amazon");
+        // Each Transaction that had Line items goes back to the cascade: Matching makes its one
+        // part again, and Categorization chooses its Category. Hand settings stay.
+        const deleted = await deleteLineItemData(database, "amazon", (tx, ids) =>
+          followUpAgain(tx, ids),
+        );
         await lineItemsRemoved(database, deleted.transactionIds, logger);
         return { outcome: "deleted", status: await status() };
       } finally {
@@ -155,6 +160,9 @@ export function amazonRoutes(
         quantity: item.quantity,
         total: item.total,
         category: item.category,
+        aiUnsure:
+          item.categorySource === "AI" &&
+          (item.categoryConfidence === "medium" || item.categoryConfidence === "low"),
         orderId: item.orderId,
         orderDate: item.orderDate,
         linkKind: item.linkKind,

@@ -24,6 +24,7 @@ import { amazonUploadKind, readAmazonUpload } from "./amazon.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
+import { lineItemCategoryApi } from "./line-item-categories.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
@@ -1574,6 +1575,8 @@ export const api = new Hono<ServerEnv>()
     if (result.outcome === "busy") return c.json({ error: AMAZON_BUSY }, 409);
     return c.json({ status: result.status }, 200);
   })
+  // A Line item's Category and Item rules (spec 14, Item rules).
+  .route("/", lineItemCategoryApi)
   // The Line items linked to a Transaction, for its detail view (spec 14, Pages).
   .get("/transactions/:id/line-items", async (c) =>
     c.json({ lineItems: await c.var.amazon.lineItemsOf(c.req.param("id")) }, 200),

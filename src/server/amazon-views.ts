@@ -65,6 +65,8 @@ export type LineItemView = {
   total: number;
   // Null until a step chooses one.
   category: string | null;
+  // The AI chose it below high confidence: the item shows an "AI unsure" tag (spec 14, Step 3).
+  aiUnsure: boolean;
   orderId: string;
   // A day in the Household time zone.
   orderDate: string;

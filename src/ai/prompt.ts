@@ -94,6 +94,7 @@ export function aiTool<Shape extends z.ZodRawShape>(tool: {
 const QUICK_BATCH_TOKENS = 12_000;
 const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
   "category fix": QUICK_BATCH_TOKENS,
+  "line item category": QUICK_BATCH_TOKENS,
   "merchant cleanup": QUICK_BATCH_TOKENS,
   "unclear transfer": QUICK_BATCH_TOKENS,
   "reimbursement linking": QUICK_BATCH_TOKENS,
@@ -115,6 +116,7 @@ const ALERT_CALL_TOKENS = 4_000;
 export type Effort = "low" | "medium";
 export const EFFORT: Record<ModelUse, Effort | undefined> = {
   "category fix": undefined,
+  "line item category": undefined,
   "merchant cleanup": undefined,
   "unclear transfer": undefined,
   "reimbursement linking": undefined,
@@ -150,6 +152,7 @@ export const QUICK_BATCH_SIZE = 100;
 // would be wasted.
 const QUICK_BATCH_USES: ReadonlySet<ModelUse> = new Set([
   "category fix",
+  "line item category",
   "merchant cleanup",
   "unclear transfer",
   "reimbursement linking",

@@ -7,7 +7,9 @@ import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { addConnection, markSetupStep } from "../db/index.ts";
-import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
+import { followUpAgain, runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
+import { startLineItemCategories } from "../line-items/index.ts";
+import { addTestLineItems } from "../line-items/testing.ts";
 import { createLogger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { createApp } from "./app.ts";
@@ -62,6 +64,7 @@ describe("the split routes", () => {
       startFollowUpPipeline({ database: test.database, startJob: () => runFollowUp() }).stop,
       startMoneyMovement({ database: test.database }).stop,
       startCategorization({ database: test.database }).stop,
+      startLineItemCategories({ database: test.database }).stop,
     ];
     const member = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
     await markSetupStep(test.database, "master key", "done");
@@ -157,6 +160,66 @@ describe("the split routes", () => {
     expect(removed.status).toBe(200);
     expect(await october()).toMatchObject({ spending: 9_000, byCategory: { Superstores: 9_000 } });
     expect((await browser.send("DELETE", path("purchase"))).status).toBe(404);
+  });
+
+  it("counts the Refund in proportion in a split from Line items too, which a hand split replaces (spec 14)", async () => {
+    const purchase = ids.get("purchase") ?? "";
+    await addTestLineItems(test.database, [
+      {
+        id: "1",
+        total: 7_000,
+        transactionId: purchase,
+        category: "Groceries",
+        categorySource: "hand-set",
+      },
+      {
+        id: "2",
+        total: 3_500,
+        transactionId: purchase,
+        category: "Clothing",
+        categorySource: "hand-set",
+      },
+    ]);
+    await followUpAgain(test.database, [purchase]);
+    await runFollowUp();
+
+    expect(await october()).toMatchObject({
+      spending: 9_000,
+      byCategory: { Groceries: 6_000, Clothing: 3_000 },
+    });
+    const detail = (await (
+      await browser.get(`/api/transactions/${purchase}`)
+    ).json()) as TransactionDetailView;
+    expect(detail.decision?.parts.map((part) => [part.amount, part.category])).toEqual([
+      [-8_000, "Groceries"],
+      [-4_000, "Clothing"],
+    ]);
+
+    expect(
+      (
+        await browser.send("PUT", path("purchase"), {
+          parts: [
+            { amount: 12_000, category: "Home and garden" },
+            { amount: 0, category: "Pets" },
+          ],
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await browser.send("PUT", path("purchase"), {
+          parts: [
+            { amount: 6_000, category: "Home and garden" },
+            { amount: 6_000, category: "Pets" },
+          ],
+        })
+      ).status,
+    ).toBe(200);
+    await runFollowUp();
+    expect(await october()).toMatchObject({
+      spending: 9_000,
+      byCategory: { "Home and garden": 4_500, Pets: 4_500 },
+    });
   });
 
   it("refuses parts that do not add up, a body that is not a split, money in, and a hidden or unknown Transaction, and changes nothing", async () => {

@@ -239,10 +239,13 @@ export type LineItemDataDeleted = {
 };
 
 // Deletes every Line item of a source, every refused link, every Item rule, and every import
-// record of the source, in one transaction (spec 14, Delete all Amazon data). Nothing else changes.
+// record of the source, in one transaction (spec 14, Delete all Amazon data). `inside` runs last,
+// in the same transaction, with the Transactions that had Line items linked, such as to send them
+// down the follow-up steps again: a failure after the commit still leaves them marked (K5).
 export async function deleteLineItemData(
   database: Database,
   source: StoredLineItem["source"],
+  inside: (tx: Queries, transactionIds: readonly string[]) => Promise<void> = async () => {},
 ): Promise<LineItemDataDeleted> {
   return database.transaction(async (tx) => {
     const linked = await tx
@@ -259,8 +262,10 @@ export async function deleteLineItemData(
       .delete(lineItemImports)
       .where(eq(lineItemImports.source, source))
       .returning({ id: lineItemImports.id });
+    const transactionIds = linked.flatMap((row) => (row.id === null ? [] : [row.id]));
+    await inside(tx, transactionIds);
     return {
-      transactionIds: linked.flatMap((row) => (row.id === null ? [] : [row.id])),
+      transactionIds,
       lineItems: removed.length,
       itemRules: rules.length,
       imports: imports.length,

@@ -190,6 +190,7 @@ describe("the Review list", () => {
             categories: [],
           },
         ],
+        lineItems: [],
         loanName: null,
         cardName: null,
         decided: "The AI guessed Restaurants, with medium confidence.",

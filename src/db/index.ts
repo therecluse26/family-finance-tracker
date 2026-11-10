@@ -372,6 +372,28 @@ export {
   type OpenInvite,
 } from "./invites.ts";
 export {
+  type CategorizedLineItem,
+  type ChangedLineItems,
+  type LineItemCategorySource,
+  type LineItemChoice,
+  type LineItemPart,
+  listMarkedLineItems,
+  listUncategorizedLineItems,
+  listUnsureLineItems,
+  type Product,
+  productKeyOf,
+  readCategorizedLineItems,
+  readItemRulesFor,
+  readLinkedLineItems,
+  removeItemRule,
+  setLineItemCategoriesByHand,
+  setLineItemCategoryByHand,
+  storeItemRule,
+  storeLineItemChoices,
+  storeLineItemParts,
+  storeTransactionStepCategories,
+} from "./line-item-categories.ts";
+export {
   countLineItems,
   countLineItemsOf,
   countOpenReviewItemsOfKind,

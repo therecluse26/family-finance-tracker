@@ -36,6 +36,8 @@ export function categoryChosenBy(part: ShownPart): CategoryChosenBy | null {
         : "Web lookup";
     case "money movement":
       return "Money movement";
+    case "Line items":
+      return "Amazon items";
     default:
       return part.categorySource;
   }

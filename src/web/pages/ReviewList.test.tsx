@@ -7,6 +7,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { categoryChoiceValue, readCategoryChoice } from "../../categorization/category-choice.ts";
 import { AI_UNSURE_KIND, BEST_GUESS_KIND } from "../../categorization/index.ts";
+import { LINE_ITEM_CATEGORY_KIND } from "../../line-items/category-cards.ts";
 import {
   MISSED_PAYMENT_KIND,
   MONEY_FROM_PERSON_KIND,
@@ -68,6 +69,7 @@ const item = (
   kind,
   subject: { type: "transactions", transactionIds: [`${id}-txn`] },
   transactions: [txn(`${id}-txn`)],
+  lineItems: [],
   loanName: null,
   cardName: null,
   decided: "The app decided something.",
@@ -342,6 +344,7 @@ describe("the Review list page", () => {
         SERVER_UNTRACKED_LOAN_KIND,
         POSSIBLE_PAYMENT_KIND,
         MISSED_PAYMENT_KIND,
+        LINE_ITEM_CATEGORY_KIND,
       ].sort(),
     );
     // A kind with no label shows none, and the item still shows in full.
@@ -410,6 +413,44 @@ describe("the Review list page", () => {
     expect(text(html)).toContain("Groceries Restaurants Only this Transaction Without it");
     expect(text(html)).not.toContain("Other choices");
     expect(text(html)).not.toContain(", only this Transaction");
+  });
+
+  it("shows a Line item card with each item of its product, Only this item, and the Item rule help", () => {
+    const lineItem = (id: string, orderDate: string, quantity: number) => ({
+      id,
+      name: "Puzzle, 500 pieces",
+      quantity,
+      total: 1_299 * quantity,
+      orderDate,
+      category: "Hobbies",
+    });
+    const card = item(
+      "items",
+      LINE_ITEM_CATEGORY_KIND,
+      { value: "Hobbies", label: "Yes, Hobbies" },
+      {
+        subject: { type: "line items", lineItemIds: ["li-2", "li-1"] },
+        transactions: [],
+        lineItems: [lineItem("li-2", "2026-10-10", 2), lineItem("li-1", "2026-09-02", 1)],
+        decided: "The AI chose Hobbies, but it was unsure.",
+      },
+    );
+    const html = inRouter(
+      <ReviewListItem
+        item={card}
+        state={{ choices: categoryChoices(true) }}
+        today={TODAY}
+        actions={noActions}
+      />,
+    );
+    expect(text(html)).toContain("Amazon item Category");
+    expect(text(html)).toContain("Puzzle, 500 pieces · 2 items");
+    expect(text(html)).toContain("Oct 10 · 2 × Puzzle, 500 pieces · $25.98");
+    expect(text(html)).toContain("Sep 2 · Puzzle, 500 pieces · $12.99");
+    expect(text(html)).toContain(
+      "Only this item Without it, an Item rule gives this product&#x27;s other items",
+    );
+    expect(text(html)).not.toContain("Only this Transaction");
   });
 
   it("shows no Only this Transaction box when the server offers no such choice", () => {

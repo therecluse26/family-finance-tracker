@@ -25,6 +25,7 @@ export type AiWorkStep =
   | "Merchant names"
   | "Money movement"
   | "Categories"
+  | "Line item Categories"
   | "Insight cards";
 
 // Why AI work waits now: the pause every Quick-tier use takes, or a retry wait, while a use the

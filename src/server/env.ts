@@ -27,6 +27,7 @@ import type { DataExportRoutes } from "./data-export-views.ts";
 import type { DeviceRoutes } from "./devices-views.ts";
 import type { GoalRoutes } from "./goals-views.ts";
 import type { HouseholdRoutes } from "./household-views.ts";
+import type { LineItemCategoryRoutes } from "./line-item-category-views.ts";
 import type { MasterKeyRoutes } from "./master-key-views.ts";
 import type { MemberRoutes } from "./members-views.ts";
 import type { MoneyMovementRoutes } from "./money-movement-views.ts";
@@ -88,6 +89,8 @@ export type ServerEnv = {
     // Settings, Amazon: the order file upload and "Delete all Amazon data", and each Transaction's
     // Line items.
     amazon: AmazonRoutes;
+    // A Line item's Category, and Item rules on Settings > Categories.
+    lineItemCategories: LineItemCategoryRoutes;
     // Settings, Members: the Members, invite links, and removing a Member.
     members: MemberRoutes;
     // Settings, My login: the signed-in Member's own devices, and Sign out on one.

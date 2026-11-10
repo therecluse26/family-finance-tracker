@@ -25,6 +25,7 @@ import {
 import { startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { startInsightCards } from "../insights/index.ts";
+import { startLineItemCategories } from "../line-items/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startMonthlyReview } from "../monthly-review/index.ts";
 import { startNotify } from "../notify/index.ts";
@@ -142,6 +143,19 @@ export const APP_MODULES: readonly AppModule[] = [
       path: "Categorization follow-up on the full history",
       buildLimitMs: 60_000,
     },
+  },
+  {
+    name: "startLineItemCategories",
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startLineItemCategories({
+        database,
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+      }),
   },
   {
     name: "startRecurringCharges",

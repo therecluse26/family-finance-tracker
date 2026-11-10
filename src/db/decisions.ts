@@ -625,6 +625,7 @@ export type CategoryRecord = {
     StoredPart,
     | "part"
     | "type"
+    | "amount"
     | "category"
     | "keepsCategory"
     | "linked"
@@ -654,6 +655,7 @@ export async function readCategoryRecords(
         part: {
           part: transactionParts.part,
           type: transactionParts.type,
+          amount: transactionParts.amount,
           category: transactionParts.category,
           keepsCategory: transactionParts.keepsCategory,
           linked: transactionParts.linked,

@@ -4,10 +4,12 @@ import type { LineItemView } from "../../server/amazon-views.ts";
 import { api } from "../api.ts";
 import { Card } from "../components/Card.tsx";
 import { SectionHeading } from "../components/Page.tsx";
+import { LineItemCategoryChange } from "./LineItemCategoryChange.tsx";
+import { ChosenByAiMark } from "./Transactions.tsx";
 
 // The Line items linked to a Transaction, on its detail view (spec 14, Pages): each item's name,
-// quantity, total, and Category, under its order's ID, date, and link kind. Read only for now:
-// Change, "only this item", and Undo come with the tickets that link and categorize Line items.
+// quantity, total, and Category, with Change and "only this item", under its order's ID, date, and
+// link kind. A Category the AI chose below high confidence shows an "AI unsure" tag.
 
 // "1 item", "3 items": the count a Transactions row shows.
 export const itemsLabel = (count: number) => (count === 1 ? "1 item" : `${count} items`);
@@ -33,7 +35,12 @@ function byOrder(items: readonly LineItemView[]): LineItemView[][] {
   return [...orders.values()];
 }
 
-export function LineItemsCard(props: { items: readonly LineItemView[]; today: string }) {
+export function LineItemsCard(props: {
+  items: readonly LineItemView[];
+  today: string;
+  // After a Member changed a Category, so the list reads the items again.
+  onChanged?: () => void;
+}) {
   return (
     <Card aria-labelledby="line-items">
       <SectionHeading id="line-items">Items · {itemsLabel(props.items.length)}</SectionHeading>
@@ -57,11 +64,20 @@ export function LineItemsCard(props: { items: readonly LineItemView[]; today: st
                     {item.name}
                     <span className="block text-small text-muted">
                       {item.category ?? "No Category yet"}
+                      {item.aiUnsure ? (
+                        <>
+                          {" "}
+                          <ChosenByAiMark unsure />
+                        </>
+                      ) : null}
                     </span>
                   </span>
                   <span className="whitespace-nowrap tabular-nums">
                     {dollarsAndCents(item.total)}
                   </span>
+                  {props.onChanged === undefined ? null : (
+                    <LineItemCategoryChange item={item} onChanged={props.onChanged} />
+                  )}
                 </li>
               ))}
             </ul>
@@ -75,10 +91,12 @@ export function LineItemsCard(props: { items: readonly LineItemView[]; today: st
 // Reads the Line items only when the Transaction has some.
 export function LineItemsList(props: { transactionId: string; itemCount: number; today: string }) {
   const [items, setItems] = useState<LineItemView[] | undefined>();
+  // Counts each change, so the list reads the items again after one.
+  const [changes, setChanges] = useState(0);
   const { transactionId, itemCount } = props;
 
   useEffect(() => {
-    setItems(undefined);
+    if (changes === 0) setItems(undefined);
     if (itemCount === 0) return;
     let current = true;
     readLineItems(transactionId)
@@ -89,8 +107,10 @@ export function LineItemsList(props: { transactionId: string; itemCount: number;
     return () => {
       current = false;
     };
-  }, [transactionId, itemCount]);
+  }, [transactionId, itemCount, changes]);
 
   if (items === undefined || items.length === 0) return null;
-  return <LineItemsCard items={items} today={props.today} />;
+  return (
+    <LineItemsCard items={items} today={props.today} onChanged={() => setChanges((n) => n + 1)} />
+  );
 }

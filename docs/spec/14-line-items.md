@@ -144,6 +144,10 @@ Each Line item takes the first answer it gets, in this order:
   - At "low", the Line item also goes on the Review list.
   - At "medium", the Category counts as decided. The Line item shows an "AI unsure" tag.
 - **Step 4.** These Line items are marked. When AI is available again, the app sends each marked Line item to the AI once, as for Transactions ([AI](08-ai.md#redo-of-no-ai-work)).
+  - The Transaction's Category is the one cascade steps 2 to 6 give it. A Line item linked to a Transaction with no Category yet waits for it.
+  - When that Category is Superstores, Cash or Payments to people, the Line item takes Miscellaneous.
+  - While the AI waits to try again after an error, the Line items and their Transaction wait too. After the last retry, they take step 4 ([AI](08-ai.md#every-ai-use)).
+- A Line item with no Transaction gets its Category soon after the import, in the background, and the import does not wait for it.
 - The app stores which step chose each Line item's Category, and how confident it was.
 - A Line item never takes Superstores, Cash or Payments to people. Those Categories say where money went when the app cannot see what it paid for, and a Line item shows that. They are not offered, and an AI answer of one of them counts as "low" with Miscellaneous.
 

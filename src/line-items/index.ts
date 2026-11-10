@@ -17,11 +17,29 @@ export {
   type UploadKind,
 } from "./amazon.ts";
 export {
+  categorizeUnlinked,
+  chooseLineItemCategories,
+  deleteLineItemRule,
+  LINE_ITEM_CATEGORY_TASK,
+  lineItemCategoriesSettled,
+  retryLineItemCategories,
+  startLineItemCategories,
+} from "./categories.ts";
+export { LINE_ITEM_CATEGORY_KIND, updateLineItemCards } from "./category-cards.ts";
+export {
   type ImportCounts,
   type ImportOutcome,
   importOrderFile,
   LineItemStoreError,
 } from "./import.ts";
+export {
+  changeLineItemCategory,
+  itemRules,
+  type LineItemChange,
+  type LineItemChangeResult,
+  lineItemCategoryChoices,
+  takesLineItemCategory,
+} from "./item-rules.ts";
 export {
   LINE_ITEM_STEPS,
   type LineItemStep,

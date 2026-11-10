@@ -170,6 +170,7 @@ function ipv6Kind(words: number[]): HostKind {
 // toward the month's cost. The db module stores the same names.
 export const AI_USES = [
   "category fix",
+  "line item category",
   "merchant cleanup",
   "merchant lookup",
   "unclear transfer",
@@ -188,6 +189,7 @@ export type AiUse = (typeof AI_USES)[number];
 
 export const AI_USE_LABELS: Record<AiUse, string> = {
   "category fix": "Category fix",
+  "line item category": "Line item Category",
   "merchant cleanup": "Merchant cleanup",
   "merchant lookup": "Merchant lookup",
   "unclear transfer": "Unclear Transfer",
@@ -208,6 +210,7 @@ export type ModelUse = Exclude<AiUse, "check on save" | "key test">;
 
 export const USE_TIERS: Record<ModelUse, AiTier> = {
   "category fix": "quick",
+  "line item category": "quick",
   "merchant cleanup": "quick",
   "merchant lookup": "quick",
   "unclear transfer": "quick",

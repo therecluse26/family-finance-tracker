@@ -97,7 +97,9 @@ export class MerchantHistory {
 
   constructor(rows: readonly MerchantHistoryRow[]) {
     for (const row of rows) {
-      if (!isCategory(row.category)) continue;
+      // A Category from Line items says what one order held, not what the Merchant sells (spec 14,
+      // Splits from Line items), so it is no part of the Merchant's history.
+      if (!isCategory(row.category) || row.categorySource === "Line items") continue;
       this.set({
         id: row.id,
         postedDate: row.postedDate,

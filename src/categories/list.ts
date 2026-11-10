@@ -104,6 +104,19 @@ export const CATEGORIES: readonly CategoryDetails[] = Object.freeze(
   ),
 );
 
+// The Categories a Line item never takes (spec 14, Categories of Line items): they say where money
+// went when the app cannot see what it paid for, and a Line item shows that.
+export const NOT_FOR_LINE_ITEMS: ReadonlySet<Category> = new Set<Category>([
+  "Superstores",
+  "Cash",
+  "Payments to people",
+]);
+
+// The Categories a Line item may take, in list order.
+export const LINE_ITEM_CATEGORIES: readonly Category[] = Object.freeze(
+  CATEGORIES.map((category) => category.name).filter((name) => !NOT_FOR_LINE_ITEMS.has(name)),
+);
+
 const BY_NAME = new Map(CATEGORIES.map((category) => [category.name, category]));
 
 export function isCategory(name: string): name is Category {

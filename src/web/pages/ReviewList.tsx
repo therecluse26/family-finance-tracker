@@ -6,6 +6,7 @@ import { calendarDateIn, dateLabel, dollarsAndCents } from "../../format.ts";
 import type {
   ReviewChoiceView,
   ReviewItemView,
+  ReviewLineItemView,
   ReviewTransactionView,
 } from "../../server/review-views.ts";
 import { keepAmountsWhole } from "../components/Amounts.tsx";
@@ -47,7 +48,20 @@ export const KIND_LABEL: Readonly<Record<string, string>> = {
   "untracked loan": "Untracked loan",
   "possible Manual loan payment": "Possible loan payment",
   "missed Manual loan payment": "Missed loan payment",
+  "Line item Category": "Amazon item Category",
 };
+
+// The Line item Category kind (spec 14, Review list items): one card per product.
+const LINE_ITEM_KIND = "Line item Category";
+
+// One Line item on its card: "Oct 10 · 2 × Paper towels · $13.50".
+export function lineItemLine(item: ReviewLineItemView, today: string): string {
+  return [
+    dateLabel(item.orderDate, today),
+    `${item.quantity === 1 ? "" : `${item.quantity} × `}${item.name}`,
+    dollarsAndCents(item.total),
+  ].join(" · ");
+}
 
 // "Oct 9 · Corner Bistro · −$42.50 · Everyday Checking". A Transaction's day is its purchase date
 // when it has one. Money in shows "+", since the list shows both (spec 07, Number formats).
@@ -109,6 +123,28 @@ function Subject(props: { item: ReviewItemView; today: string }) {
   const { item } = props;
   if (item.subject.type === "loan")
     return <p className="mt-1 font-semibold">{item.loanName ?? "A loan"}</p>;
+  if (item.subject.type === "line items") {
+    const [first] = item.lineItems;
+    return (
+      <>
+        {first === undefined || item.lineItems.length < 2 ? null : (
+          <p className="mt-1 font-semibold break-words">
+            {first.name} · {item.lineItems.length} items
+          </p>
+        )}
+        <ul className="mt-1">
+          {item.lineItems.map((lineItem) => (
+            <li
+              key={lineItem.id}
+              className={`break-words ${item.lineItems.length < 2 ? "font-semibold" : "text-sm"}`}
+            >
+              {keepAmountsWhole(lineItemLine(lineItem, props.today))}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  }
   const title = cardTitle(item);
   if (title !== undefined) return <p className="mt-1 font-semibold">{title}</p>;
   return (
@@ -309,6 +345,8 @@ function CategoryPicker(props: {
   itemId: string;
   categories: readonly Category[];
   onlyThisOffered: boolean;
+  // A Line item card says "item" and Item rule in place of Transaction and Category rule.
+  lineItems?: boolean;
   busy: boolean;
   pick(value: string): void;
 }) {
@@ -417,13 +455,15 @@ function CategoryPicker(props: {
               checked={onlyThis}
               onChange={(event) => setOnlyThis(event.target.checked)}
             />
-            Only this Transaction
+            {props.lineItems === true ? "Only this item" : "Only this Transaction"}
           </label>
         ) : null}
       </div>
       {props.onlyThisOffered ? (
         <p id={helpId} className="mt-1 text-small text-muted">
-          Without it, a Category rule gives the Merchant's other Transactions this Category too.
+          {props.lineItems === true
+            ? "Without it, an Item rule gives this product's other items this Category too."
+            : "Without it, a Category rule gives the Merchant's other Transactions this Category too."}
         </p>
       ) : null}
     </div>
@@ -504,6 +544,7 @@ export function ReviewListItem(props: {
           itemId={item.id}
           categories={picker.categories}
           onlyThisOffered={picker.onlyThisOffered}
+          lineItems={item.kind === LINE_ITEM_KIND}
           busy={state.busy === true}
           pick={(value) => actions.answer(item, value)}
         />

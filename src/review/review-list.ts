@@ -31,7 +31,9 @@ export type ReviewChoice = { value: string; label: string };
 
 export type ReviewSubject =
   | { type: "transactions"; transactionIds: string[] }
-  | { type: "loan"; accountId: string };
+  | { type: "loan"; accountId: string }
+  // Line items of one product (spec 14, Review list items).
+  | { type: "line items"; lineItemIds: string[] };
 
 export type ReviewItem = {
   id: string;
@@ -86,7 +88,9 @@ function itemOf(stored: StoredReviewItem): ReviewItem {
   const subject: ReviewSubject =
     stored.subjectType === "transactions"
       ? { type: "transactions", transactionIds: stored.subjectIds }
-      : { type: "loan", accountId: stored.subjectIds[0] ?? "" };
+      : stored.subjectType === "line items"
+        ? { type: "line items", lineItemIds: stored.subjectIds }
+        : { type: "loan", accountId: stored.subjectIds[0] ?? "" };
   return {
     id: stored.id,
     kind: stored.kind,
@@ -99,7 +103,9 @@ function itemOf(stored: StoredReviewItem): ReviewItem {
 }
 
 function subjectIdsOf(subject: ReviewSubject): string[] {
-  return subject.type === "transactions" ? subject.transactionIds : [subject.accountId];
+  if (subject.type === "transactions") return subject.transactionIds;
+  if (subject.type === "line items") return subject.lineItemIds;
+  return [subject.accountId];
 }
 
 type NewItem = {

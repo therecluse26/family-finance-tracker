@@ -157,8 +157,19 @@ export function categoryOrType(parts: readonly ShownPartView[]): string {
   const nonZero = visible.filter((part) => part.amount !== 0);
   const shown = nonZero.length === 0 ? visible : nonZero;
   const labels = [...new Set(shown.map(partLabel))];
-  if (shown.length > 1 && isSplit(shown)) return `Split: ${labels.join(", ")}`;
+  if (shown.length > 1 && (isSplit(shown) || fromLineItems(shown))) {
+    return `Split: ${labels.join(", ")}`;
+  }
   return labels.join(" + ");
+}
+
+// A split from Amazon items: every part Spending, and every Category from the Transaction's Line
+// items (spec 14, Splits from Line items).
+export function fromLineItems(parts: readonly ShownPartView[]): boolean {
+  return (
+    parts.length > 1 &&
+    parts.every((part) => part.type === "Spending" && part.categoryChosenBy === "Amazon items")
+  );
 }
 
 // A Member's split: every part Spending, and every Category hand-set.
@@ -172,5 +183,6 @@ export function isSplit(parts: readonly ShownPartView[]): boolean {
 // How the part's Category was chosen (spec 04, Provenance), or undefined when it has none.
 export function chosenByLabel(part: ShownPartView): string | undefined {
   if (part.linked) return "the linked Spending's Category";
+  if (part.categoryChosenBy === "Amazon items") return undefined;
   return part.categoryChosenBy ?? undefined;
 }

@@ -99,7 +99,8 @@ Each Spending Transaction takes the first answer it gets, in this order:
   - A lossy code always goes on down the cascade, even at `VERY_HIGH`.
   - `UNKNOWN` counts as `LOW`.
   - A provider category with no confidence level is only a hint to the AI.
-- **Step 4.** The last 3 Transactions are the 3 most recent Spending Transactions with that Merchant, before this one. A Category from step 6 does not count. With fewer than 3, the step gives no answer.
+- **Step 1a.** A Line item whose Category is not chosen yet waits for the AI and its retries, and the Transaction waits with it. A Line item that takes the Transaction's own Category goes down steps 2 to 6 first ([Line items](14-line-items.md#categories-of-line-items)).
+- **Step 4.** The last 3 Transactions are the 3 most recent Spending Transactions with that Merchant, before this one. A Category from step 6 does not count, nor one from step 1a: a store such as Amazon sells many kinds of goods. With fewer than 3, the step gives no answer.
   - A masked Merchant gets no answer at step 4: its Transactions are many shops.
 - **Step 5.** The AI gets the provider's category as a hint. It answers with one of the 30 Categories and a confidence: high, medium, or low.
   - The answer always applies.

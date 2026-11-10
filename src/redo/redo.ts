@@ -64,8 +64,14 @@ import {
 //   that AI's return starts gives way to a Member's run.
 
 // The steps of a redo, in this order: clean names first, since the Categories read them; Money
-// movement next, since a new decision clears a Transaction's Categories.
-export const REDO_STEPS = ["Merchant names", "Money movement", "Categories"] as const;
+// movement next, since a new decision clears a Transaction's Categories. Line item Categories go
+// last: each one the AI answers sends its Transaction to the follow-up job, which splits it again.
+export const REDO_STEPS = [
+  "Merchant names",
+  "Money movement",
+  "Categories",
+  "Line item Categories",
+] as const;
 
 export type RedoStepName = (typeof REDO_STEPS)[number];
 
@@ -363,13 +369,14 @@ export class RedoNoAiWorkJob extends Job {
 }
 
 // The Quick-tier uses a redo calls: Merchant names, Money movement, and Categories, with their
-// Merchant lookups.
+// Merchant lookups, and Line item Categories.
 export const REDO_AI_USES = [
   "merchant cleanup",
   "unclear transfer",
   "reimbursement linking",
   "category fix",
   "merchant lookup",
+  "line item category",
 ] as const;
 
 // The latest time a use the redo calls tries again after a failed call, while it is still to come.

@@ -332,6 +332,9 @@ function PartLine(props: { part: ShownPartView }) {
       {chosenBy === undefined ? null : (
         <span className="text-muted"> · Category chosen by: {chosenBy}</span>
       )}
+      {part.categoryChosenBy === "Amazon items" && !part.linked ? (
+        <span className="text-muted"> · from Amazon items</span>
+      ) : null}
       {chosenUnsure([part]) ? (
         <>
           {" "}

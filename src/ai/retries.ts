@@ -31,6 +31,7 @@ export const MONTHLY_REVIEW_RETRY_MS = 6 * 60 * 60_000;
 // a follow-up job.
 export const FOLLOW_UP_AI_USES: readonly ModelUse[] = [
   "category fix",
+  "line item category",
   "merchant cleanup",
   "merchant lookup",
   "unclear transfer",
@@ -49,6 +50,7 @@ type LastRetryUse = Exclude<ModelUse, "chat" | "reading a goal" | "monthly revie
 // and ends, so AI comes back with the next run.
 const USE_WORDS: Record<LastRetryUse, { work: string; again: string }> = {
   "category fix": { work: "Categories", again: "at the next sync" },
+  "line item category": { work: "Amazon item Categories", again: "at the next sync" },
   "merchant cleanup": { work: "Merchant names", again: "at the next sync" },
   "merchant lookup": { work: "Merchant web lookups", again: "at the next sync" },
   "unclear transfer": { work: "unclear Transfers", again: "at the next sync" },

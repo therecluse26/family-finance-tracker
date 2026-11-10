@@ -1,6 +1,7 @@
 import {
   type Database,
   listAccounts,
+  readCategorizedLineItems,
   readProviderCategories,
   readShownParts,
   readShownTransactions,
@@ -28,6 +29,16 @@ export function reviewRoutes(database: Database): ReviewRoutes {
         (await readShownTransactions(database, ids)).map((txn) => [txn.id, txn]),
       );
       const parts = await readShownParts(database, ids);
+      const lineItems = new Map(
+        (
+          await readCategorizedLineItems(
+            database,
+            items.flatMap((item) =>
+              item.subject.type === "line items" ? item.subject.lineItemIds : [],
+            ),
+          )
+        ).map((lineItem) => [lineItem.id, lineItem]),
+      );
       const accountNames = new Map(
         (await listAccounts(database)).map((account) => [account.id, account.name]),
       );
@@ -88,9 +99,19 @@ export function reviewRoutes(database: Database): ReviewRoutes {
                 ];
               })
             : [];
+        const onCard =
+          item.subject.type === "line items"
+            ? item.subject.lineItemIds.flatMap((id) => {
+                const lineItem = lineItems.get(id);
+                if (lineItem === undefined) return [];
+                const { name, quantity, total, orderDate, category } = lineItem;
+                return [{ id, name, quantity, total, orderDate, category }];
+              })
+            : [];
         return {
           ...item,
           transactions,
+          lineItems: onCard,
           loanName:
             item.subject.type === "loan"
               ? (accountNames.get(item.subject.accountId) ?? null)

@@ -69,9 +69,11 @@ export type OtherLinkView = {
 // How a part's Category was chosen, as the Transactions page shows it (spec 04, Provenance): the
 // cascade step, with "AI, unsure" for an AI answer below high confidence. "Money movement" is a
 // Category that a Money movement rule names, such as Cash (spec 04, Categories that Money movement
-// names).
+// names). "Amazon items" is a part step 1a took from the Transaction's Line items (spec 14, Splits
+// from Line items).
 export type CategoryChosenBy =
   | "hand-set"
+  | "Amazon items"
   | "Category rule"
   | "Recurring charge"
   | "Plaid"

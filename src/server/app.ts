@@ -37,6 +37,7 @@ import { deviceRoutes } from "./devices.ts";
 import type { ServerEnv } from "./env.ts";
 import { goalRoutes } from "./goals.ts";
 import { householdRoutes } from "./household.ts";
+import { lineItemCategoryRoutes } from "./line-item-categories.ts";
 import { masterKeyRoutes } from "./master-key.ts";
 import { memberRoutes } from "./members.ts";
 import { moneyMovementRoutes } from "./money-movement.ts";
@@ -244,6 +245,7 @@ export function createApp(
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
   const amazon = amazonRoutes(database, security.logger);
+  const lineItemCategories = lineItemCategoryRoutes(database);
   const members = memberRoutes(database, auth, security.appUrl);
   const devices = deviceRoutes(auth);
   return (
@@ -308,6 +310,7 @@ export function createApp(
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
         c.set("amazon", amazon);
+        c.set("lineItemCategories", lineItemCategories);
         c.set("members", members);
         c.set("devices", devices);
         c.set("aiWork", services.aiWork);

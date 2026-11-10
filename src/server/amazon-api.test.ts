@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { addMember, newTestAuth, type TestAuth, type TestMember } from "../auth/testing.ts";
 import { FakeBankAdapter, fakeAccount, fakeTxn } from "../bank/fake.ts";
 import { startBank, syncConnection } from "../bank/index.ts";
+import { startCategorization } from "../categorization/index.ts";
 import {
   addConnection,
   countLineItemsOf,
@@ -13,8 +14,13 @@ import {
   markSetupStep,
   removeMember,
 } from "../db/index.ts";
-import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
-import { registerLineItemsImported, registerLineItemsRemoved } from "../line-items/index.ts";
+import { followUpAgain, runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
+import {
+  lineItemCategoriesSettled,
+  registerLineItemsImported,
+  registerLineItemsRemoved,
+  startLineItemCategories,
+} from "../line-items/index.ts";
 import { type AmazonRow, amazonCsv, amazonRow, amazonZip } from "../line-items/testing.ts";
 import { createLogger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -389,6 +395,40 @@ describe("the Amazon routes", () => {
     expect(removed).toEqual([[txn]]);
   });
 
+  it("sends a Transaction split from its Line items back to one part after Delete all (K5)", async () => {
+    stops.push(
+      startCategorization({ database: test.database }).stop,
+      startLineItemCategories({ database: test.database }).stop,
+    );
+    await imported(
+      amazonZip([
+        amazonRow(),
+        amazonRow({ ASIN: "B000000002", "Product Name": "Dog leash, 6 feet" }),
+      ]),
+    );
+    const txn = await amazonTxnId();
+    await sql(
+      "UPDATE line_items SET transaction_id = ?, link_kind = 'app', category = CASE WHEN product_id = 'B000000002' THEN 'Pets' ELSE 'Home and garden' END, category_source = 'hand-set'",
+      [txn],
+    );
+    await followUpAgain(test.database, [txn]);
+    await runFollowUp();
+    const partsOf = () =>
+      sql(
+        "SELECT amount, category_source AS source FROM transaction_parts WHERE transaction_id = ? ORDER BY part",
+        [txn],
+      );
+    expect((await partsOf()).map((part) => part.source)).toEqual(["Line items", "Line items"]);
+
+    expect((await browser.send("DELETE", "/api/amazon")).status).toBe(200);
+    await runFollowUp();
+    await lineItemCategoriesSettled();
+    const parts = await partsOf();
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({ amount: -1350 });
+    expect(parts[0]?.source).not.toBe("Line items");
+  });
+
   it("unlinks Line items and drops refused links when the Connection's history is deleted, and keeps imports when their Member is removed (K6)", async () => {
     await imported(amazonZip([amazonRow()]));
     const txn = await amazonTxnId();
@@ -488,6 +528,7 @@ describe("the Amazon routes", () => {
           orderId: "111-0000001-0000001",
           orderDate: "2026-05-01",
           linkKind: "app",
+          aiUnsure: false,
         },
         {
           name: "Paper towels, 12 rolls",
@@ -497,6 +538,7 @@ describe("the Amazon routes", () => {
           orderId: "111-0000001-0000001",
           orderDate: "2026-05-01",
           linkKind: "app",
+          aiUnsure: false,
         },
         {
           name: "Hand soap",
@@ -506,6 +548,7 @@ describe("the Amazon routes", () => {
           orderId: "111-0000001-0000001",
           orderDate: "2026-05-01",
           linkKind: "app",
+          aiUnsure: false,
         },
       ].sort((a, b) => a.name.localeCompare(b.name)),
     );
