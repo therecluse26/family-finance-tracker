@@ -68,6 +68,7 @@ These example institutions shape the examples in this spec:
 - v1 gets bank data from a free source: Plaid's Trial plan, which allows 10 lifetime Items.
 - A Household may choose a paid Bank-data provider, such as SimpleFIN Bridge ($1.50 a month). v1 ships no adapter for one ([Out of scope](13-out-of-scope.md)).
 - The AI provider is the only paid service the app is built to use. It is optional. A local model, such as one on Ollama, can cost $0.
+- After v1, the deal finder may use one Scraping service, such as Apify. It is optional, and Apify's Free plan gives $5 of usage a month ([Deal finder](15-deal-finder.md)).
 
 ### 6. Works without AI
 
@@ -121,13 +122,14 @@ The AI provider is optional. Core data works without it.
   | Each Member's browser push service | Push Alerts and System notices | The message, encrypted by Web Push |
   | BLS API | CPI fetch | Nothing about the Household |
   | GitHub | Daily update check, which a Member can turn off | Nothing about the Household |
+  | Price sources (Apify, the Kroger API, Open Food Facts), after v1, if set up | Deal finder plan runs | Search words and keys; the ZIP code only with the deal finder's ZIP switch on ([Deal finder](15-deal-finder.md#data-and-privacy)) |
 
-- The AI provider gets the Household's data as the app builds it, with no privacy filter (owner decision, 2026-11-07). The ZIP code and ages are never sent, nor any secret, key, or token ([AI](08-ai.md#what-the-ai-provider-gets)).
+- The AI provider gets the Household's data as the app builds it, with no privacy filter (owner decision, 2026-11-07). The ZIP code and ages are never sent to it, nor any secret, key, or token ([AI](08-ai.md#what-the-ai-provider-gets)).
 - The app uses only AI providers and settings that do not train on API data or use it for ads ([AI](08-ai.md)).
 - The AI provider's API key still ties each request to the key owner's provider account.
 - The app has no analytics, usage tracking, or crash reporting.
 - The app shows no ads and no affiliate links. The AI names financial products by kind only, never by company ([AI](08-ai.md)).
-- Household facts (ZIP code, ages, rent or own) stay on the server. No one is asked their sex.
+- Household facts (ZIP code, ages, rent or own) stay on the server. No one is asked their sex. The one exception is the deal finder: after a Member turns on its ZIP switch, the ZIP code goes to its Price sources (owner decision, 2026-11-07).
 - The Master key encrypts every stored secret. Secrets never leave in an export ([Members, login, and security](09-members-login-security.md), [Backup, restore, and export](11-backup-restore-export.md)).
 
 ### 12. Safe on the public internet

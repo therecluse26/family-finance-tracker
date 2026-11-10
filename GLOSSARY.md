@@ -185,3 +185,41 @@ _Avoid_: Pattern, trend
 **Proposal**:
 A change the AI suggests, such as a new Budget amount or a new Goal. Nothing changes until a Member accepts it.
 _Avoid_: Suggestion, recommendation
+
+## Deal finder (after v1)
+
+**Store**:
+A chain the deal finder reads prices from, such as Walmart, Aldi, or a local chain in the weekly ads. A Store is not a Merchant: a Merchant is the business on a Transaction.
+_Avoid_: Retailer, shop, vendor
+
+**Home store**:
+The one location of a Store whose prices the deal finder uses, such as the nearest Kroger.
+_Avoid_: Branch, local store
+
+**Product**:
+One thing a Store sells, with its own price and size, such as "Jif Creamy Peanut Butter, 16 oz" at Walmart. A Line item is a Product a Member already bought.
+_Avoid_: SKU, listing, offer
+
+**Shopping list**:
+The Household's one list of things to buy. Every Member sees it and can change it.
+_Avoid_: Grocery list, cart
+
+**List item**:
+One thing on the Shopping list, in plain words with a quantity, such as "2 lb ground beef". It names no Store and no brand unless a Member locks one.
+_Avoid_: Entry, need
+
+**Deal**:
+A price below a Product's regular price for a limited time, such as a promo price, a weekly-ad item, or a coupon.
+_Avoid_: Discount, special
+
+**Shopping plan**:
+The deal finder's answer: which Store gets each List item, at what price, in how many trips. App code builds it, never the AI.
+_Avoid_: Route, basket
+
+**Price source**:
+A service the deal finder reads Store data from: the Household's Scraping service, a Store's own free API such as Kroger's, or Open Food Facts.
+_Avoid_: Connection, feed, integration
+
+**Scraping service**:
+A third-party service that reads Store web pages for the app, such as Apify. A Household uses at most one.
+_Avoid_: Proxy, unblocker, scraper API
