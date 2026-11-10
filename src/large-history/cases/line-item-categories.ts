@@ -37,6 +37,9 @@ timedCase("20,000 Line items with their Categories and splits", async (history, 
       total: transaction === undefined ? 1_000 + (index % 500) : Math.ceil(transaction.amount / 2),
       orderId: `111-${String(Math.floor(index / 3)).padStart(7, "0")}-0000001`,
       transactionId: transaction?.id ?? null,
+      // Hand links: these made-up Transactions are not Amazon charges, so the app's linking step
+      // would end app links whose amounts do not match.
+      linkKind: "hand",
       category: CATEGORIES[index % CATEGORIES.length],
       categorySource: "AI",
       categoryConfidence: "high",

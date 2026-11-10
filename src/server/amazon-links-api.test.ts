@@ -385,7 +385,7 @@ describe("the Amazon link routes", () => {
     for (const [id, kind] of [
       ["card-item", "Line item Category"],
       ["card-other", "Merchant Category"],
-    ]) {
+    ] as const) {
       await sql(
         "INSERT INTO review_items (id, kind, subject_type, subject_ids, decided, best_answer, created_at) VALUES (?, ?, 'line items', '[]', 'x', '{\"value\":\"a\",\"label\":\"a\"}', ?)",
         [id, kind, NOW.toISOString()],

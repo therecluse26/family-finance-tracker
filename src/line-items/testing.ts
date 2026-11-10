@@ -187,6 +187,8 @@ export type TestLineItem = {
   orderId?: string;
   orderDate?: string;
   transactionId?: string | null;
+  // The link's kind, when linked: "app" unless given.
+  linkKind?: "app" | "hand";
   category?: string | null;
   categorySource?: "hand-set" | "Item rule" | "AI" | "Transaction" | null;
   categoryConfidence?: "certain" | "high" | "medium" | "low" | null;
@@ -227,7 +229,7 @@ export async function addTestLineItems(
       categoryConfidence: item.categoryConfidence ?? null,
       categoryNeedsAi: item.categoryNeedsAi ?? false,
       transactionId: item.transactionId ?? null,
-      linkKind: item.transactionId == null ? null : ("app" as const),
+      linkKind: item.transactionId == null ? null : (item.linkKind ?? "app"),
       addedAt: at,
       updatedAt: at,
     };
