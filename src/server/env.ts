@@ -14,6 +14,7 @@ import type { WeeklySummarySettings } from "../weekly-summary/view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AiBoxRoutes } from "./ai-box-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
+import type { AmazonRoutes } from "./amazon-views.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BackupRoutes } from "./backups-views.ts";
 import type { BankViews } from "./bank-views.ts";
@@ -84,6 +85,9 @@ export type ServerEnv = {
     backups: BackupRoutes;
     // Settings, Backups and data: "Download my data".
     dataExport: DataExportRoutes;
+    // Settings, Amazon: the order file upload and "Delete all Amazon data", and each Transaction's
+    // Line items.
+    amazon: AmazonRoutes;
     // Settings, Members: the Members, invite links, and removing a Member.
     members: MemberRoutes;
     // Settings, My login: the signed-in Member's own devices, and Sign out on one.

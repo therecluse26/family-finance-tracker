@@ -313,6 +313,7 @@ describe("an Account's page", () => {
       merchantName: "CORNER BISTRO #42",
       merchant: "Corner Bistro",
       recurringChargeName: null,
+      itemCount: 0,
       parts: [],
     };
     const income: TransactionRowView = {

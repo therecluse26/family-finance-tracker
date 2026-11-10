@@ -59,11 +59,13 @@ These facts come from a real export of 2026-11-09. Only file names, column names
 | `Total Amount` | The Line item's total. |
 | `Payment Method Type` | Only the card's last 4 digits are kept ([The app's link](#the-apps-link)). |
 
-- **Dates.** A date is an ISO 8601 time in UTC, such as `2026-05-01T14:03:22Z` or `2026-05-01T14:03:22.123Z`. The app turns it into a day in the Household's time zone.
-- **Amounts.** An amount is in dollars, such as `12.5`, `7`, or `1,234.56`. A negative amount is in single quotes, such as `'-3.20'`. The parser removes the quotes and the commas, and reads it to the cent with no floating point. Any other form refuses the row, and the skip count names the column.
+- **Dates.** A date is an ISO 8601 time in UTC, such as `2026-05-01T14:03:22Z` or `2026-05-01T14:03:22.123Z`. The app turns it into a day in the Household's time zone. It also keeps the ship time in UTC, to the second, for the row's key and its shipment. An impossible date, such as February 30, or a time more than 1 day in the future refuses the row, and the skip count names the column.
+- **Amounts.** An amount is in dollars, such as `12.5`, `7`, or `1,234.56`. A negative amount is in single quotes, such as `'-3.20'`. The parser removes the quotes and the commas, and reads it to the cent with no floating point. Any other form refuses the row, and the skip count names the column. `Not Available` in `Unit Price Tax`, `Shipping Charge` or `Total Discounts` counts as $0.00. In `Unit Price` or `Total Amount` it refuses the row.
 - **Total check.** For each row, `Total Amount` equals `Original Quantity` × (`Unit Price` + `Unit Price Tax`) + `Shipping Charge` + `Total Discounts`. This held for every shipped row of the export. A row that fails it is skipped, and counted as "amounts do not add up".
 - **Columns never read.** The app never reads or stores the addresses, the gift columns, the carrier and tracking number, the serial number, or any other column not in the table above.
 - The app keeps no copy of the uploaded file. It keeps only the Line items it reads.
+- **A refused file.** A file that is not a ZIP or CSV file, a ZIP file without `Order History.csv`, or one with two of them, is refused, and nothing is stored. So is a ZIP file that is damaged, encrypted, split into parts, in ZIP64 form, or over a limit. The message says which, and names no row's content.
+- One import or one delete runs at a time. A second upload while one runs is refused, and the Member may try again.
 - No row's content goes into a log line or an error. A log line names the row number and the column only.
 
 ### Each Line item holds

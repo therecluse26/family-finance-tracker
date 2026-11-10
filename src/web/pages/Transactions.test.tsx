@@ -84,6 +84,7 @@ const row = (id: string, fields: Partial<TransactionRowView> = {}): TransactionR
   merchantName: "Corner Bistro",
   merchant: "Corner Bistro",
   recurringChargeName: null,
+  itemCount: 0,
   parts: [part()],
   ...fields,
 });
@@ -108,8 +109,9 @@ function elementsOf(node: ReactNode): { type: unknown; props: Props }[] {
     found.push({ type: each.type, props: each.props });
     if (typeof each.type === "function" && each.type !== MemoryRouter) {
       const name = (each.type as { name?: string }).name ?? "";
-      // Router links render with hooks; their children are words only.
-      if (name !== "Link" && name !== "LinkWithRef") {
+      // Router links render with hooks; their children are words only. The Line items list reads
+      // its own route, with hooks, and has its own tests.
+      if (name !== "Link" && name !== "LinkWithRef" && name !== "LineItemsList") {
         walk((each.type as (props: Props) => ReactNode)(each.props));
         return;
       }

@@ -23,6 +23,7 @@ import { weeklySummarySettings } from "../weekly-summary/index.ts";
 import { aboutRoutes } from "./about.ts";
 import { aiBoxRoutes } from "./ai-box.ts";
 import { alertRoutes } from "./alerts.ts";
+import { amazonRoutes } from "./amazon.ts";
 import { api } from "./api.ts";
 import { backupRoutes } from "./backups.ts";
 import { bankViews } from "./bank-data.ts";
@@ -164,13 +165,18 @@ function sameOriginChanges(appOrigin: string): MiddlewareHandler<ServerEnv> {
 }
 // The largest body a route takes: a 20,000-character Chat message or Goal's words, which in a
 // script of 3-byte characters is 60,000 bytes of JSON, with room for what useChat sends with it.
-// No route takes a file.
+// The one route that takes a file, the Amazon order file upload, has its own limit, and reads its
+// body only after the session and Origin checks.
 export const MAX_REQUEST_BODY_BYTES = 128 * 1024;
+const AMAZON_UPLOAD = "/api/amazon/import";
 
-const requestBodyLimit = bodyLimit({
+const appBodyLimit = bodyLimit({
   maxSize: MAX_REQUEST_BODY_BYTES,
   onError: (c) => c.json({ error: "The request is too large." }, 413),
 });
+
+const requestBodyLimit: MiddlewareHandler<ServerEnv> = (c, next) =>
+  c.req.method === "POST" && c.req.path === AMAZON_UPLOAD ? next() : appBodyLimit(c, next);
 
 // Until the wizard's step 3 is done, the API stores no Master-key secret (spec 12, Order and resume
 // rules). It refuses every write but step 3's own "I saved it", so no route can store one early.
@@ -237,6 +243,7 @@ export function createApp(
   const removing = connectionRemoving();
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
+  const amazon = amazonRoutes(database, security.logger);
   const members = memberRoutes(database, auth, security.appUrl);
   const devices = deviceRoutes(auth);
   return (
@@ -300,6 +307,7 @@ export function createApp(
         c.set("removing", removing);
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
+        c.set("amazon", amazon);
         c.set("members", members);
         c.set("devices", devices);
         c.set("aiWork", services.aiWork);

@@ -20,6 +20,7 @@ import { pictureChoice } from "../pictures/choice.ts";
 import { AI_WORK_REFUSALS, type AiWorkKind, retryWaitRefusal } from "../redo/work-view.ts";
 import { DEFAULT_REPORT_RANGE, REPORT_RANGES } from "../reports/range.ts";
 import { aiActivityStream } from "./ai-activity.ts";
+import { amazonUploadKind, readAmazonUpload } from "./amazon.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -65,6 +66,8 @@ function checkAnswer(c: Context<ServerEnv>, result: MasterKeyCheckResult) {
 const NO_KEY = "Paste the Master key.";
 
 const NO_REVIEW_ITEM = "No open Review list item has this ID.";
+
+const AMAZON_BUSY = "An Amazon import or delete is running. Try again when it ends.";
 const MAX_CHOICE_LENGTH = 200;
 
 // The filters of GET /api/transactions (spec 07, Transactions page): Account, a date range on the
@@ -1537,6 +1540,44 @@ export const api = new Hono<ServerEnv>()
       "Cache-Control": "no-store",
     });
   })
+  // Settings, Amazon (spec 14, The Amazon page in Settings): the last import, its counts, and the
+  // link counts.
+  .get("/amazon", async (c) => c.json(await c.var.amazon.status(), 200))
+  // An upload of Amazon's ZIP file, or the order file inside it, as the raw body: no form, so the
+  // body is read once, with its own 50 MB limit, and no page on another site can post it as a form.
+  // One import or delete runs at a time.
+  .post("/amazon/import", async (c) => {
+    const kind = amazonUploadKind(c.req.header("content-type"));
+    if (kind === undefined) {
+      return c.json({ error: "Send Amazon's ZIP file, or the CSV file inside it." }, 415);
+    }
+    const result = await c.var.amazon.importFile(
+      kind,
+      () => readAmazonUpload(c.req.raw),
+      c.var.member.id,
+    );
+    switch (result.outcome) {
+      case "imported":
+        return c.json({ import: result.import, status: result.status }, 200);
+      case "refused":
+        return c.json({ error: result.reason }, 400);
+      case "too large":
+        return c.json({ error: "The file is larger than 50 MB." }, 413);
+      case "busy":
+        return c.json({ error: AMAZON_BUSY }, 409);
+    }
+  })
+  // "Delete all Amazon data": every Line item, link, and Item rule. Each Transaction that had Line
+  // items goes back to the cascade.
+  .delete("/amazon", async (c) => {
+    const result = await c.var.amazon.deleteAll();
+    if (result.outcome === "busy") return c.json({ error: AMAZON_BUSY }, 409);
+    return c.json({ status: result.status }, 200);
+  })
+  // The Line items linked to a Transaction, for its detail view (spec 14, Pages).
+  .get("/transactions/:id/line-items", async (c) =>
+    c.json({ lineItems: await c.var.amazon.lineItemsOf(c.req.param("id")) }, 200),
+  )
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the

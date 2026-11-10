@@ -108,6 +108,8 @@ export type TransactionRowView = {
   merchant: string | null;
   // The name a Member gave the Recurring charge it is in, or null (spec 06, Member edits).
   recurringChargeName: string | null;
+  // How many Line items are linked to it, such as an Amazon shipment's (spec 14, Pages).
+  itemCount: number;
   // Empty before Matching has decided it.
   parts: ShownPartView[];
 };

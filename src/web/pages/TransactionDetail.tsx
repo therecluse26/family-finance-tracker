@@ -36,6 +36,7 @@ import {
 } from "../transactions.ts";
 import { daysBefore } from "./Account.tsx";
 import { browserZone } from "./Accounts.tsx";
+import { LineItemsList } from "./LineItemsList.tsx";
 import { centsOf } from "./settings/UnconnectedAccounts.tsx";
 import {
   accountLabels,
@@ -520,6 +521,8 @@ export function TransactionDetailBody(props: {
           </div>
         </div>
       </Card>
+
+      <LineItemsList transactionId={txn.id} itemCount={txn.itemCount} today={today} />
 
       {splitable ? (
         <Card aria-labelledby="split">

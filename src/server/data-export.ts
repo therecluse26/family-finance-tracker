@@ -1,12 +1,15 @@
 import { categoryGroupOf, isCategory } from "../categories/list.ts";
 import {
+  countLineItems,
   type Database,
   EXPORTED_TABLES,
   listCategoryRules,
   listEveryBudget,
   listGoals,
+  listItemRules,
   listMemberNamesById,
   readExportedJson,
+  readExportedLineItems,
   readExportedTransactions,
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
@@ -17,8 +20,8 @@ import type { BankViews } from "./bank-views.ts";
 import type { DataExportRoutes } from "./data-export-views.ts";
 import { type ZipFile, zipStream } from "./zip.ts";
 
-// "Download my data" (spec 11, Data export): one ZIP file with five CSV files and data.json. Every
-// file is written as the ZIP streams, a page of rows at a time, so the export never holds the whole
+// "Download my data" (spec 11, Data export): one ZIP file with five CSV files and data.json, and
+// two CSV files more when the Household has Line items or Item rules. Every file is written as the ZIP streams, a page of rows at a time, so the export never holds the whole
 // history. What data.json holds is the db module's allowlist; it holds no secret.
 
 // A cell a spreadsheet would run as a formula starts with one of these (OWASP, CSV Injection).
@@ -239,6 +242,86 @@ async function* categoryRulesCsv(database: Database, names: Names): AsyncGenerat
   }
 }
 
+const LINE_ITEM_COLUMNS = [
+  "id",
+  "source",
+  "order_id",
+  "order_date",
+  "ship_date",
+  "product_id",
+  "name",
+  "quantity",
+  "unit_price",
+  "unit_tax",
+  "shipping",
+  "discounts",
+  "total",
+  "last_4",
+  "category",
+  "category_group",
+  "transaction_id",
+  "link_kind",
+] as const;
+
+// Each Line item, such as one product of an Amazon shipment, a page at a time (spec 14, Data and
+// privacy). Its card's last 4 digits go in, as accounts.csv has each Account's. A link kind shows
+// only while the Line item is linked.
+async function* lineItemsCsv(database: Database): AsyncGenerator<string> {
+  yield header(LINE_ITEM_COLUMNS);
+  for await (const page of readExportedLineItems(database)) {
+    let lines = "";
+    for (const item of page) {
+      lines += csvLine([
+        csvText(item.id),
+        csvText(item.source),
+        csvText(item.orderId),
+        csvText(item.orderDate),
+        csvText(item.shipDate),
+        csvText(item.productId),
+        csvText(item.name),
+        String(item.quantity),
+        csvAmount(item.unitPrice),
+        csvAmount(item.unitTax),
+        csvAmount(item.shippingCharge),
+        csvAmount(item.discounts),
+        csvAmount(item.total),
+        csvText(item.cardLast4),
+        csvText(item.category),
+        csvText(groupOf(item.category)),
+        csvText(item.transactionId),
+        csvText(item.transactionId === null ? null : item.linkKind),
+      ]);
+    }
+    yield lines;
+  }
+}
+
+const ITEM_RULE_COLUMNS = [
+  "id",
+  "product_id",
+  "name",
+  "category",
+  "category_group",
+  "made_on",
+  "made_by",
+] as const;
+
+// Each Item rule, by the name of the Line item it was made from.
+async function* itemRulesCsv(database: Database, names: Names): AsyncGenerator<string> {
+  yield header(ITEM_RULE_COLUMNS);
+  for (const rule of await listItemRules(database)) {
+    yield csvLine([
+      csvText(rule.id),
+      csvText(rule.productId),
+      csvText(rule.name),
+      csvText(rule.category),
+      csvText(groupOf(rule.category)),
+      csvText(names.day(rule.madeAt)),
+      csvText(names.members.get(rule.madeBy ?? "") ?? null),
+    ]);
+  }
+}
+
 // data.json: each table on the db module's allowlist, as app.db holds it, by column name.
 async function* dataJson(database: Database, at: Date): AsyncGenerator<string> {
   const about = {
@@ -268,6 +351,9 @@ export function dataExportRoutes(
     async download() {
       const at = new Date();
       const zone = (await householdTimeZone(database)) ?? "UTC";
+      const lineItemFiles =
+        (await countLineItems(database, "amazon")) > 0 ||
+        (await listItemRules(database)).length > 0;
       // The Account names and Member names, read once each, when the first file that needs them
       // starts.
       let accountNames: Promise<Map<string, string>> | undefined;
@@ -311,6 +397,17 @@ export function dataExportRoutes(
             yield* categoryRulesCsv(database, await people());
           },
         },
+        ...(lineItemFiles
+          ? [
+              { name: "line-items.csv", content: () => lineItemsCsv(database) },
+              {
+                name: "item-rules.csv",
+                content: async function* () {
+                  yield* itemRulesCsv(database, await people());
+                },
+              },
+            ]
+          : []),
         { name: "data.json", content: () => dataJson(database, at) },
       ];
       const zip = zipStream(files, at);

@@ -77,12 +77,22 @@ export function monthLabel(date: string): string {
   return `${month} ${year}`;
 }
 
+// Each formatter partsIn made, by time zone and options: making one costs far more than using it,
+// and an import reads thousands of dates.
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
 function partsIn(
   moment: Date,
   timeZone: string,
   options: Intl.DateTimeFormatOptions,
 ): Map<string, string> {
-  const parts = new Intl.DateTimeFormat("en-US", { ...options, timeZone }).formatToParts(moment);
+  const key = `${timeZone}|${JSON.stringify(options)}`;
+  let formatter = formatters.get(key);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat("en-US", { ...options, timeZone });
+    formatters.set(key, formatter);
+  }
+  const parts = formatter.formatToParts(moment);
   return new Map(parts.map((part) => [part.type, part.value]));
 }
 

@@ -2102,3 +2102,141 @@ export const aiRedo = sqliteTable(
   },
   (table) => [check("ai_redo_one_row", sql`${table.id} = 1`)],
 );
+
+// Line items (spec 14, Line items and Amazon orders): one product on a store order, read from a
+// file a Member uploads. The first source is Amazon's order history file. One row per product per
+// shipment, as the file has it.
+export const lineItems = sqliteTable(
+  "line_items",
+  {
+    id: text("id").primaryKey(),
+    source: text("source", { enum: ["amazon"] }).notNull(),
+    // The import key (spec 14, Importing the same orders again), as JSON: the order ID, the product
+    // ID or, with none, the name, the ship time, and `place`. A newer file's row with a stored key
+    // updates that Line item.
+    key: text("key").notNull(),
+    orderId: text("order_id").notNull(),
+    // The order date and the ship date, as days in the Household time zone.
+    orderDate: calendarDate("order_date").notNull(),
+    shipDate: calendarDate("ship_date").notNull(),
+    // The ship time in UTC, to the second, as the file gives it, such as "2026-05-01T14:03:22Z".
+    // One order's Line items with the same ship time are one shipment (spec 14, Linking).
+    shipTime: text("ship_time").notNull(),
+    // Amazon's ASIN, when the row has one.
+    productId: text("product_id"),
+    // The name as the file gives it, and its clean name, which Item rules match when there is no
+    // product ID (spec 14, Item rules).
+    name: text("name").notNull(),
+    cleanName: text("clean_name").notNull(),
+    quantity: integer("quantity").notNull(),
+    unitPrice: cents("unit_price").notNull(),
+    unitTax: cents("unit_tax").notNull(),
+    shippingCharge: cents("shipping_charge").notNull(),
+    // Negative or 0.
+    discounts: cents("discounts").notNull(),
+    // What the row says was owed for it, tax included.
+    total: cents("total").notNull(),
+    // The card's last 4 digits, when the payment method names a card, stored as an Account's mask
+    // is. They never go to the AI, a log line, or an error. The card's name is never stored.
+    cardLast4: text("card_last4"),
+    // The payment method names a gift card, so the card charge is less than the total.
+    giftCard: integer("gift_card", { mode: "boolean" }).notNull().default(false),
+    // The row's place among identical rows of its order (same product, same ship time): 0 for the
+    // first.
+    place: integer("place").notNull(),
+    // The Category, which step chose it, and how sure (spec 14, Categories of Line items). Null
+    // until a step chooses one.
+    category: text("category"),
+    categorySource: text("category_source", {
+      enum: ["hand-set", "Item rule", "AI", "Transaction"],
+    }),
+    categoryConfidence: text("category_confidence", {
+      enum: ["certain", "very high", "high", "medium", "low"],
+    }),
+    // Set when the Transaction step chose the Category with no AI, so the AI decides it once AI is
+    // back (spec 14, Step 4).
+    categoryNeedsAi: integer("category_needs_ai", { mode: "boolean" }).notNull().default(false),
+    // The Transaction that paid for it, and whether the app or a Member linked it (spec 14, Linking).
+    // Deleting the Transaction unlinks it. link_kind counts only while transaction_id is set.
+    transactionId: text("transaction_id").references(() => transactions.id, {
+      onDelete: "set null",
+    }),
+    linkKind: text("link_kind", { enum: ["app", "hand"] }),
+    // When an import first stored it, and when an import last changed its file fields.
+    addedAt: moment("added_at").notNull(),
+    updatedAt: moment("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("line_items_key").on(table.key),
+    index("line_items_transaction_id").on(table.transactionId),
+    index("line_items_shipment").on(table.orderId, table.shipTime),
+    index("line_items_ship_date").on(table.shipDate),
+    index("line_items_product_id").on(table.productId),
+    index("line_items_clean_name").on(table.cleanName),
+  ],
+);
+
+// A shipment and a Transaction the app never links again (spec 14, Hand links; Review list
+// items): after Undo, or "None of these". A shipment is an order ID and a ship time.
+export const refusedLineItemLinks = sqliteTable(
+  "refused_line_item_links",
+  {
+    orderId: text("order_id").notNull(),
+    shipTime: text("ship_time").notNull(),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    refusedAt: moment("refused_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.orderId, table.shipTime, table.transactionId] }),
+    index("refused_line_item_links_transaction_id").on(table.transactionId),
+  ],
+);
+
+// Item rules (spec 14, Item rules): one Category for every Line item of one product. A product is
+// its product ID or, with none, its clean name. Each product has at most one rule.
+export const itemRules = sqliteTable(
+  "item_rules",
+  {
+    id: text("id").primaryKey(),
+    // The product ID, else the clean name, as JSON: ["id","B000000001"] or ["name","paper towels"].
+    productKey: text("product_key").notNull(),
+    productId: text("product_id"),
+    // A Line item with no product ID matches the rule by clean name.
+    cleanName: text("clean_name").notNull(),
+    // The name of the Line item it was made from, for Settings.
+    name: text("name").notNull(),
+    category: text("category").notNull(),
+    madeAt: moment("made_at").notNull(),
+    madeBy: text("made_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("item_rules_product_key").on(table.productKey),
+    index("item_rules_product_id").on(table.productId),
+    index("item_rules_clean_name").on(table.cleanName),
+  ],
+);
+
+// Each upload of an order file (spec 14, The Amazon page in Settings): when, who, and the counts.
+export const lineItemImports = sqliteTable(
+  "line_item_imports",
+  {
+    id: text("id").primaryKey(),
+    source: text("source", { enum: ["amazon"] }).notNull(),
+    importedAt: moment("imported_at").notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    // The file's data rows, not its header.
+    rowsRead: integer("rows_read").notNull(),
+    added: integer("added").notNull(),
+    updated: integer("updated").notNull(),
+    // Rows stored already, with the same file fields.
+    unchanged: integer("unchanged").notNull(),
+    // Each reason rows were skipped, with how many and the first one's row number, as JSON.
+    skipped: text("skipped", { mode: "json" })
+      .$type<{ reason: string; rows: number; firstRow: number }[]>()
+      .notNull(),
+  },
+  (table) => [index("line_item_imports_imported_at").on(table.importedAt)],
+);

@@ -67,6 +67,36 @@ export class TestBrowser {
     return res;
   }
 
+  // A raw body, such as a file upload, with its Content-Type. A stream is sent as it comes.
+  async upload(
+    path: string,
+    body: Uint8Array | string | ReadableStream<Uint8Array>,
+    contentType: string | undefined,
+    headers: Record<string, string | undefined> = {},
+  ): Promise<Response> {
+    const cookie = [...this.cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+    const sent: Record<string, string | undefined> = {
+      host: this.appUrl.host,
+      origin: this.appUrl.origin,
+      ...this.proxy?.headers,
+      "content-type": contentType,
+      ...(cookie === "" ? {} : { cookie }),
+      ...headers,
+    };
+    return this.app.request(
+      `${this.appUrl.origin}${path}`,
+      {
+        method: "POST",
+        headers: Object.fromEntries(
+          Object.entries(sent).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+        body: body as RequestInit["body"],
+        ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
+      } as RequestInit,
+      { incoming: { socket: { remoteAddress: this.proxy?.source ?? this.client } } },
+    );
+  }
+
   post = (path: string, body: unknown = {}) => this.send("POST", path, body);
   get = (path: string) => this.send("GET", path);
 

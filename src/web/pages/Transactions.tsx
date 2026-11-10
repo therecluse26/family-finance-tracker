@@ -21,6 +21,7 @@ import {
   transactionRequests,
 } from "../transactions.ts";
 import { accountLabel, browserZone } from "./Accounts.tsx";
+import { itemsLabel } from "./LineItemsList.tsx";
 
 // The Transactions page (spec 07, Transactions page): every Transaction that shows, newest first,
 // one page at a time, with filters. The filters live in the page's address, so other pages open it
@@ -400,6 +401,9 @@ function TransactionRow(props: { txn: TransactionRowView; account: string; today
         </Link>
         {txn.recurringChargeName === null ? null : (
           <span className="text-muted">{` · ${txn.recurringChargeName}`}</span>
+        )}
+        {txn.itemCount === 0 ? null : (
+          <span className="text-muted">{` · ${itemsLabel(txn.itemCount)}`}</span>
         )}
         {txn.pending ? (
           <>
