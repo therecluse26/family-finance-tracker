@@ -24,8 +24,8 @@ Using this is never required. A Household that never uploads a file sees no chan
 ## Reading the file
 
 - The upload is the ZIP file from Amazon, or the order history CSV file inside it.
-- The app reads only Amazon's retail order history file. It ignores every other file in the ZIP. Digital orders and returns files are not read in this version.
-- The exact file name and columns come from a real export. The parser names each column it needs. A file whose header lacks a needed column is refused, and the message names the missing column.
+- The app reads only Amazon's retail order history file. It ignores every other file in the ZIP, and never opens one. The ZIP also holds digital orders, returns, cart history and delivery photos. Those are not read in this version.
+- The parser names each column it needs. A file whose header lacks a needed column is refused, and the message names the missing column. A file with extra columns is read.
 - Limits, checked before any row is stored:
   - The upload is at most 50 MB.
   - A ZIP is read entry by entry. Its unpacked size is at most 200 MB, and it holds at most 500 entries.
@@ -33,6 +33,36 @@ Using this is never required. A Household that never uploads a file sees no chan
   - An entry name is checked as stored in the ZIP. A name with `..`, a leading `/`, or a control character is skipped.
 - Only amazon.com rows in US dollars are read. Other rows are counted as skipped.
 - Cancelled rows and rows with no ship date are skipped. A later file may bring the row again, once it has shipped.
+
+### The order file
+
+These facts come from a real export of 2026-11-09. Only file names, column names and the shapes of values were read. Tests use made-up rows in this form.
+
+- The entry is `Your Amazon Orders/Order History.csv`. The parser finds it by the file name `Order History.csv`, at any folder depth.
+- It is UTF-8 with a byte order mark, comma-separated, with `"` quotes. A quoted field may hold a line break.
+- It has a header row and one row per product per shipment. Every row has the same number of fields.
+- `Not Available` stands for an empty value in every column.
+
+| Column | What the app does with it |
+|---|---|
+| `Website` | Reads the row only when it is `Amazon.com`. Other values, such as `Audible` and `CBA`, are skipped. |
+| `Order ID` | The order ID, in the form `123-1234567-1234567`. |
+| `Order Date` | The order date. |
+| `Ship Date` | The ship date. `Not Available` means not shipped: the row is skipped. |
+| `Order Status` | `Cancelled` rows are skipped. `Closed` rows are read. |
+| `Currency` | Reads the row only when it is `USD`. |
+| `ASIN` | The product ID. Every row in the export had one, 10 letters and digits. |
+| `Product Name` | The name. It can be 300 characters long and hold any character. |
+| `Original Quantity` | The quantity. |
+| `Unit Price`, `Unit Price Tax` | The unit price and its tax. |
+| `Shipping Charge`, `Total Discounts` | Kept, to show on the detail view. |
+| `Total Amount` | The Line item's total. |
+| `Payment Method Type` | Only the card's last 4 digits are kept ([The app's link](#the-apps-link)). |
+
+- **Dates.** A date is an ISO 8601 time in UTC, such as `2026-05-01T14:03:22Z` or `2026-05-01T14:03:22.123Z`. The app turns it into a day in the Household's time zone.
+- **Amounts.** An amount is in dollars, such as `12.5`, `7`, or `1,234.56`. A negative amount is in single quotes, such as `'-3.20'`. The parser removes the quotes and the commas, and reads it to the cent with no floating point. Any other form refuses the row, and the skip count names the column.
+- **Total check.** For each row, `Total Amount` equals `Original Quantity` × (`Unit Price` + `Unit Price Tax`) + `Shipping Charge` + `Total Discounts`. This held for every shipped row of the export. A row that fails it is skipped, and counted as "amounts do not add up".
+- **Columns never read.** The app never reads or stores the addresses, the gift columns, the carrier and tracking number, the serial number, or any other column not in the table above.
 - The app keeps no copy of the uploaded file. It keeps only the Line items it reads.
 - No row's content goes into a log line or an error. A log line names the row number and the column only.
 
@@ -46,20 +76,25 @@ Using this is never required. A Household that never uploads a file sees no chan
 | Product ID | Amazon's ASIN, when the row has one |
 | Name | The product name, as the file gives it |
 | Quantity, unit price, tax | The file |
+| Shipping charge and discounts | The file |
 | Total | The amount the row says was owed for it, tax included |
+| Card's last 4 digits | The file's payment method, when it names a card |
 | Category, with its source | [Categories of Line items](#categories-of-line-items) |
 | Linked Transaction, with the link kind (app or hand) | [Linking](#linking-line-items-to-transactions) |
 
 ### Importing the same orders again
 
-- Amazon's files overlap. Each row has a key: the order ID, the product ID (or the name, when there is no product ID), the ship date, and the row's place among identical rows of that order.
+- Amazon's files overlap. Each row has a key: the order ID, the product ID (or the name, when there is no product ID), the ship date and time, and the row's place among identical rows of that order.
 - A row whose key is already stored updates that Line item's file fields. Its Category and its link stay.
 - A stored Line item missing from a newer file stays. A file may cover a shorter time.
 - Importing the same file twice changes nothing.
 
 ## Linking Line items to Transactions
 
-Amazon charges a card when it ships, not when the order is placed. So the app links by **shipment**: the Line items of one order with the same ship date.
+Amazon charges a card when it ships, not when the order is placed. So the app links by **shipment**: the Line items of one order with the same ship date and time, to the second.
+
+- In the export, rows with the same order ID and ship time always shared one shipment subtotal, equal to their items' prices. Rows with the same order ID and ship day did not always. So the ship day alone is not a shipment.
+- A shipment's total is the sum of its Line items' totals.
 
 ### The app's link
 
@@ -67,12 +102,14 @@ Amazon charges a card when it ships, not when the order is placed. So the app li
   - posted, not hidden, and not removed;
   - Amazon's, by Merchant [Identity](04-categorization.md#identity), or with `AMAZON` or `AMZN` in the bank description;
   - for exactly the shipment's total, to the cent;
-  - with a purchase date from 1 day before to 7 days after the ship date.
+  - with a purchase date from 1 day before to 7 days after the ship date;
+  - on an Account whose last 4 digits match the shipment's card, when the shipment names a card and some Account in the Household has those digits. When no Account has them, this filter does not apply.
 - When no shipment of an order fits alone, the app tries the whole order's total the same way. Amazon sometimes charges an order once.
 - Exactly one Transaction fits, and it has no Line items yet: the app links the shipment to it.
 - Two or more Transactions fit: the app links nothing, and puts a Review list item up ([Review list items](#review-list-items)).
 - No Transaction fits: the shipment waits. The app tries again after each sync, until 60 days after the ship date. After that, it counts as "not matched".
   - A gift card, points, or a promotion often changes the amount charged. Such a shipment usually ends as "not matched". A Member may link it by hand.
+  - A payment method that names a gift card means the card charge is less than the total. The app does not try such a shipment. It counts as "paid in part by gift card", and a Member may link it by hand.
 - Linking runs after each import, and in each sync's follow-up job, after the cascade.
 - A Transaction holds the Line items of one order at most.
 
@@ -165,6 +202,8 @@ Each Line item takes the first answer it gets, in this order:
 ## Data and privacy
 
 - Line items are Household data. The AI provider gets each Line item's name, quantity and price when it picks a Category (owner decision, 2026-11-07: no privacy filter).
+- The card's last 4 digits are stored as an Account's mask is stored. They never go to the AI, a log line or an error.
+- The ZIP also holds addresses, gift messages, tracking numbers and delivery photos. The app never reads them.
 - The data export has `line-items.csv` and `item-rules.csv` ([Backup, restore, and export](11-backup-restore-export.md#data-export)).
 - Backups hold Line items, links and Item rules, as they hold all app data.
 
