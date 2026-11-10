@@ -25,7 +25,7 @@ import {
 import { startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { startInsightCards } from "../insights/index.ts";
-import { startLineItemCategories } from "../line-items/index.ts";
+import { startLineItemCategories, startLineItemLinks } from "../line-items/index.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startMonthlyReview } from "../monthly-review/index.ts";
 import { startNotify } from "../notify/index.ts";
@@ -124,6 +124,16 @@ export const APP_MODULES: readonly AppModule[] = [
       name: "matching",
       path: "Matching follow-up on the full history",
       buildLimitMs: 40_000,
+    },
+  },
+  {
+    name: "startLineItemLinks",
+    // A fixed time, so a shipment's 60 days of waiting do not end as the calendar moves on.
+    start: ({ database }) => startLineItemLinks({ database, now: HISTORY_NOW }),
+    step: {
+      name: "Amazon linking",
+      path: "Amazon linking follow-up on the full history",
+      buildLimitMs: 20_000,
     },
   },
   {

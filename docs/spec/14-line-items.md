@@ -108,22 +108,26 @@ Amazon charges a card when it ships, not when the order is placed. So the app li
   - on an Account whose last 4 digits match the shipment's card, when the shipment names a card and some Account in the Household has those digits. When no Account has them, this filter does not apply.
 - When no shipment of an order fits alone, the app tries the whole order's total the same way. Amazon sometimes charges an order once.
 - Exactly one Transaction fits, and it has no Line items yet: the app links the shipment to it.
+  - When that Transaction is also the only one that fits another shipment, neither links yet. Each waits, since their own charges are likely still to come.
 - Two or more Transactions fit: the app links nothing, and puts a Review list item up ([Review list items](#review-list-items)).
 - No Transaction fits: the shipment waits. The app tries again after each sync, until 60 days after the ship date. After that, it counts as "not matched".
   - A gift card, points, or a promotion often changes the amount charged. Such a shipment usually ends as "not matched". A Member may link it by hand.
   - A payment method that names a gift card means the card charge is less than the total. The app does not try such a shipment. It counts as "paid in part by gift card", and a Member may link it by hand.
-- Linking runs after each import, and in each sync's follow-up job, after the cascade.
+- Linking runs after each import, and in each sync's follow-up job, after Matching and before Categorization, so Categorization reads the Line items a link brings. Each link change sends its Transaction down the cascade again.
+  - A sync tries a waiting shipment, and a shipment with a new or changed Transaction that fits it.
 - A Transaction holds the Line items of one order at most.
+- A newer file can add a Line item to a linked shipment. A hand link takes it in. An app link whose total no longer matches ends, and the app tries the shipment again.
 
 ### Hand links
 
 - On a Spending Transaction's detail view, **Link Amazon items** lists the unlinked shipments with an order date from 30 days before to 3 days after the Transaction's purchase date. A Member picks one.
 - A hand link may join a shipment to a Transaction with a different amount. The parts still add up to the Transaction's amount ([Splits from Line items](#splits-from-line-items)).
-- **Undo** on the detail view removes a link, app or hand. The app never links that shipment to that Transaction again.
+- **Undo** on the detail view removes a link, app or hand. The app never links that shipment to that Transaction again. A Member's own hand link of the pair ends that.
 
 ### When the bank changes the Transaction
 
 - The bank removes it, or hides it: its Line items become unlinked, and the app tries them again.
+  - Hidden as `replaced by re-link`: a hand link moves to its new copy, as every hand link does ([Link carry-over](02-accounts-and-bank-sync.md#carrying-accounts-over)). An app link ends at once, and the app tries the copy.
 - The bank changes its amount:
   - An app link whose totals no longer match ends, and the app tries again.
   - A hand link stays. The parts scale, as for every split.
@@ -191,15 +195,16 @@ Each Line item takes the first answer it gets, in this order:
 | A Line item Category the AI chose with confidence "low" | The AI was unsure | Accepting makes an Item rule. Picking another Category is a correction, and makes a rule unless the Member picks "only this item". |
 
 - Line item Category items group into one card per product, as Category items group per Merchant ([Categorization](04-categorization.md#review-list-items)).
-- A shipment item closes by itself when a Member links the shipment by hand, or when only one of its Transactions is left.
+- A shipment item closes by itself when a Member links the shipment by hand, or when only one of its Transactions is left. The app then links the shipment to that one.
+- An item covers one shipment, or a whole order when only the order's total fits. Its card lists each Transaction with **This one**, and **None of these**.
 
 ## The Amazon page in Settings
 
 - The steps to get the file ([Getting the file](#getting-the-file)), and **Upload**.
 - After an upload: rows read, Line items added, Line items updated, rows skipped, with the reason for each skip count.
 - The last import: its date and the Member who uploaded it.
-- Link counts: linked, waiting for a charge, waiting on the Review list, and not matched.
-- **Delete all Amazon data.** It asks once to confirm. It removes every Line item, every link and every Item rule. Each Transaction with Line items goes back to the cascade. Hand-set Categories and hand splits stay.
+- Link counts: linked, waiting for a charge, waiting on the Review list, not matched, and paid in part by gift card. A shipment on the Review list counts only there.
+- **Delete all Amazon data.** It asks once to confirm. It removes every Line item, every link and every Item rule, and closes every open shipment item. Each Transaction with Line items goes back to the cascade. Hand-set Categories and hand splits stay.
 
 ## Pages
 

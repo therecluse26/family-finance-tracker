@@ -491,9 +491,10 @@ describe("Line item Categories and splits from Line items", () => {
         throw new Error("The step failed.");
       });
 
-      const deleted = await deleteLineItemData(bank.database, "amazon", (tx, ids) =>
-        followUpAgain(tx, ids),
-      );
+      const deleted = await deleteLineItemData(bank.database, "amazon", {
+        reviewKinds: [],
+        at: new Date(),
+      });
       expect(deleted.transactionIds).toEqual([await idOf("t-gone")]);
       await runFollowUp(NOW);
 

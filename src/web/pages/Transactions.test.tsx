@@ -109,9 +109,9 @@ function elementsOf(node: ReactNode): { type: unknown; props: Props }[] {
     found.push({ type: each.type, props: each.props });
     if (typeof each.type === "function" && each.type !== MemoryRouter) {
       const name = (each.type as { name?: string }).name ?? "";
-      // Router links render with hooks; their children are words only. The Line items list reads
-      // its own route, with hooks, and has its own tests.
-      if (name !== "Link" && name !== "LinkWithRef" && name !== "LineItemsList") {
+      // Router links render with hooks; their children are words only. The Amazon links read their
+      // own routes, with hooks, and have their own tests.
+      if (name !== "Link" && name !== "LinkWithRef" && name !== "AmazonLink") {
         walk((each.type as (props: Props) => ReactNode)(each.props));
         return;
       }
@@ -719,6 +719,7 @@ describe("the Transaction detail view", () => {
     removeSplit: () => {},
     undoLink: () => {},
     linkByHand: () => {},
+    amazonLinked: () => {},
     findCandidates: () => {},
     showMoreCandidates: () => {},
   };

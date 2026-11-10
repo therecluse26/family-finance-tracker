@@ -20,7 +20,9 @@ import {
   connectionCarryOvers,
   connections,
   householdAccounts,
+  lineItems,
   loanLinks,
+  refusedLineItemLinks,
   refusedLinks,
   refusedTransferLinks,
   spendingLinks,
@@ -94,6 +96,14 @@ function handLinked(database: Queries): SQL {
         .from(loanLinks)
         .where(and(eq(loanLinks.madeBy, "Member"), eq(loanLinks.transactionId, id))),
     ),
+    // A shipment's Line items a Member linked by hand (spec 14, When the bank changes the
+    // Transaction).
+    exists(
+      database
+        .select({ id: lineItems.id })
+        .from(lineItems)
+        .where(and(eq(lineItems.linkKind, "hand"), eq(lineItems.transactionId, id))),
+    ),
   ) as SQL;
 }
 
@@ -118,6 +128,12 @@ function refused(database: Queries): SQL {
         .select({ one: sql`1` })
         .from(refusedLinks)
         .where(or(eq(refusedLinks.transactionId, id), eq(refusedLinks.otherId, id))),
+    ),
+    exists(
+      database
+        .select({ one: sql`1` })
+        .from(refusedLineItemLinks)
+        .where(eq(refusedLineItemLinks.transactionId, id)),
     ),
   ) as SQL;
 }
@@ -173,6 +189,12 @@ export async function listPossibleCopies(
               .select({ id: loanLinks.id })
               .from(loanLinks)
               .where(eq(loanLinks.transactionId, transactions.id)),
+          ),
+          notExists(
+            database
+              .select({ id: lineItems.id })
+              .from(lineItems)
+              .where(eq(lineItems.transactionId, transactions.id)),
           ),
         ),
       );
@@ -333,6 +355,7 @@ export async function endRefusalsWithNoCopy(tx: Queries, connectionId: string): 
   await tx
     .delete(refusedLinks)
     .where(or(inArray(refusedLinks.transactionId, noCopy), inArray(refusedLinks.otherId, noCopy)));
+  await tx.delete(refusedLineItemLinks).where(inArray(refusedLineItemLinks.transactionId, noCopy));
 }
 
 // The old Transactions on a Connection's Accounts whose hand-made links wait for a copy. The end of
@@ -465,6 +488,36 @@ export async function moveHandLinks(
                     eq(taken.kind, refusedLinks.kind),
                     eq(taken.transactionId, moved(refusedLinks.transactionId, chunk)),
                     eq(taken.otherId, moved(refusedLinks.otherId, chunk)),
+                  ),
+                ),
+            ),
+          ),
+        );
+      // A shipment's Line items a Member linked by hand, and each shipment the app never links to
+      // the old Transaction (spec 14, When the bank changes the Transaction).
+      await tx
+        .update(lineItems)
+        .set({ transactionId: moved(lineItems.transactionId, chunk) })
+        .where(and(eq(lineItems.linkKind, "hand"), inArray(lineItems.transactionId, from)));
+      const takenShipment = aliasedTable(refusedLineItemLinks, "taken_shipment");
+      await tx
+        .update(refusedLineItemLinks)
+        .set({ transactionId: moved(refusedLineItemLinks.transactionId, chunk) })
+        .where(
+          and(
+            inArray(refusedLineItemLinks.transactionId, from),
+            notExists(
+              tx
+                .select({ one: sql`1` })
+                .from(takenShipment)
+                .where(
+                  and(
+                    eq(takenShipment.orderId, refusedLineItemLinks.orderId),
+                    eq(takenShipment.shipTime, refusedLineItemLinks.shipTime),
+                    eq(
+                      takenShipment.transactionId,
+                      moved(refusedLineItemLinks.transactionId, chunk),
+                    ),
                   ),
                 ),
             ),

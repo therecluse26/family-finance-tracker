@@ -21,6 +21,7 @@ import { AI_WORK_REFUSALS, type AiWorkKind, retryWaitRefusal } from "../redo/wor
 import { DEFAULT_REPORT_RANGE, REPORT_RANGES } from "../reports/range.ts";
 import { aiActivityStream } from "./ai-activity.ts";
 import { amazonUploadKind, readAmazonUpload } from "./amazon.ts";
+import { amazonLinkApi } from "./amazon-links-api.ts";
 import type { BalanceQuery, TransactionQuery } from "./bank-views.ts";
 import { CHAT_NOTE_KINDS } from "./chat-views.ts";
 import type { ServerEnv } from "./env.ts";
@@ -1581,6 +1582,8 @@ export const api = new Hono<ServerEnv>()
   .get("/transactions/:id/line-items", async (c) =>
     c.json({ lineItems: await c.var.amazon.lineItemsOf(c.req.param("id")) }, 200),
   )
+  // A Transaction's Amazon links: the shipments to link by hand, the hand link, and Undo.
+  .route("/", amazonLinkApi)
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the

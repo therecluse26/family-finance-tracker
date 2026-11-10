@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { categoryChoiceValue, readCategoryChoice } from "../../categorization/category-choice.ts";
 import { AI_UNSURE_KIND, BEST_GUESS_KIND } from "../../categorization/index.ts";
 import { LINE_ITEM_CATEGORY_KIND } from "../../line-items/category-cards.ts";
+import { AMAZON_SHIPMENT_KIND } from "../../line-items/index.ts";
 import {
   MISSED_PAYMENT_KIND,
   MONEY_FROM_PERSON_KIND,
@@ -345,6 +346,7 @@ describe("the Review list page", () => {
         POSSIBLE_PAYMENT_KIND,
         MISSED_PAYMENT_KIND,
         LINE_ITEM_CATEGORY_KIND,
+        AMAZON_SHIPMENT_KIND,
       ].sort(),
     );
     // A kind with no label shows none, and the item still shows in full.

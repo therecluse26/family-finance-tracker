@@ -1,20 +1,20 @@
 import {
   countLineItems,
-  countOpenReviewItemsOfKind,
   countShipments,
   type Database,
   deleteLineItemData,
   listLineItemsOf,
   readLastLineItemImport,
 } from "../db/index.ts";
-import { followUpAgain } from "../follow-up/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import {
   AMAZON_SHIPMENT_KIND,
   importOrderFile,
+  LINE_ITEM_CATEGORY_KIND,
   lineItemsRemoved,
   type OrderFileLimits,
+  waitingFrom,
 } from "../line-items/index.ts";
 import type { Logger } from "../log.ts";
 import {
@@ -27,13 +27,6 @@ import {
 
 // Settings → Amazon (spec 14, The Amazon page in Settings): the last import and the link counts,
 // the upload, and "Delete all Amazon data". One import or delete runs at a time.
-
-// An unlinked shipment waits for a charge until this many days after its ship date.
-const WAITING_DAYS = 60;
-const DAY_MS = 86_400_000;
-
-const daysBefore = (date: string, days: number) =>
-  new Date(Date.parse(`${date}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
 
 // What an upload holds, by its Content-Type, or undefined for any other type.
 export function amazonUploadKind(contentType: string | undefined): AmazonUploadKind | undefined {
@@ -85,10 +78,9 @@ export function amazonRoutes(
   async function status(): Promise<AmazonStatusView> {
     const zone = (await householdTimeZone(database)) ?? "UTC";
     const today = calendarDateIn(new Date(), zone);
-    const [last, shipments, onReviewList, items] = await Promise.all([
+    const [last, shipments, items] = await Promise.all([
       readLastLineItemImport(database, "amazon"),
-      countShipments(database, "amazon", daysBefore(today, WAITING_DAYS - 1)),
-      countOpenReviewItemsOfKind(database, AMAZON_SHIPMENT_KIND),
+      countShipments(database, "amazon", waitingFrom(today), AMAZON_SHIPMENT_KIND),
       countLineItems(database, "amazon"),
     ]);
     return {
@@ -105,7 +97,7 @@ export function amazonRoutes(
               skipped: last.skipped,
             },
       lineItems: items,
-      shipments: { ...shipments, onReviewList },
+      shipments,
     };
   }
 
@@ -143,9 +135,10 @@ export function amazonRoutes(
       try {
         // Each Transaction that had Line items goes back to the cascade: Matching makes its one
         // part again, and Categorization chooses its Category. Hand settings stay.
-        const deleted = await deleteLineItemData(database, "amazon", (tx, ids) =>
-          followUpAgain(tx, ids),
-        );
+        const deleted = await deleteLineItemData(database, "amazon", {
+          reviewKinds: [AMAZON_SHIPMENT_KIND, LINE_ITEM_CATEGORY_KIND],
+          at: new Date(),
+        });
         await lineItemsRemoved(database, deleted.transactionIds, logger);
         return { outcome: "deleted", status: await status() };
       } finally {

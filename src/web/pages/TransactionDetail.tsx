@@ -36,7 +36,7 @@ import {
 } from "../transactions.ts";
 import { daysBefore } from "./Account.tsx";
 import { browserZone } from "./Accounts.tsx";
-import { LineItemsList } from "./LineItemsList.tsx";
+import { AmazonLink } from "./AmazonLink.tsx";
 import { centsOf } from "./settings/UnconnectedAccounts.tsx";
 import {
   accountLabels,
@@ -86,6 +86,8 @@ export type DetailActions = {
   removeSplit(): void;
   undoLink(linkId: string): void;
   linkByHand(): void;
+  // An Amazon hand link or Undo is done: the page reads the Transaction again.
+  amazonLinked(edit: EditOutcome): void;
   // Read the first page of the Spending the search finds, or the next page of it.
   findCandidates(): void;
   showMoreCandidates(): void;
@@ -197,6 +199,7 @@ export function detailActions(
         said("Undone. The app will not make that link again."),
       );
     },
+    amazonLinked: done,
     linkByHand() {
       if (form.spendingTransactionId === "") {
         return done({ error: "Pick the Spending it pays back." });
@@ -525,7 +528,13 @@ export function TransactionDetailBody(props: {
         </div>
       </Card>
 
-      <LineItemsList transactionId={txn.id} itemCount={txn.itemCount} today={today} />
+      <AmazonLink
+        transactionId={txn.id}
+        itemCount={txn.itemCount}
+        linkable={splitable && !txn.pending}
+        today={today}
+        done={actions.amazonLinked}
+      />
 
       {splitable ? (
         <Card aria-labelledby="split">

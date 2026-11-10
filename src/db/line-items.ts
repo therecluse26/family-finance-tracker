@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Database, Queries } from "./client.ts";
+import { markTransactionsUnhandled } from "./follow-up.ts";
 import {
   itemRules,
   lineItemImports,
@@ -115,12 +116,14 @@ export async function readLastLineItemImport(
 }
 
 // A source's shipments by where their linking stands (spec 14, The Amazon page in Settings). A
-// shipment is one order's Line items with one ship time. An unlinked one paid in part by gift card
-// is not tried. Another unlinked one waits for a charge while its ship date is on or after
-// `waitingFrom`, and is "not matched" after.
+// shipment is one order's Line items with one ship time. An unlinked one that an open Review list
+// item of `reviewKind` names, alone or with its whole order, counts only there. Another unlinked
+// one paid in part by gift card is not tried. Any other unlinked one waits for a charge while its
+// ship date is on or after `waitingFrom`, and is "not matched" after. One statement.
 export type ShipmentCounts = {
   linked: number;
   waiting: number;
+  onReviewList: number;
   notMatched: number;
   giftCard: number;
 };
@@ -129,9 +132,12 @@ export async function countShipments(
   database: Queries,
   source: StoredLineItem["source"],
   waitingFrom: string,
+  reviewKind: string,
 ): Promise<ShipmentCounts> {
   const shipments = database
     .select({
+      orderId: lineItems.orderId,
+      shipTime: lineItems.shipTime,
       linked: sql<number>`max(${lineItems.transactionId} IS NOT NULL)`.as("linked"),
       giftCard: sql<number>`max(${lineItems.giftCard})`.as("gift_card"),
       shipDate: sql<string>`min(${lineItems.shipDate})`.as("ship_date"),
@@ -140,17 +146,26 @@ export async function countShipments(
     .where(eq(lineItems.source, source))
     .groupBy(lineItems.orderId, lineItems.shipTime)
     .as("shipments");
+  // The best answer values of the open shipment items, as shipmentAnswerValue writes them: one for
+  // a shipment, one for a whole order. The list is read once, not once per shipment.
+  const open = sql`(SELECT json_extract(${reviewItems.bestAnswer}, '$.value') FROM ${reviewItems}
+    WHERE ${reviewItems.kind} = ${reviewKind} AND ${reviewItems.closedAt} IS NULL)`;
+  const onReviewList = sql`(('none|' || ${shipments.orderId} || '|' || ${shipments.shipTime}) IN ${open}
+    OR ('none|' || ${shipments.orderId} || '|') IN ${open})`;
+  const unlinked = sql`NOT ${shipments.linked} AND NOT ${onReviewList}`;
   const [row] = await database
     .select({
       linked: sql<number>`coalesce(sum(${shipments.linked}), 0)`,
-      giftCard: sql<number>`coalesce(sum(NOT ${shipments.linked} AND ${shipments.giftCard}), 0)`,
-      waiting: sql<number>`coalesce(sum(NOT ${shipments.linked} AND NOT ${shipments.giftCard} AND ${shipments.shipDate} >= ${waitingFrom}), 0)`,
-      notMatched: sql<number>`coalesce(sum(NOT ${shipments.linked} AND NOT ${shipments.giftCard} AND ${shipments.shipDate} < ${waitingFrom}), 0)`,
+      onReviewList: sql<number>`coalesce(sum(NOT ${shipments.linked} AND ${onReviewList}), 0)`,
+      giftCard: sql<number>`coalesce(sum(${unlinked} AND ${shipments.giftCard}), 0)`,
+      waiting: sql<number>`coalesce(sum(${unlinked} AND NOT ${shipments.giftCard} AND ${shipments.shipDate} >= ${waitingFrom}), 0)`,
+      notMatched: sql<number>`coalesce(sum(${unlinked} AND NOT ${shipments.giftCard} AND ${shipments.shipDate} < ${waitingFrom}), 0)`,
     })
     .from(shipments);
   return {
     linked: Number(row?.linked ?? 0),
     waiting: Number(row?.waiting ?? 0),
+    onReviewList: Number(row?.onReviewList ?? 0),
     notMatched: Number(row?.notMatched ?? 0),
     giftCard: Number(row?.giftCard ?? 0),
   };
@@ -166,15 +181,6 @@ export async function countLineItems(
     .from(lineItems)
     .where(eq(lineItems.source, source));
   return row?.items ?? 0;
-}
-
-// How many open Review list items have this kind.
-export async function countOpenReviewItemsOfKind(database: Queries, kind: string): Promise<number> {
-  const [row] = await database
-    .select({ open: count() })
-    .from(reviewItems)
-    .where(and(eq(reviewItems.kind, kind), isNull(reviewItems.closedAt)));
-  return row?.open ?? 0;
 }
 
 // How many Line items each of these Transactions has linked, by Transaction ID. A Transaction with
@@ -239,13 +245,14 @@ export type LineItemDataDeleted = {
 };
 
 // Deletes every Line item of a source, every refused link, every Item rule, and every import
-// record of the source, in one transaction (spec 14, Delete all Amazon data). `inside` runs last,
-// in the same transaction, with the Transactions that had Line items linked, such as to send them
-// down the follow-up steps again: a failure after the commit still leaves them marked (K5).
+// record of the source, in one transaction (spec 14, Delete all Amazon data). The same transaction
+// closes every open Review list item of the kinds in `closing.reviewKinds`, whose Line items are gone, and makes
+// each Transaction that had a Line item linked unhandled, so the follow-up job decides it again.
+// Nothing else changes.
 export async function deleteLineItemData(
   database: Database,
   source: StoredLineItem["source"],
-  inside: (tx: Queries, transactionIds: readonly string[]) => Promise<void> = async () => {},
+  closing: { reviewKinds: readonly string[]; at: Date },
 ): Promise<LineItemDataDeleted> {
   return database.transaction(async (tx) => {
     const linked = await tx
@@ -262,8 +269,12 @@ export async function deleteLineItemData(
       .delete(lineItemImports)
       .where(eq(lineItemImports.source, source))
       .returning({ id: lineItemImports.id });
+    await tx
+      .update(reviewItems)
+      .set({ closedAt: closing.at, closedReason: "Amazon data deleted" })
+      .where(and(inArray(reviewItems.kind, closing.reviewKinds), isNull(reviewItems.closedAt)));
     const transactionIds = linked.flatMap((row) => (row.id === null ? [] : [row.id]));
-    await inside(tx, transactionIds);
+    await markTransactionsUnhandled(tx, transactionIds);
     return {
       transactionIds,
       lineItems: removed.length,

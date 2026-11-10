@@ -24,6 +24,7 @@ import {
 import type { ShellContext } from "../Shell.tsx";
 import { HAND_SET_TYPES } from "../transactions.ts";
 import { browserZone } from "./Accounts.tsx";
+import { AMAZON_SHIPMENT, AmazonShipmentItem } from "./AmazonShipmentItem.tsx";
 import { CategoryOptions } from "./TransactionDetail.tsx";
 
 // The Review list page (spec 07, Review list page): the app's uncertain decisions, newest first,
@@ -49,6 +50,7 @@ export const KIND_LABEL: Readonly<Record<string, string>> = {
   "possible Manual loan payment": "Possible loan payment",
   "missed Manual loan payment": "Missed loan payment",
   "Line item Category": "Amazon item Category",
+  "Amazon shipment": "Amazon shipment",
 };
 
 // The Line item Category kind (spec 14, Review list items): one card per product.
@@ -633,15 +635,24 @@ export function ReviewItems(props: {
       </Card>
     );
   }
-  const shown = (item: ReviewItemView) => (
-    <ReviewListItem
-      key={item.id}
-      item={item}
-      state={props.states[item.id] ?? {}}
-      today={props.today}
-      actions={props.actions}
-    />
-  );
+  const shown = (item: ReviewItemView) =>
+    item.kind === AMAZON_SHIPMENT ? (
+      <AmazonShipmentItem
+        key={item.id}
+        item={item}
+        state={props.states[item.id] ?? {}}
+        today={props.today}
+        actions={props.actions}
+      />
+    ) : (
+      <ReviewListItem
+        key={item.id}
+        item={item}
+        state={props.states[item.id] ?? {}}
+        today={props.today}
+        actions={props.actions}
+      />
+    );
   return (
     <ul className="flex flex-col gap-3">
       {displayGroups(props.items).map((group) => {

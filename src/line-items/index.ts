@@ -41,6 +41,21 @@ export {
   takesLineItemCategory,
 } from "./item-rules.ts";
 export {
+  AMAZON_SHIPMENT_KIND,
+  addDays,
+  type HandLinkOutcome,
+  isAmazonCharge,
+  type LinkRunResult,
+  type LinkRunScope,
+  linkShipmentByHand,
+  runLinking,
+  shipmentsToLink,
+  startLineItemLinks,
+  undoShipmentLinks,
+  WAITING_DAYS,
+  waitingFrom,
+} from "./link.ts";
+export {
   LINE_ITEM_STEPS,
   type LineItemStep,
   type LineItemStepName,
@@ -49,7 +64,3 @@ export {
   registerLineItemsImported,
   registerLineItemsRemoved,
 } from "./seams.ts";
-
-// The Review list kind of an Amazon shipment that fits two or more Transactions (spec 14, Review
-// list items). Linking registers it; the Amazon page counts its open items.
-export const AMAZON_SHIPMENT_KIND = "Amazon shipment";

@@ -291,14 +291,18 @@ describe("the Amazon routes", () => {
     const started = new Promise<void>((resolve) => {
       reading = resolve;
     });
-    const stream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        reading();
-        await released;
-        controller.enqueue(bytes);
-        controller.close();
+    // No queue, so the stream pulls only when the route reads it, not as soon as it is made.
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          reading();
+          await released;
+          controller.enqueue(bytes);
+          controller.close();
+        },
       },
-    });
+      { highWaterMark: 0 },
+    );
     return { stream, release, started };
   }
 

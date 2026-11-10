@@ -14,6 +14,7 @@ import type { WeeklySummarySettings } from "../weekly-summary/view.ts";
 import type { AboutRoutes } from "./about-views.ts";
 import type { AiBoxRoutes } from "./ai-box-views.ts";
 import type { AlertRoutes } from "./alerts-views.ts";
+import type { AmazonLinkRoutes } from "./amazon-links-views.ts";
 import type { AmazonRoutes } from "./amazon-views.ts";
 import type { AppUrl } from "./app-url.ts";
 import type { BackupRoutes } from "./backups-views.ts";
@@ -91,6 +92,8 @@ export type ServerEnv = {
     amazon: AmazonRoutes;
     // A Line item's Category, and Item rules on Settings > Categories.
     lineItemCategories: LineItemCategoryRoutes;
+    // A Transaction's Amazon links, on its detail view: the hand link and Undo.
+    amazonLinks: AmazonLinkRoutes;
     // Settings, Members: the Members, invite links, and removing a Member.
     members: MemberRoutes;
     // Settings, My login: the signed-in Member's own devices, and Sign out on one.

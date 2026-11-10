@@ -24,6 +24,7 @@ import { aboutRoutes } from "./about.ts";
 import { aiBoxRoutes } from "./ai-box.ts";
 import { alertRoutes } from "./alerts.ts";
 import { amazonRoutes } from "./amazon.ts";
+import { amazonLinkRoutes } from "./amazon-links.ts";
 import { api } from "./api.ts";
 import { backupRoutes } from "./backups.ts";
 import { bankViews } from "./bank-data.ts";
@@ -246,6 +247,7 @@ export function createApp(
   const dataExport = dataExportRoutes(database, bank, security.logger);
   const amazon = amazonRoutes(database, security.logger);
   const lineItemCategories = lineItemCategoryRoutes(database);
+  const amazonLinks = amazonLinkRoutes(database);
   const members = memberRoutes(database, auth, security.appUrl);
   const devices = deviceRoutes(auth);
   return (
@@ -311,6 +313,7 @@ export function createApp(
         c.set("dataExport", dataExport);
         c.set("amazon", amazon);
         c.set("lineItemCategories", lineItemCategories);
+        c.set("amazonLinks", amazonLinks);
         c.set("members", members);
         c.set("devices", devices);
         c.set("aiWork", services.aiWork);

@@ -14,6 +14,9 @@ import { log } from "../log.ts";
 // registered does nothing.
 export const FOLLOW_UP_STEPS = [
   "matching",
+  // Amazon linking, on the Transactions matching just decided, before categorization reads their
+  // Line items (spec 14, The app's link).
+  "Amazon linking",
   "categorization",
   "recurring charge checks",
   // The Anomaly checks read the Recurring charges the checks before them found (spec 06,

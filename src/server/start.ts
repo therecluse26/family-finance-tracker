@@ -39,7 +39,11 @@ import { type GoalWriting, goalWriting, startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
 import { requestInsightCardCheck, startInsightCards } from "../insights/index.ts";
 import { type JobsOptions, startJobs } from "../jobs/index.ts";
-import { retryLineItemCategories, startLineItemCategories } from "../line-items/index.ts";
+import {
+  retryLineItemCategories,
+  startLineItemCategories,
+  startLineItemLinks,
+} from "../line-items/index.ts";
 import { log } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
 import { startMonthlyReview } from "../monthly-review/index.ts";
@@ -283,6 +287,9 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     const cost = aiCost({ database, timeZone });
     const ai = householdAi({ database, secrets, cost, aiBack: requestRedo });
     const moneyMovement = startMoneyMovement({ database, ai });
+    // Amazon linking: its follow-up step after Matching, its run after each import, and its Review
+    // list kind.
+    const lineItemLinks = startLineItemLinks({ database });
     const categorization = startCategorization({ database, ai });
     const lineItemCategories = startLineItemCategories({ database, ai });
     const recurring = startRecurringCharges({ database });
@@ -325,6 +332,7 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
       recurring.stop();
       lineItemCategories.stop();
       categorization.stop();
+      lineItemLinks.stop();
       moneyMovement.stop();
       aiRetries.stop();
       followUp.stop();
