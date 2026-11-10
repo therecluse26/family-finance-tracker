@@ -215,7 +215,7 @@ Small items left open after the T107 notes triage, for after the first release (
 
 ## Amazon orders
 
-- N315 (L, feature) Line items and Amazon orders: spec written in [14 Line items](spec/14-line-items.md) (2026-11-09). The file name and columns are fixed from a real export (2026-11-09). In: new `src/line-items/`, an Amazon page in Settings, the Transactions detail view.
+- N315 (L, feature) Line items and Amazon orders: spec written in [14 Line items](spec/14-line-items.md) (2026-11-09). The file name and columns are fixed from a real export (2026-11-09). In: new `src/line-items/`, an Amazon page in Settings, the Transactions detail view. Tickets (2026-11-09): X41 the data model, file reading, import, Settings Amazon page, item list on the detail view and export files; then, in parallel, X42 linking Line items to Transactions, and X43 Line item Categories, Item rules and splits from Line items.
 
 ## Backups, export, jobs and start-up
 
