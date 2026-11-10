@@ -224,6 +224,10 @@ Small items left open after the T107 notes triage, for after the first release (
 - N321 (S, tests) No parallel test for Undo racing a hand link, or the import's link run racing the job's; the re-reads in `storePlan` have no test (X42 review). In: src/line-items/link.test.ts.
 - N322 (S, polish) Delete history sets `line_items.transaction_id` to null through the foreign key but leaves `link_kind`. Nothing reads it today; clear it, or never read it alone (X42 review). In: src/db/line-items.ts.
 
+## Deal finder
+
+- N323 (L, feature) The deal finder: spec written in [15 Deal finder](spec/15-deal-finder.md) (2026-11-10). After v1 (D22). In: new `src/deal-finder/`, a Price sources page in Settings, a Shopping list page, Chat tools. Tickets (2026-11-10): X45 the data model, the Price source adapter and its fake, and the Price sources page; then, in parallel, X46 the Kroger and Apify readers with local fake servers, X47 the Shopping list page and Chat tools, X48 plan runs and Product matching, and X49 the plan math, Deals and the plan view. Before them: O1, an owner-run spike for the Target store ID and the cost of one plan run; O2, owner decisions on Chat edits and the default numbers.
+
 ## Backups, export, jobs and start-up
 
 - N12 (S, polish) A job cut off by a stop can wait about an hour to run again (Sidequest's stale-job defaults); meets the spec, check the timing. In: src/jobs/sidequest.ts.

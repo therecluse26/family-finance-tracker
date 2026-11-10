@@ -5,6 +5,7 @@ These rules apply to every builder, reviewer and helper agent, whatever its brie
 ## Security (hard rules)
 
 - Use only the fake adapter, the local fake Plaid server, and AI SDK test models. Never call Plaid, not even the sandbox. Never use real Plaid tokens, Production keys, real bank data, or real AI keys.
+- For the deal finder, use only the fake Price source adapter and its local fake servers. Never call Apify, the Kroger API, Open Food Facts, or any Store's site. Never use a real Price source key.
 - Do not read any file outside the repo and your own scratch folder that might hold secrets.
 - Never write a secret, a key, or personal data into code, tests, commits, PR text, or logs. Generate test keys and tokens at test time.
 - Never send the owner's email, name, or any personal detail to any outside service, including in a User-Agent or request header. If a site demands contact details, stop and tell the orchestrator.
