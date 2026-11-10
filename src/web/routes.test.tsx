@@ -78,7 +78,7 @@ describe("the app shell", () => {
       "My login",
       "Banks",
       "Categories",
-      "Amazon",
+      "Store orders",
       "Alerts",
       "AI",
       "Backups and data",

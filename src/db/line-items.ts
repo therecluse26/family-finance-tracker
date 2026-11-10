@@ -8,6 +8,7 @@ import {
   members,
   refusedLineItemLinks,
   reviewItems,
+  transactions,
 } from "./schema.ts";
 
 // Line items, Item rules, and order file imports in app.db (spec 14). The line-items module reads
@@ -115,16 +116,20 @@ export async function readLastLineItemImport(
   return row === undefined ? undefined : { ...row.record, memberName: row.memberName };
 }
 
-// A source's shipments by where their linking stands (spec 14, The Amazon page in Settings). A
-// shipment is one order's Line items with one ship time. An unlinked one that an open Review list
+// A source's shipments by where their linking stands (spec 14, The Store orders page in Settings).
+// A shipment is one order's Line items with one ship time. An unlinked one that an open Review list
 // item of `reviewKind` names, alone or with its whole order, counts only there. Another unlinked
-// one paid in part by gift card is not tried. Any other unlinked one waits for a charge while its
-// ship date is on or after `waitingFrom`, and is "not matched" after. One statement.
+// one paid in part by gift card is not tried. Any other unlinked one whose link window, which ends
+// `daysAfterShip` days after its ship date, ends before the first posted Transaction's purchase
+// date (any Account, hidden or not) is before the bank history: no charge can link to it. The rest
+// wait for a charge while their ship date is on or after `waitingFrom`, and are "not matched"
+// after. One statement.
 export type ShipmentCounts = {
   linked: number;
   waiting: number;
   onReviewList: number;
   notMatched: number;
+  beforeBankHistory: number;
   giftCard: number;
 };
 
@@ -133,6 +138,7 @@ export async function countShipments(
   source: StoredLineItem["source"],
   waitingFrom: string,
   reviewKind: string,
+  daysAfterShip: number,
 ): Promise<ShipmentCounts> {
   const shipments = database
     .select({
@@ -153,13 +159,20 @@ export async function countShipments(
   const onReviewList = sql`(('none|' || ${shipments.orderId} || '|' || ${shipments.shipTime}) IN ${open}
     OR ('none|' || ${shipments.orderId} || '|') IN ${open})`;
   const unlinked = sql`NOT ${shipments.linked} AND NOT ${onReviewList}`;
+  // The first posted Transaction's purchase date, read once: null with none, which makes no
+  // shipment before the bank history.
+  const firstPosted = sql`(SELECT min(coalesce(${transactions.authorizedDate}, ${transactions.postedDate}))
+    FROM ${transactions} WHERE ${transactions.pending} = 0)`;
+  const beforeBank = sql`coalesce(date(${shipments.shipDate}, ${`+${daysAfterShip} days`}) < ${firstPosted}, 0)`;
+  const tried = sql`${unlinked} AND NOT ${shipments.giftCard} AND NOT ${beforeBank}`;
   const [row] = await database
     .select({
       linked: sql<number>`coalesce(sum(${shipments.linked}), 0)`,
       onReviewList: sql<number>`coalesce(sum(NOT ${shipments.linked} AND ${onReviewList}), 0)`,
       giftCard: sql<number>`coalesce(sum(${unlinked} AND ${shipments.giftCard}), 0)`,
-      waiting: sql<number>`coalesce(sum(${unlinked} AND NOT ${shipments.giftCard} AND ${shipments.shipDate} >= ${waitingFrom}), 0)`,
-      notMatched: sql<number>`coalesce(sum(${unlinked} AND NOT ${shipments.giftCard} AND ${shipments.shipDate} < ${waitingFrom}), 0)`,
+      beforeBankHistory: sql<number>`coalesce(sum(${unlinked} AND NOT ${shipments.giftCard} AND ${beforeBank}), 0)`,
+      waiting: sql<number>`coalesce(sum(${tried} AND ${shipments.shipDate} >= ${waitingFrom}), 0)`,
+      notMatched: sql<number>`coalesce(sum(${tried} AND ${shipments.shipDate} < ${waitingFrom}), 0)`,
     })
     .from(shipments);
   return {
@@ -167,6 +180,7 @@ export async function countShipments(
     waiting: Number(row?.waiting ?? 0),
     onReviewList: Number(row?.onReviewList ?? 0),
     notMatched: Number(row?.notMatched ?? 0),
+    beforeBankHistory: Number(row?.beforeBankHistory ?? 0),
     giftCard: Number(row?.giftCard ?? 0),
   };
 }

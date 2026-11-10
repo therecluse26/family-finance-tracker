@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AmazonStatusView } from "../../../server/amazon-views.ts";
 import { AmazonCard, deleteAmazonData, uploadAmazonFile, uploadType } from "./Amazon.tsx";
 
-// Settings → Amazon (spec 14, The Amazon page in Settings), as the browser paints it, and the
-// requests it sends.
+// The Amazon card on Settings → Store orders (spec 14, The Store orders page in Settings), as the
+// browser paints it, and the requests it sends.
 
 const text = (html: string) =>
   html
@@ -17,7 +17,14 @@ const text = (html: string) =>
 const EMPTY: AmazonStatusView = {
   lastImport: null,
   lineItems: 0,
-  shipments: { linked: 0, waiting: 0, onReviewList: 0, notMatched: 0, giftCard: 0 },
+  shipments: {
+    linked: 0,
+    waiting: 0,
+    onReviewList: 0,
+    notMatched: 0,
+    beforeBankHistory: 0,
+    giftCard: 0,
+  },
 };
 
 const STORED: AmazonStatusView = {
@@ -31,7 +38,14 @@ const STORED: AmazonStatusView = {
     skipped: [{ reason: "cancelled", rows: 3, firstRow: 7 }],
   },
   lineItems: 37,
-  shipments: { linked: 20, waiting: 3, onReviewList: 1, notMatched: 2, giftCard: 1 },
+  shipments: {
+    linked: 20,
+    waiting: 3,
+    onReviewList: 1,
+    notMatched: 2,
+    beforeBankHistory: 4,
+    giftCard: 1,
+  },
 };
 
 const NOW = new Date("2026-11-09T18:00:00.000Z");
@@ -51,9 +65,23 @@ const card = (status: AmazonStatusView, extra: Partial<Parameters<typeof AmazonC
     ),
   );
 
-describe("Settings, Amazon", () => {
+describe("Settings, Store orders: the Amazon card", () => {
   it("shows the steps to get the file and Upload before any file", () => {
-    const page = card(EMPTY);
+    const html = renderToString(
+      <AmazonCard
+        status={EMPTY}
+        zone="America/New_York"
+        busy={false}
+        onUpload={() => {}}
+        onDelete={() => {}}
+        now={NOW}
+      />,
+    );
+    const page = text(html);
+
+    // One card, with the store's name as its title.
+    expect(html.match(/<h3[^>]*>/g)).toHaveLength(1);
+    expect(html).toMatch(/<h3[^>]*>Amazon<\/h3>/);
 
     expect(page).toContain("Account & Lists → Your Account → Request Your Data");
     expect(page).toContain("Pick Your Orders , then Submit Request");
@@ -62,6 +90,7 @@ describe("Settings, Amazon", () => {
     expect(page).toContain("No file uploaded yet.");
     expect(page).not.toContain("Delete all Amazon data");
     expect(page).not.toContain("Links to charges");
+    expect(page).not.toContain("Before your bank history");
   });
 
   it("shows the last import with its date and Member, and the link counts", () => {
@@ -72,8 +101,18 @@ describe("Settings, Amazon", () => {
     expect(page).toContain("Waiting for a charge 3 shipments");
     expect(page).toContain("Waiting on the Review list 1 shipment");
     expect(page).toContain("Not matched 2 shipments");
+    expect(page).toContain(
+      "Before your bank history Shipped before the first charge your banks sent. These cannot link. 4 shipments",
+    );
+    expect(page.indexOf("Not matched")).toBeLessThan(page.indexOf("Before your bank history"));
     expect(page).toContain("Paid in part by gift card, not linked 1 shipment");
     expect(page).toContain("Delete all Amazon data");
+  });
+
+  it("shows a before your bank history count of 0 like the other rows", () => {
+    const page = card({ ...STORED, shipments: { ...STORED.shipments, beforeBankHistory: 0 } });
+
+    expect(page).toContain("These cannot link. 0 shipments");
   });
 
   it("shows what an upload did, with each skip reason and its first row", () => {
@@ -100,7 +139,7 @@ describe("Settings, Amazon", () => {
   });
 });
 
-describe("Settings, Amazon: the requests", () => {
+describe("Settings, Store orders: the Amazon card's requests", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });

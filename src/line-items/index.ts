@@ -43,6 +43,7 @@ export {
 export {
   AMAZON_SHIPMENT_KIND,
   addDays,
+  DAYS_AFTER_SHIP,
   type HandLinkOutcome,
   isAmazonCharge,
   type LinkRunResult,

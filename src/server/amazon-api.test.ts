@@ -30,9 +30,9 @@ import type { TransactionListView } from "./bank-views.ts";
 import { loadSecurity } from "./security-mode.ts";
 import { type App, readZip, TestBrowser } from "./testing.ts";
 
-// Settings → Amazon through the app's HTTP interface (spec 14): the upload, the import by key,
-// "Delete all Amazon data", the Line items on a Transaction, and the data export. Every row, order
-// ID, and card number is made up.
+// Settings → Store orders, the Amazon card, through the app's HTTP interface (spec 14): the upload,
+// the import by key, "Delete all Amazon data", the Line items on a Transaction, and the data
+// export. Every row, order ID, and card number is made up.
 
 const APP_URL = "http://nas.local:8080";
 const BANK = "fake-first-bank";
@@ -138,7 +138,14 @@ describe("the Amazon routes", () => {
     expect(await status()).toEqual({
       lastImport: null,
       lineItems: 0,
-      shipments: { linked: 0, waiting: 0, onReviewList: 0, notMatched: 0, giftCard: 0 },
+      shipments: {
+        linked: 0,
+        waiting: 0,
+        onReviewList: 0,
+        notMatched: 0,
+        beforeBankHistory: 0,
+        giftCard: 0,
+      },
     });
   });
 
@@ -173,6 +180,7 @@ describe("the Amazon routes", () => {
       waiting: 1,
       onReviewList: 0,
       notMatched: 1,
+      beforeBankHistory: 0,
       giftCard: 1,
     });
     expect(await status()).toEqual(after);
@@ -384,7 +392,14 @@ describe("the Amazon routes", () => {
     expect(((await res.json()) as { status: AmazonStatusView }).status).toEqual({
       lastImport: null,
       lineItems: 0,
-      shipments: { linked: 0, waiting: 0, onReviewList: 0, notMatched: 0, giftCard: 0 },
+      shipments: {
+        linked: 0,
+        waiting: 0,
+        onReviewList: 0,
+        notMatched: 0,
+        beforeBankHistory: 0,
+        giftCard: 0,
+      },
     });
     expect((await sql("SELECT id FROM line_items")).map((row) => row.id)).toEqual(["other"]);
     expect(await sql("SELECT * FROM refused_line_item_links")).toEqual([]);

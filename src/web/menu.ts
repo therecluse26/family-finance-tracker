@@ -33,7 +33,7 @@ export const SETTINGS_SECTIONS: readonly MenuItem[] = [
   { label: "My login", path: "my-login" },
   { label: "Banks", path: "banks" },
   { label: "Categories", path: "categories" },
-  { label: "Amazon", path: "amazon" },
+  { label: "Store orders", path: "store-orders" },
   { label: "Alerts", path: "alerts" },
   { label: "AI", path: "ai" },
   { label: "Backups and data", path: "backups-and-data" },

@@ -1,5 +1,5 @@
-// The Amazon page in Settings and the Line items on a Transaction (spec 14), as the routes answer
-// them. Types only, so the web app reads them too.
+// The Amazon card on the Store orders page in Settings and the Line items on a Transaction (spec
+// 14), as the routes answer them. Types only, so the web app reads them too.
 
 // What an upload's Content-Type says it holds: Amazon's ZIP file, or the order file inside it.
 export const AMAZON_UPLOAD_TYPES = { "application/zip": "zip", "text/csv": "csv" } as const;
@@ -34,6 +34,9 @@ export type AmazonShipmentCounts = {
   onReviewList: number;
   // Unlinked, shipped 60 or more days ago.
   notMatched: number;
+  // Unlinked, and its link window ends before the first posted Transaction, so no charge the
+  // banks sent can link to it. Counted only here.
+  beforeBankHistory: number;
   // Unlinked, paid in part by gift card, so the app does not try it.
   giftCard: number;
 };

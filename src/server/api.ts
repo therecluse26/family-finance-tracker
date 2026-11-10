@@ -1542,8 +1542,8 @@ export const api = new Hono<ServerEnv>()
       "Cache-Control": "no-store",
     });
   })
-  // Settings, Amazon (spec 14, The Amazon page in Settings): the last import, its counts, and the
-  // link counts.
+  // Settings, Store orders (spec 14, The Store orders page in Settings): the Amazon card's last
+  // import, its counts, and the link counts.
   .get("/amazon", async (c) => c.json(await c.var.amazon.status(), 200))
   // An upload of Amazon's ZIP file, or the order file inside it, as the raw body: no form, so the
   // body is read once, with its own 50 MB limit, and no page on another site can post it as a form.

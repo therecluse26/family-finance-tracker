@@ -311,7 +311,7 @@ Settings has one section per area. Each owner file holds the rules.
 | My login | Password, TOTP, backup codes, passkeys, signed-in devices | [09](09-members-login-security.md) |
 | Banks | Plaid keys, Connections, Repair, Remove, "Import Plaid Connection", "at least N of 10 used", Unconnected accounts, Manual loans | [02](02-accounts-and-bank-sync.md) |
 | Categories | Category rules, with Delete; Item rules, with Delete; remembered one-sided Transfer answers, with Delete | [04](04-categorization.md), [14](14-line-items.md#item-rules), [03](03-money-movement.md#review-list-items) |
-| Amazon | The steps to get Amazon's order file, Upload, import and link counts, "Delete all Amazon data" | [14](14-line-items.md#the-amazon-page-in-settings) |
+| Store orders | One card per store; today only Amazon: the steps to get Amazon's order file, Upload, import and link counts, "Delete all Amazon data" | [14](14-line-items.md#the-store-orders-page-in-settings) |
 | Alerts | Weekly cap, my channels, the weekly summary email, SMTP and "Send a test email", push on this device | [06](06-anomalies-and-alerts.md) |
 | AI | AI provider, key, models, prices, AI cost cap, base URL, the AI usage page, and the AI request log | [08](08-ai.md#ai-settings-page) |
 | Backups and data | "Back up now", last backup, "Check my Master key", data export | [11](11-backup-restore-export.md), [09](09-members-login-security.md) |

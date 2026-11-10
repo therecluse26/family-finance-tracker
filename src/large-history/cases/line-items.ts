@@ -5,8 +5,8 @@ import type { TransactionRowView } from "../../server/money-movement-views.ts";
 import { timedCase } from "../index.ts";
 
 // An Amazon order file of 20,000 made-up rows over five years (spec 14, Speed): its import, then
-// the Transactions page and the Amazon page with the Line items stored. A second upload of the same
-// file changes nothing, and takes the same limit.
+// the Transactions page and the Store orders page with the Line items stored. A second upload of
+// the same file changes nothing, and takes the same limit.
 
 const ROWS = 20_000;
 

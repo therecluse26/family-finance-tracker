@@ -10,6 +10,7 @@ import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
 import {
   AMAZON_SHIPMENT_KIND,
+  DAYS_AFTER_SHIP,
   importOrderFile,
   LINE_ITEM_CATEGORY_KIND,
   lineItemsRemoved,
@@ -25,8 +26,9 @@ import {
   MAX_AMAZON_UPLOAD_BYTES,
 } from "./amazon-views.ts";
 
-// Settings → Amazon (spec 14, The Amazon page in Settings): the last import and the link counts,
-// the upload, and "Delete all Amazon data". One import or delete runs at a time.
+// Settings → Store orders, the Amazon card (spec 14, The Store orders page in Settings): the last
+// import and the link counts, the upload, and "Delete all Amazon data". One import or delete runs
+// at a time.
 
 // What an upload holds, by its Content-Type, or undefined for any other type.
 export function amazonUploadKind(contentType: string | undefined): AmazonUploadKind | undefined {
@@ -80,7 +82,7 @@ export function amazonRoutes(
     const today = calendarDateIn(new Date(), zone);
     const [last, shipments, items] = await Promise.all([
       readLastLineItemImport(database, "amazon"),
-      countShipments(database, "amazon", waitingFrom(today), AMAZON_SHIPMENT_KIND),
+      countShipments(database, "amazon", waitingFrom(today), AMAZON_SHIPMENT_KIND, DAYS_AFTER_SHIP),
       countLineItems(database, "amazon"),
     ]);
     return {

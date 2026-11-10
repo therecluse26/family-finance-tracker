@@ -70,7 +70,7 @@ export const waitingFrom = (today: string) => addDays(today, -(WAITING_DAYS - 1)
 
 // A purchase date from 1 day before to 7 days after the ship date.
 const DAYS_BEFORE_SHIP = 1;
-const DAYS_AFTER_SHIP = 7;
+export const DAYS_AFTER_SHIP = 7;
 
 // Amazon's Merchant, by Merchant identity: its clean name compared without case, spaces, or
 // punctuation (spec 04, Identity). A bank line with AMAZON or AMZN counts too.

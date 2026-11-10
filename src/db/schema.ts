@@ -2222,7 +2222,7 @@ export const itemRules = sqliteTable(
   ],
 );
 
-// Each upload of an order file (spec 14, The Amazon page in Settings): when, who, and the counts.
+// Each upload of an order file (spec 14, The Store orders page in Settings): when, who, and the counts.
 export const lineItemImports = sqliteTable(
   "line_item_imports",
   {

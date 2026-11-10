@@ -15,6 +15,7 @@ import { answerReviewItem } from "../review/index.ts";
 import { importOrderFile } from "./import.ts";
 import {
   AMAZON_SHIPMENT_KIND,
+  DAYS_AFTER_SHIP,
   isAmazonCharge,
   linkShipmentByHand,
   runLinking,
@@ -151,7 +152,13 @@ describe("Linking Amazon shipments", () => {
     );
   const openItems = () => listOpenReviewItemsOfKind(bank.database, AMAZON_SHIPMENT_KIND);
   const counts = (today = "2026-05-12") =>
-    countShipments(bank.database, "amazon", waitingFrom(today), AMAZON_SHIPMENT_KIND);
+    countShipments(
+      bank.database,
+      "amazon",
+      waitingFrom(today),
+      AMAZON_SHIPMENT_KIND,
+      DAYS_AFTER_SHIP,
+    );
 
   it("links a shipment to the one charge that fits it, after the import", async () => {
     await sync({
@@ -174,6 +181,7 @@ describe("Linking Amazon shipments", () => {
       waiting: 0,
       onReviewList: 0,
       notMatched: 0,
+      beforeBankHistory: 0,
       giftCard: 0,
     });
   });
@@ -426,6 +434,98 @@ describe("Linking Amazon shipments", () => {
       now,
     );
     expect(run).toEqual({ linked: 0, ended: 0, transactionIds: [] });
+  });
+
+  // A shipment shipped on May 2 has a link window that ends on May 9 (spec 14, The Store orders
+  // page in Settings).
+  describe("counts a shipment before the bank history (K2)", () => {
+    const cafe = (id: string, postedDate: string, fields: Partial<TxnRecord> = {}) =>
+      charge(id, -450, postedDate, { description: "CORNER CAFE", merchantName: null, ...fields });
+
+    it("counts one whose window ends the day before the first posted Transaction there only", async () => {
+      await sync({ added: [cafe("t-first", "2026-05-10")] });
+      await upload(row("111-0000001-0000001", 1350));
+
+      expect(await counts()).toMatchObject({ beforeBankHistory: 1, waiting: 0, notMatched: 0 });
+      expect(await counts("2026-07-01")).toMatchObject({
+        beforeBankHistory: 1,
+        waiting: 0,
+        notMatched: 0,
+      });
+    });
+
+    it("does not count one whose window ends on the first posted Transaction's day", async () => {
+      await sync({ added: [cafe("t-first", "2026-05-09")] });
+      await upload(row("111-0000001-0000001", 1350));
+
+      expect(await counts()).toMatchObject({ beforeBankHistory: 0, waiting: 1 });
+      expect(await counts("2026-07-01")).toMatchObject({ beforeBankHistory: 0, notMatched: 1 });
+    });
+
+    it("takes the purchase date before the posted date", async () => {
+      await sync({ added: [cafe("t-first", "2026-05-10", { authorizedDate: "2026-05-09" })] });
+      await upload(row("111-0000001-0000001", 1350));
+
+      expect(await counts()).toMatchObject({ beforeBankHistory: 0, waiting: 1 });
+    });
+
+    it("lets a hidden first Transaction set the date, and not a pending one", async () => {
+      await sync({
+        added: [
+          cafe("t-pending", "2026-05-03", { pending: true }),
+          cafe("t-hidden", "2026-05-09"),
+          cafe("t-later", "2026-05-10"),
+        ],
+      });
+      await upload(row("111-0000001-0000001", 1350));
+      await rows(
+        "UPDATE transactions SET hidden_reason = 'posted', hidden_at = '2026-05-12T14:00:00.000Z' WHERE provider_transaction_id = ?",
+        ["t-hidden"],
+      );
+      expect(await counts()).toMatchObject({ beforeBankHistory: 0, waiting: 1 });
+
+      // With the hidden one pending too, the pending ones set no date.
+      await rows("UPDATE transactions SET pending = 1 WHERE provider_transaction_id = ?", [
+        "t-hidden",
+      ]);
+      expect(await counts()).toMatchObject({ beforeBankHistory: 1, waiting: 0 });
+    });
+
+    it("counts a linked, a gift card, and a Review list shipment where they were", async () => {
+      await sync({
+        added: [
+          charge("t-amzn", -1350),
+          charge("t-one", -2025, "2026-05-04"),
+          charge("t-two", -2025, "2026-05-05"),
+        ],
+      });
+      await upload(
+        row("111-0000001-0000001", 1350),
+        row("111-0000002-0000002", 2025),
+        row("111-0000003-0000003", 999, { payment: "Gift Certificate/Card and Visa - 0000" }),
+      );
+      const before = await counts();
+      expect(before).toEqual({
+        linked: 1,
+        waiting: 0,
+        onReviewList: 1,
+        notMatched: 0,
+        beforeBankHistory: 0,
+        giftCard: 1,
+      });
+      // The banks' history now starts after every window ends.
+      await rows("UPDATE transactions SET posted_date = '2026-05-20', authorized_date = NULL");
+
+      expect(await counts()).toEqual(before);
+    });
+
+    it("counts none with no posted Transaction", async () => {
+      await sync({ added: [cafe("t-pending", "2026-05-10", { pending: true })] });
+      await upload(row("111-0000001-0000001", 1350));
+
+      expect(await counts()).toMatchObject({ beforeBankHistory: 0, waiting: 1 });
+      expect(await counts("2026-07-01")).toMatchObject({ beforeBankHistory: 0, notMatched: 1 });
+    });
   });
 
   describe("which shipments a sync tries (K2)", () => {

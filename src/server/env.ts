@@ -87,8 +87,8 @@ export type ServerEnv = {
     backups: BackupRoutes;
     // Settings, Backups and data: "Download my data".
     dataExport: DataExportRoutes;
-    // Settings, Amazon: the order file upload and "Delete all Amazon data", and each Transaction's
-    // Line items.
+    // Settings, Store orders: the order file upload and "Delete all Amazon data", and each
+    // Transaction's Line items.
     amazon: AmazonRoutes;
     // A Line item's Category, and Item rules on Settings > Categories.
     lineItemCategories: LineItemCategoryRoutes;

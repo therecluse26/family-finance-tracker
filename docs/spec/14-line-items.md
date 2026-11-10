@@ -13,7 +13,7 @@ Using this is never required. A Household that never uploads a file sees no chan
 
 ## Getting the file
 
-- The Amazon page in Settings shows these steps:
+- The Amazon card on the [Store orders page in Settings](#the-store-orders-page-in-settings) shows these steps:
   1. On amazon.com, open **Account & Lists → Your Account → Request Your Data**.
   2. Pick **Your Orders**, then **Submit Request**.
   3. Confirm the request from Amazon's email.
@@ -110,7 +110,7 @@ Amazon charges a card when it ships, not when the order is placed. So the app li
 - Exactly one Transaction fits, and it has no Line items yet: the app links the shipment to it.
   - When that Transaction is also the only one that fits another shipment, neither links yet. Each waits, since their own charges are likely still to come.
 - Two or more Transactions fit: the app links nothing, and puts a Review list item up ([Review list items](#review-list-items)).
-- No Transaction fits: the shipment waits. The app tries again after each sync, until 60 days after the ship date. After that, it counts as "not matched".
+- No Transaction fits: the shipment waits. The app tries again after each sync, until 60 days after the ship date. After that, it counts as "not matched", or as "before your bank history" when its window ends before the banks' first posted Transaction ([The Store orders page in Settings](#the-store-orders-page-in-settings)).
   - A gift card, points, or a promotion often changes the amount charged. Such a shipment usually ends as "not matched". A Member may link it by hand.
   - A payment method that names a gift card means the card charge is less than the total. The app does not try such a shipment. It counts as "paid in part by gift card", and a Member may link it by hand.
 - Linking runs after each import, and in each sync's follow-up job, after Matching and before Categorization, so Categorization reads the Line items a link brings. Each link change sends its Transaction down the cascade again.
@@ -198,12 +198,17 @@ Each Line item takes the first answer it gets, in this order:
 - A shipment item closes by itself when a Member links the shipment by hand, or when only one of its Transactions is left. The app then links the shipment to that one.
 - An item covers one shipment, or a whole order when only the order's total fits. Its card lists each Transaction with **This one**, and **None of these**.
 
-## The Amazon page in Settings
+## The Store orders page in Settings
+
+The Settings tab is **Store orders**, not "Amazon" (owner decision, 2026-11-10). Its one intro line says that a store's order history file links each order's items to the charge that paid for it, and gives each item a Category. Then it has one card per store, each with the store's name as its title. Amazon is the first and, in this version, the only card. A later store is one more card. The page shows no card and no "coming soon" line for a store the app does not read. The old address `/settings/amazon` opens this page.
+
+The Amazon card holds:
 
 - The steps to get the file ([Getting the file](#getting-the-file)), and **Upload**.
 - After an upload: rows read, Line items added, Line items updated, rows skipped, with the reason for each skip count.
 - The last import: its date and the Member who uploaded it.
-- Link counts: linked, waiting for a charge, waiting on the Review list, not matched, and paid in part by gift card. A shipment on the Review list counts only there.
+- Link counts: linked, waiting for a charge, waiting on the Review list, not matched, before your bank history, and paid in part by gift card. A shipment on the Review list counts only there.
+- **Before your bank history** (owner decision, 2026-11-10): an unlinked shipment, not on the Review list and not paid in part by gift card, whose purchase-date window ([The app's link](#the-apps-link)) ends before the earliest purchase date of any posted Transaction, of any Account, hidden or not. No charge the banks sent can link to it, so it counts only there, not as waiting or not matched. With no posted Transaction, the count is 0. Plaid sends about 24 months of history at most, so most shipments in a real export are years older than the bank history; without this count they would all show as not matched and hide the few that need a Member. Its row says "Shipped before the first charge your banks sent. These cannot link." Like every count row, it shows 0 when there are none.
 - **Delete all Amazon data.** It asks once to confirm. It removes every Line item, every link and every Item rule, and closes every open shipment item. Each Transaction with Line items goes back to the cascade. Hand-set Categories and hand splits stay.
 
 ## Pages
@@ -236,3 +241,4 @@ Each Line item takes the first answer it gets, in this order:
 ## Sources
 
 - Owner request and decisions in the Claude Code session of 2026-11-09; backlog item N315.
+- Owner decisions of 2026-11-10: the Store orders tab, and the "before your bank history" count (ticket X44).

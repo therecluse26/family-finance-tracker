@@ -1,4 +1,4 @@
-import type { RouteObject } from "react-router";
+import { Navigate, type RouteObject } from "react-router";
 import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { Accounts } from "./pages/Accounts.tsx";
 import { AlertList } from "./pages/AlertList.tsx";
@@ -21,7 +21,6 @@ import { Ai } from "./pages/settings/Ai.tsx";
 import { AiRequestLog, AiRequestLogEntry } from "./pages/settings/AiRequestLog.tsx";
 import { AiUsage } from "./pages/settings/AiUsage.tsx";
 import { Alerts } from "./pages/settings/Alerts.tsx";
-import { Amazon } from "./pages/settings/Amazon.tsx";
 import { BackupsAndData } from "./pages/settings/BackupsAndData.tsx";
 import { Banks } from "./pages/settings/Banks.tsx";
 import { Categories } from "./pages/settings/Categories.tsx";
@@ -30,6 +29,7 @@ import { Household } from "./pages/settings/Household.tsx";
 import { Members } from "./pages/settings/Members.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
+import { StoreOrders } from "./pages/settings/StoreOrders.tsx";
 import { TopMerchants } from "./pages/TopMerchants.tsx";
 import { TransactionDetail } from "./pages/TransactionDetail.tsx";
 import { Transactions } from "./pages/Transactions.tsx";
@@ -44,7 +44,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   "my-login": MyLogin,
   banks: Banks,
   categories: Categories,
-  amazon: Amazon,
+  "store-orders": StoreOrders,
   alerts: Alerts,
   "backups-and-data": BackupsAndData,
   ai: Ai,
@@ -121,6 +121,8 @@ export const routes: RouteObject[] = [
           { path: "ai/usage/log/:id", Component: AiRequestLogEntry },
           // The Data sources page, linked from Settings → About.
           { path: "about/data-sources", Component: DataSources },
+          // Store orders' old address, from when Amazon was its own tab. The address is replaced.
+          { path: "amazon", element: <Navigate to="/settings/store-orders" replace /> },
         ],
       },
       { path: "*", Component: NotFound },
