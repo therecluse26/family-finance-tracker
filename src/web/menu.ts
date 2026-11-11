@@ -36,6 +36,7 @@ export const SETTINGS_SECTIONS: readonly MenuItem[] = [
   { label: "Store orders", path: "store-orders" },
   { label: "Alerts", path: "alerts" },
   { label: "AI", path: "ai" },
+  { label: "Price sources", path: "price-sources" },
   { label: "Backups and data", path: "backups-and-data" },
   { label: "About", path: "about" },
 ];

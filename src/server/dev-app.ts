@@ -12,6 +12,9 @@ import {
   hasMember,
   openDatabase,
 } from "../db/index.ts";
+import { FakePriceSource } from "../deal-finder/fake.ts";
+import { startFakePriceSourceServers } from "../deal-finder/fake-servers/index.ts";
+import { priceSourceReaders } from "../deal-finder/index.ts";
 import { scheduledTasks } from "../jobs/list.ts";
 import {
   checkDataKey,
@@ -44,6 +47,9 @@ export type DevEnv = {
   TRUSTED_PROXIES?: string;
   FFT_MASTER_KEY_FILE?: string;
   FFT_MASTER_KEY?: string;
+  // "fake-servers" runs the real Price source readers against the local fake Apify and Kroger
+  // servers. Without it, dev uses the in-memory fake Price source.
+  FFT_DEV_PRICE_SOURCE?: string;
 };
 
 // With no Master key set, `pnpm dev` uses .dev/master.key and makes it, with mode 0600, when it is
@@ -129,7 +135,7 @@ export const devScheduledTasks = scheduledTasks.filter(
 
 // The services `pnpm start` runs, with the same start-up steps: the bank module, the job runner and
 // its schedule, the follow-up work, and email. Dev adds the fake adapter beside Plaid's, with each
-// demo bank scripted, and its fake bank route. close() stops them, as Vite closes or before a
+// demo bank scripted, and its fake bank route, and the fake Price source. close() stops them, as Vite closes or before a
 // restart. Tests pass their own folder, and no scheduled tasks.
 export async function createDevApp(
   webRoot: string,
@@ -158,14 +164,31 @@ export async function createDevApp(
   });
   // A throw here, such as from a route that an edit broke, must not leave the services running:
   // the next restart could not start them again.
+  let priceSources: Awaited<ReturnType<typeof devPriceSources>> | undefined;
   try {
+    priceSources = await devPriceSources(env);
     const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
       ...services.routes,
+      // The deal finder reads only made-up Stores and prices in development.
+      priceSources: priceSources.adapter,
       devRoutes: devRoutes(services.database),
     });
-    return { app, close: () => services.close() };
+    const fakes = priceSources;
+    return { app, close: () => Promise.all([services.close(), fakes.close()]).then(() => {}) };
   } catch (error) {
-    await services.close();
+    await Promise.all([services.close(), priceSources?.close()]);
     throw error;
   }
+}
+
+// The deal finder's Price source in dev: the in-memory fake, or the real readers against the local
+// fake servers on 127.0.0.1. Neither reaches a real service.
+async function devPriceSources(env: DevEnv) {
+  if (env.FFT_DEV_PRICE_SOURCE !== "fake-servers") {
+    return { adapter: new FakePriceSource(), close: async () => {} };
+  }
+  const servers = await startFakePriceSourceServers();
+  servers.apify.acceptAnyKey = true;
+  servers.kroger.acceptAnyKey = true;
+  return { adapter: priceSourceReaders(servers.addresses), close: () => servers.close() };
 }

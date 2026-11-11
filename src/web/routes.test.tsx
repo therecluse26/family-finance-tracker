@@ -81,6 +81,7 @@ describe("the app shell", () => {
       "Store orders",
       "Alerts",
       "AI",
+      "Price sources",
       "Backups and data",
       "About",
     ]);

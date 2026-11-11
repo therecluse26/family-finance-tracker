@@ -34,6 +34,7 @@ import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { type Chat, chat } from "../chat/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
+import { type PriceSourceAdapter, priceSourceReaders } from "../deal-finder/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { type GoalWriting, goalWriting, startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
@@ -114,6 +115,8 @@ export type RouteServices = {
   chat: Chat;
   goalWriting: GoalWriting;
   aiWork: AiWork;
+  // The deal finder's Price source readers: the Kroger API and Apify, at their real addresses.
+  priceSources: PriceSourceAdapter;
 };
 
 // The app's running services, with nothing listening yet. The open database stays open until
@@ -407,6 +410,7 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
           goalWriting: goalWriting({ database, ai, requestGoalRun: requestGoalTailoring }),
           // "Finish AI work now", "Run AI on all history", and the status line of the AI's work.
           aiWork,
+          priceSources: priceSourceReaders(),
         },
         close: async (waitFor = []) => {
           try {

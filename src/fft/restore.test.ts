@@ -39,6 +39,7 @@ import {
   VAPID_KEYS_ROW,
 } from "../db/index.ts";
 import { readEveryTable } from "../db/testing.ts";
+import { priceSourceSettings } from "../deal-finder/index.ts";
 import { TEST_JOB_LIST } from "../jobs/testing.ts";
 import { createLogger } from "../log.ts";
 import { vapidKeysOf } from "../notify/index.ts";
@@ -75,6 +76,7 @@ const CHANGED_WITHOUT_KEY = [
   "plaid_settings",
   "ai_settings",
   "smtp_settings",
+  "deal_finder_settings",
   "push_devices",
   "push_sends",
   "vapid_keys",
@@ -186,9 +188,17 @@ describe("fft restore", { timeout: 30_000 }, () => {
     const alice = await addMember(test.auth, { name: "Alice", email: "alice@example.com" });
     const bob = await addMember(test.auth, { name: "Bob", email: "bob@example.com" });
     await markSetupStep(database, "master key", "done");
-    const made = Array.from({ length: 6 }, () => `made-up-${crypto.randomUUID()}`);
-    const [plaidSecret = "", aiKey = "", smtpPassword = "", token1 = "", token2 = "", token3 = ""] =
-      made;
+    const made = Array.from({ length: 7 }, () => `made-up-${crypto.randomUUID()}`);
+    const [
+      plaidSecret = "",
+      aiKey = "",
+      smtpPassword = "",
+      token1 = "",
+      token2 = "",
+      token3 = "",
+      apifyToken = "",
+    ] = made;
+    await priceSourceSettings({ database, secrets, logger: quiet }).saveApifyToken(apifyToken);
     await storePlaidKeys(database, {
       clientId: "client-id",
       secret: secrets.encrypt(plaidSecret, PLAID_SECRET_PLACE),
@@ -588,6 +598,7 @@ describe("fft restore", { timeout: 30_000 }, () => {
       expect(lost).toContain("the Plaid secret");
       expect(lost).toContain("the AI key");
       expect(lost).toContain("the SMTP password");
+      expect(lost).toContain("the Price source keys");
       expect(lost).toContain("Acme Bank, Bluebird Credit Union.");
       expect(lost).not.toContain("Old Savings Bank");
       expect(lost).toContain("Alerts on 1 device");
@@ -626,6 +637,9 @@ describe("fft restore", { timeout: 30_000 }, () => {
         },
       ]);
       expect(await readAiSettings(database)).toMatchObject({ chatModel: "writer-model" });
+      expect(tables.deal_finder_settings).toMatchObject([
+        { apify_token: null, apify_token_last4: null, kroger_client_secret: null, cost_cap: 500 },
+      ]);
       for (const table of [
         "smtp_settings",
         "push_devices",

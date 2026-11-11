@@ -12,6 +12,7 @@ import {
 } from "../bank/index.ts";
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
+import { type PriceSourceAdapter, priceSourceSettings } from "../deal-finder/index.ts";
 import type { GoalWriting } from "../goals/index.ts";
 import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
@@ -105,7 +106,7 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
 // the first-run wizard's required steps are done (spec 12):
 // until then, every route but a GET answers 409. They take only JSON bodies, so a form on another
 // site cannot post to them. An app made without the service answers 404.
-function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push">(
+function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push" | "priceSources">(
   database: Database,
   name: Name,
   service: ServerEnv["Variables"][Name] | undefined,
@@ -211,6 +212,9 @@ export function createApp(
     goalWriting?: GoalWriting;
     // AI work on your Transactions, under /api/ai/work. Without it, those routes answer 404.
     aiWork?: AiWork;
+    // The deal finder's Price source adapter. Without one, Test and Find Stores near us have no
+    // reader. The built app gives the real readers; `pnpm dev` gives the fake one.
+    priceSources?: PriceSourceAdapter;
     // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
     devRoutes?: Hono<ServerEnv>;
   } = {},
@@ -246,6 +250,12 @@ export function createApp(
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
   const amazon = amazonRoutes(database, security.logger);
+  const priceSources = priceSourceSettings({
+    database,
+    secrets,
+    logger: security.logger,
+    ...(services.priceSources === undefined ? {} : { adapter: services.priceSources }),
+  });
   const lineItemCategories = lineItemCategoryRoutes(database);
   const amazonLinks = amazonLinkRoutes(database);
   const members = memberRoutes(database, auth, security.appUrl);
@@ -329,6 +339,9 @@ export function createApp(
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .use("/api/smtp/*", secretRoutes(database, "smtp", services.smtp))
       .use("/api/push/*", secretRoutes(database, "push", services.push))
+      // The Price source keys are Master-key secrets too.
+      .use("/api/price-sources/*", secretRoutes(database, "priceSources", priceSources))
+      .use("/api/price-sources", secretRoutes(database, "priceSources", priceSources))
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .use("/api/weekly-summary", jsonOnly)

@@ -257,6 +257,27 @@ export {
 } from "./data-export.ts";
 export { readDataKeys, type StoredDataKey, storeDataKey } from "./data-keys.ts";
 export {
+  addPriceSourceCost,
+  addShoppingListItem,
+  changeDealFinderStore,
+  countDealFinderData,
+  DEAL_FINDER_SETTINGS_ROW,
+  type DealFinderDataCounts,
+  deleteDealFinderData,
+  deletePriceReadsBefore,
+  type FoundStoreRow,
+  listDealFinderStores,
+  type NewListItem,
+  readDealFinderSettings,
+  readPriceSourceCost,
+  type StoreChangeResult,
+  type StoredDealFinderSettings,
+  type StoredDealFinderStore,
+  storeDealFinderSettings,
+  storeFoundStores,
+  storePriceSourceCheck,
+} from "./deal-finder.ts";
+export {
   type CategoryConfidence,
   type CategoryRecord,
   type CategorySource,

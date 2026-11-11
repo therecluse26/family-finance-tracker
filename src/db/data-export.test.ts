@@ -58,6 +58,16 @@ describe("the data export's allowlist", () => {
     leftOut(schema.smtpSettings, "password");
     leftOut(schema.aiSettings, "apiKey");
     leftOut(schema.aiSettings, "gatewayToken");
+    for (const column of [
+      "apifyToken",
+      "apifyTokenLast4",
+      "krogerClientId",
+      "krogerClientIdLast4",
+      "krogerClientSecret",
+      "krogerClientSecretLast4",
+    ]) {
+      leftOut(schema.dealFinderSettings, column);
+    }
     leftOut(schema.aiSettings, "baseUrl");
     leftOut(schema.transactions, "raw");
     leftOut(schema.householdAccounts, "raw");

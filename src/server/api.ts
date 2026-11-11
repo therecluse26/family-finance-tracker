@@ -28,6 +28,7 @@ import type { ServerEnv } from "./env.ts";
 import { lineItemCategoryApi } from "./line-item-categories.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
+import { priceSourcesApi } from "./price-sources-api.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
 import type { RecurringChargeEditView } from "./recurring-views.ts";
 import { type SetupProgressView, type SetupRefusal, SKIPPABLE_SETUP_STEPS } from "./setup-views.ts";
@@ -1584,6 +1585,8 @@ export const api = new Hono<ServerEnv>()
   )
   // A Transaction's Amazon links: the shipments to link by hand, the hand link, and Undo.
   .route("/", amazonLinkApi)
+  // Settings, Price sources (spec 15): the deal finder's keys, Stores, and its data.
+  .route("/", priceSourcesApi)
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the
