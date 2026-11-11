@@ -12,6 +12,7 @@ import {
   hasMember,
   openDatabase,
 } from "../db/index.ts";
+import { FakePriceSource } from "../deal-finder/fake.ts";
 import { scheduledTasks } from "../jobs/list.ts";
 import {
   checkDataKey,
@@ -129,7 +130,7 @@ export const devScheduledTasks = scheduledTasks.filter(
 
 // The services `pnpm start` runs, with the same start-up steps: the bank module, the job runner and
 // its schedule, the follow-up work, and email. Dev adds the fake adapter beside Plaid's, with each
-// demo bank scripted, and its fake bank route. close() stops them, as Vite closes or before a
+// demo bank scripted, and its fake bank route, and the fake Price source. close() stops them, as Vite closes or before a
 // restart. Tests pass their own folder, and no scheduled tasks.
 export async function createDevApp(
   webRoot: string,
@@ -161,6 +162,8 @@ export async function createDevApp(
   try {
     const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
       ...services.routes,
+      // The deal finder reads only made-up Stores and prices in development.
+      priceSources: new FakePriceSource(),
       devRoutes: devRoutes(services.database),
     });
     return { app, close: () => services.close() };

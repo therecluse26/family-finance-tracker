@@ -28,6 +28,7 @@ import { DataSources } from "./pages/settings/DataSources.tsx";
 import { Household } from "./pages/settings/Household.tsx";
 import { Members } from "./pages/settings/Members.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
+import { PriceSources } from "./pages/settings/PriceSources.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
 import { StoreOrders } from "./pages/settings/StoreOrders.tsx";
 import { TopMerchants } from "./pages/TopMerchants.tsx";
@@ -45,6 +46,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   banks: Banks,
   categories: Categories,
   "store-orders": StoreOrders,
+  "price-sources": PriceSources,
   alerts: Alerts,
   "backups-and-data": BackupsAndData,
   ai: Ai,

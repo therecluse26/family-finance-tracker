@@ -93,6 +93,7 @@ Each outside dependency sits behind one module. No other module imports that dep
 | `secrets` | The Master key, encrypting and decrypting secrets | `node:crypto` for secrets |
 | `notify` | Alerts and System notices by push and email ([Anomalies and Alerts](06-anomalies-and-alerts.md)) | `web-push`, `nodemailer` |
 | `auth` | Better Auth and its plugins | `better-auth`, `@better-auth/passkey` |
+| `deal-finder` | The Price source adapter interface and its adapters ([Deal finder](15-deal-finder.md#price-sources)) | None yet |
 
 The `ai` module also follows these library rules:
 
