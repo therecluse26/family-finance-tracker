@@ -80,14 +80,14 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
 - A List item has: its words ("ground beef"), a quantity and a unit ("2 lb"), an optional brand lock ("only Jif"), and an optional note. The units are `each`, `oz`, `lb`, `fl oz`, `gal`, `ct` and `pack`.
 - **Dietary needs** are one Household setting on the Shopping list page, in plain words, such as "no peanuts, gluten-free". Every match checks them.
 - **By hand:** the Shopping list page adds, edits and removes List items, and ticks them off.
-- **In Chat:** the AI changes the Shopping list with one tool, `edit_shopping_list` ([Chat tools](#chat-tools)). The change applies at once and shows as a card in the thread, with **Undo** ([Open before build](#open-before-build)).
+- **In Chat:** the AI changes the Shopping list with one tool, `edit_shopping_list` ([Chat tools](#chat-tools)). The change applies at once and shows as a card in the thread, with **Undo** (owner decision, 2026-11-11).
 - A ticked List item stays on the list, struck through, until a Member presses **Clear ticked items**.
 - The Shopping list holds at most 100 List items.
 
 ## Matching List items to Products
 
 1. **Search words.** For each List item, the AI writes the search words once, such as "ground beef 80/20". Without AI, the search words are the List item's words.
-2. **Search.** The app searches each Store that is on with those words. It keeps up to 15 Products at Kroger, Walmart and Target, and up to 5 at Costco, Aldi, Amazon and the weekly ads ([Search once, then re-read](#search-once-then-re-read-owner-decision-2026-11-11)). Later plan runs re-read the match and do not search again.
+2. **Search.** The app searches each Store that is on with those words. It keeps up to 15 Products at Kroger, Walmart and Target, up to 10 at Costco and Aldi, and up to 5 at Amazon and the weekly ads ([Search once, then re-read](#search-once-then-re-read-owner-decision-2026-11-11)). Later plan runs re-read the match and do not search again.
 3. **Match.** The AI (Quick model) reads each List item with its Products: name, brand, size, and Open Food Facts ingredients and allergens when that source is on. For each Product it answers `match`, `substitute` or `no`. A substitute gets one line of reason, such as "Turkey instead of beef".
 4. **Dietary check.** A Product that fails the dietary needs is `no`. Every result that passed a dietary check shows: "AI can get things wrong. Check the label before you buy." (owner decision, 2026-11-07).
 5. **Member choice.** A Member can confirm or reject any match. The app remembers it for the same List item words, Store and Product, and does not ask the AI again.
@@ -182,24 +182,24 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
 - **Full search.** A List item's first plan run searches each Store that is on. Products kept per search (owner decision, 2026-11-11):
   - 15 at Kroger, Walmart and Target. They are free or charge per search, so more Products cost nothing.
   - 5 at Amazon and the weekly ads. In spike round 12, all of their top 5 Products were the right kind (15 of 15 each).
-  - 5 at Costco and Aldi, then one retry. When the AI finds no `match`, the app searches that Store again with 10 Products and other AI search words. Costco's search matches words in Product names, so its order is poor: its top 5 held 2 of 5 peanut butters and 0 of 5 eggs.
+  - 10 at Costco and Aldi, with no second search. Costco's search matches words in Product names, so its order is poor: its top 5 held 2 of 5 peanut butters and 0 of 5 eggs. 10 Products in one search is simpler than 5 with a retry (owner decision, 2026-11-11).
 - **Re-read.** Later plan runs read only each List item's saved `match`, by item number or Product link. Walmart and Target search again, because a search costs the same as a re-read. The weekly ads search again at 5 Deals per List item, because Deals change each week.
 - **Full search again** for a List item when its last full search is 30 days old or more, and when its saved `match` fails: the Store no longer has it, or it has no price.
 - **Cost shown first.** Before a plan run that holds a full search, the page shows its expected cost. The run starts only when a Member confirms it. A run with only re-reads starts at once.
-- **What it costs** for 30 List items with every Store on. The retry figures assume 1 in 5 List items needs a Costco or Aldi retry; real plan runs will show the true rate.
+- **What it costs** for 30 List items with every Store on, from the prices measured in spike round 12.
 
   | Store | Full search | Re-read | Re-read tested |
   |---|---|---|---|
   | Kroger, 15 Products | $0.00 | $0.00 | not needed (API) |
   | Walmart, 15 Products | $0.06 | $0.06 | not needed (searches again) |
   | Target, 15 Products | $0.01 | $0.01 | not needed (searches again) |
-  | Aldi, 5 Products, retry 10 | $0.78 | $0.07 | no; its docs say `startUrls` takes Product links |
-  | Costco, 5 Products, retry 10 | $1.05 | $0.15 | yes, spike round 13: `productIds`, same prices |
+  | Aldi, 10 Products | $0.90 | $0.07 | no; its docs say `startUrls` takes Product links |
+  | Costco, 10 Products | $1.50 | $0.15 | yes, spike round 13: `productIds`, same prices |
   | Amazon, 5 Products | $0.38 | $0.08 | yes, spike round 14: the ASIN as the search word, 1 Product, same prices. Product links return nothing |
   | Weekly ads, 5 Deals | $0.30 | $0.30 | not needed (searches again) |
-  | **Total** | **about $2.58** | **about $0.67** | |
+  | **Total** | **about $3.15** | **about $0.67** | |
 
-- **For one List item:** a full search costs about $0.09 and a re-read about $0.02. A month of weekly plans (one full search, 3 re-reads) costs about $0.15 for each List item. So $5.00 covers about 32 List items with every Store on. Each Store a Member leaves off lowers the cost.
+- **For one List item:** a full search costs about $0.10 and a re-read about $0.02. A month of weekly plans (one full search, 3 re-reads) costs about $0.17 for each List item. So $5.00 covers about 29 List items with every Store on. Each Store a Member leaves off lowers the cost.
 
 ## Failures
 
@@ -274,8 +274,8 @@ These need an owner decision or a short spike before tickets:
 
    With a, b and d, weekly plans cost about $4.05 in the first month ($2.10, then 3 × $0.65) and about $2.60 in each later month, plus searches for new List items. The $5.00 credit also covers any other Apify use that month.
 3. **Store location and filter tests.** Answered in spike round 14: a Costco warehouse can be picked from the 5 nearest; Walmart keeps the store its Actor picks; Amazon re-reads by ASIN; Kroger's brand filter is used, and the other two filters are not.
-4. **Chat edits the list at once, with Undo.** This differs from Proposals, which change nothing until a Member accepts. A Shopping list holds no money, so this spec lets the edit apply at once.
-5. **Defaults:** the $10.00 trip setting, the Products kept per search (15, or 5 with a retry of 10), the 30-day full search, and 400 days of price history.
+4. **Chat edits the list at once, with Undo.** Answered (owner decision, 2026-11-11): keep it. This differs from Proposals, which change nothing until a Member accepts. A Shopping list holds no money, so the edit applies at once.
+5. **Defaults.** Answered (owner decision, 2026-11-11): the trip setting starts at $10.00, and a Member can change it. Products kept per search are 15 at Kroger, Walmart and Target, 10 at Costco and Aldi, and 5 at Amazon and the weekly ads. A full search runs again after 30 days. Price history is kept for 400 days.
 
 ## Not in this version
 
