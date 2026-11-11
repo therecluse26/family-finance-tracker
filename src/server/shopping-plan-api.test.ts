@@ -347,6 +347,59 @@ describe("the Shopping plan routes", () => {
     expect(await tables()).toEqual({ plans: [], lines: [], deals: [] });
   });
 
+  it("ends a used Deal only in its own plan (K2)", async () => {
+    await buildPlan("plan-1");
+    expect((await take({ planId: "plan-1", place: 1, productId: "walmart-eggs" })).status).toBe(
+      200,
+    );
+    const before = await tables();
+    expect((await drop({ planId: "plan-other", place: 1 })).status).toBe(404);
+    expect(await tables()).toEqual(before);
+    expect(where(await view())).toContain("Walmart: eggs 299 deal");
+  });
+
+  it("shows the last plan that was built, not a newer one that failed or still runs (K2)", async () => {
+    await buildPlan("plan-1");
+    const later = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+    await sql(
+      `INSERT INTO shopping_plans (id, started_at, started_by, state, trip_saving, store_failures,
+         finished_at)
+       VALUES ('plan-failed', ?, ?, 'failed', 0, '[]', ?),
+              ('plan-running', ?, ?, 'running', 0, '[]', NULL)`,
+      [later(1), member.id, later(2), later(3), member.id],
+    );
+    expect((await view())?.planId).toBe("plan-1");
+    expect((await shoppingPlanForChat(test.database)).plan).not.toBe(null);
+    expect((await take({ planId: "plan-1", place: 1, productId: "walmart-eggs" })).status).toBe(
+      200,
+    );
+  });
+
+  it("offers no Deal for a List item ticked off after the plan was built (K2)", async () => {
+    await buildPlan("plan-1");
+    await sql("UPDATE shopping_list_items SET ticked = 1 WHERE id = 'eggs'");
+    const plan = await view();
+    expect(plan?.stores[0]?.lines[1]).toMatchObject({ words: "eggs", deals: [] });
+    expect(plan?.elsewhere.flatMap((store) => store.deals.map((deal) => deal.place))).not.toContain(
+      1,
+    );
+    const before = await tables();
+    expect((await take({ planId: "plan-1", place: 1, productId: "walmart-eggs" })).status).toBe(
+      409,
+    );
+    expect(await tables()).toEqual(before);
+  });
+
+  it("drops the used Deals when the same plan is built again", async () => {
+    await buildPlan("plan-1");
+    expect((await take({ planId: "plan-1", place: 1, productId: "walmart-eggs" })).status).toBe(
+      200,
+    );
+    expect(await buildStoredShoppingPlan(test.database, "plan-1")).toBe(true);
+    expect(await sql("SELECT * FROM shopping_plan_deals")).toEqual([]);
+    expect(where(await view())).toContain("Walmart: eggs 349 regular");
+  });
+
   it("gives Chat the last plan with its Stores, prices, Deals, total, trips and price dates", async () => {
     await buildPlan("plan-1");
     expect((await take({ planId: "plan-1", place: 1, productId: "walmart-eggs" })).status).toBe(

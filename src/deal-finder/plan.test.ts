@@ -439,6 +439,50 @@ describe("Deals", () => {
       expect.objectContaining({ storeId: "ad-fresh", saving: 301, paysForTrip: true }),
     ]);
   });
+
+  it("lets an extra trip pay only when it saves more than $X, not exactly $X", () => {
+    const input = scenario(stores, prices, 200);
+    const plan = buildShoppingPlan(input);
+    // C saves exactly $2.00 on milk.
+    expect(findDeals(input, plan.lines, "2026-11-15").elsewhere).toEqual([
+      expect.objectContaining({ storeId: "c", saving: 200, paysForTrip: false }),
+    ]);
+  });
+
+  it("lets a Deal at an in-person Store pay when the plan has no trip yet: it is the first trip", () => {
+    const input = scenario(
+      [store("amazon", { kind: "online" }), store("a")],
+      { milk1: { amazon: 500, a: { regular: 900, deal: 450 } } },
+      1000,
+    );
+    const plan = buildShoppingPlan(input);
+    expect(plan.trips).toBe(0);
+    expect(findDeals(input, plan.lines, "2026-11-10").elsewhere).toEqual([
+      expect.objectContaining({ storeId: "a", saving: 50, paysForTrip: true }),
+    ]);
+  });
+
+  it("charges no delivery fee at exactly the free-delivery amount", () => {
+    const input = scenario(
+      [store("a"), store("amazon", { kind: "online", deliveryFee: 599, freeDeliveryFrom: 900 })],
+      { milk1: { a: 1000, amazon: 900 } },
+      0,
+    );
+    const plan = buildShoppingPlan(input);
+    expect(plan.stores).toEqual([{ storeId: "amazon", subtotal: 900, deliveryFee: 0 }]);
+    expect(plan.total).toBe(900);
+  });
+
+  it("shows no Deal that only equals the plan price", () => {
+    const input = scenario(
+      [store("a"), store("b")],
+      { milk1: { a: 500, b: { regular: 900, deal: 500 } }, bread2: { b: 300, a: 900 } },
+      0,
+    );
+    const plan = buildShoppingPlan(input);
+    expect(placed(plan)).toEqual(["milk1 → a", "bread2 → b"]);
+    expect(findDeals(input, plan.lines, "2026-11-10").beside).toEqual([]);
+  });
 });
 
 describe("the plan's speed (K3)", () => {
