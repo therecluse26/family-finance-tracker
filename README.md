@@ -2,7 +2,7 @@
 
 A free, self-hosted, read-only finance tracker for one US Household. It pulls Transactions from the Household's banks, cards, and loans, separates real Spending from money that moves between the Household's own Accounts, and gives analysis and AI advice with no manual upkeep.
 
-v1 is being built. The rules are in the [v1 spec](docs/spec/README.md), the decisions in [docs/adr](docs/adr/), and the terms in [GLOSSARY.md](GLOSSARY.md).
+v1 adds Reports and an Amazon order file import to bank sync, Categories, Budgets, Alerts and AI advice. The rules are in the [v1 spec](docs/spec/README.md), the decisions in [docs/adr](docs/adr/), and the terms in [GLOSSARY.md](GLOSSARY.md).
 
 ## Quick start
 
