@@ -119,9 +119,13 @@ export type PriceSourceErrorKind = "refused key" | "usage limit" | "store failed
 export class PriceSourceError extends Error {
   override name = "PriceSourceError";
   readonly kind: PriceSourceErrorKind;
+  // What the failed run still charged, in billionths of a dollar, from the source's own run record.
+  // A Scraping service run that fails can charge. Undefined when it charged nothing or is not known.
+  readonly costNanos?: number;
 
-  constructor(kind: PriceSourceErrorKind, message: string) {
+  constructor(kind: PriceSourceErrorKind, message: string, costNanos?: number) {
     super(message);
     this.kind = kind;
+    if (costNanos !== undefined) this.costNanos = costNanos;
   }
 }

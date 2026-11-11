@@ -6,8 +6,8 @@ import {
   type Database,
   readDealFinderSettings,
   storeDealFinderSettings,
-  storeMatchAnswers,
   storeHouseholdFacts,
+  storeMatchAnswers,
 } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
@@ -24,6 +24,7 @@ import {
 } from "./match.ts";
 import { FakeProductData } from "./product-data.ts";
 import {
+  checkProduct,
   PLAN_RUN_STALE_MS,
   type PlanRunNotices,
   type PlanRuns,
@@ -711,6 +712,342 @@ describe("plan runs", () => {
       expect((await matches()).map((row) => row.answer)).toEqual(["match"]);
       expect(lines.filter((line) => line.includes("Product data lookups failed"))).toHaveLength(1);
     });
+  });
+
+  describe("costs", () => {
+    const monthCost = async () =>
+      Number((await sql("SELECT sum(cost_nanos) AS n FROM price_source_costs"))[0]?.n ?? 0);
+
+    it("counts what a failed run charged, then what its retry charged", async () => {
+      await addItem("ground beef");
+      await turnOn("walmart");
+      fake.failingTimes.set("walmart", 1);
+      fake.failedRunCostNanos = 7_000_000;
+
+      const view = await runPlan();
+
+      expect(storesOf(view)).toEqual({ walmart: ["read", null] });
+      expect(callsOf()).toEqual(["searchStoreMany walmart", "searchStoreMany walmart"]);
+      expect(await monthCost()).toBe(7_000_000 + 2_000_000);
+    });
+
+    it("counts each try of a Store that always fails, and the cost cap then stops the next run", async () => {
+      await addItem("ground beef");
+      await turnOn("walmart");
+      await priceSourceSettings({ database, secrets }).setCostCap(1);
+      fake.failingStores.add("walmart");
+      fake.failedRunCostNanos = 7_000_000;
+
+      const first = await runPlan();
+      expect(storesOf(first)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
+      expect(await monthCost()).toBe(14_000_000);
+
+      fake.calls.length = 0;
+      clock = new Date(START.getTime() + HOUR);
+      const next = await runPlan();
+      expect(storesOf(next)).toEqual({ walmart: ["skipped", COST_CAP_REACHED] });
+      expect(fake.calls).toEqual([]);
+      expect(await monthCost()).toBe(14_000_000);
+    });
+
+    it("keeps the Store failures of a run that fails after its reads", async () => {
+      await addItem("ground beef");
+      await turnOn("kroger", "walmart");
+      fake.failingStores.add("walmart");
+      const failing = makeRuns(fake, {
+        buildPlan: async () => {
+          throw new Error("a made-up failure");
+        },
+      });
+
+      let answer = await failing.start(null);
+      if (answer.outcome === "confirm") answer = await failing.start(null, answer.cost.costNanos);
+      await failing.run(started[0] as string);
+
+      expect(await sql("SELECT state, store_failures FROM shopping_plans")).toEqual([
+        {
+          state: "failed",
+          store_failures: JSON.stringify([{ storeId: "walmart", reason: COULD_NOT_READ }]),
+        },
+      ]);
+    });
+  });
+
+  describe("a failed match", () => {
+    it("forgets a match the Store no longer has, and searches its List item again next run (K2)", async () => {
+      const beef = await addItem("ground beef");
+      await turnOn("kroger");
+      await runPlan();
+      const [kroger] = await sql("SELECT id FROM deal_finder_products");
+      await rememberMatchChoice(database, {
+        listItemId: beef,
+        productId: String(kroger?.id),
+        choice: "confirmed",
+        memberId: null,
+      });
+      // Another Store's match with the same read key, and its search: neither is Kroger's.
+      await sql(
+        `INSERT INTO deal_finder_products (id, store_id, read_key, name, added_at)
+         VALUES ('product-other', 'walmart', '0001111000101', 'Made-up Ground Beef', ?)`,
+        [START.toISOString()],
+      );
+      await sql(
+        `INSERT INTO product_matches (list_item_id, product_id, store_id, answer, read_key,
+           last_full_search_at, matched_at)
+         VALUES (?, 'product-other', 'walmart', 'match', '0001111000101', ?, ?)`,
+        [beef, START.toISOString(), START.toISOString()],
+      );
+      await sql(
+        "INSERT INTO list_item_searches (list_item_id, store_id, searched_at) VALUES (?, 'walmart', ?)",
+        [beef, START.toISOString()],
+      );
+      runs = makeRuns(wrapped({ readProduct: async () => ({ value: null, costNanos: null }) }));
+      fake.calls.length = 0;
+
+      clock = new Date(START.getTime() + 25 * HOUR);
+      await runPlan();
+
+      expect(await matches()).toEqual([
+        { item: beef, store: "walmart", readKey: "0001111000101", answer: "match" },
+      ]);
+      expect(
+        await sql("SELECT list_item_id AS item, store_id AS store FROM list_item_searches"),
+      ).toEqual([{ item: beef, store: "walmart" }]);
+
+      runs = makeRuns();
+      clock = new Date(START.getTime() + 26 * HOUR);
+      await runPlan();
+      expect(callsOf()).toEqual(["searchStoreMany kroger"]);
+      // Found again, it takes the Member's remembered choice.
+      expect((await matches()).map((row) => [row.store, row.answer])).toEqual([
+        ["kroger", "match"],
+        ["walmart", "match"],
+      ]);
+    });
+
+    it("forgets a match the Store gives no price for", async () => {
+      const beef = await addItem("ground beef");
+      await turnOn("kroger");
+      await runPlan();
+      const [kroger] = await sql("SELECT id FROM deal_finder_products");
+      await rememberMatchChoice(database, {
+        listItemId: beef,
+        productId: String(kroger?.id),
+        choice: "confirmed",
+        memberId: null,
+      });
+      runs = makeRuns(
+        wrapped({
+          readProduct: async (input) => {
+            const read = await fake.readProduct(input);
+            const product = read.value === null ? null : { ...read.value, regularPrice: null };
+            return { value: product && { ...product, dealPrice: null }, costNanos: null };
+          },
+        }),
+      );
+
+      clock = new Date(START.getTime() + 25 * HOUR);
+      await runPlan();
+
+      expect(await matches()).toEqual([]);
+      expect(await sql("SELECT * FROM list_item_searches")).toEqual([]);
+    });
+  });
+
+  describe("the weekly ads", () => {
+    it("reads 5 Deals for each List item at weekly-ad-only Stores, and searches again a day later", async () => {
+      const beef = await addItem("ground beef");
+      const butter = await addItem("peanut butter");
+      await turnOn("ad-hilltop-market");
+
+      const asked = await runs.start(null);
+      expect(asked).toEqual({
+        outcome: "confirm",
+        cost: { fullSearch: true, costNanos: 20_000_000, monthCostNanos: 0, capCents: 500 },
+      });
+      const view = await runPlan();
+
+      expect(storesOf(view)).toEqual({ "ad-hilltop-market": ["read", null] });
+      expect(callsOf()).toEqual([`readWeeklyAds ${ZIP_CODE}`]);
+      expect(await matches()).toEqual([
+        {
+          item: beef,
+          store: "ad-hilltop-market",
+          readKey: "ad:2026-11-17:Hilltop Ground Beef, per lb",
+          answer: "unchecked",
+        },
+      ]);
+      expect(
+        await sql(
+          `SELECT r.regular_price, r.deal_price, r.deal_ends_on FROM deal_finder_price_reads r`,
+        ),
+      ).toEqual([{ regular_price: null, deal_price: 399, deal_ends_on: "2026-11-17" }]);
+      expect(
+        (await sql("SELECT list_item_id FROM list_item_searches ORDER BY list_item_id")).map(
+          (row) => row.list_item_id,
+        ),
+      ).toEqual([beef, butter]);
+
+      // Within a day, it keeps its Deals, with no cost to confirm.
+      fake.calls.length = 0;
+      clock = new Date(START.getTime() + 23 * HOUR);
+      expect((await runs.start(null)).outcome).toBe("started");
+      await runs.run(started.at(-1) as string);
+      expect(storesOf((await runs.view()) as PlanRunView)).toEqual({
+        "ad-hilltop-market": ["stored prices", null],
+      });
+      expect(fake.calls).toEqual([]);
+
+      // A day on, it searches again, still with no cost to confirm.
+      clock = new Date(START.getTime() + 25 * HOUR);
+      expect((await runs.start(null)).outcome).toBe("started");
+      await runs.run(started.at(-1) as string);
+      expect(callsOf()).toEqual([`readWeeklyAds ${ZIP_CODE}`]);
+    });
+
+    it("keeps at most 5 Deals for a List item", async () => {
+      await addItem("ground beef");
+      await turnOn("ad-hilltop-market");
+      runs = makeRuns(
+        wrapped({
+          readWeeklyAds: async () => ({
+            value: Array.from({ length: 8 }, (_, n) => ({
+              storeId: "ad-hilltop-market",
+              name: `Made-up Ground Beef ${n}, per lb`,
+              dealPrice: 300 + n,
+              regularPrice: null,
+              validFrom: "2026-11-11",
+              validTo: "2026-11-17",
+            })),
+            costNanos: null,
+          }),
+        }),
+      );
+
+      await runPlan();
+
+      expect(await matches()).toHaveLength(5);
+    });
+
+    it("skips the weekly ads while the ZIP code switch is off", async () => {
+      await addItem("ground beef");
+      await turnOn("ad-hilltop-market");
+      await storeDealFinderSettings(database, { useZip: false });
+
+      expect((await runs.start(null)).outcome).toBe("started");
+      await runs.run(started[0] as string);
+
+      expect(storesOf((await runs.view()) as PlanRunView)).toEqual({
+        "ad-hilltop-market": ["skipped", "Needs your ZIP code"],
+      });
+      expect(fake.calls).toEqual([]);
+    });
+  });
+
+  describe("Products per search", () => {
+    it("asks for and keeps 15 at Kroger, Walmart and Target, 10 at Costco and Aldi, and 5 at Amazon", async () => {
+      await addItem("ground beef");
+      await turnOn("kroger", "walmart", "target", "costco", "aldi", "amazon");
+      const asked: Record<string, number> = {};
+      runs = makeRuns(
+        wrapped({
+          searchStoreMany: async (input) => {
+            asked[input.storeId] = input.searches[0]?.productCount ?? 0;
+            return {
+              value: input.searches.map((search) =>
+                Array.from({ length: 20 }, (_, k) => ({
+                  readKey: `${input.storeId}-${k}`,
+                  name: `Made-up ${search.words} ${k}, 1 lb`,
+                  brand: null,
+                  size: "1 lb",
+                  upc: null,
+                  link: null,
+                  regularPrice: 500 + k,
+                  dealPrice: null,
+                  dealEndsOn: null,
+                  onlinePrice: null,
+                })),
+              ),
+              costNanos: null,
+            };
+          },
+        }),
+      );
+
+      await runPlan();
+
+      const counts = { kroger: 15, walmart: 15, target: 15, costco: 10, aldi: 10, amazon: 5 };
+      expect(asked).toEqual(counts);
+      const kept = await sql(
+        "SELECT store_id, count(*) AS n FROM product_matches GROUP BY store_id",
+      );
+      expect(Object.fromEntries(kept.map((row) => [row.store_id, Number(row.n)]))).toEqual(counts);
+    });
+  });
+
+  describe("the checks on every price", () => {
+    const base: ProductRead = {
+      readKey: "made-up-1",
+      name: "Made-up Peanut Butter, 16 oz",
+      brand: "Made-up",
+      size: "16 oz",
+      upc: "012345678905",
+      link: "https://www.example.com/p/1",
+      regularPrice: 299,
+      dealPrice: null,
+      dealEndsOn: null,
+      onlinePrice: null,
+    };
+
+    it("keeps a Product with whole cents in range", () => {
+      expect(checkProduct(base)).toMatchObject({ readKey: "made-up-1", regularPrice: 299 });
+      expect(checkProduct({ ...base, regularPrice: 1 })).toMatchObject({ regularPrice: 1 });
+      expect(checkProduct({ ...base, regularPrice: 999_999 })).toMatchObject({
+        regularPrice: 999_999,
+      });
+    });
+
+    it.each([
+      ["a price of $0.00", { regularPrice: 0 }],
+      ["a price of $10,000.00", { regularPrice: 1_000_000 }],
+      ["a price that is not whole cents", { regularPrice: 1.5 }],
+      ["a price below zero", { regularPrice: -299 }],
+      ["a bad Deal price", { dealPrice: 0 }],
+      ["no price at all", { regularPrice: null, dealPrice: null, onlinePrice: null }],
+      ["no name", { name: "   " }],
+      ["no read key", { readKey: " " }],
+    ] as [string, Partial<ProductRead>][])("drops a Product with %s", (_, change) => {
+      expect(checkProduct({ ...base, ...change })).toBeUndefined();
+    });
+
+    it("cuts text to 200 characters, and drops a date that is not real, a bad barcode and a long link", () => {
+      const checked = checkProduct({
+        ...base,
+        name: `Made-up ${"x".repeat(300)}`,
+        brand: "y".repeat(250),
+        dealPrice: 249,
+        dealEndsOn: "2026-02-30",
+        upc: "12-34",
+        link: `https://www.example.com/${"z".repeat(250)}`,
+      });
+
+      expect(checked?.name).toHaveLength(200);
+      expect(checked?.brand).toHaveLength(200);
+      expect(checked).toMatchObject({ dealEndsOn: null, upc: null, link: null, dealPrice: 249 });
+      expect(checkProduct({ ...base, dealEndsOn: "2026-11-18" })?.dealEndsOn).toBe("2026-11-18");
+    });
+  });
+
+  it("removes every List item search with Delete all deal finder data, and keeps the Shopping list", async () => {
+    await addItem("ground beef");
+    await turnOn("kroger");
+    await runPlan();
+    expect(await sql("SELECT * FROM list_item_searches")).toHaveLength(1);
+
+    await priceSourceSettings({ database, secrets }).deleteAll();
+
+    expect(await sql("SELECT * FROM list_item_searches")).toEqual([]);
+    expect(await sql("SELECT * FROM shopping_list_items")).toHaveLength(1);
   });
 
   it("reads 100 List items at 12 Stores of 15 Products each in a few seconds (K3)", async () => {

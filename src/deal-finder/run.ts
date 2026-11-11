@@ -268,6 +268,9 @@ function adFor(item: PlanRunListItem, adName: string): boolean {
   return words.length > 0 && words.every((word) => name.has(word) || name.has(`${word}s`));
 }
 
+// The most barcodes' facts the app keeps between plan runs.
+const FACTS_KEPT = 5_000;
+
 // A System notice: the notify module's, unless a test gives its own.
 export type PlanRunNotices = {
   raise(notice: NewNotice): Promise<unknown>;
@@ -333,6 +336,9 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
   // The month's cost each Store read in flight reserved, in billionths of a dollar. Each read takes
   // its place in the same synchronous step as its check against the cap (K18).
   let reserved = 0;
+  // The cost this process added to the month, so far. A task that read the month's cost counts
+  // what was added after its read too, so a cost added while it waited is never missed.
+  let added = 0;
   // Each barcode's Open Food Facts facts, kept while the app runs.
   const facts = new Map<string, ProductFacts | null>();
 
@@ -531,8 +537,17 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       await runOnce(planId);
     } catch (error) {
       logger.error("A plan run failed", { error: error instanceof Error ? error.name : "unknown" });
+      // The Store failures found before the run failed still show.
+      const storeFailures =
+        progress?.planId === planId
+          ? [...progress.stores.values()].flatMap((store) =>
+              (store.state === "skipped" || store.state === "failed") && store.reason !== null
+                ? [{ storeId: store.storeId, reason: store.reason }]
+                : [],
+            )
+          : [];
       try {
-        await finishPlanRun(database, planId, { state: "failed", at: now(), storeFailures: [] });
+        await finishPlanRun(database, planId, { state: "failed", at: now(), storeFailures });
       } catch (ending) {
         logger.error("A failed plan run could not be ended", {
           error: ending instanceof Error ? ending.name : "unknown",
@@ -652,7 +667,8 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       // one synchronous step (K18). The Store API is free.
       let place = 0;
       if (task.source === "apify" && task.cost > 0) {
-        const spent = await readPriceSourceCost(database, month);
+        const addedBefore = added;
+        const spent = (await readPriceSourceCost(database, month)) + (added - addedBefore);
         if (spent + reserved + task.cost > settings.costCap * 10_000_000) {
           for (const id of task.storeIds) end(id, { state: "skipped", reason: COST_CAP_REACHED });
           return;
@@ -683,19 +699,25 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       }
     };
 
+    // A run's cost counts toward the month as soon as it is known.
+    const count = async (costNanos: number | null | undefined) => {
+      if (costNanos === null || costNanos === undefined || !(costNanos > 0)) return;
+      await addPriceSourceCost(database, month, costNanos);
+      added += costNanos;
+    };
+
     // Each adapter call with one retry for the Store in this run. A refused key or a usage limit
-    // is not retried. Each run's cost counts toward the month as it returns.
+    // is not retried. A failed run's cost counts too, before the retry or the end.
     const withRetry =
       <T>(retries: { left: number }) =>
       async (call: () => Promise<{ value: T; costNanos: number | null }>): Promise<T> => {
         for (;;) {
           try {
             const result = await call();
-            if (result.costNanos !== null && result.costNanos > 0) {
-              await addPriceSourceCost(database, month, result.costNanos);
-            }
+            await count(result.costNanos);
             return result.value;
           } catch (error) {
+            if (error instanceof PriceSourceError) await count(error.costNanos);
             const kind = error instanceof PriceSourceError ? error.kind : "store failed";
             if (kind !== "store failed" || retries.left === 0) throw error;
             retries.left -= 1;
@@ -851,6 +873,8 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
     if (unchecked.length > 0) {
       const fresh = await readDealFinderSettings(database);
       if (fresh.openFoodFacts && options.productData !== undefined) {
+        // The cache holds at most a few runs of lookups.
+        if (facts.size > FACTS_KEPT) facts.clear();
         const barcodes = unchecked.flatMap((row) => (row.upc === null ? [] : [row.upc]));
         await lookUpFacts(options.productData, barcodes, facts, logger);
       }

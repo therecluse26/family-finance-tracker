@@ -192,6 +192,10 @@ export class FakePriceSource implements PriceSourceAdapter {
   readonly sourceErrors = new Map<"apify" | "kroger", PriceSourceErrorKind>();
   // Every call for this Store fails.
   readonly failingStores = new Set<string>();
+  // The next this many calls for this Store fail, then they work again.
+  readonly failingTimes = new Map<string, number>();
+  // What each failed Store call charged, in billionths of a dollar.
+  failedRunCostNanos: number | undefined;
   // While set, every call waits for it, so a test can hold calls in flight.
   hold: Promise<void> | undefined;
 
@@ -212,8 +216,11 @@ export class FakePriceSource implements PriceSourceAdapter {
 
   private failForStore(storeId: string, keys: PriceSourceKeys): void {
     this.failFor(storeId === "kroger" ? "kroger" : "apify", keys);
-    if (this.failingStores.has(storeId)) {
-      throw new PriceSourceError("store failed", `The fake ${storeId} failed.`);
+    const times = this.failingTimes.get(storeId) ?? 0;
+    if (times > 0) this.failingTimes.set(storeId, times - 1);
+    if (this.failingStores.has(storeId) || times > 0) {
+      const message = `The fake ${storeId} failed.`;
+      throw new PriceSourceError("store failed", message, this.failedRunCostNanos);
     }
   }
 
