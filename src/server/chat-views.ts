@@ -1,5 +1,6 @@
 // What the Chat routes answer (spec 08, Chat; spec 07, Chat page). This file imports only other
 // view files, so the web app's type check can follow it through api.ts.
+import type { ShoppingListChangeCardView } from "../deal-finder/shopping-list-view.ts";
 import type { ProposalView } from "./proposals-views.ts";
 
 // Whether Chat can answer now, or why not. "send anyway?" is the AI cost cap: Chat asks before
@@ -51,6 +52,8 @@ export type ChatThreadView = {
   firstSent: string | null;
   answering: boolean;
   proposals: ChatProposalView[];
+  // The Shopping list changes the thread's AI made, each with Undo until a Member presses it.
+  shoppingListChanges: ShoppingListChangeCardView[];
   // The signed-in Member's name, which the page shows above a new question while it is answered.
   you: string;
 };

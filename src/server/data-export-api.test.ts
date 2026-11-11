@@ -21,6 +21,7 @@ import {
   storeSmtpSettings,
   VAPID_KEYS_ROW,
 } from "../db/index.ts";
+import { shoppingList } from "../deal-finder/index.ts";
 import { runFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { startMoneyMovement } from "../money-movement/index.ts";
@@ -612,6 +613,62 @@ describe("Download my data", () => {
       (await rows("SELECT description FROM transactions LIMIT 1"))[0]?.description,
     );
     expect(lines.join("\n")).not.toContain(description);
+  });
+
+  it("writes shopping-list.csv while the Shopping list has a List item, one row each in its place", async () => {
+    const list = shoppingList({ database: test.database });
+    await list.add(alice.id, { words: "=eggs, large", quantity: 1.5, unit: "ct", note: "brown" });
+    const added = await list.add(bob.id, {
+      words: "peanut butter",
+      quantity: 2,
+      unit: "each",
+      brandLock: "Jif",
+    });
+    const ids = "view" in added ? added.view.items.map((item) => item.id) : [];
+    await list.change(ids[1] ?? "", { ticked: true });
+
+    try {
+      const files = await exported();
+      expect([...files.keys()]).toEqual([...FILES.slice(0, -1), "shopping-list.csv", "data.json"]);
+      const { header, rows: listed } = readCsv(textOf(files, "shopping-list.csv"));
+      expect(header).toEqual([
+        "id",
+        "words",
+        "quantity",
+        "unit",
+        "brand_lock",
+        "note",
+        "ticked",
+        "added_on",
+        "added_by",
+      ]);
+      expect(listed).toEqual([
+        {
+          id: ids[0],
+          words: "'=eggs, large",
+          quantity: "1.5",
+          unit: "ct",
+          brand_lock: "",
+          note: "brown",
+          ticked: "false",
+          added_on: expect.stringMatching(DATE),
+          added_by: "Alice",
+        },
+        {
+          id: ids[1],
+          words: "peanut butter",
+          quantity: "2",
+          unit: "each",
+          brand_lock: "Jif",
+          note: "",
+          ticked: "true",
+          added_on: expect.stringMatching(DATE),
+          added_by: "Bob",
+        },
+      ]);
+    } finally {
+      for (const id of ids) await list.remove(id);
+    }
   });
 
   describe("the route", () => {

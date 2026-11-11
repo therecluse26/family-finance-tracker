@@ -741,6 +741,23 @@ export {
   skipSetupStep,
 } from "./setup-steps.ts";
 export {
+  applyShoppingListEdit,
+  changeShoppingListItem,
+  clearTickedListItems,
+  type ListItemChanges,
+  type ListItemFields,
+  type ListItemUnit,
+  listShoppingListChanges,
+  listShoppingListItems,
+  removeShoppingListItem,
+  type ShoppingListEditResult,
+  type ShoppingListOp,
+  type ShoppingListUndoResult,
+  type StoredListItem,
+  type StoredShoppingListChange,
+  undoShoppingListChange,
+} from "./shopping-list.ts";
+export {
   addSignInTries,
   countSignInTries,
   removeSignInTries,

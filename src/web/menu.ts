@@ -21,6 +21,7 @@ export const MORE_MENU: readonly MenuItem[] = [
   { label: "Alert list", path: "/alert-list" },
   { label: "Recurring charges", path: "/recurring-charges" },
   { label: "Top Merchants", path: "/top-merchants" },
+  { label: "Shopping list", path: "/shopping-list" },
 ];
 
 // At phone width the menu folds to a bar of these tabs and "More", which opens the whole menu.
