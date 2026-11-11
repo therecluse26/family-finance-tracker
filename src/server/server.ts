@@ -4,6 +4,7 @@ import type { Auth } from "../auth/index.ts";
 import type { PlaidSettings } from "../bank/index.ts";
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
+import type { PriceSourceAdapter } from "../deal-finder/index.ts";
 import type { GoalWriting } from "../goals/index.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
@@ -31,6 +32,7 @@ export function startServer(options: {
   chat?: Chat;
   goalWriting?: GoalWriting;
   aiWork?: AiWork;
+  priceSources?: PriceSourceAdapter;
 }): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const server = serve(
@@ -49,6 +51,7 @@ export function startServer(options: {
             ...(options.chat === undefined ? {} : { chat: options.chat }),
             ...(options.goalWriting === undefined ? {} : { goalWriting: options.goalWriting }),
             ...(options.aiWork === undefined ? {} : { aiWork: options.aiWork }),
+            ...(options.priceSources === undefined ? {} : { priceSources: options.priceSources }),
           },
         ).fetch,
         port: options.port,

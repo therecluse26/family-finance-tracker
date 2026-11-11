@@ -10,5 +10,6 @@ export type {
   WeeklyAdItem,
 } from "./adapter.ts";
 export { PriceSourceError } from "./adapter.ts";
+export { type PriceSourceReaderOptions, priceSourceReaders } from "./readers/index.ts";
 export { priceSourceSettings, readPriceSourceKeys } from "./settings.ts";
 export * from "./view.ts";

@@ -65,8 +65,10 @@ export type PriceSourceAdapter = {
     distanceMiles: FindStoresMiles;
     keys: PriceSourceKeys;
   }): Promise<Costed<FoundStore[]>>;
-  // Searches one Store for words, in the Store's own best-match order, and keeps up to
-  // `productCount` Products.
+  // Searches one Store for words, in the Store's own best-match order, never a price sort, and keeps
+  // up to `productCount` Products. A brand lock goes into the words at every Store, and into the
+  // Store's own brand filter where it has one. `dealsOnly` asks for on-sale Products only, where the
+  // Store's reader has such a filter (spec 15, Search order and filters).
   searchStore(input: {
     storeId: string;
     homeStoreId: string | null;
@@ -74,6 +76,8 @@ export type PriceSourceAdapter = {
     words: string;
     productCount: number;
     keys: PriceSourceKeys;
+    brand?: string | null;
+    dealsOnly?: boolean;
   }): Promise<Costed<ProductRead[]>>;
   // Reads one Product by its re-read key. Null when the Store no longer has it.
   readProduct(input: {
@@ -92,9 +96,10 @@ export type PriceSourceAdapter = {
   }): Promise<Costed<WeeklyAdItem[]>>;
 };
 
-// Each error a Price source maps to: the source refused the key, its usage limit was reached, or
-// the Store failed, for any other reason.
-export type PriceSourceErrorKind = "refused key" | "usage limit" | "store failed";
+// Each error a Price source maps to: the source refused the key, its usage limit was reached, the
+// source or Store took too long, or the Store failed, for any other reason, such as a failed Actor
+// run.
+export type PriceSourceErrorKind = "refused key" | "usage limit" | "timed out" | "store failed";
 
 export class PriceSourceError extends Error {
   override name = "PriceSourceError";

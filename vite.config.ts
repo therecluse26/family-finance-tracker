@@ -39,6 +39,7 @@ function devEnv(): DevEnv {
       TRUSTED_PROXIES: process.env.TRUSTED_PROXIES,
       FFT_MASTER_KEY_FILE: process.env.FFT_MASTER_KEY_FILE,
       FFT_MASTER_KEY: process.env.FFT_MASTER_KEY,
+      FFT_DEV_PRICE_SOURCE: process.env.FFT_DEV_PRICE_SOURCE,
     };
     delete process.env.FFT_MASTER_KEY;
   }

@@ -213,7 +213,7 @@ export function createApp(
     // AI work on your Transactions, under /api/ai/work. Without it, those routes answer 404.
     aiWork?: AiWork;
     // The deal finder's Price source adapter. Without one, Test and Find Stores near us have no
-    // reader: no real reader is built yet, and `pnpm dev` gives the fake one.
+    // reader. The built app gives the real readers; `pnpm dev` gives the fake one.
     priceSources?: PriceSourceAdapter;
     // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
     devRoutes?: Hono<ServerEnv>;
