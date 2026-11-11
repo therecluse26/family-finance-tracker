@@ -1,4 +1,3 @@
-import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listShoppingListItems } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
@@ -25,6 +24,9 @@ const LATER = new Date("2026-11-11T16:00:00.000Z");
 let test: TestDatabase;
 let list: ShoppingList;
 let clock: Date;
+
+// One SQL statement on the test database, for a write no route makes.
+const run = (sql: string, ...args: string[]) => test.database.$client.execute({ sql, args });
 
 beforeEach(async () => {
   test = await newTestDatabase();
@@ -166,10 +168,11 @@ describe("the Shopping list page's writes", () => {
   it("clears the AI's search words when the words or the brand lock change, and keeps them otherwise", async () => {
     const beef = await added(BEEF);
     const searched = () =>
-      test.database
-        .update(schema.shoppingListItems)
-        .set({ searchWords: "ground beef 80/20" })
-        .where(eq(schema.shoppingListItems.id, beef));
+      run(
+        "UPDATE shopping_list_items SET search_words = ? WHERE id = ?",
+        "ground beef 80/20",
+        beef,
+      );
     const searchWords = async () => (await rows())[0]?.searchWords;
 
     await searched();
@@ -256,10 +259,7 @@ describe("Chat's edit_shopping_list and Undo", () => {
       brandLock: "Jif",
     });
     await list.change(jif, { ticked: true });
-    await test.database
-      .update(schema.shoppingListItems)
-      .set({ searchWords: "eggs large" })
-      .where(eq(schema.shoppingListItems.id, eggs));
+    await run("UPDATE shopping_list_items SET search_words = ? WHERE id = ?", "eggs large", eggs);
     const original = await rows();
 
     clock = LATER;
@@ -466,8 +466,8 @@ describe("Chat's edit_shopping_list and Undo", () => {
     await list.undo(first?.id ?? "", "ravi");
     await edited([{ action: "add", ...BEEF }]);
 
-    await test.database.delete(schema.members).where(eq(schema.members.id, "dana"));
-    await test.database.delete(schema.members).where(eq(schema.members.id, "ravi"));
+    await run("DELETE FROM members WHERE id = ?", "dana");
+    await run("DELETE FROM members WHERE id = ?", "ravi");
     expect(
       await test.database
         .select({
@@ -481,7 +481,7 @@ describe("Chat's edit_shopping_list and Undo", () => {
       { madeBy: null, undoneBy: null },
     ]);
 
-    await test.database.delete(schema.chatThreads).where(eq(schema.chatThreads.id, "thread-1"));
+    await run("DELETE FROM chat_threads WHERE id = ?", "thread-1");
     expect(await shoppingListCards(test.database, "thread-1")).toEqual([]);
     expect(await shoppingListCards(test.database, "thread-2")).toHaveLength(1);
     expect((await rows()).map((item) => [item.words, item.addedBy])).toEqual([
