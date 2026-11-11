@@ -454,15 +454,13 @@ describe("Chat's edit_shopping_list and Undo", () => {
 
   // A third Member, so the app's own removal may take Dana and Ravi (it never takes the last one).
   const addKeeper = () =>
-    test.database
-      .insert(schema.members)
-      .values({
-        id: "kim",
-        name: "Kim Alder",
-        email: "kim@example.com",
-        createdAt: AT,
-        updatedAt: AT,
-      });
+    test.database.insert(schema.members).values({
+      id: "kim",
+      name: "Kim Alder",
+      email: "kim@example.com",
+      createdAt: AT,
+      updatedAt: AT,
+    });
 
   it("puts back an AI-removed List item with no adder once the Member who added it is removed", async () => {
     const beef = await added(BEEF, "ravi");
