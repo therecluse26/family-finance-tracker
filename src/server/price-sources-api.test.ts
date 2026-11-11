@@ -603,6 +603,23 @@ describe("the Price sources routes", () => {
       expect((await put("/api/price-sources/stores/kroger", { on: true })).status).toBe(409);
     });
 
+    it("lists a Store ticked with the switch off once the switch is on, before any lookup, and turns it off", async () => {
+      await ok(await put("/api/price-sources/stores/walmart", { on: true }));
+      await ok(await put("/api/price-sources/zip", { on: true }));
+
+      const on = await view();
+      expect(on.storesFoundAt).toBeNull();
+      expect(on.stores.map((store) => [store.id, store.on])).toEqual([["walmart", true]]);
+
+      const off = await ok(await put("/api/price-sources/stores/walmart", { on: false }));
+
+      expect(off.priceSources.stores).toEqual([]);
+      expect(await sql(`SELECT "on" FROM deal_finder_stores WHERE id = 'walmart'`)).toEqual([
+        { on: 0 },
+      ]);
+      expect(fake.calls).toEqual([]);
+    });
+
     it("keeps a Store ticked with the switch off when the Stores are found later", async () => {
       await ok(await put("/api/price-sources/stores/walmart", { on: true }));
 

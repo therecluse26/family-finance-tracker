@@ -221,7 +221,8 @@ export async function changeDealFinderStore(
     const useZip = settings?.useZip === true;
     const withoutZip = useZip ? undefined : rules.withoutZip;
     const [saved] = await tx.select().from(dealFinderStores).where(eq(dealFinderStores.id, id));
-    const listed = saved?.nearby === true || withoutZip !== undefined;
+    // A Store still on is listed, so it can always be turned off.
+    const listed = saved?.nearby === true || saved?.on === true || withoutZip !== undefined;
     const store = listed ? (saved ?? withoutZip) : undefined;
     if (store === undefined) return "no store";
     if (!useZip && changes.homeStoreId !== undefined) return "needs zip";

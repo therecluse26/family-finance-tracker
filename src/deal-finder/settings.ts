@@ -135,11 +135,12 @@ const UNSAVED_STORE = {
   lastGoodReadAt: null,
 } as const;
 
-// The listed Stores. With the switch on, the ones Find Stores near us found. With it off, every
+// The listed Stores. With the switch on, the ones Find Stores near us found, and any Store still on
+// (ticked with the switch off, before a lookup), so it can be seen and turned off. With it off, every
 // supported Store, saved or not, and any weekly ad found earlier, which shows that it needs the ZIP
 // code.
 function listedStores(saved: StoredDealFinderStore[], zipOn: boolean): StoredDealFinderStore[] {
-  if (zipOn) return saved.filter((store) => store.nearby);
+  if (zipOn) return saved.filter((store) => store.nearby || store.on);
   const byId = new Map(saved.map((store) => [store.id, store]));
   const supported = SUPPORTED_STORES.map(
     (store): StoredDealFinderStore =>
