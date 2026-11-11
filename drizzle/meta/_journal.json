@@ -547,6 +547,13 @@
       "when": 1794437304884,
       "tag": "0077_shopping_list_changes",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "6",
+      "when": 1794441525383,
+      "tag": "0078_plan_runs",
+      "breakpoints": true
     }
   ]
 }

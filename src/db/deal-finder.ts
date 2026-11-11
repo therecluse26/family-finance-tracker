@@ -6,6 +6,7 @@ import {
   dealFinderSettings,
   dealFinderStores,
   LIST_ITEM_UNITS,
+  listItemSearches,
   memberMatchChoices,
   priceSourceCosts,
   productMatches,
@@ -296,14 +297,15 @@ export async function countDealFinderData(database: Database): Promise<DealFinde
 }
 
 // "Delete all deal finder data" (spec 15, The Price sources page in Settings), in one transaction:
-// every plan and its lines, every match and Member match choice, every price read, and every
-// Product. It keeps the Shopping list, the Stores and their settings, the keys, and the month's
-// cost, which Apify charged already.
+// every plan and its lines, every match, search time and Member match choice, every price read,
+// and every Product. It keeps the Shopping list, the Stores and their settings, the keys, and the
+// month's cost, which Apify charged already.
 export async function deleteDealFinderData(database: Database): Promise<void> {
   await database.transaction(async (tx) => {
     await tx.delete(shoppingPlanLines);
     await tx.delete(shoppingPlans);
     await tx.delete(productMatches);
+    await tx.delete(listItemSearches);
     await tx.delete(memberMatchChoices);
     await tx.delete(dealFinderPriceReads);
     await tx.delete(dealFinderProducts);

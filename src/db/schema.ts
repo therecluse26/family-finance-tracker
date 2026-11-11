@@ -549,6 +549,7 @@ export const AI_USE_NAMES = [
   "line item category",
   "merchant cleanup",
   "merchant lookup",
+  "product match",
   "unclear transfer",
   "reimbursement linking",
   "reading a goal",
@@ -2441,6 +2442,9 @@ export const memberMatchChoices = sqliteTable(
   ],
 );
 
+// Each answer a List item and a Product can have (spec 15, Matching List items to Products).
+export const PRODUCT_MATCH_ANSWERS = ["match", "substitute", "no", "unchecked"] as const;
+
 // The AI's answer for one List item and one Product (spec 15, Matching List items to Products). It
 // keeps the Store's re-read key and the time of the List item's last full search at that Store, so
 // later plan runs re-read a `match` and search again after 30 days (Search once, then re-read).
@@ -2456,7 +2460,9 @@ export const productMatches = sqliteTable(
     storeId: text("store_id")
       .notNull()
       .references(() => dealFinderStores.id, { onDelete: "cascade" }),
-    answer: text("answer", { enum: ["match", "substitute", "no"] }).notNull(),
+    // "unchecked" until the AI or a Member answers: a search found the Product, and with no AI
+    // provider a Member picks from these (spec 15, Rules that stay in force: Works without AI).
+    answer: text("answer", { enum: PRODUCT_MATCH_ANSWERS }).notNull(),
     // One line, for a substitute, such as "Turkey instead of beef".
     reason: text("reason"),
     readKey: text("read_key").notNull(),
@@ -2467,6 +2473,26 @@ export const productMatches = sqliteTable(
     primaryKey({ columns: [table.listItemId, table.productId] }),
     index("product_matches_product").on(table.productId),
     index("product_matches_store").on(table.storeId, table.listItemId),
+  ],
+);
+
+// When each List item was last fully searched at each Store, even a search that found nothing, so
+// a later plan run re-reads its saved `match` and searches again only after 30 days or when the
+// match fails (spec 15, Search once, then re-read). Delete all deal finder data removes every row.
+export const listItemSearches = sqliteTable(
+  "list_item_searches",
+  {
+    listItemId: text("list_item_id")
+      .notNull()
+      .references(() => shoppingListItems.id, { onDelete: "cascade" }),
+    storeId: text("store_id")
+      .notNull()
+      .references(() => dealFinderStores.id, { onDelete: "cascade" }),
+    searchedAt: moment("searched_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.listItemId, table.storeId] }),
+    index("list_item_searches_store").on(table.storeId),
   ],
 );
 

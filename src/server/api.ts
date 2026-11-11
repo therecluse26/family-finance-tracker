@@ -28,6 +28,7 @@ import type { ServerEnv } from "./env.ts";
 import { lineItemCategoryApi } from "./line-item-categories.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
+import { planRunApi } from "./plan-run-api.ts";
 import { priceSourcesApi } from "./price-sources-api.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
 import type { RecurringChargeEditView } from "./recurring-views.ts";
@@ -1590,6 +1591,8 @@ export const api = new Hono<ServerEnv>()
   .route("/", priceSourcesApi)
   // The Shopping list page (spec 15), and Undo on a Shopping list change's card in Chat.
   .route("/", shoppingListApi)
+  // The Shopping list's "Find the best prices" (spec 15, The Shopping plan) and its progress.
+  .route("/", planRunApi)
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the

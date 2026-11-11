@@ -34,7 +34,13 @@ import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import { type Chat, chat } from "../chat/index.ts";
 import { applyMigrations, closeDatabase, type Database, openDatabase } from "../db/index.ts";
-import { type PriceSourceAdapter, priceSourceReaders } from "../deal-finder/index.ts";
+import {
+  type PlanRuns,
+  type PriceSourceAdapter,
+  priceSourceReaders,
+  startPlanRuns,
+  startPriceHistoryPrune,
+} from "../deal-finder/index.ts";
 import { askForFollowUp, requestFollowUp, startFollowUpPipeline } from "../follow-up/index.ts";
 import { type GoalWriting, goalWriting, startGoals } from "../goals/index.ts";
 import { householdTimeZone } from "../household/index.ts";
@@ -94,6 +100,9 @@ export type ServiceOptions = {
   // Bank-data adapters beside the Plaid adapter. `pnpm dev` adds the fake adapter; the built app
   // adds none.
   extraBankAdapters?: readonly BankDataAdapter[];
+  // The deal finder's Price source adapter. `pnpm dev` gives the fake one; the built app leaves it
+  // out and gets the real readers, which read only with the Household's saved keys.
+  priceSources?: PriceSourceAdapter;
   // /backups and /data/backups. Tests give temporary folders.
   backupFolders: BackupFolders;
 };
@@ -115,8 +124,11 @@ export type RouteServices = {
   chat: Chat;
   goalWriting: GoalWriting;
   aiWork: AiWork;
-  // The deal finder's Price source readers: the Kroger API and Apify, at their real addresses.
+  // The deal finder's Price source adapter: the Kroger API and Apify readers, or the one the
+  // ServiceOptions gave.
   priceSources: PriceSourceAdapter;
+  // "Find the best prices" and its progress, with a Price source adapter.
+  planRuns?: PlanRuns;
 };
 
 // The app's running services, with nothing listening yet. The open database stays open until
@@ -275,6 +287,8 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
           await retryRedo();
           await retryLineItemCategories();
         },
+        // A Product match tries again at the next plan run, which a Member starts.
+        "product match": async () => undefined,
         // Budget tailoring retries in its own job, which runs each waiting run.
         "budget tailoring": requestTailoringJob,
         // The Insight cards retry in the Insight card check job, as a run the 6 AM check started
@@ -316,7 +330,14 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     const updateCheck = startUpdateCheck({ database });
     const weeklySummary = startWeeklySummary({ database });
     const stopRequestLogCleanup = startAiRequestLogCleanup({ database });
+    // The deal finder: its plan runs, with a Price source adapter, and its daily price history
+    // prune.
+    const priceSources = options.priceSources ?? priceSourceReaders();
+    const plans = startPlanRuns({ database, secrets, adapter: priceSources, ai });
+    const priceHistory = startPriceHistoryPrune({ database });
     const stopModules = () => {
+      plans.stop();
+      priceHistory.stop();
       backups?.stop();
       stopRequestLogCleanup();
       weeklySummary.stop();
@@ -410,7 +431,8 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
           goalWriting: goalWriting({ database, ai, requestGoalRun: requestGoalTailoring }),
           // "Finish AI work now", "Run AI on all history", and the status line of the AI's work.
           aiWork,
-          priceSources: priceSourceReaders(),
+          priceSources,
+          planRuns: plans.planRuns,
         },
         close: async (waitFor = []) => {
           try {

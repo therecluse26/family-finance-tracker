@@ -17,6 +17,8 @@ import { startCpiFetch } from "../benchmarks/index.ts";
 import { startBudgets } from "../budgets/index.ts";
 import { startCategorization } from "../categorization/index.ts";
 import type { Database } from "../db/index.ts";
+import { FakePriceSource } from "../deal-finder/fake.ts";
+import { startPlanRuns, startPriceHistoryPrune } from "../deal-finder/index.ts";
 import {
   askForFollowUp,
   type FollowUpStepName,
@@ -324,6 +326,28 @@ export const APP_MODULES: readonly AppModule[] = [
     name: "startCpiFetch",
     start: ({ database }) =>
       startCpiFetch({ database, timeZone: () => householdTimeZone(database), fetch: noNetwork }),
+  },
+  {
+    name: "startPlanRuns",
+    // A plan run starts only when a Member presses "Find the best prices", never in a follow-up
+    // step; no case presses it. The fake Price source reads only made-up Stores.
+    start: ({ database, secrets, makeModels = noAiProvider }) =>
+      startPlanRuns({
+        database,
+        secrets,
+        adapter: new FakePriceSource(),
+        ai: householdAi({
+          database,
+          secrets,
+          makeModels,
+          cost: aiCost({ database, timeZone: () => householdTimeZone(database) }),
+        }),
+      }),
+  },
+  {
+    name: "startPriceHistoryPrune",
+    // Its job runs once a day, never in a follow-up step.
+    start: ({ database }) => startPriceHistoryPrune({ database }),
   },
   {
     name: "startUpdateCheck",

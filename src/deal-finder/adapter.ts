@@ -79,6 +79,26 @@ export type PriceSourceAdapter = {
     brand?: string | null;
     dealsOnly?: boolean;
   }): Promise<Costed<ProductRead[]>>;
+  // One run with every search of a plan run at one Store, for a Store whose reader takes a list of
+  // search words (spec 15, Cost and limits). Answers each search's Products in the searches' order.
+  // A reader without it gets one searchStore call for each search.
+  searchStoreMany?(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    searches: { words: string; productCount: number }[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<ProductRead[][]>>;
+  // One run that reads many Products at one Store by their re-read keys, such as Costco's item
+  // numbers. Answers each key's Product in order, null when the Store no longer has it. A reader
+  // without it gets one readProduct call for each key.
+  readProducts?(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    readKeys: string[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<(ProductRead | null)[]>>;
   // Reads one Product by its re-read key. Null when the Store no longer has it.
   readProduct(input: {
     storeId: string;
@@ -104,8 +124,9 @@ export type PriceSourceErrorKind = "refused key" | "usage limit" | "timed out" |
 export class PriceSourceError extends Error {
   override name = "PriceSourceError";
   readonly kind: PriceSourceErrorKind;
-  // What the failed work still cost, in billionths of a dollar, such as a failed or stopped Actor
-  // run's charge. The caller adds it to the month's cost, as for work that succeeded.
+  // What the failed work still cost, in billionths of a dollar, from the source's own run record,
+  // such as a failed or stopped Actor run's charge. The caller adds it to the month's cost, as for
+  // work that succeeded. Undefined when it charged nothing or is not known.
   readonly costNanos?: number;
 
   constructor(kind: PriceSourceErrorKind, message: string, costNanos?: number) {

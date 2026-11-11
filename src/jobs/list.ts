@@ -6,6 +6,7 @@ import { BACKUP_SCHEDULE, BackupJob } from "../backups/index.ts";
 import { SyncScheduleJob } from "../bank/index.ts";
 import { CpiFetchJob } from "../benchmarks/index.ts";
 import { MonthStartJob } from "../budgets/index.ts";
+import { PriceHistoryPruneJob } from "../deal-finder/index.ts";
 import { INSIGHT_CARD_CHECK_SCHEDULE, InsightCardCheckJob } from "../insights/index.ts";
 import { ProvisionalResultsJob } from "../money-movement/index.ts";
 import { MonthlyReviewDueJob, MonthlyReviewJob, ON_THE_FIRST } from "../monthly-review/index.ts";
@@ -17,6 +18,7 @@ import { daily, everyMinute } from "./schedule.ts";
 import type { ScheduledTask } from "./scheduler.ts";
 
 export { BankAddedLaterJob, FirstRunJob, SyncConnectionJob } from "../bank/index.ts";
+export { PlanRunJob } from "../deal-finder/index.ts";
 export { FollowUpJob } from "../follow-up/index.ts";
 export { DeliveryJob, MorningDeliveryJob } from "../notify/index.ts";
 export { RedoNoAiWorkJob } from "../redo/index.ts";
@@ -32,6 +34,7 @@ export {
   MonthlyReviewDueJob,
   MonthlyReviewJob,
   MonthStartJob,
+  PriceHistoryPruneJob,
   ProvisionalResultsJob,
   SyncScheduleJob,
   UpdateCheckJob,
@@ -71,6 +74,15 @@ export const scheduledTasks: readonly ScheduledTask[] = [
     name: "ai request log cleanup",
     schedule: daily("00:30"),
     job: AiRequestLogCleanupJob,
+    quiet: true,
+  },
+  // Deletes deal finder price reads older than 400 days at 12:35 AM, Household time (spec 15,
+  // Prices and Deals). A failed run tries again the next day. Its job logs only when it deletes
+  // something or fails.
+  {
+    name: "price history prune",
+    schedule: daily("00:35"),
+    job: PriceHistoryPruneJob,
     quiet: true,
   },
   // Asks GitHub for the latest release once a day (spec 12, Updates). Off, its job makes no

@@ -13,6 +13,7 @@ import {
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
 import {
+  type PlanRuns,
   type PriceSourceAdapter,
   priceSourceSettings,
   shoppingList,
@@ -128,6 +129,20 @@ function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push" | "priceSour
   };
 }
 
+// Before /api/shopping-plan/run: "Find the best prices" and its progress. It takes
+// only JSON bodies, so a form on another site cannot post to it. An app made with no Price source
+// adapter has no plan runs, and answers 404.
+function planRunRoutes(planRuns: PlanRuns | undefined): MiddlewareHandler<ServerEnv> {
+  return async (c, next) => {
+    if (planRuns === undefined) return c.json({ error: "Not found" }, 404);
+    if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sendsJson(c)) {
+      return c.json({ error: "Send JSON." }, 415);
+    }
+    c.set("planRuns", planRuns);
+    await next();
+  };
+}
+
 const sendsJson = (c: Context<ServerEnv>) =>
   c.req.header("content-type")?.split(";")[0]?.trim() === "application/json";
 
@@ -219,6 +234,9 @@ export function createApp(
     // The deal finder's Price source adapter. Without one, Test and Find Stores near us have no
     // reader. The built app gives the real readers; `pnpm dev` gives the fake one.
     priceSources?: PriceSourceAdapter;
+    // "Find the best prices" and its progress, at /api/shopping-plan/run. Without it, that route
+    // answers 404.
+    planRuns?: PlanRuns;
     // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
     devRoutes?: Hono<ServerEnv>;
   } = {},
@@ -348,6 +366,7 @@ export function createApp(
       // The Price source keys are Master-key secrets too.
       .use("/api/price-sources/*", secretRoutes(database, "priceSources", priceSources))
       .use("/api/price-sources", secretRoutes(database, "priceSources", priceSources))
+      .use("/api/shopping-plan/run", planRunRoutes(services.planRuns))
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .use("/api/weekly-summary", jsonOnly)

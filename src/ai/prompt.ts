@@ -96,6 +96,7 @@ const REPLY_TOKENS: Record<Exclude<ModelUse, "alert advice">, number> = {
   "category fix": QUICK_BATCH_TOKENS,
   "line item category": QUICK_BATCH_TOKENS,
   "merchant cleanup": QUICK_BATCH_TOKENS,
+  "product match": QUICK_BATCH_TOKENS,
   "unclear transfer": QUICK_BATCH_TOKENS,
   "reimbursement linking": QUICK_BATCH_TOKENS,
   "reading a goal": 2_000,
@@ -118,6 +119,7 @@ export const EFFORT: Record<ModelUse, Effort | undefined> = {
   "category fix": undefined,
   "line item category": undefined,
   "merchant cleanup": undefined,
+  "product match": undefined,
   "unclear transfer": undefined,
   "reimbursement linking": undefined,
   "merchant lookup": undefined,
@@ -154,6 +156,7 @@ const QUICK_BATCH_USES: ReadonlySet<ModelUse> = new Set([
   "category fix",
   "line item category",
   "merchant cleanup",
+  "product match",
   "unclear transfer",
   "reimbursement linking",
 ]);

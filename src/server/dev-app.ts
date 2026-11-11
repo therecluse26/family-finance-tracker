@@ -153,30 +153,39 @@ export async function createDevApp(
   offerDemoBanks(fake);
   // "Back up now" and the daily backup write to .dev/backups.
   const backups = join(folder, "backups");
-  const services = await launchServices({
-    masterKey: opened.masterKey,
-    databaseUrl: devDatabaseUrl(folder),
-    migrationsFolder: MIGRATIONS,
-    jobs: { jobsDb: join(folder, "jobs.db"), jobList: JOB_LIST, tasks },
-    security,
-    extraBankAdapters: [fake],
-    backupFolders: { mounted: backups, fallback: backups },
-  });
+  // The deal finder reads only made-up Stores and prices in development, for its settings page and
+  // its plan runs alike.
+  const priceSources = await devPriceSources(env);
+  let services: Awaited<ReturnType<typeof launchServices>>;
+  try {
+    services = await launchServices({
+      masterKey: opened.masterKey,
+      databaseUrl: devDatabaseUrl(folder),
+      migrationsFolder: MIGRATIONS,
+      jobs: { jobsDb: join(folder, "jobs.db"), jobList: JOB_LIST, tasks },
+      security,
+      extraBankAdapters: [fake],
+      priceSources: priceSources.adapter,
+      backupFolders: { mounted: backups, fallback: backups },
+    });
+  } catch (error) {
+    await priceSources.close();
+    throw error;
+  }
   // A throw here, such as from a route that an edit broke, must not leave the services running:
   // the next restart could not start them again.
-  let priceSources: Awaited<ReturnType<typeof devPriceSources>> | undefined;
+  const running = services;
   try {
-    priceSources = await devPriceSources(env);
-    const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
-      ...services.routes,
-      // The deal finder reads only made-up Stores and prices in development.
-      priceSources: priceSources.adapter,
-      devRoutes: devRoutes(services.database),
+    const app = createApp(webRoot, security, running.auth, running.database, running.secrets, {
+      ...running.routes,
+      devRoutes: devRoutes(running.database),
     });
-    const fakes = priceSources;
-    return { app, close: () => Promise.all([services.close(), fakes.close()]).then(() => {}) };
+    return {
+      app,
+      close: () => Promise.all([running.close(), priceSources.close()]).then(() => {}),
+    };
   } catch (error) {
-    await Promise.all([services.close(), priceSources?.close()]);
+    await Promise.all([running.close(), priceSources.close()]);
     throw error;
   }
 }

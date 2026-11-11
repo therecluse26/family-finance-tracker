@@ -53,6 +53,7 @@ const USE_WORDS: Record<LastRetryUse, { work: string; again: string }> = {
   "line item category": { work: "Amazon item Categories", again: "at the next sync" },
   "merchant cleanup": { work: "Merchant names", again: "at the next sync" },
   "merchant lookup": { work: "Merchant web lookups", again: "at the next sync" },
+  "product match": { work: "Product matches", again: "at the next plan run" },
   "unclear transfer": { work: "unclear Transfers", again: "at the next sync" },
   "reimbursement linking": { work: "Reimbursements", again: "at the next sync" },
   "alert advice": { work: "Alert advice", again: "at the next sync" },

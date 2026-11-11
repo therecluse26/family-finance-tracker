@@ -6,6 +6,7 @@ import type {
   ConnectionRepairing,
 } from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
+import type { PlanRuns } from "../deal-finder/index.ts";
 import type { ShoppingList } from "../deal-finder/shopping-list-view.ts";
 import type { PriceSourceSettings } from "../deal-finder/view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
@@ -97,6 +98,8 @@ export type ServerEnv = {
     priceSources: PriceSourceSettings;
     // The Shopping list page, and Undo on a Shopping list change's card in Chat.
     shoppingList: ShoppingList;
+    // "Find the best prices" and its progress, for /api/shopping-plan/run.
+    planRuns: PlanRuns;
     // A Line item's Category, and Item rules on Settings > Categories.
     lineItemCategories: LineItemCategoryRoutes;
     // A Transaction's Amazon links, on its detail view: the hand link and Undo.

@@ -19,7 +19,9 @@ export type FakePriceSourceCall =
   | "checkAccount"
   | "findLocations"
   | "searchStore"
+  | "searchStoreMany"
   | "readProduct"
+  | "readProducts"
   | "readWeeklyAds";
 
 // Made-up run costs, in billionths of a dollar, near the ones spec 15 measured.
@@ -192,6 +194,10 @@ export class FakePriceSource implements PriceSourceAdapter {
   readonly failingStores = new Set<string>();
   // What a switched-on source error says the failed work still cost, such as a failed Actor run.
   failureCostNanos: number | undefined;
+  // The next this many calls for this Store fail, then they work again.
+  readonly failingTimes = new Map<string, number>();
+  // What each failed Store call charged, in billionths of a dollar.
+  failedRunCostNanos: number | undefined;
   // While set, every call waits for it, so a test can hold calls in flight.
   hold: Promise<void> | undefined;
 
@@ -214,8 +220,11 @@ export class FakePriceSource implements PriceSourceAdapter {
 
   private failForStore(storeId: string, keys: PriceSourceKeys): void {
     this.failFor(storeId === "kroger" ? "kroger" : "apify", keys);
-    if (this.failingStores.has(storeId)) {
-      throw new PriceSourceError("store failed", `The fake ${storeId} failed.`);
+    const times = this.failingTimes.get(storeId) ?? 0;
+    if (times > 0) this.failingTimes.set(storeId, times - 1);
+    if (this.failingStores.has(storeId) || times > 0) {
+      const message = `The fake ${storeId} failed.`;
+      throw new PriceSourceError("store failed", message, this.failedRunCostNanos);
     }
   }
 
@@ -268,6 +277,46 @@ export class FakePriceSource implements PriceSourceAdapter {
     return {
       value: found,
       costNanos: input.storeId === "kroger" ? null : SEARCH_COST_NANOS,
+    };
+  }
+
+  async searchStoreMany(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    searches: { words: string; productCount: number }[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<ProductRead[][]>> {
+    await this.begin("searchStoreMany", input.storeId);
+    this.failForStore(input.storeId, input.keys);
+    const found = input.searches.map((search) =>
+      (CATALOG[input.storeId] ?? [])
+        .filter((item) => matches(item.name, search.words))
+        .slice(0, search.productCount)
+        .map(asRead),
+    );
+    return {
+      value: found,
+      costNanos: input.storeId === "kroger" ? null : SEARCH_COST_NANOS * input.searches.length,
+    };
+  }
+
+  async readProducts(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    readKeys: string[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<(ProductRead | null)[]>> {
+    await this.begin("readProducts", input.storeId);
+    this.failForStore(input.storeId, input.keys);
+    const read = input.readKeys.map((readKey) => {
+      const item = (CATALOG[input.storeId] ?? []).find((one) => one.readKey === readKey);
+      return item === undefined ? null : asRead(item);
+    });
+    return {
+      value: read,
+      costNanos: input.storeId === "kroger" ? null : PRODUCT_COST_NANOS * read.length,
     };
   }
 
