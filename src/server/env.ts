@@ -6,6 +6,7 @@ import type {
   ConnectionRepairing,
 } from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
+import type { PlanRuns } from "../deal-finder/index.ts";
 import type { PriceSourceSettings } from "../deal-finder/view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
@@ -94,6 +95,8 @@ export type ServerEnv = {
     // Settings, Price sources: the deal finder's keys, Stores, and "Delete all deal finder data",
     // for the routes under /api/price-sources/.
     priceSources: PriceSourceSettings;
+    // "Find the best prices" and its progress, for /api/shopping-plan/run.
+    planRuns: PlanRuns;
     // A Line item's Category, and Item rules on Settings > Categories.
     lineItemCategories: LineItemCategoryRoutes;
     // A Transaction's Amazon links, on its detail view: the hand link and Undo.

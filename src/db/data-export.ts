@@ -305,6 +305,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   exported(schema.shoppingListItems, "every column"),
   exported(schema.memberMatchChoices, "every column"),
   exported(schema.productMatches, "every column"),
+  exported(schema.listItemSearches, "every column"),
   exported(schema.shoppingPlans, "every column"),
   exported(schema.shoppingPlanLines, "every column"),
   // Each Merchant's Web lookup: its Category and the line about the business.

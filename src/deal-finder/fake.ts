@@ -19,7 +19,9 @@ export type FakePriceSourceCall =
   | "checkAccount"
   | "findLocations"
   | "searchStore"
+  | "searchStoreMany"
   | "readProduct"
+  | "readProducts"
   | "readWeeklyAds";
 
 // Made-up run costs, in billionths of a dollar, near the ones spec 15 measured.
@@ -264,6 +266,46 @@ export class FakePriceSource implements PriceSourceAdapter {
     return {
       value: found,
       costNanos: input.storeId === "kroger" ? null : SEARCH_COST_NANOS,
+    };
+  }
+
+  async searchStoreMany(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    searches: { words: string; productCount: number }[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<ProductRead[][]>> {
+    await this.begin("searchStoreMany", input.storeId);
+    this.failForStore(input.storeId, input.keys);
+    const found = input.searches.map((search) =>
+      (CATALOG[input.storeId] ?? [])
+        .filter((item) => matches(item.name, search.words))
+        .slice(0, search.productCount)
+        .map(asRead),
+    );
+    return {
+      value: found,
+      costNanos: input.storeId === "kroger" ? null : SEARCH_COST_NANOS * input.searches.length,
+    };
+  }
+
+  async readProducts(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    readKeys: string[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<(ProductRead | null)[]>> {
+    await this.begin("readProducts", input.storeId);
+    this.failForStore(input.storeId, input.keys);
+    const read = input.readKeys.map((readKey) => {
+      const item = (CATALOG[input.storeId] ?? []).find((one) => one.readKey === readKey);
+      return item === undefined ? null : asRead(item);
+    });
+    return {
+      value: read,
+      costNanos: input.storeId === "kroger" ? null : PRODUCT_COST_NANOS * read.length,
     };
   }
 

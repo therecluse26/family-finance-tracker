@@ -20,6 +20,8 @@ import {
   loginTables,
   storeAlerts,
 } from "../db/index.ts";
+import { PRODUCT_MATCH_TASK, SEARCH_WORDS_TASK } from "../deal-finder/index.ts";
+import { answerMatches, writeSearchWords } from "../deal-finder/match.ts";
 import { runFollowUp } from "../follow-up/index.ts";
 import { goalWriting } from "../goals/index.ts";
 import { saveHouseholdFacts } from "../household/index.ts";
@@ -162,6 +164,16 @@ describe("the demo Household through every AI use", () => {
         .filter((text) => text.startsWith('{"row":'))
         .map((text) => JSON.parse(text) as { row: number; kind?: string });
       const has = (words: string) => texts.some((text) => text.includes(words));
+      if (has(SEARCH_WORDS_TASK)) {
+        return JSON.stringify({
+          answers: rows.map(({ row }) => ({ row, searchWords: "peanut butter creamy" })),
+        });
+      }
+      if (has(PRODUCT_MATCH_TASK)) {
+        return JSON.stringify({
+          answers: rows.map(({ row }) => ({ row, answer: "match", reason: null, size: null })),
+        });
+      }
       if (has(LINE_ITEM_CATEGORY_TASK)) {
         return JSON.stringify({
           answers: rows.map(({ row }) => ({ row, category: "Pets", confidence: "high" })),
@@ -397,6 +409,34 @@ describe("the demo Household through every AI use", () => {
     ]);
     await categorizeUnlinked(bank.database, ai);
 
+    // The deal finder's search words and Product match (spec 15, Matching List items to Products).
+    const listItem = {
+      id: "list-1",
+      words: "peanut butter",
+      quantity: 2,
+      unit: "each" as const,
+      brandLock: null,
+      searchWords: null,
+    };
+    await writeSearchWords(bank.database, ai, [listItem]);
+    await answerMatches({ database: bank.database, ai, dietaryNeeds: "no pork", now: NOW }, [
+      {
+        listItemId: listItem.id,
+        productId: "product-1",
+        storeId: "kroger",
+        storeName: "Kroger",
+        words: listItem.words,
+        quantity: listItem.quantity,
+        unit: listItem.unit,
+        brandLock: null,
+        name: "Sample Creamy Peanut Butter, 16 oz",
+        brand: "Sample",
+        size: "16 oz",
+        upc: null,
+        price: 299,
+      },
+    ]);
+
     // Chat about an Alert note, with every lookup tool and both Proposal tools.
     const talk = chat({
       database: bank.database,
@@ -474,6 +514,7 @@ describe("the demo Household through every AI use", () => {
       "unclear transfer": 12_000,
       "reimbursement linking": 12_000,
       "line item category": 12_000,
+      "product match": 12_000,
       "merchant lookup": 2_000,
       "reading a goal": 2_000,
       "insight cards": 8_000,

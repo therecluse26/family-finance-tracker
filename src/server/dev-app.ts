@@ -145,6 +145,8 @@ export async function createDevApp(
     closeDatabase(opened.database);
   }
   const fake = new FakeBankAdapter();
+  // The deal finder reads only made-up Stores and prices in development.
+  const priceSources = new FakePriceSource();
   offerDemoBanks(fake);
   // "Back up now" and the daily backup write to .dev/backups.
   const backups = join(folder, "backups");
@@ -155,6 +157,7 @@ export async function createDevApp(
     jobs: { jobsDb: join(folder, "jobs.db"), jobList: JOB_LIST, tasks },
     security,
     extraBankAdapters: [fake],
+    priceSources,
     backupFolders: { mounted: backups, fallback: backups },
   });
   // A throw here, such as from a route that an edit broke, must not leave the services running:
@@ -162,8 +165,7 @@ export async function createDevApp(
   try {
     const app = createApp(webRoot, security, services.auth, services.database, services.secrets, {
       ...services.routes,
-      // The deal finder reads only made-up Stores and prices in development.
-      priceSources: new FakePriceSource(),
+      priceSources,
       devRoutes: devRoutes(services.database),
     });
     return { app, close: () => services.close() };

@@ -75,6 +75,26 @@ export type PriceSourceAdapter = {
     productCount: number;
     keys: PriceSourceKeys;
   }): Promise<Costed<ProductRead[]>>;
+  // One run with every search of a plan run at one Store, for a Store whose reader takes a list of
+  // search words (spec 15, Cost and limits). Answers each search's Products in the searches' order.
+  // A reader without it gets one searchStore call for each search.
+  searchStoreMany?(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    searches: { words: string; productCount: number }[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<ProductRead[][]>>;
+  // One run that reads many Products at one Store by their re-read keys, such as Costco's item
+  // numbers. Answers each key's Product in order, null when the Store no longer has it. A reader
+  // without it gets one readProduct call for each key.
+  readProducts?(input: {
+    storeId: string;
+    homeStoreId: string | null;
+    zipCode: string | null;
+    readKeys: string[];
+    keys: PriceSourceKeys;
+  }): Promise<Costed<(ProductRead | null)[]>>;
   // Reads one Product by its re-read key. Null when the Store no longer has it.
   readProduct(input: {
     storeId: string;
