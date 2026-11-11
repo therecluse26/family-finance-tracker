@@ -332,6 +332,7 @@ function StoreRow(props: {
   act: Act;
   now: Date;
   zone: string;
+  zipOn: boolean;
 }) {
   const { store } = props;
   const [fee, setFee] = useState(store.deliveryFee === null ? "" : String(store.deliveryFee / 100));
@@ -361,7 +362,7 @@ function StoreRow(props: {
         <input
           type="checkbox"
           checked={store.on}
-          disabled={props.busy}
+          disabled={props.busy || (store.needsZip && !store.on)}
           onChange={(e) => void props.act(() => changeStore(store.id, { on: e.target.checked }))}
         />
         {store.name}
@@ -371,9 +372,11 @@ function StoreRow(props: {
           ? "Online"
           : store.kind === "weekly ad only"
             ? "Weekly ad only"
-            : store.homeStore === null
-              ? "The reader picks the store from the ZIP code"
-              : `Home store: ${store.homeStore.name}${store.distanceMiles === null ? "" : `, ${store.distanceMiles} miles`}`}
+            : !props.zipOn
+              ? "Its default store"
+              : store.homeStore === null
+                ? "The reader picks the store from the ZIP code"
+                : `Home store: ${store.homeStore.name}${store.distanceMiles === null ? "" : `, ${store.distanceMiles} miles`}`}
         {" · "}
         {store.reader === "Store API" ? "Kroger API" : "Scraping service"}
         {" · "}
@@ -466,6 +469,12 @@ export function StoresCard(props: {
       {view.zip.on ? null : (
         <p className={HINT}>Turn on "Use our ZIP code to find stores" to find Stores near you.</p>
       )}
+      {view.zip.on ? null : (
+        <p className={HINT}>
+          Without the ZIP code, Walmart, Target and Costco are read at their default stores, and
+          Amazon online. Kroger, Aldi and the weekly ads need the ZIP code.
+        </p>
+      )}
       {view.stores.length === 0 ? (
         <p className="mt-3">No Stores found yet.</p>
       ) : (
@@ -478,6 +487,7 @@ export function StoresCard(props: {
               act={props.act}
               now={props.now}
               zone={props.zone}
+              zipOn={view.zip.on}
             />
           ))}
         </ul>

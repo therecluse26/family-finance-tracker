@@ -22,12 +22,15 @@ import { type PriceSourceAdapter, PriceSourceError, type PriceSourceKeys } from 
 import {
   FIND_STORES_MILES,
   type FindStoresMiles,
+  KEYED_PRICE_SOURCES,
   type KeyedPriceSource,
   MAX_STORES_ON,
   type PriceSourceCheck,
   type PriceSourceSettings,
   type PriceSourceStoreView,
   type PriceSourcesView,
+  SUPPORTED_STORES,
+  storeNeedsZip,
 } from "./view.ts";
 
 // The Price sources page in Settings (spec 15): the keys, each Test, Open Food Facts, the ZIP code
@@ -59,12 +62,21 @@ export async function readPriceSourceKeys(
   return keysOf(await readDealFinderSettings(database), secrets);
 }
 
-function keysOf(stored: StoredDealFinderSettings, secrets: Secrets): PriceSourceKeys {
+// Only the sources named are decrypted, so one source's unreadable key never stops the other's Test.
+function keysOf(
+  stored: StoredDealFinderSettings,
+  secrets: Secrets,
+  sources: readonly KeyedPriceSource[] = KEYED_PRICE_SOURCES,
+): PriceSourceKeys {
   const keys: PriceSourceKeys = {};
-  if (stored.apifyToken !== null) {
+  if (sources.includes("apify") && stored.apifyToken !== null) {
     keys.apifyToken = secrets.decrypt(stored.apifyToken, APIFY_TOKEN);
   }
-  if (stored.krogerClientId !== null && stored.krogerClientSecret !== null) {
+  if (
+    sources.includes("kroger") &&
+    stored.krogerClientId !== null &&
+    stored.krogerClientSecret !== null
+  ) {
     keys.kroger = {
       clientId: secrets.decrypt(stored.krogerClientId, KROGER_CLIENT_ID),
       clientSecret: secrets.decrypt(stored.krogerClientSecret, KROGER_CLIENT_SECRET),
@@ -81,18 +93,25 @@ function monthOf(at: Date, zone: string): string {
   return calendarDateIn(at, zone).slice(0, 7);
 }
 
-// Kroger, Aldi, and the weekly ads need the ZIP code (spec 15, Store locations and the ZIP code).
-const needsZip = (store: StoredDealFinderStore) =>
-  store.reader === "Store API" || store.id === "aldi" || store.kind === "weekly ad only";
-
+// Each Store as the page lists it. With the ZIP code switch off, a Store is read at its default
+// store, so no Home store or location is shown (spec 15, Store locations and the ZIP code).
 function storeView(store: StoredDealFinderStore, zipOn: boolean): PriceSourceStoreView {
+  if (!zipOn) {
+    return {
+      ...storeView(store, true),
+      needsZip: storeNeedsZip(store),
+      homeStore: null,
+      distanceMiles: null,
+      locations: [],
+    };
+  }
   return {
     id: store.id,
     name: store.name,
     kind: store.kind,
     reader: store.reader,
     on: store.on,
-    needsZip: !zipOn && needsZip(store),
+    needsZip: false,
     homeStore:
       store.homeStoreId === null
         ? null
@@ -105,8 +124,42 @@ function storeView(store: StoredDealFinderStore, zipOn: boolean): PriceSourceSto
   };
 }
 
+const UNSAVED_STORE = {
+  on: false,
+  nearby: false,
+  homeStoreId: null,
+  homeStoreName: null,
+  distanceMiles: null,
+  deliveryFee: null,
+  freeDeliveryFrom: null,
+  lastGoodReadAt: null,
+} as const;
+
+// The listed Stores. With the switch on, the ones Find Stores near us found. With it off, every
+// supported Store, saved or not, and any weekly ad found earlier, which shows that it needs the ZIP
+// code.
+function listedStores(saved: StoredDealFinderStore[], zipOn: boolean): StoredDealFinderStore[] {
+  if (zipOn) return saved.filter((store) => store.nearby);
+  const byId = new Map(saved.map((store) => [store.id, store]));
+  const supported = SUPPORTED_STORES.map(
+    (store): StoredDealFinderStore =>
+      byId.get(store.id) ?? { ...store, ...UNSAVED_STORE, locations: [], foundAt: new Date(0) },
+  );
+  const others = saved.filter(
+    (store) => store.nearby && !SUPPORTED_STORES.some((one) => one.id === store.id),
+  );
+  return [...supported, ...others].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
+}
+
 const asMiles = (value: number): FindStoresMiles =>
   FIND_STORES_MILES.find((miles) => miles === value) ?? 25;
+
+const withoutZipOf = (id: string) => {
+  const store = SUPPORTED_STORES.find((one) => one.id === id);
+  return store === undefined ? {} : { withoutZip: store };
+};
 
 export function priceSourceSettings(options: {
   database: Database;
@@ -157,7 +210,7 @@ export function priceSourceSettings(options: {
       storesFoundAt: stored.storesFoundAt?.toISOString() ?? null,
       costCap: stored.costCap,
       monthCostNanos: await readPriceSourceCost(database, month),
-      stores: stores.map((store) => storeView(store, stored.useZip)),
+      stores: listedStores(stores, stored.useZip).map((store) => storeView(store, stored.useZip)),
       data,
     };
   }
@@ -225,7 +278,7 @@ export function priceSourceSettings(options: {
         if (adapter === undefined) return { outcome: "no reader" };
         const stored = await readDealFinderSettings(database);
         const tested = source === "apify" ? stored.apifyToken : stored.krogerClientSecret;
-        const keys = keysOf(stored, secrets);
+        const keys = keysOf(stored, secrets, [source]);
         if (tested === null || (source === "apify" ? keys.apifyToken : keys.kroger) === undefined) {
           return { outcome: "no key" };
         }
@@ -292,7 +345,12 @@ export function priceSourceSettings(options: {
     },
 
     async changeStore(id, changes) {
-      const changed = await changeDealFinderStore(database, id, changes, MAX_STORES_ON);
+      const changed = await changeDealFinderStore(database, id, changes, {
+        maxOn: MAX_STORES_ON,
+        ...withoutZipOf(id),
+        needsZip: storeNeedsZip,
+        at: now(),
+      });
       return changed === "changed"
         ? { outcome: "changed", view: await view() }
         : { outcome: changed };

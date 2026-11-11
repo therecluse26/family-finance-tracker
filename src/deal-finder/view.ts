@@ -28,14 +28,38 @@ export const MAX_DELIVERY_CENTS = 1_000_000;
 export const KEYED_PRICE_SOURCES = ["apify", "kroger"] as const;
 export type KeyedPriceSource = (typeof KEYED_PRICE_SOURCES)[number];
 
+// Each Store the deal finder reads with no Find Stores lookup (spec 15, Store locations and the ZIP
+// code). With the ZIP code switch off, the page lists these: Walmart, Target and Costco at their
+// default stores, and Amazon. Kroger and Aldi are listed too, as "Needs your ZIP code".
+export type DealFinderStoreKind = "in person" | "online" | "weekly ad only";
+export type DealFinderStoreReader = "Store API" | "Scraping service";
+export type SupportedStore = {
+  id: string;
+  name: string;
+  kind: DealFinderStoreKind;
+  reader: DealFinderStoreReader;
+};
+export const SUPPORTED_STORES: readonly SupportedStore[] = [
+  { id: "aldi", name: "Aldi", kind: "in person", reader: "Scraping service" },
+  { id: "amazon", name: "Amazon", kind: "online", reader: "Scraping service" },
+  { id: "costco", name: "Costco", kind: "in person", reader: "Scraping service" },
+  { id: "kroger", name: "Kroger", kind: "in person", reader: "Store API" },
+  { id: "target", name: "Target", kind: "in person", reader: "Scraping service" },
+  { id: "walmart", name: "Walmart", kind: "in person", reader: "Scraping service" },
+];
+
+// Kroger, Aldi, and the weekly ads need the ZIP code: they give no price without a location.
+export const storeNeedsZip = (store: Pick<SupportedStore, "id" | "kind" | "reader">) =>
+  store.reader === "Store API" || store.id === "aldi" || store.kind === "weekly ad only";
+
 // What the last Test found.
 export type PriceSourceCheck = "passed" | "refused" | "usage limit" | "no answer";
 
 export type PriceSourceStoreView = {
   id: string;
   name: string;
-  kind: "in person" | "online" | "weekly ad only";
-  reader: "Store API" | "Scraping service";
+  kind: DealFinderStoreKind;
+  reader: DealFinderStoreReader;
   on: boolean;
   // Without the ZIP switch on, this Store cannot be read: Kroger, Aldi, and the weekly ads.
   needsZip: boolean;
@@ -104,7 +128,7 @@ export type StoreChanges = {
 
 export type StoreChangeOutcome =
   | { outcome: "changed"; view: PriceSourcesView }
-  | { outcome: "no store" | "too many on" | "no such location" };
+  | { outcome: "no store" | "too many on" | "no such location" | "needs zip" };
 
 export type PriceSourceSettings = {
   view(): Promise<PriceSourcesView>;

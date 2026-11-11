@@ -128,10 +128,21 @@ describe("the Price sources routes", () => {
     );
   }
 
+  const saveKrogerKeys = async () =>
+    ok(
+      await put("/api/price-sources/kroger", {
+        clientId: madeKey("client"),
+        clientSecret: madeKey("secret"),
+      }),
+    );
+
+  // Saves both keys when none is saved, turns the ZIP code switch on, and finds the Stores.
   async function findStores(miles = 25) {
-    if ((await view()).apify.tokenLast4 === null) {
+    const keys = await view();
+    if (keys.apify.tokenLast4 === null) {
       await ok(await put("/api/price-sources/apify", { token: madeKey("apify_api") }));
     }
+    if (keys.kroger.clientIdLast4 === null) await saveKrogerKeys();
     await ok(await put("/api/price-sources/zip", { on: true }));
     return ok(await browser.post("/api/price-sources/find-stores", { distanceMiles: miles }));
   }
@@ -161,7 +172,7 @@ describe("the Price sources routes", () => {
     test.close();
   });
 
-  it("starts with every default: no keys, the switches off, 25 miles, a $5.00 cap, no Stores", async () => {
+  it("starts with every default: no keys, the switches off, 25 miles, a $5.00 cap, no Store on", async () => {
     expect(await view()).toEqual({
       apify: { tokenLast4: null, check: null, checkedAt: null },
       kroger: { clientIdLast4: null, clientSecretLast4: null, check: null, checkedAt: null },
@@ -171,9 +182,10 @@ describe("the Price sources routes", () => {
       storesFoundAt: null,
       costCap: 500,
       monthCostNanos: 0,
-      stores: [],
+      stores: expect.any(Array),
       data: { products: 0, priceReads: 0, matches: 0, plans: 0 },
     });
+    expect((await view()).stores.filter((store) => store.on)).toEqual([]);
   });
 
   describe("the keys", () => {
@@ -511,6 +523,7 @@ describe("the Price sources routes", () => {
     });
 
     it("maps the adapter's errors to their own answers, with no raw error", async () => {
+      await ok(await put("/api/price-sources/apify", { token: madeKey("apify_api") }));
       await ok(await put("/api/price-sources/zip", { on: true }));
       const press = () => browser.post("/api/price-sources/find-stores", { distanceMiles: 25 });
 
@@ -524,6 +537,105 @@ describe("the Price sources routes", () => {
       expect(await failed.text()).not.toContain("fake");
       expect((await view()).stores).toEqual([]);
     });
+  });
+
+  describe("with the ZIP code switch off", () => {
+    const listed = async () =>
+      new Map((await view()).stores.map((store) => [store.id, store] as const));
+
+    it("lists the Stores read with no location, and Kroger and Aldi as needing the ZIP code, with no lookup", async () => {
+      const stores = await listed();
+
+      expect([...stores.keys()]).toEqual([
+        "aldi",
+        "amazon",
+        "costco",
+        "kroger",
+        "target",
+        "walmart",
+      ]);
+      expect(
+        [...stores.values()].filter((store) => store.needsZip).map((store) => store.id),
+      ).toEqual(["aldi", "kroger"]);
+      for (const store of stores.values()) {
+        expect(store).toMatchObject({ on: false, homeStore: null, locations: [] });
+      }
+      expect(await sql("SELECT id FROM deal_finder_stores")).toEqual([]);
+      expect(fake.calls).toEqual([]);
+    });
+
+    it("ticks Walmart and Amazon on, and sends no ZIP code anywhere", async () => {
+      await ok(await put("/api/price-sources/stores/walmart", { on: true }));
+      await ok(await put("/api/price-sources/stores/amazon", { on: true, deliveryFee: 599 }));
+
+      const stores = await listed();
+      expect(stores.get("walmart")).toMatchObject({ on: true, needsZip: false, homeStore: null });
+      expect(stores.get("amazon")).toMatchObject({ on: true, deliveryFee: 599 });
+      expect(fake.calls).toEqual([]);
+      expect(JSON.stringify(await dealFinderTables())).not.toContain(ZIP_CODE);
+    });
+
+    it("refuses to turn on a Store that needs the ZIP code, or to pick a Home store, changing nothing", async () => {
+      for (const id of ["kroger", "aldi"]) {
+        const res = await put(`/api/price-sources/stores/${id}`, { on: true });
+        expect([id, res.status]).toEqual([id, 409]);
+      }
+      const home = await put("/api/price-sources/stores/walmart", {
+        homeStoreId: "fake-walmart-4401",
+      });
+      expect(home.status).toBe(409);
+      expect(await sql("SELECT id FROM deal_finder_stores")).toEqual([]);
+      // A Store that is not listed is not found.
+      expect((await put("/api/price-sources/stores/ad-hilltop-market", { on: true })).status).toBe(
+        404,
+      );
+    });
+
+    it("refuses Kroger once the switch is turned off after a lookup, and shows that it needs the ZIP code", async () => {
+      await findStores(25);
+      await ok(await put("/api/price-sources/stores/kroger", { on: true }));
+      await ok(await put("/api/price-sources/zip", { on: false }));
+
+      const stores = await listed();
+      expect(stores.get("kroger")).toMatchObject({ on: true, needsZip: true, homeStore: null });
+      expect(stores.get("ad-hilltop-market")).toMatchObject({ needsZip: true });
+      await ok(await put("/api/price-sources/stores/kroger", { on: false }));
+      expect((await put("/api/price-sources/stores/kroger", { on: true })).status).toBe(409);
+    });
+
+    it("keeps a Store ticked with the switch off when the Stores are found later", async () => {
+      await ok(await put("/api/price-sources/stores/walmart", { on: true }));
+
+      const { priceSources } = await findStores(25);
+
+      expect(priceSources.stores.find((store) => store.id === "walmart")).toMatchObject({
+        on: true,
+        homeStore: { id: "fake-walmart-4401" },
+      });
+    });
+  });
+
+  it("finds Kroger alone with only the Kroger keys saved", async () => {
+    await saveKrogerKeys();
+    await ok(await put("/api/price-sources/zip", { on: true }));
+
+    const { priceSources } = await ok(
+      await browser.post("/api/price-sources/find-stores", { distanceMiles: 25 }),
+    );
+
+    expect(priceSources.stores.map((store) => store.id)).toEqual(["kroger"]);
+    expect(fake.calls).toEqual([{ call: "findLocations", target: ZIP_CODE }]);
+  });
+
+  it("tests one source even when the other source's saved key cannot be read", async () => {
+    await ok(await put("/api/price-sources/apify", { token: madeKey("apify_api") }));
+    await saveKrogerKeys();
+    await sql("UPDATE deal_finder_settings SET kroger_client_id = 'not a sealed key'");
+
+    const passed = await ok(await browser.post("/api/price-sources/apify/test", {}));
+
+    expect(passed.check).toBe("passed");
+    expect(fake.calls).toEqual([{ call: "checkAccount", target: "apify" }]);
   });
 
   describe("each Store's settings", () => {

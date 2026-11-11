@@ -227,16 +227,23 @@ export class FakePriceSource implements PriceSourceAdapter {
     keys: PriceSourceKeys;
   }): Promise<Costed<FoundStore[]>> {
     await this.begin("findLocations", input.zipCode);
-    this.failFor("apify", input.keys);
+    // Kroger's locations come from the Kroger API, every other Store's from the Scraping service, so
+    // a Household with only the Kroger keys finds Kroger alone.
+    const { apifyToken, kroger } = input.keys;
+    if (apifyToken === undefined && kroger === undefined) {
+      throw new PriceSourceError("refused key", "The fake Price source got no key.");
+    }
+    if (apifyToken !== undefined) this.failFor("apify", input.keys);
+    if (kroger !== undefined) this.failFor("kroger", input.keys);
+    const keyed = (store: FoundStore) =>
+      store.reader === "Store API" ? kroger !== undefined : apifyToken !== undefined;
     // A Store with locations, none within the distance, is not found.
-    const found = LOCATIONS.filter((store) => !this.failingStores.has(store.id)).flatMap(
-      (store) => {
-        const near = store.locations.filter((place) => place.distanceMiles <= input.distanceMiles);
-        return store.locations.length > 0 && near.length === 0
-          ? []
-          : [{ ...store, locations: near }];
-      },
-    );
+    const found = LOCATIONS.filter(
+      (store) => keyed(store) && !this.failingStores.has(store.id),
+    ).flatMap((store) => {
+      const near = store.locations.filter((place) => place.distanceMiles <= input.distanceMiles);
+      return store.locations.length > 0 && near.length === 0 ? [] : [{ ...store, locations: near }];
+    });
     return { value: found, costNanos: FIND_COST_NANOS };
   }
 

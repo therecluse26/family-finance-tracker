@@ -90,6 +90,10 @@ const STORE_REFUSALS: Record<
     error: `At most ${MAX_STORES_ON} Stores can be on at once. Turn one off first.`,
   },
   "no such location": { status: 400, error: "Pick the Home store from this Store's list." },
+  "needs zip": {
+    status: 409,
+    error: "This Store needs your ZIP code. Turn on “Use our ZIP code to find stores” first.",
+  },
 };
 
 export const priceSourcesApi = new Hono<ServerEnv>()

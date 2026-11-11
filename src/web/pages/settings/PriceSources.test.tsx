@@ -98,6 +98,44 @@ describe("Settings, Price sources", () => {
   });
 });
 
+describe("Settings, Price sources: with the ZIP code switch off", () => {
+  const store = (id: string, name: string, needsZip: boolean) => ({
+    id,
+    name,
+    kind: "in person" as const,
+    reader: "Scraping service" as const,
+    on: false,
+    needsZip,
+    homeStore: null,
+    distanceMiles: null,
+    locations: [],
+    deliveryFee: null,
+    freeDeliveryFrom: null,
+    lastGoodReadAt: null,
+  });
+  const html = renderToString(
+    <PriceSourcesCards
+      view={{
+        ...EMPTY,
+        stores: [store("aldi", "Aldi", true), store("walmart", "Walmart", false)],
+      }}
+      busy={false}
+      act={async () => true}
+      zone="America/New_York"
+      now={NOW}
+    />,
+  );
+
+  it("lists Walmart at its default store, and Aldi as needing the ZIP code, with its tick off", () => {
+    const shown = text(html);
+
+    expect(shown).toContain("Walmart Its default store");
+    expect(shown).toContain("Needs your ZIP code");
+    const ticks = [...html.matchAll(/<input type="checkbox"[^>]*>/g)].map((tick) => tick[0]);
+    expect(ticks.filter((tick) => tick.includes("disabled"))).toHaveLength(1);
+  });
+});
+
 describe("Settings, Price sources: the requests", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

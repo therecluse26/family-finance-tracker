@@ -118,12 +118,11 @@ export async function readPriceSourceCost(database: Database, month: string): Pr
   return row?.costNanos ?? 0;
 }
 
-// Every Store found nearby, ticked or not, by name.
+// Every saved Store, nearby or not, ticked or not, by name.
 export async function listDealFinderStores(database: Database): Promise<StoredDealFinderStore[]> {
   return database
     .select()
     .from(dealFinderStores)
-    .where(eq(dealFinderStores.nearby, true))
     .orderBy(asc(dealFinderStores.name), asc(dealFinderStores.id));
 }
 
@@ -153,7 +152,8 @@ export async function storeFoundStores(
         name: store.name,
         kind: store.kind,
         reader: store.reader,
-        on: old?.nearby === true && old.on,
+        // A Store not found by the last lookup is off already; one ticked with the switch off stays on.
+        on: old?.on === true,
         nearby: true,
         locations: store.locations,
         homeStoreId: home?.id ?? null,
@@ -178,10 +178,30 @@ export async function storeFoundStores(
   });
 }
 
-export type StoreChangeResult = "changed" | "no store" | "too many on" | "no such location";
+export type StoreChangeResult =
+  | "changed"
+  | "no store"
+  | "too many on"
+  | "no such location"
+  | "needs zip";
 
-// Changes one nearby Store's settings. Turning it on counts the Stores on in the same statement, so
-// two at once never pass the cap. A Home store must be one of the Store's own listed locations.
+type StoreIdentity = Pick<StoredDealFinderStore, "id" | "name" | "kind" | "reader">;
+
+export type StoreChangeRules = {
+  maxOn: number;
+  // With the ZIP code switch off, the Store as the page lists it with no lookup, when it is one.
+  // Its row is added on its first change.
+  withoutZip?: StoreIdentity;
+  // Whether the Store gives no price without the ZIP code.
+  needsZip: (store: StoreIdentity) => boolean;
+  at: Date;
+};
+
+// Changes one listed Store's settings. With the ZIP code switch on, the listed Stores are the ones
+// Find Stores near us found; with it off, they are also the Stores read with no location, and a
+// Store that needs the ZIP code cannot be turned on, nor its Home store picked. Turning a Store on
+// counts the Stores on in the same statement, so two at once never pass the cap. A Home store must
+// be one of the Store's own listed locations.
 export async function changeDealFinderStore(
   database: Database,
   id: string,
@@ -191,17 +211,38 @@ export async function changeDealFinderStore(
     deliveryFee?: number | null;
     freeDeliveryFrom?: number | null;
   },
-  maxOn: number,
+  rules: StoreChangeRules,
 ): Promise<StoreChangeResult> {
   return database.transaction(async (tx) => {
-    const [store] = await tx
-      .select()
-      .from(dealFinderStores)
-      .where(and(eq(dealFinderStores.id, id), eq(dealFinderStores.nearby, true)));
+    const [settings] = await tx
+      .select({ useZip: dealFinderSettings.useZip })
+      .from(dealFinderSettings)
+      .where(eq(dealFinderSettings.id, DEAL_FINDER_SETTINGS_ROW));
+    const useZip = settings?.useZip === true;
+    const withoutZip = useZip ? undefined : rules.withoutZip;
+    const [saved] = await tx.select().from(dealFinderStores).where(eq(dealFinderStores.id, id));
+    const listed = saved?.nearby === true || withoutZip !== undefined;
+    const store = listed ? (saved ?? withoutZip) : undefined;
     if (store === undefined) return "no store";
+    if (!useZip && changes.homeStoreId !== undefined) return "needs zip";
+    const turningOn = changes.on === true && saved?.on !== true;
+    if (!useZip && turningOn && rules.needsZip(store)) return "needs zip";
+    if (saved === undefined) {
+      await tx.insert(dealFinderStores).values({
+        id: store.id,
+        name: store.name,
+        kind: store.kind,
+        reader: store.reader,
+        on: false,
+        nearby: false,
+        locations: [],
+        foundAt: rules.at,
+      });
+    }
+    const locations = saved?.locations ?? [];
     const set: Partial<StoredDealFinderStore> = {};
     if (changes.homeStoreId !== undefined) {
-      const home = store.locations.find((place) => place.id === changes.homeStoreId);
+      const home = locations.find((place) => place.id === changes.homeStoreId);
       if (home === undefined) return "no such location";
       set.homeStoreId = home.id;
       set.homeStoreName = home.name;
@@ -209,7 +250,7 @@ export async function changeDealFinderStore(
     }
     if (changes.deliveryFee !== undefined) set.deliveryFee = changes.deliveryFee;
     if (changes.freeDeliveryFrom !== undefined) set.freeDeliveryFrom = changes.freeDeliveryFrom;
-    if (changes.on === true && !store.on) {
+    if (turningOn) {
       const others = tx
         .select({ count: count() })
         .from(dealFinderStores)
@@ -217,7 +258,7 @@ export async function changeDealFinderStore(
       const turned = await tx
         .update(dealFinderStores)
         .set({ ...set, on: true })
-        .where(and(eq(dealFinderStores.id, id), lt(sql`(${others})`, maxOn)))
+        .where(and(eq(dealFinderStores.id, id), lt(sql`(${others})`, rules.maxOn)))
         .returning({ id: dealFinderStores.id });
       return turned.length === 1 ? "changed" : "too many on";
     }
