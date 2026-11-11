@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listShoppingListItems } from "../db/index.ts";
+import { listShoppingListItems, removeMember } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
 import {
@@ -452,6 +452,36 @@ describe("Chat's edit_shopping_list and Undo", () => {
     expect((await rows()).map((item) => item.quantity)).toEqual([2]);
   });
 
+  // A third Member, so the app's own removal may take Dana and Ravi (it never takes the last one).
+  const addKeeper = () =>
+    test.database
+      .insert(schema.members)
+      .values({
+        id: "kim",
+        name: "Kim Alder",
+        email: "kim@example.com",
+        createdAt: AT,
+        updatedAt: AT,
+      });
+
+  it("puts back an AI-removed List item with no adder once the Member who added it is removed", async () => {
+    const beef = await added(BEEF, "ravi");
+    const eggs = await added({ words: "eggs", quantity: 12, unit: "ct" }, "dana");
+    const changeId = await edited([
+      { action: "remove", id: beef },
+      { action: "remove", id: eggs },
+    ]);
+    await addKeeper();
+    expect(await removeMember(test.database, "ravi", LATER)).toBe("removed");
+
+    expect("view" in (await list.undo(changeId, "dana"))).toBe(true);
+    expect((await rows()).map((item) => [item.id, item.addedBy])).toEqual([
+      [beef, null],
+      [eggs, "dana"],
+    ]);
+    expect((await shoppingListCards(test.database, "thread-1"))[0]?.undoneAt).not.toBeNull();
+  });
+
   it("deletes the cards with their thread, keeps them when a Member is removed, and keeps the List items in both", async () => {
     await test.database
       .insert(schema.chatThreads)
@@ -466,8 +496,9 @@ describe("Chat's edit_shopping_list and Undo", () => {
     await list.undo(first?.id ?? "", "ravi");
     await edited([{ action: "add", ...BEEF }]);
 
-    await run("DELETE FROM members WHERE id = ?", "dana");
-    await run("DELETE FROM members WHERE id = ?", "ravi");
+    await addKeeper();
+    expect(await removeMember(test.database, "dana", LATER)).toBe("removed");
+    expect(await removeMember(test.database, "ravi", LATER)).toBe("removed");
     expect(
       await test.database
         .select({

@@ -3,6 +3,7 @@ import type { Database, Queries } from "./client.ts";
 import {
   LIST_ITEM_UNITS,
   type ListItemSnapshot,
+  members,
   shoppingListChanges,
   shoppingListItems,
 } from "./schema.ts";
@@ -230,11 +231,28 @@ export async function undoShoppingListChange(
       const [listed] = await tx.select({ count: count() }).from(shoppingListItems);
       if ((listed?.count ?? 0) + puts - takes > max) return "full";
     }
+    // A List item put back names its adder only while that Member is still in the Household: the
+    // copy keeps the ID after removing a Member sets the stored ones to none (spec 09, Members).
+    const adders = change.items.flatMap(({ before, after }) =>
+      before !== null && after === null && before.addedBy !== null ? [before.addedBy] : [],
+    );
+    const stillHere = new Set(
+      adders.length === 0
+        ? []
+        : (
+            await tx
+              .select({ id: members.id })
+              .from(members)
+              .where(inArray(members.id, [...new Set(adders)]))
+          ).map((member) => member.id),
+    );
     for (const { before, after } of change.items) {
       if (before === null && after !== null) {
         await tx.delete(shoppingListItems).where(eq(shoppingListItems.id, after.id));
       } else if (before !== null && after === null) {
-        await tx.insert(shoppingListItems).values(rowOf(before));
+        const addedBy =
+          before.addedBy !== null && stillHere.has(before.addedBy) ? before.addedBy : null;
+        await tx.insert(shoppingListItems).values(rowOf({ ...before, addedBy }));
       } else if (before !== null) {
         const { id: itemId, words, quantity, unit, brandLock, note, ticked } = before;
         await tx
