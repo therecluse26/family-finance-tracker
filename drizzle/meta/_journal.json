@@ -540,6 +540,13 @@
       "when": 1794433890287,
       "tag": "0076_deal_finder",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "6",
+      "when": 1794437437881,
+      "tag": "0077_shopping_plan_deals",
+      "breakpoints": true
     }
   ]
 }

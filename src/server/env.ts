@@ -40,6 +40,7 @@ import type { RecurringRoutes } from "./recurring-views.ts";
 import type { ReportRoutes } from "./reports-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
 import type { SetupRoutes } from "./setup-views.ts";
+import type { ShoppingPlanRoutes } from "./shopping-plan-views.ts";
 import type { TopMerchantRoutes } from "./top-merchants-views.ts";
 
 // What the security check sets on every request it accepts, and the session check on every /api
@@ -94,6 +95,8 @@ export type ServerEnv = {
     // Settings, Price sources: the deal finder's keys, Stores, and "Delete all deal finder data",
     // for the routes under /api/price-sources/.
     priceSources: PriceSourceSettings;
+    // The Shopping plan on the Shopping list page, and "Use this Deal".
+    shoppingPlan: ShoppingPlanRoutes;
     // A Line item's Category, and Item rules on Settings > Categories.
     lineItemCategories: LineItemCategoryRoutes;
     // A Transaction's Amazon links, on its detail view: the hand link and Undo.
