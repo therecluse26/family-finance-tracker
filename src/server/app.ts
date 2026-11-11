@@ -12,7 +12,11 @@ import {
 } from "../bank/index.ts";
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
-import { type PriceSourceAdapter, priceSourceSettings } from "../deal-finder/index.ts";
+import {
+  type PriceSourceAdapter,
+  priceSourceSettings,
+  shoppingList,
+} from "../deal-finder/index.ts";
 import type { GoalWriting } from "../goals/index.ts";
 import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
@@ -256,6 +260,7 @@ export function createApp(
     logger: security.logger,
     ...(services.priceSources === undefined ? {} : { adapter: services.priceSources }),
   });
+  const shopping = shoppingList({ database });
   const lineItemCategories = lineItemCategoryRoutes(database);
   const amazonLinks = amazonLinkRoutes(database);
   const members = memberRoutes(database, auth, security.appUrl);
@@ -322,6 +327,7 @@ export function createApp(
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
         c.set("amazon", amazon);
+        c.set("shoppingList", shopping);
         c.set("lineItemCategories", lineItemCategories);
         c.set("amazonLinks", amazonLinks);
         c.set("members", members);

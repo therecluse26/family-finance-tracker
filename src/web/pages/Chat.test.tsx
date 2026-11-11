@@ -59,6 +59,7 @@ const thread = (fields: Partial<ChatThreadView> = {}): ChatThreadView => ({
   firstSent: null,
   answering: false,
   proposals: [],
+  shoppingListChanges: [],
   you: "Alice",
   ...fields,
 });

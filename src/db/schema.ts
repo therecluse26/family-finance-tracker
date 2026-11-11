@@ -2527,3 +2527,50 @@ export const shoppingPlanLines = sqliteTable(
     index("shopping_plan_lines_product").on(table.productId),
   ],
 );
+
+// One List item as a Shopping list change kept it: every column, with its time as ISO 8601 text.
+export type ListItemSnapshot = {
+  id: string;
+  words: string;
+  quantity: number;
+  unit: (typeof LIST_ITEM_UNITS)[number];
+  brandLock: string | null;
+  note: string | null;
+  searchWords: string | null;
+  ticked: boolean;
+  place: number;
+  addedAt: string;
+  addedBy: string | null;
+};
+
+// A Shopping list change Chat's AI made with edit_shopping_list (spec 15, Chat tools). It applied at
+// once, and shows as a card in its thread with Undo (owner decision, 2026-11-11). It keeps each List
+// item it touched as it was before and after, so Undo puts back the exact list. Deleting the thread
+// deletes it.
+export const shoppingListChanges = sqliteTable(
+  "shopping_list_changes",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    // The AI answer that made it. It may fail and never be stored.
+    answerId: text("answer_id").notNull(),
+    // Each List item it touched, in the order of the AI's changes: null before for an add, and null
+    // after for a remove. The card's lines are made from it.
+    items: text("items", { mode: "json" })
+      .$type<{ before: ListItemSnapshot | null; after: ListItemSnapshot | null }[]>()
+      .notNull(),
+    madeAt: moment("made_at").notNull(),
+    // The Member whose question it answered.
+    madeBy: text("made_by").references(() => members.id, { onDelete: "set null" }),
+    // When a Member pressed Undo, and who.
+    undoneAt: moment("undone_at"),
+    undoneBy: text("undone_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    index("shopping_list_changes_thread").on(table.threadId),
+    index("shopping_list_changes_made_by").on(table.madeBy),
+    index("shopping_list_changes_undone_by").on(table.undoneBy),
+  ],
+);

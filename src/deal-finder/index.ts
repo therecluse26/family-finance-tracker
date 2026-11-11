@@ -12,4 +12,11 @@ export type {
 export { PriceSourceError } from "./adapter.ts";
 export { type PriceSourceReaderOptions, priceSourceReaders } from "./readers/index.ts";
 export { priceSourceSettings, readPriceSourceKeys } from "./settings.ts";
+export {
+  editShoppingList,
+  shoppingList,
+  shoppingListCards,
+  shoppingListForChat,
+} from "./shopping-list.ts";
+export * from "./shopping-list-view.ts";
 export * from "./view.ts";

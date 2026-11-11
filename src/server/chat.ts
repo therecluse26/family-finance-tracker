@@ -75,6 +75,10 @@ export function chatRoutes(database: Database, chat: Chat | undefined): ChatRout
           ...message,
           createdAt: message.createdAt.toISOString(),
         })),
+        shoppingListChanges: thread.shoppingListChanges.map((change) => ({
+          ...change,
+          answerId: answers.has(change.answerId) ? change.answerId : null,
+        })),
         proposals: thread.proposals.map(({ runId, status, ...proposal }) => {
           const answerId = runId.slice(runId.indexOf("/") + 1);
           return {

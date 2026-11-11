@@ -32,6 +32,7 @@ import { priceSourcesApi } from "./price-sources-api.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
 import type { RecurringChargeEditView } from "./recurring-views.ts";
 import { type SetupProgressView, type SetupRefusal, SKIPPABLE_SETUP_STEPS } from "./setup-views.ts";
+import { shoppingListApi } from "./shopping-list.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1587,6 +1588,8 @@ export const api = new Hono<ServerEnv>()
   .route("/", amazonLinkApi)
   // Settings, Price sources (spec 15): the deal finder's keys, Stores, and its data.
   .route("/", priceSourcesApi)
+  // The Shopping list page (spec 15), and Undo on a Shopping list change's card in Chat.
+  .route("/", shoppingListApi)
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the

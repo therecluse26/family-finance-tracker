@@ -8,6 +8,7 @@ import {
   listGoals,
   listItemRules,
   listMemberNamesById,
+  listShoppingListItems,
   readExportedJson,
   readExportedLineItems,
   readExportedTransactions,
@@ -21,7 +22,8 @@ import type { DataExportRoutes } from "./data-export-views.ts";
 import { type ZipFile, zipStream } from "./zip.ts";
 
 // "Download my data" (spec 11, Data export): one ZIP file with five CSV files and data.json, and
-// two CSV files more when the Household has Line items or Item rules. Every file is written as the ZIP streams, a page of rows at a time, so the export never holds the whole
+// two CSV files more when the Household has Line items or Item rules, and shopping-list.csv when
+// the Shopping list has a List item. Every file is written as the ZIP streams, a page of rows at a time, so the export never holds the whole
 // history. What data.json holds is the db module's allowlist; it holds no secret.
 
 // A cell a spreadsheet would run as a formula starts with one of these (OWASP, CSV Injection).
@@ -342,6 +344,37 @@ async function* dataJson(database: Database, at: Date): AsyncGenerator<string> {
   yield "}}";
 }
 
+const SHOPPING_LIST_COLUMNS = [
+  "id",
+  "words",
+  "quantity",
+  "unit",
+  "brand_lock",
+  "note",
+  "ticked",
+  "added_on",
+  "added_by",
+] as const;
+
+// Each List item on the Shopping list, in its place (spec 15, Data and privacy). The list holds at
+// most 100.
+async function* shoppingListCsv(database: Database, names: Names): AsyncGenerator<string> {
+  yield header(SHOPPING_LIST_COLUMNS);
+  for (const item of await listShoppingListItems(database)) {
+    yield csvLine([
+      csvText(item.id),
+      csvText(item.words),
+      String(item.quantity),
+      csvText(item.unit),
+      csvText(item.brandLock),
+      csvText(item.note),
+      csvFlag(item.ticked),
+      csvText(names.day(item.addedAt)),
+      csvText(names.members.get(item.addedBy ?? "") ?? null),
+    ]);
+  }
+}
+
 export function dataExportRoutes(
   database: Database,
   bank: BankViews,
@@ -354,6 +387,7 @@ export function dataExportRoutes(
       const lineItemFiles =
         (await countLineItems(database, "amazon")) > 0 ||
         (await listItemRules(database)).length > 0;
+      const shoppingListFile = (await listShoppingListItems(database)).length > 0;
       // The Account names and Member names, read once each, when the first file that needs them
       // starts.
       let accountNames: Promise<Map<string, string>> | undefined;
@@ -404,6 +438,16 @@ export function dataExportRoutes(
                 name: "item-rules.csv",
                 content: async function* () {
                   yield* itemRulesCsv(database, await people());
+                },
+              },
+            ]
+          : []),
+        ...(shoppingListFile
+          ? [
+              {
+                name: "shopping-list.csv",
+                content: async function* () {
+                  yield* shoppingListCsv(database, await people());
                 },
               },
             ]

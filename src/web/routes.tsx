@@ -15,6 +15,7 @@ import { Reset } from "./pages/Reset.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
 import { MonthlyReviewPage, Reviews } from "./pages/Reviews.tsx";
 import { Setup } from "./pages/Setup.tsx";
+import { ShoppingList } from "./pages/ShoppingList.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { About } from "./pages/settings/About.tsx";
 import { Ai } from "./pages/settings/Ai.tsx";
@@ -70,6 +71,7 @@ const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/recurring-charges": RecurringCharges,
   "/reports": Reports,
   "/review-list": ReviewList,
+  "/shopping-list": ShoppingList,
   "/reviews": Reviews,
   "/top-merchants": TopMerchants,
   "/transactions": Transactions,
