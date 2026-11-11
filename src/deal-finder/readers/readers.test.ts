@@ -154,7 +154,8 @@ describe("The Kroger reader (spec 15, Stores and their readers)", () => {
 
   it("reuses its token until it expires, and asks once more when Kroger ends it early", async () => {
     let now = DAY;
-    const reader = readers({ now: () => now });
+    const count: KrogerCallCount = { day: "", calls: 0 };
+    const reader = readers({ now: () => now, krogerCalls: count });
     const at = search("kroger", { homeStoreId: "FAKE0101" });
     await reader.searchStore(at);
     await reader.searchStore(at);
@@ -172,6 +173,8 @@ describe("The Kroger reader (spec 15, Stores and their readers)", () => {
     const before = servers.kroger.to("/v1/products").length;
     expect((await failureOf(reader.searchStore(at))).kind).toBe("refused key");
     expect(servers.kroger.to("/v1/products").length - before).toBe(2);
+    // Each Products call sent counts toward the day's cap, the second try too.
+    expect(count.calls).toBe(servers.kroger.to("/v1/products").length);
   });
 
   it("stops at 5,000 Products calls a day, reserved before the call, and starts again the next day", async () => {
@@ -534,6 +537,43 @@ describe("Find Stores near us (spec 15)", () => {
     expect(none.kind).toBe("refused key");
   });
 
+  it("keeps a failed lookup's cost, and every finished lookup's cost when one ends the lookup", async () => {
+    // A failed Actor run still cost what Apify charged.
+    servers.apify.runStatus.set("axlymxp/target-store-scraper", "FAILED");
+    const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
+    expect(found.value.map((store) => store.id)).not.toContain("target");
+    expect(found.costNanos).toBe(4 * 12_300_000);
+    // A usage limit on one Actor ends the lookup, and the other three runs' cost goes with it.
+    servers.apify.answer("/v2/acts/axlymxp~target-store-scraper/runs", {
+      status: 402,
+      body: { error: { type: "not-enough-usage-to-run-paid-actor" } },
+    });
+    const limit = await failureOf(
+      readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys }),
+    );
+    expect([limit.kind, limit.costNanos]).toEqual(["usage limit", 3 * 12_300_000]);
+    // A refused Kroger key ends it too, after the Apify runs end, and keeps their cost.
+    const refused = await failureOf(
+      readers().findLocations({
+        zipCode: ZIP,
+        distanceMiles: 25,
+        keys: { ...keys, kroger: { clientId: "fake-wrong", clientSecret: "fake-wrong" } },
+      }),
+    );
+    expect([refused.kind, refused.costNanos]).toEqual(["refused key", 3 * 12_300_000]);
+  });
+
+  it("leaves out only Kroger when Kroger fails, and keeps the other Stores and their cost", async () => {
+    servers.kroger.answer("/v1/locations", { status: 500, body: { error: "Fake: broken" } });
+    const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
+    const ids = found.value.map((store) => store.id);
+    expect(ids).not.toContain("kroger");
+    expect(ids).toEqual(expect.arrayContaining(["target", "costco", "walmart", "amazon"]));
+    expect(found.costNanos).toBe(4 * 12_300_000);
+    expect(lines.join("")).toContain("A Store lookup failed");
+    expect(lines.join("")).not.toContain("Fake:");
+  });
+
   it("runs at most 2 Actor runs at once", async () => {
     let release = () => {};
     servers.apify.hold = new Promise((resolve) => {
@@ -589,14 +629,42 @@ describe("Apify's errors (spec 15, Failures)", () => {
     servers.apify.runStatus.set("gauravlabs/walmart-search-api", "FAILED");
     const failed = await failureOf(readers().searchStore(search("walmart")));
     expect([failed.kind, failed.message]).toEqual(["store failed", "The Actor run failed."]);
+    expect(failed.costNanos).toBe(12_300_000);
     servers.apify.runStatus.set("gauravlabs/walmart-search-api", "TIMED-OUT");
-    expect((await failureOf(readers().searchStore(search("walmart")))).kind).toBe("timed out");
+    const timedOut = await failureOf(readers().searchStore(search("walmart")));
+    expect([timedOut.kind, timedOut.costNanos]).toEqual(["timed out", 12_300_000]);
+    // With no cost in the run record, a failed run counts at its $1.00 cap.
+    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "FAILED");
+    servers.apify.runUsd.set("gauravlabs/walmart-search-api", null);
+    expect((await failureOf(readers().searchStore(search("walmart")))).costNanos).toBe(
+      1_000_000_000,
+    );
+  });
+
+  it("keeps the cost of a run whose dataset cannot be read", async () => {
+    servers.apify.answer("/v2/datasets/", { status: 500, body: {} });
+    const failed = await failureOf(readers().searchStore(search("walmart")));
+    expect([failed.kind, failed.costNanos]).toEqual(["store failed", 12_300_000]);
+  });
+
+  it("stops a run it cannot follow, as on a timeout, and keeps its cost", async () => {
+    servers.apify.answer("/v2/actor-runs/", { status: 500, body: {} });
+    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "RUNNING");
+    const failed = await failureOf(readers().searchStore(search("walmart")));
+    expect(failed.kind).toBe("store failed");
+    expect(
+      servers.apify.requests.filter((request) => request.path.endsWith("/abort")),
+    ).toHaveLength(1);
+    // The abort got no run record either, so the run counts at its cap.
+    expect(failed.costNanos).toBe(1_000_000_000);
   });
 
   it("stops a run that never ends after its waits, and aborts it", async () => {
     servers.apify.runStatus.set("gauravlabs/walmart-search-api", "RUNNING");
     const stopped = await failureOf(readers().searchStore(search("walmart")));
     expect(stopped.kind).toBe("timed out");
+    // The cost comes from the run record the abort answers with.
+    expect(stopped.costNanos).toBe(12_300_000);
     const polls = servers.apify.requests.filter(
       (request) => request.method === "GET" && request.path.startsWith("/v2/actor-runs/"),
     );

@@ -233,6 +233,8 @@ export function priceSourceSettings(options: {
       await addCost((await reader.checkAccount(source, keys)).costNanos);
       return "passed";
     } catch (error) {
+      // A failed call can still cost, such as a failed Actor run.
+      if (error instanceof PriceSourceError) await addCost(error.costNanos ?? null);
       if (error instanceof PriceSourceError && error.kind === "refused key") return "refused";
       if (error instanceof PriceSourceError && error.kind === "usage limit") return "usage limit";
       logger.warn("A Price source did not answer its Test", {
@@ -322,6 +324,8 @@ export function priceSourceSettings(options: {
             keys: keysOf(stored, secrets),
           });
         } catch (error) {
+          // The lookups that ran before the failure still cost.
+          if (error instanceof PriceSourceError) await addCost(error.costNanos ?? null);
           const kind = error instanceof PriceSourceError ? error.kind : "unknown";
           logger.warn("Find Stores near us failed", { failure: kind });
           if (kind === "refused key") return { outcome: "refused key" };

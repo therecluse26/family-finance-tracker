@@ -95,40 +95,60 @@ export class ApifyClient {
     );
     if (started.status !== 201 && started.status !== 200) throw this.failure(actor, started);
     let run = runIn(started);
+    // From here a run exists, so every end, good or not, carries its cost.
     for (let waits = 0; !ENDED.has(String(run.status)); waits += 1) {
       if (waits >= MAX_WAITS || Date.now() >= deadline) {
-        await this.abort(token, run);
+        const cost = await this.abort(token, run);
         this.logger.warn("An Actor run took too long and was stopped", { actor });
-        throw new PriceSourceError("timed out", "The Actor run took too long.");
+        throw new PriceSourceError("timed out", "The Actor run took too long.", cost);
       }
       const wait = new URLSearchParams({ waitForFinish: String(this.timings.waitSeconds) });
-      const polled = await this.call(token, "GET", `/v2/actor-runs/${run.id}?${wait}`);
-      if (polled.status !== 200) throw this.failure(actor, polled);
-      run = runIn(polled);
+      let polled: SourceAnswer;
+      try {
+        polled = await this.call(token, "GET", `/v2/actor-runs/${run.id}?${wait}`);
+        if (polled.status === 200) run = runIn(polled);
+      } catch (error) {
+        const failed = error instanceof PriceSourceError ? error : unread();
+        throw withCost(failed, await this.abort(token, run));
+      }
+      // A run the reader cannot follow is stopped, as on the timeout path.
+      if (polled.status !== 200) {
+        throw this.failure(actor, polled, await this.abort(token, run));
+      }
     }
+    const cost = runCostNanos(run);
     if (run.status === "TIMED-OUT") {
       this.logger.warn("An Actor run timed out", { actor });
-      throw new PriceSourceError("timed out", "The Actor run took too long.");
+      throw new PriceSourceError("timed out", "The Actor run took too long.", cost);
     }
     if (run.status !== "SUCCEEDED") {
       this.logger.warn("An Actor run failed", { actor, runStatus: run.status });
-      throw new PriceSourceError("store failed", "The Actor run failed.");
+      throw new PriceSourceError("store failed", "The Actor run failed.", cost);
     }
     const dataset = typeof run.defaultDatasetId === "string" ? run.defaultDatasetId : "";
-    if (!APIFY_ID.test(dataset))
-      throw new PriceSourceError("store failed", "Apify sent no dataset.");
+    if (!APIFY_ID.test(dataset)) {
+      throw new PriceSourceError("store failed", "Apify sent no dataset.", cost);
+    }
     const items = new URLSearchParams({ clean: "true", format: "json", limit: String(MAX_ROWS) });
-    const read = await this.call(token, "GET", `/v2/datasets/${dataset}/items?${items}`);
-    if (read.status !== 200) throw this.failure(actor, read);
-    return { value: recordsIn(read.body), costNanos: runCostNanos(run) };
+    let read: SourceAnswer;
+    try {
+      read = await this.call(token, "GET", `/v2/datasets/${dataset}/items?${items}`);
+    } catch (error) {
+      throw withCost(error instanceof PriceSourceError ? error : unread(), cost);
+    }
+    if (read.status !== 200) throw this.failure(actor, read, cost);
+    return { value: recordsIn(read.body), costNanos: cost };
   }
 
-  // Stops a run that took too long. A failure here changes nothing: the run's own charge cap ends it.
-  private async abort(token: string, run: Record<string, unknown>): Promise<void> {
+  // Stops a run, and gives its cost from the run record Apify answers with. When that answer has
+  // none, or the abort fails, the run counts at its cap, since it may have spent up to it.
+  private async abort(token: string, run: Record<string, unknown>): Promise<number> {
     try {
-      await this.call(token, "POST", `/v2/actor-runs/${run.id}/abort`);
+      const answer = await this.call(token, "POST", `/v2/actor-runs/${run.id}/abort`);
+      const stopped = isRecord(answer.body) && isRecord(answer.body.data) ? answer.body.data : {};
+      return answer.status === 200 ? runCostNanos(stopped) : runCostNanos({});
     } catch {
-      // The run's cap still holds.
+      return runCostNanos({});
     }
   }
 
@@ -167,8 +187,17 @@ export class ApifyClient {
     else next();
   }
 
-  // Apify's answer, mapped to its own error. Only the status is logged.
-  private failure(call: string, answer: SourceAnswer): PriceSourceError {
+  // Apify's answer, mapped to its own error, with the cost of a run that exists. Only the status
+  // is logged.
+  private failure(
+    call: string,
+    answer: SourceAnswer,
+    cost: number | null = null,
+  ): PriceSourceError {
+    return withCost(this.mappedFailure(call, answer), cost);
+  }
+
+  private mappedFailure(call: string, answer: SourceAnswer): PriceSourceError {
     this.logger.warn("Apify refused a call", { call, status: answer.status });
     const error = isRecord(answer.body) && isRecord(answer.body.error) ? answer.body.error : {};
     const type = typeof error.type === "string" ? error.type : "";
@@ -186,6 +215,12 @@ export class ApifyClient {
     return new PriceSourceError("store failed", "Apify could not run the Actor.");
   }
 }
+
+// The same error, carrying a run's cost.
+const withCost = (error: PriceSourceError, cost: number | null) =>
+  new PriceSourceError(error.kind, error.message, cost ?? undefined);
+
+const unread = () => new PriceSourceError("store failed", "Apify could not be read.");
 
 // The run record in an answer, with an ID in Apify's form.
 function runIn(answer: SourceAnswer): Record<string, unknown> {

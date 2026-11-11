@@ -345,6 +345,12 @@ describe("the Price sources routes", () => {
       fake.sourceErrors.set("apify", "store failed");
       expect(await press("apify")).toMatchObject({ check: "no answer" });
       expect((await view()).kroger.check).toBe("refused");
+      // A failed Test that still cost, such as a failed Actor run, counts toward the month.
+      fake.failureCostNanos = 7_000_000;
+      expect(await press("apify")).toMatchObject({ check: "no answer" });
+      fake.sourceErrors.set("apify", "usage limit");
+      expect(await press("apify")).toMatchObject({ check: "usage limit" });
+      expect((await view()).monthCostNanos).toBe(14_000_000);
     });
 
     it("clears a Test's result when a new key is saved", async () => {
@@ -536,6 +542,14 @@ describe("the Price sources routes", () => {
       expect(failed.status).toBe(502);
       expect(await failed.text()).not.toContain("fake");
       expect((await view()).stores).toEqual([]);
+      expect((await view()).monthCostNanos).toBe(0);
+      // The lookups that ran before a failure still count toward the month.
+      fake.failureCostNanos = 9_000_000;
+      fake.sourceErrors.set("apify", "usage limit");
+      expect((await press()).status).toBe(429);
+      fake.sourceErrors.set("apify", "store failed");
+      expect((await press()).status).toBe(502);
+      expect((await view()).monthCostNanos).toBe(18_000_000);
     });
   });
 

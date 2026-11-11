@@ -104,9 +104,13 @@ export type PriceSourceErrorKind = "refused key" | "usage limit" | "timed out" |
 export class PriceSourceError extends Error {
   override name = "PriceSourceError";
   readonly kind: PriceSourceErrorKind;
+  // What the failed work still cost, in billionths of a dollar, such as a failed or stopped Actor
+  // run's charge. The caller adds it to the month's cost, as for work that succeeded.
+  readonly costNanos?: number;
 
-  constructor(kind: PriceSourceErrorKind, message: string) {
+  constructor(kind: PriceSourceErrorKind, message: string, costNanos?: number) {
     super(message);
     this.kind = kind;
+    if (costNanos !== undefined) this.costNanos = costNanos;
   }
 }

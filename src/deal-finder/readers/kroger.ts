@@ -218,9 +218,10 @@ export class KrogerReader {
   }
 
   // A GET with the token. A refused token is asked for again once, since Kroger can end one early.
+  // Each Products call sent counts toward the day's cap, the second try too.
   private async get(keys: KrogerKeys, path: string, productsCall: boolean): Promise<SourceAnswer> {
-    if (productsCall) this.takeProductCall();
     for (let attempt = 1; ; attempt += 1) {
+      if (productsCall) this.takeProductCall();
       const token = await this.token(keys);
       const answer = await callSource(
         new URL(path, this.baseUrl),

@@ -190,6 +190,8 @@ export class FakePriceSource implements PriceSourceAdapter {
   readonly sourceErrors = new Map<"apify" | "kroger", PriceSourceErrorKind>();
   // Every call for this Store fails.
   readonly failingStores = new Set<string>();
+  // What a switched-on source error says the failed work still cost, such as a failed Actor run.
+  failureCostNanos: number | undefined;
   // While set, every call waits for it, so a test can hold calls in flight.
   hold: Promise<void> | undefined;
 
@@ -201,7 +203,9 @@ export class FakePriceSource implements PriceSourceAdapter {
   // The source a Store is read through: the Kroger API for Kroger, else the Scraping service.
   private failFor(source: "apify" | "kroger", keys: PriceSourceKeys): void {
     const kind = this.sourceErrors.get(source);
-    if (kind !== undefined) throw new PriceSourceError(kind, `The fake ${source} found ${kind}.`);
+    if (kind !== undefined) {
+      throw new PriceSourceError(kind, `The fake ${source} found ${kind}.`, this.failureCostNanos);
+    }
     const keyed = source === "apify" ? keys.apifyToken : keys.kroger;
     if (keyed === undefined) {
       throw new PriceSourceError("refused key", `The fake ${source} got no key.`);

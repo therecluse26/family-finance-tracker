@@ -88,7 +88,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
   };
 
   // A lookup for Find Stores near us. A refused key or a usage limit ends the whole lookup; any
-  // other failure leaves out that one Store.
+  // other failure leaves out that one Store, and keeps what its failed run cost.
   async function lookup<T>(
     name: string,
     work: () => Promise<Costed<T>>,
@@ -106,8 +106,35 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
         store: name,
         failure: error instanceof PriceSourceError ? error.kind : "unknown",
       });
-      return { value: null, costNanos: null };
+      return {
+        value: null,
+        costNanos: error instanceof PriceSourceError ? (error.costNanos ?? null) : null,
+      };
     }
+  }
+
+  // Lookups side by side. Every one ends before a refused key or a usage limit is thrown, and the
+  // error carries what all of them cost, so no finished run's cost is lost.
+  async function allLookups<T>(work: Promise<Costed<T>>[]): Promise<Costed<T>[]> {
+    const ends = await Promise.allSettled(work);
+    let costNanos = 0;
+    let failure: PriceSourceError | null = null;
+    const done: Costed<T>[] = [];
+    for (const end of ends) {
+      if (end.status === "fulfilled") {
+        done.push(end.value);
+        costNanos += end.value.costNanos ?? 0;
+        continue;
+      }
+      const error =
+        end.reason instanceof PriceSourceError
+          ? end.reason
+          : new PriceSourceError("store failed", "A Store lookup failed.");
+      costNanos += error.costNanos ?? 0;
+      failure ??= error;
+    }
+    if (failure !== null) throw new PriceSourceError(failure.kind, failure.message, costNanos);
+    return done;
   }
 
   async function apifyLookups(
@@ -119,25 +146,25 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       ({ id: name.toLowerCase(), name, kind, reader: "Scraping service", locations }) as FoundStore;
     const run = (name: string, call: ActorCall) =>
       lookup(name, () => apify.run(token, call.actor, call.input));
-    const [targetRun, costcoRun, walmartRun, adRun] = await Promise.all([
+    const runs = await allLookups([
       run("target", targetFindInput(zipCode, miles)),
       run("costco", costcoFindInput(zipCode)),
       run("walmart", walmartFindInput(zipCode)),
       run("weekly ads", weeklyAdFindInput(zipCode)),
     ]);
+    const [targetRows, costcoRows, walmartRows, adRows] = runs.map((each) => each.value);
     const found: FoundStore[] = [];
-    const targetStores = targetStoresIn(targetRun.value ?? []).slice(0, 5);
+    const targetStores = targetStoresIn(targetRows ?? []).slice(0, 5);
     if (targetStores.length > 0) found.push(scraped("Target", "in person", targetStores));
-    const warehouses = costcoWarehousesIn(costcoRun.value ?? []).slice(0, 5);
+    const warehouses = costcoWarehousesIn(costcoRows ?? []).slice(0, 5);
     if (warehouses.length > 0) found.push(scraped("Costco", "in person", warehouses));
-    if (walmartRun.value !== null && walmartRun.value.length > 0) {
-      const picked = walmartStoreIn(walmartRun.value);
+    if (walmartRows != null && walmartRows.length > 0) {
+      const picked = walmartStoreIn(walmartRows);
       found.push(scraped("Walmart", "in person", picked === null ? [] : [picked]));
     }
-    found.push(...adStoresIn(adRun.value ?? []));
+    found.push(...adStoresIn(adRows ?? []));
     found.push(scraped("Amazon", "online", []));
-    const costs = [targetRun, costcoRun, walmartRun, adRun].map((run) => run.costNanos ?? 0);
-    return { value: found, costNanos: costs.reduce((sum, cost) => sum + cost, 0) };
+    return { value: found, costNanos: costOf(runs) };
   }
 
   return {
@@ -150,23 +177,26 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
     async findLocations(input) {
       const { apifyToken, kroger: krogerKeys } = input.keys;
       if (apifyToken === undefined && krogerKeys === undefined) throw noApifyToken();
-      const [krogerFound, apifyFound] = await Promise.all([
+      const none: Costed<FoundStore[] | null> = { value: null, costNanos: null };
+      // Kroger is one more lookup: a failure other than a refused key or a usage limit leaves out
+      // only Kroger, and the Apify lookups' cost is kept.
+      const sources = await allLookups<FoundStore[] | null>([
         krogerKeys === undefined
-          ? null
-          : kroger.findLocations({
-              zipCode: input.zipCode,
-              distanceMiles: input.distanceMiles,
-              keys: krogerKeys,
+          ? Promise.resolve(none)
+          : lookup("kroger", async () => {
+              const store = await kroger.findLocations({
+                zipCode: input.zipCode,
+                distanceMiles: input.distanceMiles,
+                keys: krogerKeys,
+              });
+              return { value: store.locations.length === 0 ? [] : [store], costNanos: null };
             }),
         apifyToken === undefined
-          ? null
+          ? Promise.resolve(none)
           : apifyLookups(apifyToken, input.zipCode, input.distanceMiles),
       ]);
-      const found = [
-        ...(krogerFound === null || krogerFound.locations.length === 0 ? [] : [krogerFound]),
-        ...(apifyFound?.value ?? []),
-      ];
-      return { value: found, costNanos: apifyFound?.costNanos ?? null };
+      const found = sources.flatMap((each) => each.value ?? []);
+      return { value: found, costNanos: apifyToken === undefined ? null : costOf(sources) };
     },
 
     async searchStore(input) {
@@ -234,6 +264,11 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       return { value: items satisfies WeeklyAdItem[], costNanos: run.costNanos };
     },
   };
+}
+
+// What a set of lookups cost together.
+function costOf(runs: Costed<unknown>[]): number {
+  return runs.reduce((sum, run) => sum + (run.costNanos ?? 0), 0);
 }
 
 // Each Product once, in the Store's own order: a row repeated in one run counts once.
