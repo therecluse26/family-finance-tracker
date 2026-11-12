@@ -232,6 +232,8 @@ Small items left open after the T107 notes triage, for after the first release (
 - N326 (S, polish) A run whose cost is not known counts as $1.00. Keep the run ID and read the real cost later (X46 review). In: src/deal-finder/readers/apify.ts.
 - N327 (S, owner) Some Actor field names in X46 are guesses. The owner checks them with one real run before release (X46 review). In: src/deal-finder/readers/stores/.
 - N328 (S, tests) The `added` counter at `run.ts:670-671` has no test (X48 review). In: src/deal-finder/run.test.ts.
+- N329 (S, polish) A Walmart or Target match never fails in a real run. If its Product drops out of the search results, the saved price grows older with no limit. Mark the match failed, or show the price's age on the plan (X55 review). In: src/deal-finder/run.ts.
+- N330 (S, polish) Plan runs no longer use the Walmart reader's re-read by saved name (`readInput` in `readers/stores/walmart.ts`). Remove it, or use it for a failed match (X55 review). In: src/deal-finder/readers/stores/walmart.ts.
 
 ## Backups, export, jobs and start-up
 
