@@ -47,8 +47,13 @@ import {
 // ticked items". The list holds at most 100 List items.
 
 // The deal finder's parts this page holds a place for: "Find the best prices" (ticket X48) beside
-// the heading, and the last Shopping plan (ticket X49) under the list.
-export type ShoppingListSlots = { findBestPrices?: ReactNode; plan?: ReactNode };
+// the heading, the plan run's panel under the heading at the page's width, and the last Shopping
+// plan (ticket X49) under the list. The heading holds only its title and the button.
+export type ShoppingListSlots = {
+  findBestPrices?: ReactNode;
+  planRun?: ReactNode;
+  plan?: ReactNode;
+};
 
 // One request: the page sends it, shows its error or its done line, and takes the new list from
 // its answer.
@@ -378,6 +383,7 @@ export function ShoppingList(props: ShoppingListSlots = {}) {
           <div data-slot="find-best-prices">{props.findBestPrices}</div>
         )}
       </PageHeading>
+      {props.planRun === undefined ? null : <div data-slot="plan-run">{props.planRun}</div>}
       <ErrorLine error={error} />
       <DoneLine done={done} />
       {view === undefined ? null : (

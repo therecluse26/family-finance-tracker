@@ -22,7 +22,7 @@ export function PlanRunConfirm(props: {
   const { cost } = props;
   const left = Math.max(0, cost.capCents * NANOS_PER_CENT - cost.monthCostNanos);
   return (
-    <section className="mt-3 rounded-card border border-line p-3" aria-label="Confirm the cost">
+    <section aria-label="Confirm the cost">
       <p>
         This plan run searches each Store for new List items. It should cost about{" "}
         <strong>{costWords(cost.costNanos)}</strong> in Price source fees.

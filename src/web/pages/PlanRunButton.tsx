@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { PlanRunCost, PlanRunView } from "../../deal-finder/run-view.ts";
 import { api } from "../api.ts";
 import { Button } from "../components/Button.tsx";
+import { Card } from "../components/Card.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
-import { usePolling } from "../polling.ts";
+import { type PollState, usePolling } from "../polling.ts";
 import { PlanRunConfirm } from "./PlanRunConfirm.tsx";
 import { PlanRunProgress } from "./PlanRunProgress.tsx";
 
 // "Find the best prices" on the Shopping list page (spec 15, The Shopping plan): it starts a plan
 // run, or joins the one that runs, asks a Member to confirm the cost before a full search, and
-// shows each Store's progress while the job works.
+// shows each Store's progress while the job works, in a panel under the page's heading.
 
 // Each request the button sends. Both take and answer JSON.
 const planRun = api["shopping-plan"].run;
@@ -28,7 +29,10 @@ type StartAnswer = {
   cost?: PlanRunCost;
 };
 
-export function PlanRunButton(props: { onDone?: () => void }) {
+// The plan run's state, shared by its two places on the Shopping list page: the button beside the
+// heading, and the panel under the heading. The panel spans the page, so the heading keeps its
+// height while a run works.
+export function usePlanRun(onDone?: () => void): { button: ReactNode; panel: ReactNode } {
   const [run, setRun] = useState<PlanRunView | null>(null);
   const [cost, setCost] = useState<PlanRunCost | undefined>();
   const [busy, setBusy] = useState(false);
@@ -39,7 +43,7 @@ export function PlanRunButton(props: { onDone?: () => void }) {
     if (!res.ok) return true;
     const next = (await res.json()).run;
     setRun(next);
-    if (next !== null && !next.running) props.onDone?.();
+    if (next !== null && !next.running) onDone?.();
     return next?.running ?? false;
   };
 
@@ -68,46 +72,73 @@ export function PlanRunButton(props: { onDone?: () => void }) {
     }
   };
 
-  return (
-    <div>
+  return {
+    button: (
       <PlanRunControls
+        run={run}
+        busy={busy}
+        confirming={cost !== undefined}
+        onStart={() => void start()}
+      />
+    ),
+    panel: (
+      <PlanRunPanel
         run={run}
         cost={cost}
         busy={busy}
-        onStart={() => void start()}
+        error={error}
+        poll={poll}
         onConfirm={(nanos) => void start(nanos)}
         onCancel={() => setCost(undefined)}
       />
-      <ErrorLine error={error} />
-      {run === null ? null : <PlanRunProgress run={run} poll={poll} />}
-    </div>
+    ),
+  };
+}
+
+// The button. It is off while a run works, and while its cost waits to be confirmed.
+export function PlanRunControls(props: {
+  run: PlanRunView | null;
+  busy: boolean;
+  confirming: boolean;
+  onStart: () => void;
+}) {
+  const running = props.run?.running ?? false;
+  return (
+    <Button
+      type="button"
+      disabled={props.busy || running || props.confirming}
+      onClick={props.onStart}
+    >
+      {running ? "Finding the best prices…" : "Find the best prices"}
+    </Button>
   );
 }
 
-// The button, or the cost to confirm in its place. While a run works, the button is off.
-export function PlanRunControls(props: {
+// The panel under the heading: the cost to confirm before a full search, the error of the last
+// start, and each Store's progress. With none of them, it shows nothing.
+export function PlanRunPanel(props: {
   run: PlanRunView | null;
   cost: PlanRunCost | undefined;
   busy: boolean;
-  onStart: () => void;
+  error: string | undefined;
+  poll: PollState;
   onConfirm: (costNanos: number) => void;
   onCancel: () => void;
 }) {
-  const { cost } = props;
-  if (cost !== undefined) {
-    return (
-      <PlanRunConfirm
-        cost={cost}
-        busy={props.busy}
-        onConfirm={() => props.onConfirm(cost.costNanos)}
-        onCancel={props.onCancel}
-      />
-    );
-  }
-  const running = props.run?.running ?? false;
+  const { cost, run } = props;
+  if (cost === undefined && props.error === undefined && run === null) return null;
   return (
-    <Button type="button" disabled={props.busy || running} onClick={props.onStart}>
-      {running ? "Finding the best prices…" : "Find the best prices"}
-    </Button>
+    <Card as="div" className="flex flex-col gap-3">
+      {cost === undefined ? null : (
+        <PlanRunConfirm
+          cost={cost}
+          busy={props.busy}
+          onConfirm={() => props.onConfirm(cost.costNanos)}
+          onCancel={props.onCancel}
+        />
+      )}
+      <ErrorLine error={props.error} />
+      {run === null ? null : <PlanRunProgress run={run} poll={props.poll} />}
+    </Card>
   );
 }
