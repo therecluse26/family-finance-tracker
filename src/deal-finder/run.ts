@@ -31,6 +31,7 @@ import { type Logger, log } from "../log.ts";
 import { endCondition, type NewNotice, raiseNotice } from "../notify/index.ts";
 import type { Secrets } from "../secrets/index.ts";
 import {
+  isMadeUpId,
   type PriceSourceAdapter,
   PriceSourceError,
   type PriceSourceKeys,
@@ -42,6 +43,7 @@ import type { ProductDataAdapter, ProductFacts } from "./product-data.ts";
 import {
   COST_CAP_REACHED,
   COULD_NOT_READ,
+  FIND_STORES_AGAIN,
   NEEDS_ZIP,
   type PlanRunPhase,
   type PlanRunStart,
@@ -357,6 +359,11 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
     keys: PriceSourceKeys,
   ): string | undefined {
     if (storeNeedsZip(store) && (!settings.useZip || zipCode === null)) return NEEDS_ZIP;
+    // A Home store the fake adapter found is never sent to a real reader. It is sent only with the
+    // ZIP code switch on.
+    if (settings.useZip && isMadeUpId(store.homeStoreId) && adapter.madeUpStores !== true) {
+      return FIND_STORES_AGAIN;
+    }
     const source = sourceOf(store);
     const check = source === "apify" ? settings.apifyCheck : settings.krogerCheck;
     if (check === "refused") return SOURCE_REASONS[source]["refused key"];
@@ -385,17 +392,27 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       zoneAndZip(),
     ]);
     const on = stores.filter((store) => store.on);
-    const matches = new Map<string, SavedMatch[]>();
-    for (const match of inputs.matches) {
-      const key = `${match.listItemId}\u0000${match.storeId}`;
-      matches.set(key, [...(matches.get(key) ?? []), match]);
-    }
     const searched = new Map(
       inputs.searches.map((search) => [
         `${search.listItemId}\u0000${search.storeId}`,
         search.searchedAt,
       ]),
     );
+    const matches = new Map<string, SavedMatch[]>();
+    for (const match of inputs.matches) {
+      const key = `${match.listItemId}\u0000${match.storeId}`;
+      // A Product the fake adapter found is never re-read by a real reader. It counts as no match,
+      // and its List item is fully searched at that Store, unless it was searched there after that
+      // Product's last read.
+      if (isMadeUpId(match.readKey) && adapter.madeUpStores !== true) {
+        const last = searched.get(key);
+        if (last !== undefined && match.lastReadAt !== null && last <= match.lastReadAt) {
+          searched.delete(key);
+        }
+        continue;
+      }
+      matches.set(key, [...(matches.get(key) ?? []), match]);
+    }
     const time = at.getTime();
     const adStores = on.filter((store) => store.kind === "weekly ad only");
     const storeWork = on

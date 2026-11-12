@@ -18,7 +18,12 @@ import {
 import { calendarDateIn } from "../format.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 import type { SecretPlace, Secrets } from "../secrets/index.ts";
-import { type PriceSourceAdapter, PriceSourceError, type PriceSourceKeys } from "./adapter.ts";
+import {
+  isMadeUpId,
+  type PriceSourceAdapter,
+  PriceSourceError,
+  type PriceSourceKeys,
+} from "./adapter.ts";
 import {
   FIND_STORES_MILES,
   type FindStoresMiles,
@@ -94,15 +99,30 @@ function monthOf(at: Date, zone: string): string {
 }
 
 // Each Store as the page lists it. With the ZIP code switch off, a Store is read at its default
-// store, so no Home store or location is shown (spec 15, Store locations and the ZIP code).
-function storeView(store: StoredDealFinderStore, zipOn: boolean): PriceSourceStoreView {
+// store, so no Home store or location is shown (spec 15, Store locations and the ZIP code). With
+// the real readers, a made-up Home store from the fake adapter counts as none, and the Store asks
+// for Find Stores near us again.
+function storeView(
+  store: StoredDealFinderStore,
+  zipOn: boolean,
+  madeUpStores: boolean,
+): PriceSourceStoreView {
   if (!zipOn) {
     return {
-      ...storeView(store, true),
+      ...storeView(store, true, true),
       needsZip: storeNeedsZip(store),
       homeStore: null,
       distanceMiles: null,
       locations: [],
+    };
+  }
+  if (!madeUpStores && isMadeUpId(store.homeStoreId)) {
+    return {
+      ...storeView(store, true, true),
+      homeStore: null,
+      distanceMiles: null,
+      locations: store.locations.filter((place) => !isMadeUpId(place.id)),
+      findAgain: true,
     };
   }
   return {
@@ -112,6 +132,7 @@ function storeView(store: StoredDealFinderStore, zipOn: boolean): PriceSourceSto
     reader: store.reader,
     on: store.on,
     needsZip: false,
+    findAgain: false,
     homeStore:
       store.homeStoreId === null
         ? null
@@ -171,6 +192,8 @@ export function priceSourceSettings(options: {
   now?: () => Date;
 }): PriceSourceSettings {
   const { database, secrets, adapter, logger = log, now = () => new Date() } = options;
+  // Only the fake adapter reads the made-up Home stores it found.
+  const madeUpStores = adapter?.madeUpStores === true;
   // The Tests in flight, and whether a Find Stores lookup is. Each is taken in the same synchronous
   // step as its check, before the first await, and given back when its work ends.
   const testing = new Set<KeyedPriceSource>();
@@ -211,7 +234,9 @@ export function priceSourceSettings(options: {
       storesFoundAt: stored.storesFoundAt?.toISOString() ?? null,
       costCap: stored.costCap,
       monthCostNanos: await readPriceSourceCost(database, month),
-      stores: listedStores(stores, stored.useZip).map((store) => storeView(store, stored.useZip)),
+      stores: listedStores(stores, stored.useZip).map((store) =>
+        storeView(store, stored.useZip, madeUpStores),
+      ),
       data,
     };
   }
@@ -350,6 +375,9 @@ export function priceSourceSettings(options: {
     },
 
     async changeStore(id, changes) {
+      if (!madeUpStores && isMadeUpId(changes.homeStoreId ?? null)) {
+        return { outcome: "no such location" };
+      }
       const changed = await changeDealFinderStore(database, id, changes, {
         maxOn: MAX_STORES_ON,
         ...withoutZipOf(id),

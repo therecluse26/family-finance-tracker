@@ -44,6 +44,8 @@ Settings → Banks shows a **Link a fake bank (dev only)** button under `pnpm de
 
 To try the real Plaid Link screen locally, the owner may start `pnpm dev` with `FFT_DEV_PLAID_ENV=sandbox` and enter their own Plaid sandbox keys in Settings → Banks. Only unbuilt code reads that setting. Agents never do this: they use the fake adapter and the local fake Plaid server only.
 
+The deal finder chooses its Price source under `pnpm dev` the same way the built app does: the real readers, with the Apify token and Kroger keys saved in Settings → Price sources. With no saved key, it reads nothing and asks for one. Start `pnpm dev` with `FFT_DEV_PRICE_SOURCE=fake` for the fake Price source and its made-up Stores, or with `FFT_DEV_PRICE_SOURCE=fake-servers` for the real readers against the local fake Apify and Kroger servers. A Home store the fake Price source found is never sent to a real reader: its Store asks for **Find Stores near us** again, and a plan run skips it until then. Agents always set one of the two fake values.
+
 CI also scans every commit, with its file names, author, and message, and the files as they stand, for secrets with [gitleaks](https://github.com/gitleaks/gitleaks): `scripts/secret-scan.sh <gitleaks binary>` runs the scan with `.gitleaks.toml`. It refuses a `.gitleaksignore` file, and any `node_modules/`, `.pdf`, `.doc(x)`, or `.xls(x)` file in git, since gitleaks skips those.
 
 A package in the production tree or the browser bundle that ships no license file (a `NOTICE` file alone does not count) needs a record in `licenses/reviewed.json` whose `licenseText` names a `.txt` file in `licenses/texts/` with its license text, or the build fails.

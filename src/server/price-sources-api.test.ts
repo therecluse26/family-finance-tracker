@@ -11,7 +11,13 @@ import {
   storeHouseholdFacts,
 } from "../db/index.ts";
 import { FakePriceSource } from "../deal-finder/fake.ts";
-import { type PriceSourcesView, priceSourceSettings } from "../deal-finder/index.ts";
+import { startFakePriceSourceServers } from "../deal-finder/fake-servers/index.ts";
+import {
+  type PriceSourceAdapter,
+  type PriceSourcesView,
+  priceSourceReaders,
+  priceSourceSettings,
+} from "../deal-finder/index.ts";
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -70,7 +76,10 @@ describe("the Price sources routes", () => {
     costs: await sql("SELECT * FROM price_source_costs"),
   });
 
-  function makeApp(adapter: FakePriceSource | undefined, logger: ReturnType<typeof createLogger>) {
+  function makeApp(
+    adapter: PriceSourceAdapter | undefined,
+    logger: ReturnType<typeof createLogger>,
+  ) {
     return loadSecurity({ APP_URL }, { logger }).then((security) =>
       createApp(webRoot, security, test.auth, test.database, test.secrets, {
         ...(adapter === undefined ? {} : { priceSources: adapter }),
@@ -550,6 +559,60 @@ describe("the Price sources routes", () => {
       fake.sourceErrors.set("apify", "store failed");
       expect((await press()).status).toBe(502);
       expect((await view()).monthCostNanos).toBe(18_000_000);
+    });
+
+    it("shows no made-up Home store with the real readers, and asks for Find Stores near us again", async () => {
+      await findStores(25);
+      await ok(await put("/api/price-sources/stores/kroger", { on: true }));
+      const servers = await startFakePriceSourceServers();
+      try {
+        // The keys this test saved are made up, so the fake servers take any key.
+        servers.apify.acceptAnyKey = true;
+        servers.kroger.acceptAnyKey = true;
+        const logger = createLogger((line) => lines.push(line), { throwOnSecretField: true });
+        app = await makeApp(priceSourceReaders({ ...servers.addresses, logger }), logger);
+        // The same signed-in browser, on the app with the real readers.
+        const signedIn = browser.cookies;
+        browser = new TestBrowser(app, APP_URL, "192.168.1.20");
+        for (const [name, value] of signedIn) browser.cookies.set(name, value);
+        const before = await dealFinderTables();
+
+        const kroger = (await view()).stores.find((store) => store.id === "kroger");
+        expect(kroger).toMatchObject({
+          on: true,
+          findAgain: true,
+          homeStore: null,
+          distanceMiles: null,
+          locations: [],
+        });
+        const amazon = (await view()).stores.find((store) => store.id === "amazon");
+        expect(amazon).toMatchObject({ findAgain: false });
+        // A made-up location cannot be picked as the Home store either.
+        const picked = await put("/api/price-sources/stores/kroger", {
+          homeStoreId: "fake-kroger-0102",
+        });
+        expect(picked.status).toBe(400);
+        expect(await dealFinderTables()).toEqual(before);
+
+        const found = await ok(
+          await browser.post("/api/price-sources/find-stores", { distanceMiles: 25 }),
+        );
+        const again = found.priceSources.stores.find((store) => store.id === "kroger");
+        expect(again).toMatchObject({ on: true, findAgain: false });
+        expect(again?.homeStore?.id).not.toMatch(/^fake-/);
+      } finally {
+        await servers.close();
+      }
+    });
+
+    it("keeps the fake adapter's made-up Home stores with the fake adapter", async () => {
+      await findStores(25);
+
+      const kroger = (await view()).stores.find((store) => store.id === "kroger");
+      expect(kroger).toMatchObject({ findAgain: false, homeStore: { id: "fake-kroger-0101" } });
+      expect(
+        (await put("/api/price-sources/stores/kroger", { homeStoreId: "fake-kroger-0102" })).status,
+      ).toBe(200);
     });
   });
 

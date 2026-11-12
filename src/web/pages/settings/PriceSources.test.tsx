@@ -51,6 +51,7 @@ const FOUND: PriceSourcesView = {
       reader: "Store API",
       on: true,
       needsZip: false,
+      findAgain: false,
       homeStore: { id: "fake-kroger-0101", name: "Kroger, Maple Avenue" },
       distanceMiles: 2.4,
       locations: [
@@ -95,6 +96,20 @@ describe("Settings, Price sources", () => {
 
     expect(shown).toContain("Saved, ending in a1b2.");
     expect(shown).toContain("Home store: Kroger, Maple Avenue, 2.4 miles");
+    expect(shown).not.toContain("Find Stores near us again");
+  });
+
+  it("asks for Find Stores near us again for a Store whose Home store is made up", () => {
+    const [kroger] = FOUND.stores;
+    if (kroger === undefined) throw new Error("FOUND lists Kroger.");
+    const shown = page({
+      ...FOUND,
+      stores: [{ ...kroger, findAgain: true, homeStore: null, distanceMiles: null, locations: [] }],
+    });
+
+    expect(shown).toContain("No Home store");
+    expect(shown).toContain("Its Home store is made up. Find Stores near us again.");
+    expect(shown).not.toContain("Maple Avenue");
   });
 });
 
@@ -106,6 +121,7 @@ describe("Settings, Price sources: with the ZIP code switch off", () => {
     reader: "Scraping service" as const,
     on: false,
     needsZip,
+    findAgain: false,
     homeStore: null,
     distanceMiles: null,
     locations: [],

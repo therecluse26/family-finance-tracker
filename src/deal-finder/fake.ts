@@ -186,6 +186,7 @@ const asRead = (item: FakeProduct): ProductRead => ({
 });
 
 export class FakePriceSource implements PriceSourceAdapter {
+  readonly madeUpStores = true;
   // Each call, in order, with the source or Store it named. Never a key.
   readonly calls: { call: FakePriceSourceCall; target: string }[] = [];
   // Switches: every call of the source throws this kind of error until it is cleared.

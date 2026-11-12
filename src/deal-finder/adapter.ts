@@ -56,7 +56,15 @@ export type WeeklyAdItem = {
   validTo: string;
 };
 
+// The fake adapter's Home stores, locations and Product re-read keys: each ID starts with "fake-".
+// A Household that ran on the fake adapter, such as under `pnpm dev`, can still hold some once it
+// runs on the real readers.
+export const isMadeUpId = (id: string | null): boolean => id !== null && id.startsWith("fake-");
+
 export type PriceSourceAdapter = {
+  // True for the fake adapter, which reads its own made-up Home stores. Any other adapter is a real
+  // reader, and is never sent a made-up Home store: the Store asks for Find Stores near us again.
+  readonly madeUpStores?: true;
   // For Test: one small call with the key. It resolves when the source accepts it.
   checkAccount(source: "apify" | "kroger", keys: PriceSourceKeys): Promise<Costed<true>>;
   // Every supported Store near the ZIP code, within the distance.

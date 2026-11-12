@@ -374,9 +374,11 @@ function StoreRow(props: {
             ? "Weekly ad only"
             : !props.zipOn
               ? "Its default store"
-              : store.homeStore === null
-                ? "The reader picks the store from the ZIP code"
-                : `Home store: ${store.homeStore.name}${store.distanceMiles === null ? "" : `, ${store.distanceMiles} miles`}`}
+              : store.findAgain
+                ? "No Home store"
+                : store.homeStore === null
+                  ? "The reader picks the store from the ZIP code"
+                  : `Home store: ${store.homeStore.name}${store.distanceMiles === null ? "" : `, ${store.distanceMiles} miles`}`}
         {" · "}
         {store.reader === "Store API" ? "Kroger API" : "Scraping service"}
         {" · "}
@@ -387,6 +389,13 @@ function StoreRow(props: {
       {store.needsZip ? (
         <p className="mt-1 text-small">
           <StatusText tone="serious">Needs your ZIP code</StatusText>
+        </p>
+      ) : null}
+      {store.findAgain ? (
+        <p className="mt-1 text-small">
+          <StatusText tone="serious">
+            Its Home store is made up. Find Stores near us again.
+          </StatusText>
         </p>
       ) : null}
       {store.locations.length > 1 ? (
