@@ -24,6 +24,52 @@ const words = (input: Record<string, unknown>, field: string): string[] => {
   return typeof value === "string" ? [value] : [];
 };
 
+// One made-up Costco warehouse row, in `dromb/costco-us`'s real shape.
+const fakeWarehouse = (number: string, letters: string, name: string, miles: number) => ({
+  id: number,
+  warehouse_id: `${number}-${letters}`,
+  record_type: "warehouse",
+  name,
+  distance_miles: miles,
+  address: {
+    street: "1 Fake Street",
+    city: "Faketown",
+    state: "ZZ",
+    postal_code: "00000",
+    country: "US",
+  },
+  latitude: 0,
+  longitude: 0,
+});
+
+// One made-up Deal row, in `gratifying_graph/us-grocery-deals`'s real search shape.
+const fakeDeal = (
+  merchant: string,
+  name: string,
+  currentPrice: number,
+  discount: number,
+  dates: { validFrom: string; validTo: string },
+) => ({
+  dealId: `fake-deal-${name.length}-${merchant.length}`,
+  mode: "search",
+  query: "fake",
+  zipCode: "00000",
+  name,
+  brand: null,
+  merchant,
+  merchantId: `fake-${merchant.length}`,
+  currentPrice,
+  discount,
+  currency: "USD",
+  flyerId: "fake-flyer",
+  flyerName: `${merchant} Fake Weekly Ad`,
+  flyerCategories: ["Groceries"],
+  ...dates,
+  imageUrl: null,
+  source: "fake",
+  fetchedAt: "2026-11-11T12:00:00Z",
+});
+
 // Each Actor's made-up rows.
 export const FAKE_ACTOR_ROWS: Record<string, ActorRows> = {
   "gauravlabs/walmart-search-api": (input) => {
@@ -153,9 +199,11 @@ export const FAKE_ACTOR_ROWS: Record<string, ActorRows> = {
     if (ids.length > 0) return rows.filter((row) => ids.includes(String(row.itemNumber)));
     return input.dealsOnly === true ? rows.filter((row) => row.onSale) : rows;
   },
+  // The real warehouse rows' shape: `id` is the warehouse number, `warehouse_id` the number, a dash
+  // and 2 letters.
   "dromb/costco-us": () => [
-    { warehouse_id: "9301", name: "Costco Fake Fairgrounds", distance_miles: 7.4 },
-    { warehouse_id: "9302", name: "Costco Fake Old Mill", distance_miles: 33.7 },
+    fakeWarehouse("9301", "fa", "Costco Fake Fairgrounds", 7.4),
+    fakeWarehouse("9302", "om", "Costco Fake Old Mill", 33.7),
   ],
   "delicious_zebu/amazon-product-data-scraper": (input) => {
     const rows = [
@@ -179,31 +227,25 @@ export const FAKE_ACTOR_ROWS: Record<string, ActorRows> = {
     const byAsin = rows.filter((row) => asked.includes(row.asin));
     return byAsin.length > 0 ? byAsin : rows;
   },
+  // The real Deal rows' shape: `currentPrice` is the sale price, and `discount` the dollars off.
   "gratifying_graph/us-grocery-deals": (input) => {
     const rows = [
-      {
-        merchant: "Hilltop Fake Market",
-        name: "Hilltop Ground Beef, per lb",
-        salePrice: 3.99,
-        regularPrice: 5.29,
+      fakeDeal("Hilltop Fake Market", "Hilltop Ground Beef, per lb", 3.99, 1.3, {
         validFrom: "2026-11-11",
         validTo: "2026-11-17",
-      },
-      {
-        merchant: "Target",
-        name: "Large Eggs, 12 ct",
-        salePrice: "2.99",
-        regularPrice: null,
+      }),
+      fakeDeal("Target", "Large Eggs, 12 ct", 2.99, 0, {
         validFrom: "2026-11-09T00:00:00-05:00",
         validTo: "2026-11-15T23:59:59-05:00",
-      },
-      {
-        merchant: "Aldi",
-        name: "ALDI Finds Fake Skillet",
-        salePrice: 14.99,
+      }),
+      fakeDeal("ALDI", "ALDI Finds Fake Skillet", 14.99, 0, {
         validFrom: "2026-11-12",
         validTo: "2026-11-18",
-      },
+      }),
+      fakeDeal("Sam's Club", "Fake Member Mark Whole Milk, 1 gal", 3.48, 0.5, {
+        validFrom: "2026-11-10",
+        validTo: "2026-11-16",
+      }),
     ];
     return input.onlyWithPrice === true
       ? rows

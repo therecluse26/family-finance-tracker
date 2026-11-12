@@ -52,6 +52,8 @@ const FOUND: PriceSourcesView = {
       on: true,
       needsZip: false,
       findAgain: false,
+      notFound: null,
+      earlierResult: false,
       homeStore: { id: "fake-kroger-0101", name: "Kroger, Maple Avenue" },
       distanceMiles: 2.4,
       locations: [
@@ -111,6 +113,58 @@ describe("Settings, Price sources", () => {
     expect(shown).toContain("Its Home store is made up. Find Stores near us again.");
     expect(shown).not.toContain("Maple Avenue");
   });
+
+  it("shows why each Store is not found, unticked and not tickable, and a failed Store's earlier result", () => {
+    const [kroger] = FOUND.stores;
+    if (kroger === undefined) throw new Error("FOUND lists Kroger.");
+    const notFound = (id: string, name: string, why: "none" | "failed" | "no key") => ({
+      ...kroger,
+      id,
+      name,
+      reader: "Scraping service" as const,
+      on: false,
+      notFound: why,
+      homeStore: null,
+      distanceMiles: null,
+      locations: [],
+    });
+    const html = renderToString(
+      <PriceSourcesCards
+        view={{
+          ...FOUND,
+          findDistanceMiles: 50,
+          stores: [
+            notFound("aldi", "Aldi", "none"),
+            notFound("costco", "Costco", "failed"),
+            { ...kroger, earlierResult: true },
+            notFound("walmart", "Walmart", "no key"),
+          ],
+        }}
+        busy={false}
+        act={async () => true}
+        zone="America/New_York"
+        now={NOW}
+      />,
+    );
+    const shown = text(html);
+
+    expect(shown).toContain("Aldi None within 50 miles");
+    expect(shown).toContain("Costco ◆ Could not look it up. Try Find Stores again later.");
+    expect(shown).toContain("Walmart ◆ Not looked up: save the Apify token first.");
+    // Kroger's lookup failed: it keeps its Home store, and says so.
+    expect(shown).toContain("Home store: Kroger, Maple Avenue, 2.4 miles");
+    expect(shown).toContain("The last lookup failed; this is the earlier result.");
+    const ticks = [...html.matchAll(/<input type="checkbox"[^>]*>/g)].map((tick) => tick[0]);
+    // The last four ticks are the Stores'.
+    expect(ticks.slice(-4).map((tick) => tick.includes("disabled"))).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ]);
+    // A Store not found offers no Home store or delivery amounts.
+    expect(shown.match(/Delivery fee/g)).toHaveLength(1);
+  });
 });
 
 describe("Settings, Price sources: with the ZIP code switch off", () => {
@@ -122,6 +176,8 @@ describe("Settings, Price sources: with the ZIP code switch off", () => {
     on: false,
     needsZip,
     findAgain: false,
+    notFound: null,
+    earlierResult: false,
     homeStore: null,
     distanceMiles: null,
     locations: [],

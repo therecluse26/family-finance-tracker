@@ -11,6 +11,7 @@ import {
   readPriceSourceCost,
   type StoredDealFinderSettings,
   type StoredDealFinderStore,
+  type StoreLookupRow,
   storeDealFinderSettings,
   storeFoundStores,
   storePriceSourceCheck,
@@ -19,6 +20,7 @@ import { calendarDateIn } from "../format.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 import type { SecretPlace, Secrets } from "../secrets/index.ts";
 import {
+  type FoundStore,
   isMadeUpId,
   type PriceSourceAdapter,
   PriceSourceError,
@@ -101,15 +103,16 @@ function monthOf(at: Date, zone: string): string {
 // Each Store as the page lists it. With the ZIP code switch off, a Store is read at its default
 // store, so no Home store or location is shown (spec 15, Store locations and the ZIP code). With
 // the real readers, a made-up Home store from the fake adapter counts as none, and the Store asks
-// for Find Stores near us again.
+// for Find Stores near us again. With the switch on, after a lookup, a Store not found says why.
 function storeView(
   store: StoredDealFinderStore,
   zipOn: boolean,
   madeUpStores: boolean,
+  lookedUp: boolean,
 ): PriceSourceStoreView {
   if (!zipOn) {
     return {
-      ...storeView(store, true, true),
+      ...storeView(store, true, true, false),
       needsZip: storeNeedsZip(store),
       homeStore: null,
       distanceMiles: null,
@@ -118,13 +121,15 @@ function storeView(
   }
   if (!madeUpStores && isMadeUpId(store.homeStoreId)) {
     return {
-      ...storeView(store, true, true),
+      ...storeView(store, true, true, lookedUp),
       homeStore: null,
       distanceMiles: null,
       locations: store.locations.filter((place) => !isMadeUpId(place.id)),
       findAgain: true,
     };
   }
+  const why =
+    store.lastLookup === null || store.lastLookup === "found" ? "unknown" : store.lastLookup;
   return {
     id: store.id,
     name: store.name,
@@ -133,6 +138,8 @@ function storeView(
     on: store.on,
     needsZip: false,
     findAgain: false,
+    notFound: lookedUp && !store.nearby ? why : null,
+    earlierResult: lookedUp && store.nearby && store.lastLookup === "failed",
     homeStore:
       store.homeStoreId === null
         ? null
@@ -154,21 +161,28 @@ const UNSAVED_STORE = {
   deliveryFee: null,
   freeDeliveryFrom: null,
   lastGoodReadAt: null,
+  lastLookup: null,
 } as const;
 
-// The listed Stores. With the switch on, the ones Find Stores near us found, and any Store still on
-// (ticked with the switch off, before a lookup), so it can be seen and turned off. With it off, every
-// supported Store, saved or not, and any weekly ad found earlier, which shows that it needs the ZIP
-// code.
-function listedStores(saved: StoredDealFinderStore[], zipOn: boolean): StoredDealFinderStore[] {
-  if (zipOn) return saved.filter((store) => store.nearby || store.on);
+const isSupported = (store: { id: string }) => SUPPORTED_STORES.some((one) => one.id === store.id);
+
+// The listed Stores. With the switch on, before any Find Stores near us, only a Store still on
+// (ticked with the switch off), so it can be seen and turned off. With the switch on after a lookup,
+// and with it off, every supported Store, saved or not, found or not, and each weekly ad found; with
+// the switch off, a weekly ad shows that it needs the ZIP code.
+function listedStores(
+  saved: StoredDealFinderStore[],
+  zipOn: boolean,
+  lookedUp: boolean,
+): StoredDealFinderStore[] {
+  if (zipOn && !lookedUp) return saved.filter((store) => store.nearby || store.on);
   const byId = new Map(saved.map((store) => [store.id, store]));
   const supported = SUPPORTED_STORES.map(
     (store): StoredDealFinderStore =>
       byId.get(store.id) ?? { ...store, ...UNSAVED_STORE, locations: [], foundAt: new Date(0) },
   );
   const others = saved.filter(
-    (store) => store.nearby && !SUPPORTED_STORES.some((one) => one.id === store.id),
+    (store) => !isSupported(store) && (store.nearby || (zipOn && store.on)),
   );
   return [...supported, ...others].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
@@ -234,8 +248,8 @@ export function priceSourceSettings(options: {
       storesFoundAt: stored.storesFoundAt?.toISOString() ?? null,
       costCap: stored.costCap,
       monthCostNanos: await readPriceSourceCost(database, month),
-      stores: listedStores(stores, stored.useZip).map((store) =>
-        storeView(store, stored.useZip, madeUpStores),
+      stores: listedStores(stores, stored.useZip, stored.storesFoundAt !== null).map((store) =>
+        storeView(store, stored.useZip, madeUpStores, stored.storesFoundAt !== null),
       ),
       data,
     };
@@ -358,16 +372,36 @@ export function priceSourceSettings(options: {
           return { outcome: "failed" };
         }
         await addCost(found.costNanos);
-        // A location outside the distance is not shown, whatever the source sent.
-        const near = found.value.flatMap((store) => {
+        // A location outside the distance is not shown, whatever the source sent: a Store with
+        // locations, none within the distance, is "none".
+        const within = (store: FoundStore): FoundStore | null => {
           const locations = store.locations
             .filter((place) => place.distanceMiles <= miles)
             .sort((a, b) => a.distanceMiles - b.distanceMiles);
           return store.locations.length > 0 && locations.length === 0
-            ? []
-            : [{ ...store, locations }];
+            ? null
+            : { ...store, locations };
+        };
+        // Each supported Store's outcome. One the adapter did not look up has no saved key.
+        const lookups = SUPPORTED_STORES.map((supported): StoreLookupRow => {
+          const looked = found.value.lookups.find((each) => each.storeId === supported.id);
+          if (looked === undefined) return { outcome: "no key", store: supported };
+          if (looked.outcome !== "found") return { outcome: looked.outcome, store: supported };
+          const near = within({ ...looked.store, id: supported.id });
+          return near === null
+            ? { outcome: "none", store: supported }
+            : { outcome: "found", store: near };
         });
-        await storeFoundStores(database, near, { zipCode, distanceMiles: miles, at: now() });
+        const weeklyAds =
+          found.value.weeklyAds?.flatMap((store) => {
+            const near = isSupported(store) ? null : within(store);
+            return near === null ? [] : [near];
+          }) ?? null;
+        await storeFoundStores(database, lookups, weeklyAds, {
+          zipCode,
+          distanceMiles: miles,
+          at: now(),
+        });
         return { outcome: "found", view: await view() };
       } finally {
         finding = false;

@@ -41,7 +41,7 @@ A Store is a chain the deal finder reads, such as Walmart or Aldi. A Home store 
 | Aldi | `blackfalcondata/aldi-us-scraper` with `location`; `onSaleOnly` for deals | The Actor picks it from the ZIP code | 15 of 15 priced. Different store per ZIP code, same prices. 40 of 40 on-sale rows had a regular price |
 | Costco | `vant47/costco-scraper` with `storeIds` and `locations` | [Find Stores near us](#find-stores-near-us-owner-design-2026-11-11) | Different warehouse per ZIP code. 2 of 12 prices differed. 6 of 12 rows had only `regularPrice` |
 | Amazon | `delicious_zebu/amazon-product-data-scraper` | None: Amazon has one price for the US | The ZIP code changed no price. Rows carry a coupon, a list price and a unit price |
-| Weekly ads, every chain that prints one | `gratifying_graph/us-grocery-deals` (Flipp data), mode `flyers`, with `zipCodes` and `merchants` | The ZIP code | Aldi 151 items with ALDI Finds, Target 192, Costco 208 or more, and local chains. Sale price, regular price, `validFrom` and `validTo`, in 2 to 3 s. Walmart prints no ad |
+| Weekly ads, every chain that prints one | `gratifying_graph/us-grocery-deals` (Flipp data), mode `search`, with `zipCodes` and `queries`; each Deal gives `currentPrice` and `discount` | The ZIP code | Aldi 151 items with ALDI Finds, Target 192, Costco 208 or more, and local chains. Sale price, regular price, `validFrom` and `validTo`, in 2 to 3 s. Walmart prints no ad |
 
 - **A weekly-ad-only Store** is a local chain that appears only in the weekly ads. Its deals count in the plan. It has no regular prices, so a List item goes there only for a deal.
 - Costco gives two prices: the warehouse price (`warehousePrice`) and a higher online price (`onlinePrice`). The plan uses the warehouse price (owner decision, 2026-11-10). A Product with no warehouse price uses its online price, and the plan labels it "Online price". In spike round 12, 6 of 15 rows had a warehouse price.
@@ -64,13 +64,13 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
    |---|---|---|---|
    | Kroger and its brands | Locations API within the distance. It skips a location with no departments: the spike found one that was not a grocery store | up to 10 nearest | free |
    | Target | `axlymxp/target-store-scraper` with `within` set to the distance | up to 5 nearest open stores | about $0.015 |
-   | Costco | `dromb/costco-us` with `operation: "warehouses"` lists the 5 nearest warehouses, with `warehouse_id` and `distance_miles` | up to 5 nearest; `vant47` reads the picked one by `storeIds` (spike round 14) | about $0.007 |
+   | Costco | `dromb/costco-us` with `operation: "warehouses"` lists the 5 nearest warehouses, with `id` (the warehouse number, all digits; else the digits before the dash in `warehouse_id`, such as `1234-ab`) and `distance_miles` | up to 5 nearest; `vant47` reads the picked one by `storeIds` (spike round 14) | about $0.007 |
    | Walmart | One search with `zipcode`. Its row gives the store the Actor picked | that store only: the Actor's `storeId` input failed 2 of 2 runs, and no Actor lists Walmart stores near a ZIP code (spike round 14) | $0.002 |
-   | Aldi | The weekly ads show whether an Aldi ad runs near the ZIP code | none: the Actor takes only a ZIP code and picks the store | in the weekly ads lookup |
+   | Aldi | The weekly ads show whether an Aldi ad (`ALDI`) runs near the ZIP code. The lookup is a search in mode `search` for milk, eggs, bread and chicken, 25 Deals each: mode `flyers` has no limit per flyer, and one chain's ad filled a real run | none: the Actor takes only a ZIP code and picks the store | in the weekly ads lookup |
    | Amazon | Always listed, as "Online" | none | free |
-   | Local chains | The weekly ads list each chain that prints an ad near the ZIP code. Each one is a weekly-ad-only Store | none | in the weekly ads lookup |
+   | Local chains | The weekly ads list each chain that prints an ad near the ZIP code. Each one the app has no reader for, such as Sam's Club, is a weekly-ad-only Store | none | in the weekly ads lookup |
 
-4. **The list.** The page shows each Store found, with its nearest location and distance. A Store outside the distance is not shown. The Member ticks the Stores to read. A ticked Store is on; the rest are off.
+4. **The list.** The page lists every supported Store and each weekly-ad-only Store found. A Store found shows its nearest location and distance. A Store not found shows why, unticked, and cannot be ticked: "None within 25 miles" (the chosen distance), or "Could not look it up. Try Find Stores again later." A failed lookup is not "none": a Store found before keeps its row as it was (ticked or not, its Home store and locations) and shows "The last lookup failed; this is the earlier result." A refused key or a usage limit still fails the whole lookup. Each Store keeps its last lookup's outcome, so the page shows it after a reload. The Member ticks the Stores to read. A ticked Store is on; the rest are off.
 5. **Locations.** For a ticked Store with a list, the app picks the nearest location as its Home store. A Member can pick another one from the list. Each Store has one Home store.
 6. **Saved.** The app saves the ticked Stores and their Home store IDs. Plan runs use the saved IDs, and do not look them up again.
 

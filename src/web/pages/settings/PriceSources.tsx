@@ -326,14 +326,60 @@ export function ZipCard(props: {
   );
 }
 
-function StoreRow(props: {
+type StoreRowProps = {
   store: PriceSourceStoreView;
   busy: boolean;
   act: Act;
   now: Date;
   zone: string;
   zipOn: boolean;
-}) {
+  // The distance the last Find Stores near us looked within.
+  miles: FindStoresMiles;
+};
+
+// One Store on the Stores card. With the ZIP code switch on, a Store the last lookup did not find
+// shows why, and cannot be ticked.
+function StoreRow(props: StoreRowProps) {
+  const { store } = props;
+  const notFound = props.zipOn ? store.notFound : null;
+  return (
+    <li className={`${ROW} block`}>
+      <label className={`${CHOICE} mt-0 font-semibold`}>
+        <input
+          type="checkbox"
+          checked={store.on}
+          disabled={props.busy || ((store.needsZip || notFound !== null) && !store.on)}
+          onChange={(e) => void props.act(() => changeStore(store.id, { on: e.target.checked }))}
+        />
+        {store.name}
+      </label>
+      {notFound === null ? null : (
+        <p className="mt-1 text-small">
+          {notFound === "none" ? (
+            <span className="text-muted">None within {props.miles} miles</span>
+          ) : (
+            <StatusText tone="serious">{NOT_FOUND_TEXT[notFound](store)}</StatusText>
+          )}
+        </p>
+      )}
+      {notFound === null ? <StoreDetails {...props} /> : null}
+    </li>
+  );
+}
+
+// Why a Store is not found, after Find Stores near us.
+const NOT_FOUND_TEXT: Record<
+  "failed" | "no key" | "unknown",
+  (store: PriceSourceStoreView) => string
+> = {
+  failed: () => "Could not look it up. Try Find Stores again later.",
+  "no key": (store) =>
+    `Not looked up: save the ${store.reader === "Store API" ? "Kroger API keys" : "Apify token"} first.`,
+  unknown: () => "Not found by the last lookup. Find Stores near us again.",
+};
+
+// A found Store's Home store, last read, and delivery amounts.
+function StoreDetails(props: StoreRowProps) {
   const { store } = props;
   const [fee, setFee] = useState(store.deliveryFee === null ? "" : String(store.deliveryFee / 100));
   const [free, setFree] = useState(
@@ -357,16 +403,7 @@ function StoreRow(props: {
   }
 
   return (
-    <li className={`${ROW} block`}>
-      <label className={`${CHOICE} mt-0 font-semibold`}>
-        <input
-          type="checkbox"
-          checked={store.on}
-          disabled={props.busy || (store.needsZip && !store.on)}
-          onChange={(e) => void props.act(() => changeStore(store.id, { on: e.target.checked }))}
-        />
-        {store.name}
-      </label>
+    <>
       <p className="mt-1 text-small text-muted">
         {store.kind === "online"
           ? "Online"
@@ -398,6 +435,13 @@ function StoreRow(props: {
           </StatusText>
         </p>
       ) : null}
+      {props.zipOn && store.earlierResult ? (
+        <p className="mt-1 text-small">
+          <StatusText tone="serious">
+            The last lookup failed; this is the earlier result.
+          </StatusText>
+        </p>
+      ) : null}
       {store.locations.length > 1 ? (
         <label className={LABEL}>
           Change Home store
@@ -426,7 +470,7 @@ function StoreRow(props: {
       </form>
       <p className={HINT}>Empty means no fee.</p>
       <ErrorLine error={error} />
-    </li>
+    </>
   );
 }
 
@@ -497,6 +541,7 @@ export function StoresCard(props: {
               now={props.now}
               zone={props.zone}
               zipOn={view.zip.on}
+              miles={view.findDistanceMiles}
             />
           ))}
         </ul>

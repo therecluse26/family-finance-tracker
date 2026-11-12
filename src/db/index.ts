@@ -273,6 +273,7 @@ export {
   type StoreChangeResult,
   type StoredDealFinderSettings,
   type StoredDealFinderStore,
+  type StoreLookupRow,
   storeDealFinderSettings,
   storeFoundStores,
   storePriceSourceCheck,

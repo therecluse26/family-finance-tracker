@@ -3,9 +3,10 @@ import { calendarDate, cutText, parseCents } from "../checks.ts";
 import { recordsIn } from "../http.ts";
 
 // The weekly ads: `gratifying_graph/us-grocery-deals` (Flipp data), near the ZIP code. A search
-// keeps 5 Deals per List item, with a price only (`onlyWithPrice`). Find Stores near us reads the
-// flyers near the ZIP code to learn which chains print an ad there: an Aldi ad shows that an Aldi is
-// near, and each local chain becomes a weekly-ad-only Store.
+// keeps 5 Deals per List item, with a price only (`onlyWithPrice`). Find Stores near us searches a
+// few staples near the ZIP code to learn which chains print an ad there: an Aldi ad ("ALDI") shows
+// that an Aldi is near, and each chain the app has no reader for, such as Sam's Club, becomes a
+// weekly-ad-only Store.
 
 export const WEEKLY_ADS_ACTOR = "gratifying_graph/us-grocery-deals";
 const DEALS_PER_SEARCH = 5;
@@ -46,40 +47,50 @@ export const weeklyAdSearchInput = (zipCode: string, words: string[]) => ({
   },
 });
 
-// One ad item, or null when the checks drop it: it needs a chain, a name, a sale price, and real
-// dates. A regular price counts only above the sale price.
+// One ad item, or null when the checks drop it: it needs a chain, a name, a sale price
+// (`currentPrice`), and real dates. The regular price is the sale price plus `discount`, the
+// dollars off, when that is above 0.
 export function weeklyAdItem(row: Record<string, unknown>): WeeklyAdItem | null {
   const merchant = cutText(row.merchant);
   const storeId = merchant === null ? null : adStoreId(merchant);
   const name = cutText(row.name);
-  const dealPrice = parseCents(row.salePrice);
+  const dealPrice = parseCents(row.currentPrice);
   const validFrom = calendarDate(row.validFrom);
   const validTo = calendarDate(row.validTo);
   if (storeId === null || name === null || dealPrice === null) return null;
   if (validFrom === null || validTo === null || validTo < validFrom) return null;
-  const given =
-    row.regularPrice !== null && row.regularPrice !== undefined && row.regularPrice !== "";
-  const regular = given ? parseCents(row.regularPrice) : null;
-  if (given && regular === null) return null;
+  // A discount of 0 is none; any other that is not whole cents drops the item.
+  const none =
+    row.discount === null ||
+    row.discount === undefined ||
+    row.discount === 0 ||
+    row.discount === "";
+  const discount = none ? null : parseCents(row.discount);
+  if (!none && discount === null) return null;
   return {
     storeId,
     name,
     dealPrice,
-    regularPrice: regular !== null && regular > dealPrice ? regular : null,
+    regularPrice: discount !== null && discount > 0 ? dealPrice + discount : null,
     validFrom,
     validTo,
   };
 }
 
-// Find Stores near us: one item from each flyer near the ZIP code.
+// Find Stores near us: a search for a few staples near the ZIP code, whose Deals name the chains
+// that print an ad there. The Actor's "flyers" mode has no limit for each flyer, so one chain's ad
+// can fill the whole run.
+export const WEEKLY_AD_FIND_QUERIES = ["milk", "eggs", "bread", "chicken"];
+const FIND_DEALS_PER_QUERY = 25;
+
 export const weeklyAdFindInput = (zipCode: string) => ({
   actor: WEEKLY_ADS_ACTOR,
   input: {
-    mode: "flyers",
+    mode: "search",
     zipCodes: [zipCode],
+    queries: WEEKLY_AD_FIND_QUERIES,
     onlyWithPrice: true,
-    maxItemsPerFlyer: 1,
-    maxItems: 40,
+    maxItemsPerQuery: FIND_DEALS_PER_QUERY,
   },
 });
 

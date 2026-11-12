@@ -131,29 +131,72 @@ export type FoundStoreRow = Pick<StoredDealFinderStore, "id" | "name" | "kind" |
   locations: { id: string; name: string; distanceMiles: number }[];
 };
 
+// One Store's lookup, as Find Stores near us stores it.
+export type StoreLookupRow =
+  | { outcome: "found"; store: FoundStoreRow }
+  | { outcome: "none" | "failed" | "no key"; store: StoreIdentity };
+
 // Saves what Find Stores near us found, in one transaction (spec 15, Find Stores near us). A Store
 // found again keeps whether it is on, its Home store while that is still listed, and its delivery
-// settings; a new one is off, with its nearest location as its Home store. A Store not found is off
-// and hidden, and keeps its settings.
+// settings; a new one is off, with its nearest location as its Home store. A Store with none within
+// the distance, or not looked up for want of a key, is off and hidden, and keeps its settings. A
+// Store whose lookup failed keeps its row as it was: on, nearby, Home store and locations. The
+// weekly-ad-only Stores change only when their lookup ran (`weeklyAds` is not null): one not found
+// again is "none". Each row keeps its last lookup's outcome, so the page shows it after a reload.
 export async function storeFoundStores(
   database: Database,
-  found: FoundStoreRow[],
+  lookups: StoreLookupRow[],
+  weeklyAds: FoundStoreRow[] | null,
   lookup: { zipCode: string; distanceMiles: number; at: Date },
 ): Promise<void> {
   await database.transaction(async (tx) => {
     const before = new Map(
       (await tx.select().from(dealFinderStores)).map((store) => [store.id, store]),
     );
-    await tx.update(dealFinderStores).set({ on: false, nearby: false });
-    for (const store of found) {
+    const rows = [...lookups];
+    if (weeklyAds !== null) {
+      const foundAds = new Set(weeklyAds.map((store) => store.id));
+      rows.push(...weeklyAds.map((store) => ({ outcome: "found" as const, store })));
+      for (const old of before.values()) {
+        if (old.kind === "weekly ad only" && !foundAds.has(old.id)) {
+          rows.push({ outcome: "none", store: old });
+        }
+      }
+    }
+    for (const { outcome, store } of rows) {
       const old = before.get(store.id);
+      const identity = { id: store.id, name: store.name, kind: store.kind, reader: store.reader };
+      if (outcome === "failed") {
+        // A failed lookup tells nothing new: only its outcome is stored.
+        await tx
+          .insert(dealFinderStores)
+          .values({
+            ...identity,
+            on: false,
+            nearby: false,
+            locations: [],
+            foundAt: lookup.at,
+            lastLookup: outcome,
+          })
+          .onConflictDoUpdate({ target: dealFinderStores.id, set: { lastLookup: outcome } });
+        continue;
+      }
+      if (outcome !== "found") {
+        const row = { on: false, nearby: false, lastLookup: outcome };
+        await tx
+          .insert(dealFinderStores)
+          .values({ ...identity, ...row, locations: [], foundAt: lookup.at })
+          .onConflictDoUpdate({ target: dealFinderStores.id, set: row });
+        continue;
+      }
       const home =
         store.locations.find((place) => place.id === old?.homeStoreId) ?? store.locations[0];
       const row = {
         name: store.name,
         kind: store.kind,
         reader: store.reader,
-        // A Store not found by the last lookup is off already; one ticked with the switch off stays on.
+        // A Store not found by an earlier lookup is off already; one ticked with the switch off
+        // stays on.
         on: old?.on === true,
         nearby: true,
         locations: store.locations,
@@ -161,6 +204,7 @@ export async function storeFoundStores(
         homeStoreName: home?.name ?? null,
         distanceMiles: home?.distanceMiles ?? null,
         foundAt: lookup.at,
+        lastLookup: outcome,
       };
       await tx
         .insert(dealFinderStores)

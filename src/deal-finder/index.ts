@@ -1,12 +1,14 @@
 // The deal-finder module's interface (spec 15, Deal finder). Other modules import from here.
 export type {
   Costed,
+  FoundLocations,
   FoundStore,
   PriceSourceAdapter,
   PriceSourceErrorKind,
   PriceSourceKeys,
   ProductRead,
   StoreLocation,
+  StoreLookup,
   WeeklyAdItem,
 } from "./adapter.ts";
 export { PriceSourceError } from "./adapter.ts";

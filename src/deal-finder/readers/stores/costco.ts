@@ -74,9 +74,18 @@ export const costcoFindInput = (zipCode: string) => ({
   input: { operation: "warehouses", postalCode: zipCode, autoResolveLocation: true, limit: 5 },
 });
 
+// A warehouse row's `warehouse_id` is its number, a dash and 2 lower-case letters, such as
+// "1234-ab".
+const WAREHOUSE_CODE = /^(\d{1,6})-[a-z]{2}$/;
+
+// Each warehouse, by its number: `id`, all digits, as `vant47`'s `storeIds` takes it. Only a row
+// with no `id` falls back to the digits before the dash in `warehouse_id`.
 export function costcoWarehousesIn(rows: Record<string, unknown>[]): StoreLocation[] {
   return recordsIn(rows).flatMap((row) => {
-    const id = readKeyOf(row.warehouse_id, WAREHOUSE_ID);
+    const id =
+      row.id === undefined || row.id === null
+        ? (WAREHOUSE_CODE.exec(String(row.warehouse_id ?? ""))?.[1] ?? null)
+        : readKeyOf(row.id, WAREHOUSE_ID);
     const distance = row.distance_miles;
     if (id === null || typeof distance !== "number" || !Number.isFinite(distance)) return [];
     return [{ id, name: cutText(row.name) ?? "Costco", distanceMiles: distance }];

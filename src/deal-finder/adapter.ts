@@ -29,6 +29,21 @@ export type FoundStore = {
   locations: StoreLocation[];
 };
 
+// What Find Stores near us learned about one supported Store: found, with its locations; none
+// within the distance; or a lookup that failed, with its PriceSourceError kind. A failed lookup is
+// not "none": the Store keeps what an earlier lookup found.
+export type StoreLookup =
+  | { storeId: string; outcome: "found"; store: FoundStore }
+  | { storeId: string; outcome: "none" }
+  | { storeId: string; outcome: "failed"; failure: PriceSourceErrorKind };
+
+export type FoundLocations = {
+  // One for each supported Store looked up. A Store whose Price source has no saved key is not.
+  lookups: StoreLookup[];
+  // The weekly-ad-only Stores found, or null when their lookup failed or did not run.
+  weeklyAds: FoundStore[] | null;
+};
+
 // One Product and its prices, as a Store gives them. Prices are whole cents.
 export type ProductRead = {
   // The Store's re-read key: its item number, ASIN, or Product link.
@@ -67,12 +82,13 @@ export type PriceSourceAdapter = {
   readonly madeUpStores?: true;
   // For Test: one small call with the key. It resolves when the source accepts it.
   checkAccount(source: "apify" | "kroger", keys: PriceSourceKeys): Promise<Costed<true>>;
-  // Every supported Store near the ZIP code, within the distance.
+  // Every supported Store near the ZIP code, within the distance, and the weekly-ad-only Stores. A
+  // refused key or a usage limit throws; any other failure is that one Store's "failed" lookup.
   findLocations(input: {
     zipCode: string;
     distanceMiles: FindStoresMiles;
     keys: PriceSourceKeys;
-  }): Promise<Costed<FoundStore[]>>;
+  }): Promise<Costed<FoundLocations>>;
   // Searches one Store for words, in the Store's own best-match order, never a price sort, and keeps
   // up to `productCount` Products. A brand lock goes into the words at every Store, and into the
   // Store's own brand filter where it has one. `dealsOnly` asks for on-sale Products only, where the

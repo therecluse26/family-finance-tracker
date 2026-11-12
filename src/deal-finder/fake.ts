@@ -1,11 +1,13 @@
 import {
   type Costed,
+  type FoundLocations,
   type FoundStore,
   type PriceSourceAdapter,
   PriceSourceError,
   type PriceSourceErrorKind,
   type PriceSourceKeys,
   type ProductRead,
+  type StoreLookup,
   type WeeklyAdItem,
 } from "./adapter.ts";
 import type { FindStoresMiles } from "./view.ts";
@@ -193,6 +195,9 @@ export class FakePriceSource implements PriceSourceAdapter {
   readonly sourceErrors = new Map<"apify" | "kroger", PriceSourceErrorKind>();
   // Every call for this Store fails.
   readonly failingStores = new Set<string>();
+  // Only this Store's Find Stores lookup fails, as one failed Actor run does. "weekly ads" fails
+  // the weekly-ad-only Stores' lookup.
+  readonly failingLookups = new Set<string>();
   // What a switched-on source error says the failed work still cost, such as a failed Actor run.
   failureCostNanos: number | undefined;
   // The next this many calls for this Store fail, then they work again.
@@ -239,7 +244,7 @@ export class FakePriceSource implements PriceSourceAdapter {
     zipCode: string;
     distanceMiles: FindStoresMiles;
     keys: PriceSourceKeys;
-  }): Promise<Costed<FoundStore[]>> {
+  }): Promise<Costed<FoundLocations>> {
     await this.begin("findLocations", input.zipCode);
     // Kroger's locations come from the Kroger API, every other Store's from the Scraping service, so
     // a Household with only the Kroger keys finds Kroger alone.
@@ -251,14 +256,27 @@ export class FakePriceSource implements PriceSourceAdapter {
     if (kroger !== undefined) this.failFor("kroger", input.keys);
     const keyed = (store: FoundStore) =>
       store.reader === "Store API" ? kroger !== undefined : apifyToken !== undefined;
-    // A Store with locations, none within the distance, is not found.
-    const found = LOCATIONS.filter(
-      (store) => keyed(store) && !this.failingStores.has(store.id),
-    ).flatMap((store) => {
+    // A Store with locations, none within the distance, is "none".
+    const within = (store: FoundStore): FoundStore | null => {
       const near = store.locations.filter((place) => place.distanceMiles <= input.distanceMiles);
-      return store.locations.length > 0 && near.length === 0 ? [] : [{ ...store, locations: near }];
+      return store.locations.length > 0 && near.length === 0 ? null : { ...store, locations: near };
+    };
+    const failing = (id: string) => this.failingStores.has(id) || this.failingLookups.has(id);
+    const lookups = LOCATIONS.filter(
+      (store) => keyed(store) && store.kind !== "weekly ad only",
+    ).map((store): StoreLookup => {
+      if (failing(store.id))
+        return { storeId: store.id, outcome: "failed", failure: "store failed" };
+      const near = within(store);
+      return near === null
+        ? { storeId: store.id, outcome: "none" }
+        : { storeId: store.id, outcome: "found", store: near };
     });
-    return { value: found, costNanos: FIND_COST_NANOS };
+    const weeklyAds =
+      apifyToken === undefined || this.failingLookups.has("weekly ads")
+        ? null
+        : LOCATIONS.filter((store) => store.kind === "weekly ad only" && !failing(store.id));
+    return { value: { lookups, weeklyAds }, costNanos: FIND_COST_NANOS };
   }
 
   async searchStore(input: {
