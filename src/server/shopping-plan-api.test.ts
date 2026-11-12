@@ -230,6 +230,17 @@ describe("the Shopping plan routes", () => {
     ]);
   });
 
+  it("uses a Walmart price read 20 days ago, as Walmart reads each List item only every 28 days, and shows its read date", async () => {
+    await sql(
+      "UPDATE deal_finder_price_reads SET read_at = ? WHERE product_id = 'walmart-beef' AND regular_price = 519",
+      [new Date(Date.now() - 20 * 86_400_000).toISOString()],
+    );
+    await buildPlan("plan-1");
+    const plan = await view();
+    expect(where(plan)?.[0]).toBe("Walmart: ground beef 1038 regular");
+    expect(plan?.stores[0]?.lines[0]).toMatchObject({ price: 519, readOn: day(-20) });
+  });
+
   it("uses a Deal until it ends, then shows the List item at its regular price again", async () => {
     await buildPlan("plan-1");
     const used = await take({ planId: "plan-1", place: 1, productId: "walmart-eggs" });

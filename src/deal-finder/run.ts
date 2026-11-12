@@ -67,6 +67,9 @@ const DAY_MS = 24 * HOUR_MS;
 export const PRICE_REUSE_MS = DAY_MS;
 // A List item is fully searched again 30 days after its last full search.
 export const FULL_SEARCH_AGAIN_MS = 30 * DAY_MS;
+// Walmart searches a List item again 28 days after its last full search, and reads nothing between
+// (owner decision, 2026-11-12): a search costs about $0.08, and its Actor cannot read one Product.
+export const WALMART_SEARCH_AGAIN_MS = 28 * DAY_MS;
 // The weekly ads are searched again a day after their last search, as Deals change each week.
 const WEEKLY_ADS_AGAIN_MS = DAY_MS;
 // A plan run still running an hour after it started has stopped, such as at a restart cut short:
@@ -92,13 +95,16 @@ export const WEEKLY_AD_DEALS = 5;
 
 // How each Store's saved matches are read again.
 // - api: the Store API reads each Product, free.
-// - search again: Walmart and Target search again, as a search costs the same as a re-read.
+// - search again: Target searches again, as a search costs the same as a re-read.
+// - full search only: Walmart reads nothing between full searches, 28 days apart, and the plan
+//   uses its saved price.
 // - re-read: the Scraping service reads the matched Products by item number or link.
-type ReadMode = "api" | "search again" | "re-read";
+type ReadMode = "api" | "search again" | "full search only" | "re-read";
 
 function readModeOf(store: Pick<StoredDealFinderStore, "id" | "reader">): ReadMode {
   if (store.reader === "Store API") return "api";
-  return store.id === "walmart" || store.id === "target" ? "search again" : "re-read";
+  if (store.id === "walmart") return "full search only";
+  return store.id === "target" ? "search again" : "re-read";
 }
 
 // Measured prices (spec 15, Cost and limits, spike round 12), in billionths of a dollar: per
@@ -122,16 +128,18 @@ const productsPerSearch = (storeId: string) =>
 // What a plan run reads at one Store.
 type StoreWork = {
   store: StoredDealFinderStore;
-  // List items fully searched: their first run, 30 days on, or after their match failed.
+  // List items fully searched: their first run, 30 days on (28 at Walmart), or after their match
+  // failed.
   full: PlanRunListItem[];
-  // List items Walmart or Target search again, in place of a re-read.
+  // List items Target searches again, in place of a re-read.
   again: PlanRunListItem[];
   // Saved matches read again, each older than 24 hours.
   reread: SavedMatch[];
 };
 
 // What a plan run reads at one Store, from its List items' saved matches and full searches. A
-// List item whose prices are all less than 24 hours old reads nothing.
+// List item whose prices are all less than 24 hours old reads nothing, and at Walmart a List item
+// reads nothing between its full searches.
 function planStoreWork(
   store: StoredDealFinderStore,
   items: readonly PlanRunListItem[],
@@ -141,13 +149,16 @@ function planStoreWork(
 ): StoreWork {
   const work: StoreWork = { store, full: [], again: [], reread: [] };
   const mode = readModeOf(store);
+  const searchAgainMs =
+    mode === "full search only" ? WALMART_SEARCH_AGAIN_MS : FULL_SEARCH_AGAIN_MS;
   for (const item of items) {
     const key = `${item.id}\u0000${store.id}`;
     const last = searched.get(key);
-    if (last === undefined || now - last.getTime() >= FULL_SEARCH_AGAIN_MS) {
+    if (last === undefined || now - last.getTime() >= searchAgainMs) {
       work.full.push(item);
       continue;
     }
+    if (mode === "full search only") continue;
     const stale = (matches.get(key) ?? []).filter(
       (match) => match.lastReadAt === null || now - match.lastReadAt.getTime() >= PRICE_REUSE_MS,
     );

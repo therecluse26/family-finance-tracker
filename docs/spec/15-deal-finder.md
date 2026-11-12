@@ -87,7 +87,7 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
 ## Matching List items to Products
 
 1. **Search words.** For each List item, the AI writes the search words once, such as "ground beef 80/20". Without AI, the search words are the List item's words.
-2. **Search.** The app searches each Store that is on with those words. It keeps up to 15 Products at Kroger, Walmart and Target, up to 10 at Costco and Aldi, and up to 5 at Amazon and the weekly ads ([Search once, then re-read](#search-once-then-re-read-owner-decision-2026-11-11)). Later plan runs re-read the match and do not search again.
+2. **Search.** The app searches each Store that is on with those words. It keeps up to 15 Products at Kroger, Walmart and Target, up to 10 at Costco and Aldi, and up to 5 at Amazon and the weekly ads ([Search once, then re-read](#search-once-then-re-read-owner-decision-2026-11-11)). Later plan runs re-read the match and do not search again. Walmart reads nothing until its next full search, 28 days on.
 3. **Match.** The AI (Quick model) reads each List item with its Products: name, brand, size, and Open Food Facts ingredients and allergens when that source is on. For each Product it answers `match`, `substitute` or `no`. A substitute gets one line of reason, such as "Turkey instead of beef".
 4. **Dietary check.** A Product that fails the dietary needs is `no`. Every result that passed a dietary check shows: "AI can get things wrong. Check the label before you buy." (owner decision, 2026-11-07).
 5. **Member choice.** A Member can confirm or reject any match. The app remembers it for the same List item words, Store and Product, and does not ask the AI again.
@@ -118,7 +118,7 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
 - The **regular price** is the Store's normal shelf price: Kroger `price.regular`, Target `original_price`, Aldi's and Costco's regular price, Amazon's list price, else the current price.
 - A **Deal** is a price below the regular price for a limited time: a Kroger `price.promo`, a Target sale price, an Aldi on-sale price, a weekly-ad item, or an Amazon coupon. A Deal has an end date when the source gives one.
 - **Unit price** = price divided by package size, in the List item's unit. App code compares Products by unit price.
-- **Reuse.** A price read less than 24 hours ago is reused. Each plan run reads only what is older.
+- **Reuse.** A price read less than 24 hours ago is reused. Each plan run reads only what is older. At Walmart, the plan uses the saved price from its last full search, up to 28 days old, and shows its read date like any other price.
 - **Price history.** The app stores each price read: Product, Store, date, regular price, Deal price and Deal end date. It keeps 400 days.
 - **Checks on every price.** A price must parse to whole cents, above $0.00 and below $10,000.00. Else the app drops that Product. Text fields are cut to 200 characters.
 - **Product links.** A link opens only when it is `https:` and its host is the Store's own domain, checked on the stored string as sent ([K15](../../CLAUDE.md)). Else the app shows the Product with no link.
@@ -183,23 +183,24 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
   - 15 at Kroger, Walmart and Target. They are free or charge per search, so more Products cost nothing.
   - 5 at Amazon and the weekly ads. In spike round 12, all of their top 5 Products were the right kind (15 of 15 each).
   - 10 at Costco and Aldi, with no second search. Costco's search matches words in Product names, so its order is poor: its top 5 held 2 of 5 peanut butters and 0 of 5 eggs. 10 Products in one search is simpler than 5 with a retry (owner decision, 2026-11-11).
-- **Re-read.** Later plan runs read only each List item's saved `match`, by item number or Product link. Walmart and Target search again, because a search costs the same as a re-read. Walmart's Actor has no lookup by item number: its re-read is a search for the Product's saved name that keeps the row with the same `usItemId`, about $0.08. The weekly ads search again at 5 Deals per List item, because Deals change each week.
-- **Full search again** for a List item when its last full search is 30 days old or more, and when its saved `match` fails: the Store no longer has it, or it has no price.
-- **Cost shown first.** Before a plan run that holds a full search, the page shows its expected cost. The run starts only when a Member confirms it. A run with only re-reads starts at once.
+- **Re-read.** Later plan runs read only each List item's saved `match`, by item number or Product link, once its price is 24 hours old. Target searches again, because a search costs the same as a re-read. The weekly ads search again at 5 Deals per List item, because Deals change each week.
+- **Walmart reads each List item at most once in 28 days** (owner decision, 2026-11-12). Its Actor cannot read one Product by item number, and a search costs about $0.08, so Walmart does not re-read. Between full searches it reads nothing, and the plan uses the saved Walmart price. Without this, weekly plans for 30 List items cost about $14.50 a month, $9.60 of it at Walmart.
+- **Full search again** for a List item when its last full search is 30 days old or more (28 at Walmart), and when its saved `match` fails: the Store no longer has it, or it has no price.
+- **Cost shown first.** Before a plan run that holds a full search, the page shows its expected cost. The run starts only when a Member confirms it. A run with only re-reads starts at once. The cost counts only the Walmart searches the run makes.
 - **What it costs** for 30 List items with every Store on, from the prices measured in spike round 12, and Walmart's from the owner's run of 2026-11-11.
 
-  | Store | Full search | Re-read | Re-read tested |
+  | Store | Full search | Weekly run between full searches | Re-read tested |
   |---|---|---|---|
   | Kroger, 15 Products | $0.00 | $0.00 | not needed (API) |
-  | Walmart, 15 Products | $2.40 | $2.40 | not needed (searches again) |
+  | Walmart, 15 Products | $2.40 | $0.00 | not needed (reads nothing; full search every 28 days) |
   | Target, 15 Products | $0.01 | $0.01 | not needed (searches again) |
   | Aldi, 10 Products | $0.90 | $0.07 | no; its docs say `startUrls` takes Product links |
   | Costco, 10 Products | $1.50 | $0.15 | yes, spike round 13: `productIds`, same prices |
   | Amazon, 5 Products | $0.38 | $0.08 | yes, spike round 14: the ASIN as the search word, 1 Product, same prices. Product links return nothing |
   | Weekly ads, 5 Deals | $0.30 | $0.30 | not needed (searches again) |
-  | **Total** | **about $5.49** | **about $3.01** | |
+  | **Total** | **about $5.49** | **about $0.61** | |
 
-- **For one List item:** a full search costs about $0.10 and a re-read about $0.02. A month of weekly plans (one full search, 3 re-reads) costs about $0.17 for each List item. So $5.00 covers about 29 List items with every Store on. Each Store a Member leaves off lowers the cost.
+- **For one List item:** a full search costs about $0.18 and a weekly run between full searches about $0.02. A month of weekly plans (one full search, 3 weekly runs) costs about $7.32 for 30 List items, about $0.24 for each. So $5.00 covers about 20 List items with every Store on. Each Store a Member leaves off lowers the cost.
 
 ## Failures
 
@@ -272,10 +273,10 @@ These need an owner decision or a short spike before tickets:
    - c. **Costco off by default.** Replaced by [Find Stores near us](#find-stores-near-us-owner-design-2026-11-11): every Store is off until a Member ticks it. At 15 Products per search, Costco is $2.25 of $5.55; with option b, $0.15 of about $0.65.
    - d. **Show the expected cost before a run, and let the Member confirm it.** It saves nothing by itself. It stops a surprise charge.
 
-   With a, b and d, weekly plans cost about $4.05 in the first month ($2.10, then 3 × $0.65) and about $2.60 in each later month, plus searches for new List items. The $5.00 credit also covers any other Apify use that month.
+   With a, b and d, weekly plans cost about $4.05 in the first month ($2.10, then 3 × $0.65) and about $2.60 in each later month, plus searches for new List items. The $5.00 credit also covers any other Apify use that month. Since Walmart moved to `burbn/walmart-product-search` at about $0.08 a search, with 15 Products per search and Walmart searching each List item once in 28 days (owner decision, 2026-11-12), 30 List items cost about $5.49 for the first run and about $0.61 for each weekly run between full searches: about $7.32 a month ($5.49, then 3 × $0.61).
 3. **Store location and filter tests.** Answered in spike round 14: a Costco warehouse can be picked from the 5 nearest; Walmart keeps the store its Actor picks; Amazon re-reads by ASIN; Kroger's brand filter is used, and the other two filters are not.
 4. **Chat edits the list at once, with Undo.** Answered (owner decision, 2026-11-11): keep it. This differs from Proposals, which change nothing until a Member accepts. A Shopping list holds no money, so the edit applies at once.
-5. **Defaults.** Answered (owner decision, 2026-11-11): the trip setting starts at $10.00, and a Member can change it. Products kept per search are 15 at Kroger, Walmart and Target, 10 at Costco and Aldi, and 5 at Amazon and the weekly ads. A full search runs again after 30 days. Price history is kept for 400 days.
+5. **Defaults.** Answered (owner decision, 2026-11-11): the trip setting starts at $10.00, and a Member can change it. Products kept per search are 15 at Kroger, Walmart and Target, 10 at Costco and Aldi, and 5 at Amazon and the weekly ads. A full search runs again after 30 days, and after 28 at Walmart (owner decision, 2026-11-12). Price history is kept for 400 days.
 
 ## Not in this version
 
