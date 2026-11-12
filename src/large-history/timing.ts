@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { type TimingRow, timeWork } from "./build.ts";
+import { useHistoryClock } from "./clock.ts";
 import { type LargeHistory, openLargeHistory } from "./open.ts";
 
 // K9: no request takes more than 1 s.
@@ -30,7 +31,8 @@ export type TimingMeta = { largeHistory?: TimingRow[] };
 
 // One timed case, as a test on a new copy of the built history. It fails when a request takes
 // more than 1 s, a job goes over its limit, or a request does not answer 2xx. Each limit counts
-// CPU time, so a busy host does not fail a case (TimingRow).
+// CPU time, so a busy host does not fail a case (TimingRow). It runs on the history's clock
+// (clock.ts), so it sees the history as it was on HISTORY_NOW, whatever the real date.
 export function timedCase(
   name: string,
   run: (history: LargeHistory, time: Timer) => Promise<void>,
@@ -56,11 +58,16 @@ export function timedCase(
         job: measure,
         add: (row) => rows.push(row),
       };
-      const history = await openLargeHistory();
+      const realClock = useHistoryClock();
       try {
-        await run(history, time);
+        const history = await openLargeHistory();
+        try {
+          await run(history, time);
+        } finally {
+          history.close();
+        }
       } finally {
-        history.close();
+        realClock();
       }
       expect(overLimit(rows)).toEqual([]);
     },
