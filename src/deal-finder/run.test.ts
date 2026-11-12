@@ -25,6 +25,7 @@ import {
 } from "./match.ts";
 import { FakeProductData } from "./product-data.ts";
 import { priceSourceReaders } from "./readers/index.ts";
+import { COSTCO_ACTOR } from "./readers/stores/costco.ts";
 import { WALMART_ACTOR } from "./readers/stores/walmart.ts";
 import {
   checkProduct,
@@ -1099,6 +1100,51 @@ describe("plan runs", () => {
       expect(await homeStoreOf("walmart")).not.toMatch(/^fake-/);
       clock = new Date(START.getTime() + HOUR);
       expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
+    });
+
+    it("never re-reads a Product the fake adapter found, and searches each List item again once", async () => {
+      await addItem("large eggs");
+      await turnOn("costco");
+      // A plan run on the fake adapter saves its made-up Products, and the Member matches them.
+      runs = makeRuns(fake);
+      expect(storesOf(await runPlan())).toEqual({ costco: ["read", null] });
+      await sql("UPDATE product_matches SET answer = 'match'");
+      expect((await matches()).map((row) => row.readKey)).toContain("fake-cc-8801");
+      // The real readers, with each re-read key they are asked for.
+      const asked: string[] = [];
+      const spied: PriceSourceAdapter = {
+        ...readers,
+        readProduct: (input) => {
+          asked.push(input.readKey);
+          return readers.readProduct(input);
+        },
+        readProducts: (input) => {
+          asked.push(...input.readKeys);
+          const many = readers.readProducts;
+          if (many === undefined) throw new Error("The readers read many Products at once.");
+          return many(input);
+        },
+      };
+      runs = makeRuns(spied);
+      // The words of each Costco search, one List item each.
+      const costcoSearches = () =>
+        servers.apify
+          .inputsOf(COSTCO_ACTOR)
+          .flatMap((input) => (input.searchTerms as string[] | undefined) ?? [])
+          .sort();
+
+      // Two days on, the prices are old: a re-read is due, and it searches instead.
+      clock = new Date(START.getTime() + 2 * DAY);
+      expect(storesOf(await runPlan())).toEqual({ costco: ["read", null] });
+      expect(asked).toEqual([]);
+      expect(costcoSearches()).toEqual(["large eggs", "peanut butter"]);
+      expect(JSON.stringify(servers.apify.requests)).not.toContain("fake-cc");
+
+      // Searched since, the List items are not searched again on the next run.
+      clock = new Date(START.getTime() + 4 * DAY);
+      await runPlan();
+      expect(asked).toEqual([]);
+      expect(costcoSearches()).toEqual(["large eggs", "peanut butter"]);
     });
 
     it("sends a Home store the readers found, which does not start with fake-", async () => {

@@ -19,7 +19,7 @@ import { calendarDateIn } from "../format.ts";
 import { type Logger, log, registerSecretValue } from "../log.ts";
 import type { SecretPlace, Secrets } from "../secrets/index.ts";
 import {
-  isMadeUpStoreId,
+  isMadeUpId,
   type PriceSourceAdapter,
   PriceSourceError,
   type PriceSourceKeys,
@@ -116,12 +116,12 @@ function storeView(
       locations: [],
     };
   }
-  if (!madeUpStores && isMadeUpStoreId(store.homeStoreId)) {
+  if (!madeUpStores && isMadeUpId(store.homeStoreId)) {
     return {
       ...storeView(store, true, true),
       homeStore: null,
       distanceMiles: null,
-      locations: store.locations.filter((place) => !isMadeUpStoreId(place.id)),
+      locations: store.locations.filter((place) => !isMadeUpId(place.id)),
       findAgain: true,
     };
   }
@@ -375,7 +375,7 @@ export function priceSourceSettings(options: {
     },
 
     async changeStore(id, changes) {
-      if (!madeUpStores && isMadeUpStoreId(changes.homeStoreId ?? null)) {
+      if (!madeUpStores && isMadeUpId(changes.homeStoreId ?? null)) {
         return { outcome: "no such location" };
       }
       const changed = await changeDealFinderStore(database, id, changes, {
