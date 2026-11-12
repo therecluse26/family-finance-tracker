@@ -707,7 +707,8 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
     };
 
     // Each adapter call with one retry for the Store in this run. A refused key or a usage limit
-    // is not retried. A failed run's cost counts too, before the retry or the end.
+    // is not retried. A failed run's cost counts too, before the retry or the end. A run that
+    // timed out is a Store failure, like any other failed Actor run (spec 15, Failures).
     const withRetry =
       <T>(retries: { left: number }) =>
       async (call: () => Promise<{ value: T; costNanos: number | null }>): Promise<T> => {
@@ -719,7 +720,8 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
           } catch (error) {
             if (error instanceof PriceSourceError) await count(error.costNanos);
             const kind = error instanceof PriceSourceError ? error.kind : "store failed";
-            if (kind !== "store failed" || retries.left === 0) throw error;
+            const storeFailure = kind === "store failed" || kind === "timed out";
+            if (!storeFailure || retries.left === 0) throw error;
             retries.left -= 1;
           }
         }

@@ -9,6 +9,7 @@ import {
   type ShoppingListEditInput,
   shoppingListForChat,
 } from "../deal-finder/index.ts";
+import { shoppingPlanForChat } from "../server/shopping-plan.ts";
 
 // Chat's Shopping list tools (spec 15, Chat tools). get_shopping_list reads the list.
 // edit_shopping_list changes it: up to 30 changes, applied at once, which show as a card in the
@@ -81,9 +82,6 @@ function editOf(change: Change): ShoppingListEditInput | { rule: "add" | "id" } 
   };
 }
 
-// What get_shopping_plan answers until the plan view is built (ticket X49).
-export const NO_PLAN_YET = { result: "No plan yet" };
-
 export function shoppingTools({
   database,
   threadId,
@@ -124,7 +122,7 @@ export function shoppingTools({
     description:
       "Read the last Shopping plan: its Stores, List items, prices, Deals, total, trips, and the date of each price. Only a Member starts a plan run, with Find the best prices.",
     input: z.object({}),
-    run: async () => NO_PLAN_YET,
+    run: () => shoppingPlanForChat(database, now()),
   });
 
   return { get_shopping_list, edit_shopping_list, get_shopping_plan };

@@ -3,6 +3,7 @@ import { dateLabel, dollarsAndCents } from "../../format.ts";
 import type {
   ShoppingPlanDealView,
   ShoppingPlanLineView,
+  ShoppingPlanUncheckedView,
   ShoppingPlanView,
 } from "../../server/shopping-plan-views.ts";
 import { api } from "../api.ts";
@@ -24,6 +25,11 @@ export const shoppingPlanRequests = {
     api["shopping-plan"].deals.$post({ json: deal }),
   dropDeal: (line: { planId: string; place: number }) =>
     api["shopping-plan"].deals.stop.$post({ json: line }),
+  chooseMatch: (choice: {
+    listItemId: string;
+    productId: string;
+    choice: "confirmed" | "rejected";
+  }) => api["shopping-plan"].matches.$post({ json: choice }),
 };
 
 const trips = (count: number) => (count === 1 ? "1 trip" : `${count} trips`);
@@ -52,7 +58,56 @@ type Actions = {
   busy: boolean;
   takeDeal(place: number, productId: string): void;
   dropDeal(place: number): void;
+  chooseMatch(listItemId: string, productId: string, choice: "confirmed" | "rejected"): void;
 };
+
+// "Jif Creamy Peanut Butter · 16 oz · $3.49 at Walmart".
+function foundLine(product: ShoppingPlanUncheckedView["products"][number]): string {
+  const name = product.brand === null ? product.name : `${product.brand} ${product.name}`;
+  const size = product.size === null ? "" : ` · ${product.size}`;
+  const price = product.price === null ? "" : ` · ${dollarsAndCents(product.price)}`;
+  return `${name}${size}${price} at ${product.storeName}`;
+}
+
+// The found Products no one has answered: without AI, a Member picks each List item's Products by
+// hand (spec 15, Works without AI). The next plan uses each one confirmed.
+function UncheckedSection(props: { unchecked: ShoppingPlanUncheckedView[] } & Actions) {
+  return (
+    <section className="mt-4" aria-label="Pick the Products">
+      <h3 className="font-semibold">Pick the Products</h3>
+      <p className="text-small text-muted">
+        Confirm each Product that is right for the List item. The next plan uses it.
+      </p>
+      {props.unchecked.map((item) => (
+        <div key={item.listItemId} className="mt-2">
+          <p className="text-sm font-semibold">{item.words}</p>
+          <ul>
+            {item.products.map((product) => (
+              <li
+                key={product.productId}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1 text-small"
+              >
+                <span className="break-words tabular-nums">{foundLine(product)}</span>
+                <DealButton
+                  busy={props.busy}
+                  onClick={() => props.chooseMatch(item.listItemId, product.productId, "confirmed")}
+                >
+                  Confirm
+                </DealButton>
+                <DealButton
+                  busy={props.busy}
+                  onClick={() => props.chooseMatch(item.listItemId, product.productId, "rejected")}
+                >
+                  Reject
+                </DealButton>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function DealButton(props: { onClick(): void; busy: boolean; children: string }) {
   return (
@@ -105,6 +160,9 @@ export function ShoppingPlanSections(props: { plan: ShoppingPlanView } & Actions
       <p className="mt-1 text-small text-muted">
         Built {dateLabel(plan.builtOn, plan.today)}. {PLAN_NOTE}
       </p>
+      {plan.dietaryDisclaimer === null ? null : (
+        <p className="mt-1 text-small font-semibold">{plan.dietaryDisclaimer}</p>
+      )}
       <p className="mt-3 font-semibold tabular-nums">
         Total {dollarsAndCents(plan.total)} · {trips(plan.trips)}
       </p>
@@ -139,6 +197,9 @@ export function ShoppingPlanSections(props: { plan: ShoppingPlanView } & Actions
             ))}
           </ul>
         </section>
+      ) : null}
+      {plan.unchecked.length > 0 ? (
+        <UncheckedSection unchecked={plan.unchecked} {...props} />
       ) : null}
       {plan.elsewhere.length > 0 ? (
         <section className="mt-4" aria-label="Deals at other Stores">
@@ -237,6 +298,9 @@ export function ShoppingPlan(props: { version?: number }) {
         }
         dropDeal={(place) =>
           void send(() => shoppingPlanRequests.dropDeal({ planId: plan.planId, place }))
+        }
+        chooseMatch={(listItemId, productId, choice) =>
+          void send(() => shoppingPlanRequests.chooseMatch({ listItemId, productId, choice }))
         }
       />
     </>

@@ -17,6 +17,8 @@ import {
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
+import { buildStoredShoppingPlan } from "./shopping-plan.ts";
+import type { ShoppingPlanView } from "./shopping-plan-views.ts";
 import { type App, TestBrowser } from "./testing.ts";
 
 // "Find the best prices" through the app's HTTP interface (spec 15, The Shopping plan): the start,
@@ -106,6 +108,10 @@ describe("the plan run routes", () => {
       startRun: async (planId) => {
         started.push(planId);
       },
+      // As the app's start does: a plan run that ends its reads and matches builds the plan.
+      buildPlan: async (planId) => {
+        await buildStoredShoppingPlan(test.database, planId);
+      },
     });
     const security = await loadSecurity({ APP_URL }, { logger });
     app = createApp(webRoot, security, test.auth, test.database, test.secrets, {
@@ -186,6 +192,41 @@ describe("the plan run routes", () => {
       phase: "done",
       stores: [{ storeId: "kroger", state: "read" }],
     });
+  });
+
+  it("builds the Shopping plan when a run ends, and a Member's pick of an unchecked Product goes in the next plan", async () => {
+    await addItem("item-beef", "ground beef");
+    await turnOn("kroger");
+    const plan = async () =>
+      (
+        (await (await browser.get("/api/shopping-plan")).json()) as {
+          plan: ShoppingPlanView | null;
+        }
+      ).plan;
+    expect(await plan()).toBeNull();
+
+    await press();
+    await runs.run(started[0] as string);
+
+    // With no AI, every found Product waits for a Member.
+    const built = await plan();
+    expect(built?.notFound).toEqual([{ place: 0, words: "ground beef" }]);
+    const [item] = built?.unchecked ?? [];
+    const [product] = item?.products ?? [];
+    expect(item?.listItemId).toBe("item-beef");
+    expect(product?.storeName).toBe("Kroger");
+
+    const chose = await browser.send("POST", "/api/shopping-plan/matches", {
+      listItemId: "item-beef",
+      productId: product?.productId,
+      choice: "confirmed",
+    });
+    expect(chose.status).toBe(200);
+    await press();
+    await runs.run(started[1] as string);
+    expect((await plan())?.stores.map((store) => store.lines.map((line) => line.words))).toEqual([
+      ["ground beef"],
+    ]);
   });
 
   it("answers the expected cost of a full search at a Store that charges, and starts once the Member confirms it", async () => {

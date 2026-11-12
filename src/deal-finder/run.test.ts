@@ -16,6 +16,7 @@ import { type Secrets, unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
 import type { PriceSourceAdapter, ProductRead } from "./adapter.ts";
 import { FakePriceSource } from "./fake.ts";
+import { type FakePriceSourceServers, startFakePriceSourceServers } from "./fake-servers/index.ts";
 import {
   brandAllowed,
   PRODUCT_MATCH_TASK,
@@ -23,6 +24,8 @@ import {
   SEARCH_WORDS_TASK,
 } from "./match.ts";
 import { FakeProductData } from "./product-data.ts";
+import { priceSourceReaders } from "./readers/index.ts";
+import { WALMART_ACTOR } from "./readers/stores/walmart.ts";
 import {
   checkProduct,
   PLAN_RUN_STALE_MS,
@@ -1035,6 +1038,66 @@ describe("plan runs", () => {
       expect(checked?.brand).toHaveLength(200);
       expect(checked).toMatchObject({ dealEndsOn: null, upc: null, link: null, dealPrice: 249 });
       expect(checkProduct({ ...base, dealEndsOn: "2026-11-18" })?.dealEndsOn).toBe("2026-11-18");
+    });
+  });
+
+  describe("with the real readers on the local fake servers", () => {
+    let servers: FakePriceSourceServers;
+    const monthCost = async () =>
+      Number((await sql("SELECT sum(cost_nanos) AS n FROM price_source_costs"))[0]?.n ?? 0);
+    const walmartRuns = () => servers.apify.inputsOf(WALMART_ACTOR);
+
+    beforeEach(async () => {
+      servers = await startFakePriceSourceServers();
+      // The keys this test saved are made up, so the fake servers take any key.
+      servers.apify.acceptAnyKey = true;
+      servers.kroger.acceptAnyKey = true;
+      const logger = createLogger((line) => lines.push(line), { throwOnSecretField: true });
+      runs = makeRuns(priceSourceReaders({ ...servers.addresses, logger, now: () => clock }));
+      await addItem("peanut butter");
+      await turnOn("walmart");
+    });
+
+    afterEach(async () => {
+      await servers.close();
+    });
+
+    it("counts what a timed-out search charged, tries once more, then ends the Store failed", async () => {
+      servers.apify.runStatus.set(WALMART_ACTOR, "TIMED-OUT");
+
+      const view = await runPlan();
+
+      expect(storesOf(view)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
+      expect(walmartRuns()).toHaveLength(2);
+      expect(await monthCost()).toBe(2 * 12_300_000);
+    });
+
+    it("counts what a failed re-read charged, tries once more, then ends the Store failed", async () => {
+      expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
+      await sql("UPDATE product_matches SET answer = 'match'");
+      await sql("DELETE FROM price_source_costs");
+      const searches = walmartRuns().length;
+      // Two days on, the prices are old, so the next run re-reads each saved match.
+      clock = new Date(START.getTime() + 2 * DAY);
+      servers.apify.runStatus.set(WALMART_ACTOR, "FAILED");
+
+      const view = await runPlan();
+
+      expect(storesOf(view)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
+      expect(walmartRuns()).toHaveLength(searches + 2);
+      expect(await monthCost()).toBe(2 * 12_300_000);
+    });
+
+    it("sends the ZIP code to the readers only while the switch is on", async () => {
+      await storeDealFinderSettings(database, { useZip: false });
+      expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
+      expect(JSON.stringify(walmartRuns())).not.toContain(ZIP_CODE);
+
+      await storeDealFinderSettings(database, { useZip: true });
+      await addItem("ground beef");
+      clock = new Date(START.getTime() + HOUR);
+      expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
+      expect(walmartRuns().at(-1)).toMatchObject({ zipcode: ZIP_CODE });
     });
   });
 

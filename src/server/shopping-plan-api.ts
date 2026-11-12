@@ -25,6 +25,11 @@ const takeDealBody = z.strictObject({
   productId: z.string().min(1).max(200),
 });
 const dropDealBody = z.strictObject({ planId: PLAN_ID, place: PLACE });
+const matchChoiceBody = z.strictObject({
+  listItemId: z.string().min(1).max(100),
+  productId: z.string().min(1).max(200),
+  choice: z.enum(["confirmed", "rejected"]),
+});
 
 async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
   try {
@@ -61,6 +66,17 @@ export const shoppingPlanApi = new Hono<ServerEnv>()
     if (!body.success) return c.json({ error: "Name the plan and the List item." }, 400);
     if (!(await c.var.shoppingPlan.dropDeal(body.data))) {
       return c.json({ error: "That List item uses no Deal." }, 404);
+    }
+    return c.json({ plan: (await c.var.shoppingPlan.view()) ?? null }, 200);
+  })
+  // A Member confirms or rejects a found Product for a List item (spec 15, Matching List items to
+  // Products, step 5). The app remembers it, and the next plan uses it.
+  .post("/shopping-plan/matches", jsonOnly, async (c) => {
+    const body = matchChoiceBody.safeParse(await jsonBody(c));
+    if (!body.success)
+      return c.json({ error: "Name the List item, the Product and a choice." }, 400);
+    if (!(await c.var.shoppingPlan.chooseMatch(body.data, c.var.member.id))) {
+      return c.json({ error: "That Product was not found for this List item." }, 404);
     }
     return c.json({ plan: (await c.var.shoppingPlan.view()) ?? null }, 200);
   });

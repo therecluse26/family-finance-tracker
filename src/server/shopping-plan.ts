@@ -2,19 +2,25 @@ import {
   type Database,
   deleteShoppingPlanDeal,
   type LastShoppingPlan,
+  listUncheckedMatches,
+  readDealFinderSettings,
   readLastShoppingPlan,
   readShoppingPlanRows,
   type ShoppingPlanRows,
   storeShoppingPlanDeal,
   storeShoppingPlanResult,
+  type UncheckedMatch,
 } from "../db/index.ts";
 import {
   buildShoppingPlan,
+  DIETARY_DISCLAIMER,
   findDeals,
   type PlanDeal,
   type PlanDeals,
   type PlanLine,
   planTotals,
+  rememberMatchChoice,
+  showsDietaryDisclaimer,
 } from "../deal-finder/index.ts";
 import { calendarDateIn } from "../format.ts";
 import { householdTimeZone } from "../household/index.ts";
@@ -23,6 +29,7 @@ import type {
   ShoppingPlanLineView,
   ShoppingPlanRoutes,
   ShoppingPlanStoreView,
+  ShoppingPlanUncheckedView,
   ShoppingPlanView,
   TakeDealOutcome,
 } from "./shopping-plan-views.ts";
@@ -65,6 +72,8 @@ type CurrentPlan = {
   // The stored lines, with each Deal a Member used that still runs.
   lines: (PlanLine & { dealEndsOn: string | null })[];
   deals: PlanDeals;
+  dietaryNeeds: string;
+  unchecked: UncheckedMatch[];
 };
 
 // The last plan as it stands today. A used Deal moves its line until the Deal ends; then the line
@@ -96,7 +105,43 @@ async function currentPlan(database: Database, now: Date): Promise<CurrentPlan |
   });
   // Whether a Deal pays for a trip follows the trip setting the plan was built with.
   const deals = findDeals({ ...rows, tripSaving: last.plan.tripSaving }, lines, today);
-  return { last, rows, zone, today, lines, deals };
+  const { dietaryNeeds } = await readDealFinderSettings(database);
+  const unchecked = await listUncheckedMatches(database);
+  return { last, rows, zone, today, lines, deals, dietaryNeeds, unchecked };
+}
+
+// Whether a Product in the plan passed a dietary check: its match is a `match` or a substitute
+// while the Household has dietary needs.
+function passedDietaryCheck(current: CurrentPlan): boolean {
+  const answers = new Map(
+    current.rows.matches.map((match) => [`${match.listItemId}|${match.productId}`, match.answer]),
+  );
+  return current.lines.some((line) => {
+    const answer = answers.get(`${line.listItemId}|${line.productId}`);
+    return answer !== undefined && showsDietaryDisclaimer(current.dietaryNeeds, answer);
+  });
+}
+
+// The unchecked matches, grouped by List item in list order.
+function uncheckedOf(rows: readonly UncheckedMatch[]): ShoppingPlanUncheckedView[] {
+  const items = new Map<string, ShoppingPlanUncheckedView>();
+  for (const row of rows) {
+    const item = items.get(row.listItemId) ?? {
+      listItemId: row.listItemId,
+      words: row.words,
+      products: [],
+    };
+    item.products.push({
+      productId: row.productId,
+      storeName: row.storeName,
+      name: row.name,
+      brand: row.brand,
+      size: row.size,
+      price: row.price,
+    });
+    items.set(row.listItemId, item);
+  }
+  return [...items.values()];
 }
 
 function viewOf(current: CurrentPlan): ShoppingPlanView {
@@ -192,6 +237,8 @@ function viewOf(current: CurrentPlan): ShoppingPlanView {
       name: stores.get(failure.storeId)?.name ?? failure.storeId,
       reason: failure.reason,
     })),
+    dietaryDisclaimer: passedDietaryCheck(current) ? DIETARY_DISCLAIMER : null,
+    unchecked: uncheckedOf(current.unchecked),
   };
 }
 
@@ -250,6 +297,8 @@ export function shoppingPlanRoutes(
     view: () => shoppingPlanView(database, now()),
     takeDeal: (deal, memberId) => takeDeal(database, deal, memberId, now()),
     dropDeal: ({ planId, place }) => deleteShoppingPlanDeal(database, planId, place),
+    chooseMatch: (choice, memberId) =>
+      rememberMatchChoice(database, { ...choice, memberId }, now()),
   };
 }
 

@@ -341,7 +341,13 @@ describe("the Shopping list routes", () => {
       const [card] = thread.shoppingListChanges;
       expect(results.slice(1)).toEqual([
         { type: "json", value: { result: "done", card: card?.id } },
-        { type: "json", value: { result: "No plan yet" } },
+        {
+          type: "json",
+          value: {
+            plan: null,
+            note: "No Shopping plan yet. A Member presses Find the best prices.",
+          },
+        },
       ]);
       expect(card).toEqual({
         id: expect.any(String),

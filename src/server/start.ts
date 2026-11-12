@@ -88,6 +88,7 @@ import { startWeeklySummary } from "../weekly-summary/index.ts";
 import { takeAppLock } from "./running-lock.ts";
 import type { Security } from "./security-mode.ts";
 import { type RunningServer, startServer } from "./server.ts";
+import { buildStoredShoppingPlan } from "./shopping-plan.ts";
 
 // What the app's services need: everything that `pnpm start` and `pnpm dev` both run.
 export type ServiceOptions = {
@@ -331,9 +332,17 @@ export async function launchServices(options: ServiceOptions): Promise<AppServic
     const weeklySummary = startWeeklySummary({ database });
     const stopRequestLogCleanup = startAiRequestLogCleanup({ database });
     // The deal finder: its plan runs, with a Price source adapter, and its daily price history
-    // prune.
+    // prune. A plan run that ends its reads and matches builds the Shopping plan.
     const priceSources = options.priceSources ?? priceSourceReaders();
-    const plans = startPlanRuns({ database, secrets, adapter: priceSources, ai });
+    const plans = startPlanRuns({
+      database,
+      secrets,
+      adapter: priceSources,
+      ai,
+      buildPlan: async (planId) => {
+        await buildStoredShoppingPlan(database, planId);
+      },
+    });
     const priceHistory = startPriceHistoryPrune({ database });
     const stopModules = () => {
       plans.stop();

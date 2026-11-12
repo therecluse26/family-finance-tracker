@@ -8,6 +8,8 @@ import { dealLine, PLAN_NOTE, ShoppingPlanSections } from "./ShoppingPlan.tsx";
 // and price is made up.
 
 const TODAY = "2026-11-11";
+// The server sends it (owner decision, 2026-11-07).
+const DIETARY_DISCLAIMER = "AI can get things wrong. Check the label before you buy.";
 
 const text = (html: string) =>
   html
@@ -163,7 +165,34 @@ const PLAN: ShoppingPlanView = {
     },
   ],
   failures: [{ storeId: "kroger", name: "Kroger", reason: "Could not read this store" }],
+  dietaryDisclaimer: null,
+  unchecked: [],
 };
+
+const PICKS: ShoppingPlanView["unchecked"] = [
+  {
+    listItemId: "item-peanut-butter",
+    words: "peanut butter",
+    products: [
+      {
+        productId: "walmart-pb",
+        storeName: "Walmart",
+        name: "Creamy Peanut Butter",
+        brand: "Fake Brand",
+        size: "16 oz",
+        price: 349,
+      },
+      {
+        productId: "aldi-pb",
+        storeName: "Aldi",
+        name: "Crunchy Peanut Butter",
+        brand: null,
+        size: null,
+        price: null,
+      },
+    ],
+  },
+];
 
 describe("the Shopping plan", () => {
   it("writes a Deal as the spec does", () => {
@@ -176,10 +205,18 @@ describe("the Shopping plan", () => {
   it("shows each Store's List items with packages, prices and dates, the total, trips, saving, and the Stores not read", () => {
     const shown = text(
       renderToString(
-        <ShoppingPlanSections plan={PLAN} busy={false} takeDeal={() => {}} dropDeal={() => {}} />,
+        <ShoppingPlanSections
+          plan={PLAN}
+          busy={false}
+          takeDeal={() => {}}
+          dropDeal={() => {}}
+          chooseMatch={() => {}}
+        />,
       ),
     );
     expect(shown).toContain(`Built Nov 10. ${PLAN_NOTE}`);
+    expect(shown).not.toContain(DIETARY_DISCLAIMER);
+    expect(shown).not.toContain("Pick the Products");
     expect(shown).toContain("Total $32.45 · 1 trip");
     expect(shown).toContain("Saves $4.10 against the best one-Store plan.");
     expect(shown).toContain(
@@ -203,7 +240,7 @@ describe("the Shopping plan", () => {
     const takeDeal = vi.fn();
     const dropDeal = vi.fn();
     const buttons = buttonsOf(
-      ShoppingPlanSections({ plan: PLAN, busy: false, takeDeal, dropDeal }),
+      ShoppingPlanSections({ plan: PLAN, busy: false, takeDeal, dropDeal, chooseMatch: () => {} }),
     );
     expect(buttons.map((button) => button.words)).toEqual([
       "Use this Deal",
@@ -226,11 +263,65 @@ describe("the Shopping plan", () => {
           busy={false}
           takeDeal={() => {}}
           dropDeal={() => {}}
+          chooseMatch={() => {}}
         />,
       ),
     );
     expect(shown).not.toContain("best one-Store plan");
     expect(shown).not.toContain("Stores not read");
     expect(shown).not.toContain("Deals at other Stores");
+  });
+
+  it("shows the dietary disclaimer when a Product passed a dietary check", () => {
+    const shown = text(
+      renderToString(
+        <ShoppingPlanSections
+          plan={{ ...PLAN, dietaryDisclaimer: DIETARY_DISCLAIMER }}
+          busy={false}
+          takeDeal={() => {}}
+          dropDeal={() => {}}
+          chooseMatch={() => {}}
+        />,
+      ),
+    );
+    expect(shown).toContain(`Built Nov 10. ${PLAN_NOTE} ${DIETARY_DISCLAIMER}`);
+  });
+
+  it("lists each unchecked Product under its List item, to confirm or reject", () => {
+    const plan = { ...PLAN, elsewhere: [], unchecked: PICKS };
+    const shown = text(
+      renderToString(
+        <ShoppingPlanSections
+          plan={plan}
+          busy={false}
+          takeDeal={() => {}}
+          dropDeal={() => {}}
+          chooseMatch={() => {}}
+        />,
+      ),
+    );
+    expect(shown).toContain(
+      "Pick the Products Confirm each Product that is right for the List item. The next plan uses it. peanut butter Fake Brand Creamy Peanut Butter · 16 oz · $3.49 at Walmart Confirm Reject Crunchy Peanut Butter at Aldi Confirm Reject",
+    );
+    const chooseMatch = vi.fn();
+    const buttons = buttonsOf(
+      ShoppingPlanSections({
+        plan,
+        busy: false,
+        takeDeal: () => {},
+        dropDeal: () => {},
+        chooseMatch,
+      }),
+    ).filter((button) => button.words === "Confirm" || button.words === "Reject");
+    expect(buttons.map((button) => button.words)).toEqual([
+      "Confirm",
+      "Reject",
+      "Confirm",
+      "Reject",
+    ]);
+    buttons[0]?.tap();
+    expect(chooseMatch).toHaveBeenLastCalledWith("item-peanut-butter", "walmart-pb", "confirmed");
+    buttons[3]?.tap();
+    expect(chooseMatch).toHaveBeenLastCalledWith("item-peanut-butter", "aldi-pb", "rejected");
   });
 });

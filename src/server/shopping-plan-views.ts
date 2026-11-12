@@ -57,6 +57,22 @@ export type ShoppingPlanElsewhereView = {
   deals: (ShoppingPlanDealView & { place: number; words: string })[];
 };
 
+// A Product a search found that neither the AI nor a Member has answered: without an AI provider,
+// every found Product. A Member confirms or rejects it (spec 15, Matching List items to Products).
+export type ShoppingPlanUncheckedView = {
+  listItemId: string;
+  words: string;
+  products: {
+    productId: string;
+    storeName: string;
+    name: string;
+    brand: string | null;
+    size: string | null;
+    // The latest price in cents, if one was read.
+    price: number | null;
+  }[];
+};
+
 export type ShoppingPlanView = {
   planId: string;
   // The day the plan was built.
@@ -72,6 +88,11 @@ export type ShoppingPlanView = {
   elsewhere: ShoppingPlanElsewhereView[];
   // Each Store that could not be read, with its reason.
   failures: { storeId: string; name: string; reason: string }[];
+  // "AI can get things wrong. Check the label before you buy." when a Product in the plan passed a
+  // dietary check (owner decision, 2026-11-07). Empty otherwise.
+  dietaryDisclaimer: string | null;
+  // The found Products no one has answered, each List item's in turn.
+  unchecked: ShoppingPlanUncheckedView[];
 };
 
 // Why "Use this Deal" was refused, or that it was used.
@@ -86,4 +107,10 @@ export type ShoppingPlanRoutes = {
   ): Promise<TakeDealOutcome>;
   // Back to the regular price. False when the line used no Deal.
   dropDeal(line: { planId: string; place: number }): Promise<boolean>;
+  // A Member confirms or rejects a found Product for a List item. The next plan uses it. False
+  // when the List item has no such Product.
+  chooseMatch(
+    choice: { listItemId: string; productId: string; choice: "confirmed" | "rejected" },
+    memberId: string,
+  ): Promise<boolean>;
 };

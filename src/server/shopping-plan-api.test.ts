@@ -7,6 +7,7 @@ import {
   deleteDealFinderData,
   markSetupStep,
   removeMember,
+  storeDealFinderSettings,
   storeHouseholdFacts,
 } from "../db/index.ts";
 import { calendarDateIn } from "../format.ts";
@@ -53,6 +54,12 @@ describe("the Shopping plan routes", () => {
     browser.send("POST", "/api/shopping-plan/deals", body, headers);
   const drop = (body: unknown, headers?: Record<string, string | undefined>) =>
     browser.send("POST", "/api/shopping-plan/deals/stop", body, headers);
+  const choose = (body: unknown, headers?: Record<string, string | undefined>) =>
+    browser.send("POST", "/api/shopping-plan/matches", body, headers);
+  const answers = async () => ({
+    matches: await sql("SELECT * FROM product_matches ORDER BY list_item_id, product_id"),
+    choices: await sql("SELECT * FROM member_match_choices ORDER BY words, product_id"),
+  });
   // Each Store's List items, as "Store: words at price", and the Not found ones.
   const where = (plan: ShoppingPlanView | null | undefined) =>
     plan?.stores.flatMap((store) =>
@@ -323,6 +330,93 @@ describe("the Shopping plan routes", () => {
       expect((await drop(body, { "content-type": type })).status, type).toBe(415);
     }
     expect(await sql("SELECT place FROM shopping_plan_deals")).toEqual([{ place: 1 }]);
+  });
+
+  describe("the unchecked Products", () => {
+    const saffron = { listItemId: "saffron", productId: "kroger-saffron", choice: "confirmed" };
+
+    beforeEach(async () => {
+      await addProduct(
+        "kroger-saffron",
+        "kroger",
+        "saffron",
+        "1 oz",
+        { regular: 999 },
+        "unchecked",
+      );
+      await buildPlan("plan-1");
+    });
+
+    it("lists them with the dietary disclaimer when it applies, and a confirmed one goes in the next plan", async () => {
+      let plan = await view();
+      expect(plan?.dietaryDisclaimer).toBe(null);
+      expect(plan?.unchecked).toEqual([
+        {
+          listItemId: "saffron",
+          words: "saffron",
+          products: [
+            {
+              productId: "kroger-saffron",
+              storeName: "Kroger",
+              name: "Fake kroger-saffron",
+              brand: null,
+              size: "1 oz",
+              price: 999,
+            },
+          ],
+        },
+      ]);
+      expect(plan?.notFound).toEqual([{ place: 3, words: "saffron" }]);
+      await storeDealFinderSettings(test.database, { dietaryNeeds: "no peanuts" });
+      expect((await view())?.dietaryDisclaimer).toBe(
+        "AI can get things wrong. Check the label before you buy.",
+      );
+
+      const res = await choose(saffron);
+      expect(res.status).toBe(200);
+      plan = ((await res.json()) as { plan: ShoppingPlanView }).plan;
+      expect(plan.unchecked).toEqual([]);
+      expect(
+        await sql("SELECT words, product_id, choice, member_id FROM member_match_choices"),
+      ).toEqual([
+        {
+          words: "saffron",
+          product_id: "kroger-saffron",
+          choice: "confirmed",
+          member_id: member.id,
+        },
+      ]);
+      await buildPlan("plan-2");
+      expect((await view())?.notFound).toEqual([]);
+    });
+
+    it("refuses a choice for a Product the List item never found, and changes nothing (K2)", async () => {
+      const before = await answers();
+      // Kroger's beef was found for the ground beef, not the saffron.
+      expect((await choose({ ...saffron, productId: "kroger-beef" })).status).toBe(404);
+      expect((await choose({ ...saffron, listItemId: "beef" })).status).toBe(404);
+      expect((await choose({ ...saffron, listItemId: "no-such-item" })).status).toBe(404);
+      expect((await choose({ ...saffron, choice: "maybe" })).status).toBe(400);
+      expect((await choose({ ...saffron, memberId: "someone" })).status).toBe(400);
+      expect(await answers()).toEqual(before);
+    });
+
+    it("answers 401 with no session, 403 from another site or with no Origin, and 415 to another type, and changes nothing (K1)", async () => {
+      const before = await answers();
+      const signedOut = new TestBrowser(app, APP_URL, "192.168.1.21");
+      expect((await signedOut.send("POST", "/api/shopping-plan/matches", saffron)).status).toBe(
+        401,
+      );
+      for (const origin of ["http://evil.example", undefined]) {
+        expect((await choose(saffron, { origin })).status).toBe(403);
+      }
+      for (const type of ["text/plain", "application/x-www-form-urlencoded", undefined]) {
+        expect((await choose(saffron, { "content-type": type })).status, type).toBe(415);
+      }
+      expect(await answers()).toEqual(before);
+      expect((await choose(saffron)).status).toBe(200);
+      expect(await answers()).not.toEqual(before);
+    });
   });
 
   it("keeps a used Deal when its Member is removed, and drops it with its plan, Product or Store (K6)", async () => {
