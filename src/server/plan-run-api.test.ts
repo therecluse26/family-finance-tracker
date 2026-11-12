@@ -236,11 +236,11 @@ describe("the plan run routes", () => {
     const asked = (await (await press()).json()) as Answer;
     expect(asked).toEqual({
       outcome: "confirm",
-      cost: { fullSearch: true, costNanos: 2_000_000, monthCostNanos: 0, capCents: 500 },
+      cost: { fullSearch: true, costNanos: 80_000_000, monthCostNanos: 0, capCents: 500 },
     });
     expect(started).toEqual([]);
 
-    const confirmed = (await (await press({ confirmedCostNanos: 2_000_000 })).json()) as Answer;
+    const confirmed = (await (await press({ confirmedCostNanos: 80_000_000 })).json()) as Answer;
     expect(confirmed.outcome).toBe("started");
     expect(started).toHaveLength(1);
     expect(fake.calls).toEqual([]);

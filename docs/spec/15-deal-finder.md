@@ -36,7 +36,7 @@ A Store is a chain the deal finder reads, such as Walmart or Aldi. A Home store 
 | Store | Reader | How the Home store is set | Spike result |
 |---|---|---|---|
 | Kroger and its brands, such as Ralphs and King Soopers | Kroger API, scope `product.compact` | The Locations API near the ZIP code | 15 of 15 priced, 8 with a promo price. Prices are set per division: one of 12 Products differed between two divisions |
-| Walmart | `gauravlabs/walmart-search-api` with `zipcode`. Its `storeId` input failed 2 of 2 runs (spike round 14) | The Actor picks it from the ZIP code | Different stores per ZIP code. No price differences seen |
+| Walmart | `burbn/walmart-product-search` with `query`, `zip`, `domain: "us"` and `maxPages: 1`. It replaced `gauravlabs/walmart-search-api`, which stopped taking the owner's runs (owner decision, 2026-11-11) | None: the prices are for the ZIP code | One page of 40 rows for "eggs", each with `usItemId`, `price`, `listPrice`, `sponsored`, `outOfStock`, `pickup` and `deliveryFromStore` (owner's run, 2026-11-11) |
 | Target | `litescrape/target-search` with `store_id`; `apify/e-commerce-scraping-tool` for one Product's page | `axlymxp/target-store-scraper` near the ZIP code gives the nearest store's `storeId` (spike round 12) | 24 Products with `data.price` and `data.original_price`. Two stores: 2 sale prices differed |
 | Aldi | `blackfalcondata/aldi-us-scraper` with `location`; `onSaleOnly` for deals | The Actor picks it from the ZIP code | 15 of 15 priced. Different store per ZIP code, same prices. 40 of 40 on-sale rows had a regular price |
 | Costco | `vant47/costco-scraper` with `storeIds` and `locations` | [Find Stores near us](#find-stores-near-us-owner-design-2026-11-11) | Different warehouse per ZIP code. 2 of 12 prices differed. 6 of 12 rows had only `regularPrice` |
@@ -65,7 +65,7 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
    | Kroger and its brands | Locations API within the distance. It skips a location with no departments: the spike found one that was not a grocery store | up to 10 nearest | free |
    | Target | `axlymxp/target-store-scraper` with `within` set to the distance | up to 5 nearest open stores | about $0.015 |
    | Costco | `dromb/costco-us` with `operation: "warehouses"` lists the 5 nearest warehouses, with `id` (the warehouse number, all digits; else the digits before the dash in `warehouse_id`, such as `1234-ab`) and `distance_miles` | up to 5 nearest; `vant47` reads the picked one by `storeIds` (spike round 14) | about $0.007 |
-   | Walmart | One search with `zipcode`. Its row gives the store the Actor picked | that store only: the Actor's `storeId` input failed 2 of 2 runs, and no Actor lists Walmart stores near a ZIP code (spike round 14) | $0.002 |
+   | Walmart | No lookup: it is always listed, and reads with the ZIP code | none: prices for your ZIP code | free |
    | Aldi | The weekly ads show whether an Aldi ad (`ALDI`) runs near the ZIP code. The lookup is a search in mode `search` for milk, eggs, bread and chicken, 25 Deals each: mode `flyers` has no limit per flyer, and one chain's ad filled a real run | none: the Actor takes only a ZIP code and picks the store | in the weekly ads lookup |
    | Amazon | Always listed, as "Online" | none | free |
    | Local chains | The weekly ads list each chain that prints an ad near the ZIP code. Each one the app has no reader for, such as Sam's Club, is a weekly-ad-only Store | none | in the weekly ads lookup |
@@ -106,7 +106,7 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
 
   | Store | Filter | Why |
   |---|---|---|
-  | Walmart | `excludeSponsored: true` | Paid ads take result slots. It costs nothing: Walmart charges per search |
+  | Walmart | The reader drops a row with `sponsored`, a row with `outOfStock`, and a row with neither `pickup` nor `deliveryFromStore` | Paid ads are not the search's best match, and a row sold only online is not the store's price. The Actor has no field to leave them out |
   | Weekly ads | `onlyWithPrice: true` (the default) | Drops ad images with no price |
   | Aldi | `brand`, only with a brand lock | Keeps other brands out |
 
@@ -171,10 +171,10 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
 - **Price source cost cap.** One monthly amount for the Scraping service, like the AI cost cap. The default is $5.00, Apify's Free plan credit. When the month's cost reaches it, plan runs use stored prices only, until the 1st.
 - The app takes each Actor run's cost from Apify's own run record. The Price sources page shows the month's total.
 - Every Actor run sets `maxTotalChargeUsd=1.00`, the lowest Apify accepts.
-- **One Actor run per Store per plan run.** It carries all the search words, for each Actor that takes a list: Walmart `queries`, Target `requests`, Costco `searchTerms`, Amazon `Keywords`, and the weekly ads' `queries`. Aldi takes one query, so it gets one run per List item. Target's `maxResults` caps the whole run, so it is set to 25 per List item.
+- **One Actor run per Store per plan run.** It carries all the search words, for each Actor that takes a list: Target `requests`, Costco `searchTerms`, Amazon `Keywords`, and the weekly ads' `queries`. Aldi and Walmart take one query, so they get one run per List item. Target's `maxResults` caps the whole run, so it is set to 25 per List item.
 - At most 2 Actor runs go at once.
 - Kroger allows 10,000 Products calls a day. The app stops at 5,000.
-- **Measured prices** (spike round 12): every charge matched the Actor's published price. Walmart $0.002 a search. Target $0.00025 a search. Aldi $0.01 a run plus $0.002 a Product. Costco $0.005 a Product. Amazon $0.0025 a Product. Weekly ads $0.002 a Deal.
+- **Measured prices** (spike round 12): every charge matched the Actor's published price. Walmart about $0.08 a search, a run start plus 40 rows (owner's run, 2026-11-11). Target $0.00025 a search. Aldi $0.01 a run plus $0.002 a Product. Costco $0.005 a Product. Amazon $0.0025 a Product. Weekly ads $0.002 a Deal.
 - Costco re-reads cost the same $0.005 a Product as a search. No cheaper Costco Actor gives warehouse prices (spike round 13).
 
 ### Search once, then re-read (owner decision, 2026-11-11)
@@ -183,21 +183,21 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
   - 15 at Kroger, Walmart and Target. They are free or charge per search, so more Products cost nothing.
   - 5 at Amazon and the weekly ads. In spike round 12, all of their top 5 Products were the right kind (15 of 15 each).
   - 10 at Costco and Aldi, with no second search. Costco's search matches words in Product names, so its order is poor: its top 5 held 2 of 5 peanut butters and 0 of 5 eggs. 10 Products in one search is simpler than 5 with a retry (owner decision, 2026-11-11).
-- **Re-read.** Later plan runs read only each List item's saved `match`, by item number or Product link. Walmart and Target search again, because a search costs the same as a re-read. The weekly ads search again at 5 Deals per List item, because Deals change each week.
+- **Re-read.** Later plan runs read only each List item's saved `match`, by item number or Product link. Walmart and Target search again, because a search costs the same as a re-read. Walmart's Actor has no lookup by item number: its re-read is a search for the Product's saved name that keeps the row with the same `usItemId`, about $0.08. The weekly ads search again at 5 Deals per List item, because Deals change each week.
 - **Full search again** for a List item when its last full search is 30 days old or more, and when its saved `match` fails: the Store no longer has it, or it has no price.
 - **Cost shown first.** Before a plan run that holds a full search, the page shows its expected cost. The run starts only when a Member confirms it. A run with only re-reads starts at once.
-- **What it costs** for 30 List items with every Store on, from the prices measured in spike round 12.
+- **What it costs** for 30 List items with every Store on, from the prices measured in spike round 12, and Walmart's from the owner's run of 2026-11-11.
 
   | Store | Full search | Re-read | Re-read tested |
   |---|---|---|---|
   | Kroger, 15 Products | $0.00 | $0.00 | not needed (API) |
-  | Walmart, 15 Products | $0.06 | $0.06 | not needed (searches again) |
+  | Walmart, 15 Products | $2.40 | $2.40 | not needed (searches again) |
   | Target, 15 Products | $0.01 | $0.01 | not needed (searches again) |
   | Aldi, 10 Products | $0.90 | $0.07 | no; its docs say `startUrls` takes Product links |
   | Costco, 10 Products | $1.50 | $0.15 | yes, spike round 13: `productIds`, same prices |
   | Amazon, 5 Products | $0.38 | $0.08 | yes, spike round 14: the ASIN as the search word, 1 Product, same prices. Product links return nothing |
   | Weekly ads, 5 Deals | $0.30 | $0.30 | not needed (searches again) |
-  | **Total** | **about $3.15** | **about $0.67** | |
+  | **Total** | **about $5.49** | **about $3.01** | |
 
 - **For one List item:** a full search costs about $0.10 and a re-read about $0.02. A month of weekly plans (one full search, 3 re-reads) costs about $0.17 for each List item. So $5.00 covers about 29 List items with every Store on. Each Store a Member leaves off lowers the cost.
 
@@ -282,7 +282,7 @@ These need an owner decision or a short spike before tickets:
 - Buying, carts, and signing in to a Store. Member-only prices, such as Kroger digital coupons, need a sign-in.
 - Other Scraping services, such as Bright Data and ZenRows. The adapter leaves room. Bright Data needs a payment method for a personal-email account (spike, 2026-11-10).
 - Our own Actor.
-- Picking a Home store at Walmart or Aldi. Their Actors pick the store from the ZIP code.
+- Picking a Home store at Walmart or Aldi. Walmart's prices are for the ZIP code, and Aldi's Actor picks the store from it.
 - More than one Home store for one Store.
 - Recurring List items, and a Shopping list built from past Line items ([Line items](14-line-items.md)).
 - Price drop Alerts for one Product.

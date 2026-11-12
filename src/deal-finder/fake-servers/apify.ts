@@ -70,38 +70,82 @@ const fakeDeal = (
   fetchedAt: "2026-11-11T12:00:00Z",
 });
 
+// One made-up Walmart row, in `burbn/walmart-product-search`'s real shape (the owner's run,
+// 2026-11-11): in stock, not an ad, and sold at the store for pickup and delivery, unless changed.
+const fakeWalmartRow = (
+  usItemId: string,
+  title: string,
+  price: number,
+  changes: Record<string, unknown> = {},
+) => ({
+  productId: `FAKE${usItemId}`,
+  usItemId,
+  title,
+  description: null,
+  brand: null,
+  url: `https://www.walmart.com/ip/fake/${usItemId}`,
+  image: null,
+  thumbnail: null,
+  price,
+  listPrice: null,
+  currency: "USD",
+  currencySymbol: "$",
+  priceDisplay: `$${price.toFixed(2)}`,
+  minPrice: null,
+  maxPrice: null,
+  savingsAmount: null,
+  pricePerUnitAmount: null,
+  pricePerUnitType: null,
+  primaryOffer: { offer_id: `fake-offer-${usItemId}`, offer_price: price, min_price: null },
+  rating: 4.5,
+  reviewCount: 12,
+  availability: "IN_STOCK",
+  outOfStock: false,
+  preorder: false,
+  seller: "Walmart.com",
+  sellerId: "fake-seller",
+  pickup: true,
+  deliveryFromStore: true,
+  shipping: true,
+  shippingDays: 2,
+  twoDayShipping: true,
+  freeShipping: false,
+  freeShippingWithWalmartPlus: true,
+  sponsored: false,
+  multipleOptionsAvailable: false,
+  badgeFlags: [],
+  bestSeller: false,
+  position: 1,
+  ...changes,
+});
+
 // Each Actor's made-up rows.
 export const FAKE_ACTOR_ROWS: Record<string, ActorRows> = {
-  "gauravlabs/walmart-search-api": (input) => {
-    const rows = words(input, "queries").flatMap((query) => [
-      {
-        query,
-        usItemId: "990000101",
-        title: "Sample Creamy Peanut Butter, 16 oz",
-        brand: "Sample",
-        price: 2.78,
-        url: "https://www.walmart.com/ip/sample-creamy-peanut-butter/990000101",
-        store: { store_id: "9401", name: "Walmart Fake Pine Street", distance: 4.6 },
-      },
-      {
-        query,
-        usItemId: "990000102",
-        title: "Fake Valley Large Eggs, 12 ct",
-        brand: "Fake Valley",
-        price: "3.12",
-        url: "/ip/fake-valley-large-eggs/990000102",
-        store: { store_id: "9401", name: "Walmart Fake Pine Street", distance: 4.6 },
-      },
-    ]);
-    // A paid ad takes a slot unless the search leaves them out.
-    const ad = {
-      usItemId: "990000199",
-      title: "Sponsored Fake Snack",
-      price: 1.5,
-      isSponsored: true,
-    };
-    return input.excludeSponsored === true ? rows : [ad, ...rows];
-  },
+  // One page of a search, with the rows the reader drops: a paid ad, one out of stock, and one a
+  // marketplace seller ships, which the store does not sell.
+  "burbn/walmart-product-search": (input) =>
+    typeof input.query !== "string" || input.query.trim() === ""
+      ? []
+      : [
+          fakeWalmartRow("990000199", "Sponsored Fake Snack", 1.5, { sponsored: true }),
+          fakeWalmartRow("990000101", "Sample Creamy Peanut Butter, 16 oz", 2.78, {
+            brand: "Sample",
+            url: "https://www.walmart.com/ip/sample-creamy-peanut-butter/990000101",
+          }),
+          fakeWalmartRow("990000102", "Fake Valley Large Eggs, 12 ct", 3.12, {
+            listPrice: 3.48,
+            url: "/ip/fake-valley-large-eggs/990000102",
+          }),
+          fakeWalmartRow("990000198", "Fake Valley Brown Eggs, 12 ct", 3.98, {
+            availability: "OUT_OF_STOCK",
+            outOfStock: true,
+          }),
+          fakeWalmartRow("990000197", "Fake Import Peanut Butter, 3 Pack", 19.99, {
+            seller: "Fake Marketplace Seller",
+            pickup: false,
+            deliveryFromStore: false,
+          }),
+        ],
   "litescrape/target-search": () => [
     {
       data: {

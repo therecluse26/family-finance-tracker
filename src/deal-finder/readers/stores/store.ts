@@ -30,10 +30,12 @@ export type ApifyStore = {
   // One search row as a Product, or null when the checks drop it.
   product(row: Record<string, unknown>): ProductRead | null;
   // The run that reads one Product again by its re-read key, and how to find it in the rows. Null
-  // when the key is not in this Store's form, or the Store needs the ZIP code.
+  // when the key is not in this Store's form, or the Store needs the ZIP code. A Store with no
+  // lookup by key searches for the Product's saved name instead, and is null with no name.
   readInput(
     readKey: string,
     place: Place,
+    name?: string | null,
   ): (ActorCall & { product(row: Record<string, unknown>): ProductRead | null }) | null;
 };
 

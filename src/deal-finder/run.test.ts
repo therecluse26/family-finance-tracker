@@ -271,13 +271,13 @@ describe("plan runs", () => {
       const asked = await runs.start(null);
       expect(asked).toEqual({
         outcome: "confirm",
-        cost: { fullSearch: true, costNanos: 4_000_000, monthCostNanos: 0, capCents: 500 },
+        cost: { fullSearch: true, costNanos: 160_000_000, monthCostNanos: 0, capCents: 500 },
       });
-      expect(await runs.start(null, 3_999_999)).toMatchObject({ outcome: "confirm" });
+      expect(await runs.start(null, 159_999_999)).toMatchObject({ outcome: "confirm" });
       expect(started).toEqual([]);
       expect(await sql("SELECT * FROM shopping_plans")).toEqual([]);
 
-      expect(await runs.start(null, 4_000_000)).toMatchObject({ outcome: "started" });
+      expect(await runs.start(null, 160_000_000)).toMatchObject({ outcome: "started" });
       expect(started).toHaveLength(1);
       expect(fake.calls).toEqual([]);
     });
@@ -745,20 +745,20 @@ describe("plan runs", () => {
     it("counts each try of a Store that always fails, and the cost cap then stops the next run", async () => {
       await addItem("ground beef");
       await turnOn("walmart");
-      await priceSourceSettings({ database, secrets }).setCostCap(1);
+      await priceSourceSettings({ database, secrets }).setCostCap(10);
       fake.failingStores.add("walmart");
-      fake.failedRunCostNanos = 7_000_000;
+      fake.failedRunCostNanos = 30_000_000;
 
       const first = await runPlan();
       expect(storesOf(first)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
-      expect(await monthCost()).toBe(14_000_000);
+      expect(await monthCost()).toBe(60_000_000);
 
       fake.calls.length = 0;
       clock = new Date(START.getTime() + HOUR);
       const next = await runPlan();
       expect(storesOf(next)).toEqual({ walmart: ["skipped", COST_CAP_REACHED] });
       expect(fake.calls).toEqual([]);
-      expect(await monthCost()).toBe(14_000_000);
+      expect(await monthCost()).toBe(60_000_000);
     });
 
     it("keeps the Store failures of a run that fails after its reads", async () => {
@@ -1095,9 +1095,10 @@ describe("plan runs", () => {
       expect(storesOf(view)).toEqual({ walmart: ["skipped", FIND_STORES_AGAIN] });
       expect(walmartRuns()).toEqual([]);
       expect(JSON.stringify(servers.apify.requests)).not.toContain("fake-walmart");
-      // Find Stores near us with the real readers picks a real Home store, and the next run reads.
+      // Find Stores near us with the real readers finds Walmart with no Home store, and the next
+      // run reads by the ZIP code.
       await findWithReaders();
-      expect(await homeStoreOf("walmart")).not.toMatch(/^fake-/);
+      expect(await homeStoreOf("walmart")).toBeNull();
       clock = new Date(START.getTime() + HOUR);
       expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
     });
@@ -1147,11 +1148,23 @@ describe("plan runs", () => {
       expect(costcoSearches()).toEqual(["large eggs", "peanut butter"]);
     });
 
-    it("sends a Home store the readers found, which does not start with fake-", async () => {
-      expect(await homeStoreOf("walmart")).not.toMatch(/^fake-/);
+    it("finds Walmart with no Home store and no run, and reads it by the ZIP code", async () => {
+      const settings = priceSourceSettings({ database, secrets, adapter: readers });
+      const found = await settings.findStores(25);
+      expect(walmartRuns()).toEqual([]);
+      expect(found).toMatchObject({ outcome: "found" });
+      const view = found.outcome === "found" ? found.view : undefined;
+      expect(view?.stores.find((store) => store.id === "walmart")).toMatchObject({
+        notFound: null,
+        homeStore: null,
+        locations: [],
+      });
+      expect(await homeStoreOf("walmart")).toBeNull();
 
       expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
-      expect(walmartRuns()).not.toEqual([]);
+      expect(walmartRuns()).toEqual([
+        { query: "peanut butter", domain: "us", maxPages: 1, zip: ZIP_CODE },
+      ]);
     });
 
     it("counts what a timed-out search charged, tries once more, then ends the Store failed", async () => {
@@ -1189,7 +1202,7 @@ describe("plan runs", () => {
       await addItem("ground beef");
       clock = new Date(START.getTime() + HOUR);
       expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
-      expect(walmartRuns().at(-1)).toMatchObject({ zipcode: ZIP_CODE });
+      expect(walmartRuns().at(-1)).toMatchObject({ zip: ZIP_CODE });
     });
   });
 
