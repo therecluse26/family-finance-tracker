@@ -268,5 +268,4 @@ Small items left open after the T107 notes triage, for after the first release (
 
 ## Owner
 
-- N44 (S, owner) Nobody has run update mode (Repair, Add accounts) or the OAuth pop-up by hand on the Plaid sandbox. In: Plaid sandbox, by hand.
 - N187 (S, owner) An install with no AI provider, already past its history wait, never gets the first AI run when AI is set up. In: src/redo/redo.ts.
