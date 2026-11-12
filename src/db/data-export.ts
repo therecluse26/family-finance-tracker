@@ -276,6 +276,41 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
     ["productKey", "cleanName"],
   ),
   exported(schema.lineItemImports, "every column"),
+  // The deal finder (spec 15, Data and privacy): its settings, Stores, Products, prices, Shopping
+  // list, matches and plans. Each Price source key is a Master-key secret, and its last 4
+  // characters and Tests stay with it. Where the Stores were last found is work state.
+  exported(
+    schema.dealFinderSettings,
+    ["openFoodFacts", "useZip", "findDistanceMiles", "costCap", "tripSaving", "dietaryNeeds"],
+    [
+      "id",
+      "apifyToken",
+      "apifyTokenLast4",
+      "apifyCheck",
+      "apifyCheckedAt",
+      "krogerClientId",
+      "krogerClientIdLast4",
+      "krogerClientSecret",
+      "krogerClientSecretLast4",
+      "krogerCheck",
+      "krogerCheckedAt",
+      "storesFoundZip",
+      "storesFoundAt",
+    ],
+  ),
+  exported(schema.priceSourceCosts, "every column"),
+  exported(schema.dealFinderStores, "every column"),
+  exported(schema.dealFinderProducts, "every column"),
+  exported(schema.dealFinderPriceReads, "every column"),
+  exported(schema.shoppingListItems, "every column"),
+  exported(schema.memberMatchChoices, "every column"),
+  exported(schema.productMatches, "every column"),
+  exported(schema.listItemSearches, "every column"),
+  exported(schema.shoppingPlans, "every column"),
+  exported(schema.shoppingPlanLines, "every column"),
+  // Each Shopping list change Chat made, with the List items it touched, for its card and Undo.
+  exported(schema.shoppingListChanges, "every column"),
+  exported(schema.shoppingPlanDeals, "every column"),
   // Each Merchant's Web lookup: its Category and the line about the business.
   exported(schema.merchantLookups, "every column"),
   exported(schema.aiCalls, "every column"),

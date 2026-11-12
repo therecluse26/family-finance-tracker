@@ -5,6 +5,7 @@ import {
   aiSettings,
   connections,
   dataKeys,
+  dealFinderSettings,
   masterKeyChecks,
   noticeDeliveries,
   plaidSettings,
@@ -26,6 +27,8 @@ export type RestoreLosses = {
   // The AI key or the gateway token.
   aiKey: boolean;
   smtpPassword: boolean;
+  // The Apify token or the Kroger keys.
+  priceSourceKeys: boolean;
   // The bank name of each Connection that is not removed, which must be linked again.
   banks: string[];
   // The devices Alerts are on for.
@@ -42,6 +45,16 @@ export async function readRestoreLosses(database: Database): Promise<RestoreLoss
     .from(aiSettings)
     .where(or(isNotNull(aiSettings.apiKey), isNotNull(aiSettings.gatewayToken)));
   const [smtp] = await database.select({ id: smtpSettings.id }).from(smtpSettings);
+  const [priceSources] = await database
+    .select({ id: dealFinderSettings.id })
+    .from(dealFinderSettings)
+    .where(
+      or(
+        isNotNull(dealFinderSettings.apifyToken),
+        isNotNull(dealFinderSettings.krogerClientId),
+        isNotNull(dealFinderSettings.krogerClientSecret),
+      ),
+    );
   const banks = await database
     .select({ bankName: connections.bankName })
     .from(connections)
@@ -52,6 +65,7 @@ export async function readRestoreLosses(database: Database): Promise<RestoreLoss
     plaidSecret: plaid !== undefined,
     aiKey: ai !== undefined,
     smtpPassword: smtp !== undefined,
+    priceSourceKeys: priceSources !== undefined,
     banks: banks.map((row) => row.bankName),
     pushDevices: Number(devices?.count ?? 0),
   };
@@ -64,6 +78,7 @@ export async function readRestoreLosses(database: Database): Promise<RestoreLoss
 //   AI, as any Broken Connection does (spec 02, First history load).
 // - The Plaid secret, the AI key and gateway token, and the SMTP settings, whose password is
 //   required, are deleted. The Plaid Items used stay counted.
+// - The Apify token and the Kroger keys are deleted, with their last 4 characters and Tests.
 // - The VAPID keys and every web push device are deleted. The app makes new keys at start.
 // - Every session, TOTP secret and backup code, and pending login value ends: the login signing
 //   secret comes from the Master key, so none of them would work. A reset link still works, and
@@ -92,6 +107,18 @@ export async function forgetUnreadableSecrets(
     await tx.update(plaidSettings).set({ secret: null });
     await tx.update(aiSettings).set({ apiKey: null, gatewayToken: null, keyRejectedAt: null });
     await tx.delete(smtpSettings);
+    await tx.update(dealFinderSettings).set({
+      apifyToken: null,
+      apifyTokenLast4: null,
+      apifyCheck: null,
+      apifyCheckedAt: null,
+      krogerClientId: null,
+      krogerClientIdLast4: null,
+      krogerClientSecret: null,
+      krogerClientSecretLast4: null,
+      krogerCheck: null,
+      krogerCheckedAt: null,
+    });
     // Deleting a device deletes the pushes that wait for it.
     await tx.delete(pushDevices);
     await tx.delete(vapidKeys);

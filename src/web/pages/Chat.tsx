@@ -37,6 +37,7 @@ import {
 import { Button, buttonClass } from "../components/Button.tsx";
 import { ErrorLine } from "../components/Fields.tsx";
 import { ProposalCard } from "../components/Proposal.tsx";
+import { ShoppingListChangeCard } from "../components/ShoppingListChange.tsx";
 import { AiMark } from "../components/Status.tsx";
 
 // The Chat page (spec 07, Chat page; spec 08, Chat): the threads, newest first, and the open one.
@@ -182,7 +183,7 @@ function ThreadProposal(props: {
 }
 
 // The thread's messages, the dropped-turns line above the first one the next call sends, and each
-// Proposal under the answer that made it. `live` is the answer streaming now, if any.
+// Proposal and Shopping list change under the answer that made it. `live` is the answer streaming now, if any.
 export function ThreadMessages(props: {
   thread: ChatThreadView;
   live?: { question?: string; answer: string } | undefined;
@@ -201,6 +202,17 @@ export function ThreadMessages(props: {
           onAsk={props.onAsk}
         />
       ));
+  const changesOf = (answerId: string | null) =>
+    thread.shoppingListChanges
+      .filter((change) => change.answerId === answerId)
+      .map((change) => (
+        <ShoppingListChangeCard
+          key={change.id}
+          change={change}
+          onChanged={props.onChanged}
+          className="max-w-[88%] self-start"
+        />
+      ));
   const items: ReactNode[] = [];
   for (const message of thread.messages) {
     if (message.id === thread.firstSent) {
@@ -211,6 +223,7 @@ export function ThreadMessages(props: {
       );
     }
     items.push(<ThreadMessage key={message.id} message={message} />);
+    items.push(...changesOf(message.author === "AI" ? message.id : "none"));
     items.push(...proposalsOf(message.author === "AI" ? message.id : "none"));
   }
   if (props.live?.question !== undefined) {
@@ -229,7 +242,8 @@ export function ThreadMessages(props: {
       />,
     );
   }
-  // A Proposal whose answer failed still shows, after the messages.
+  // A Proposal or a Shopping list change whose answer failed still shows, after the messages.
+  items.push(...changesOf(null));
   items.push(...proposalsOf(null));
   return (
     <ol aria-label="Messages" className="flex flex-col gap-[18px]">

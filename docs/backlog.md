@@ -227,6 +227,11 @@ Small items left open after the T107 notes triage, for after the first release (
 ## Deal finder
 
 - N323 (L, feature) The deal finder: spec written in [15 Deal finder](spec/15-deal-finder.md) (2026-11-10). After v1 (D22). In: new `src/deal-finder/`, a Price sources page in Settings, a Shopping list page, Chat tools. Tickets (2026-11-10): X45 the data model, the Price source adapter and its fake, and the Price sources page; then, in parallel, X46 the Kroger and Apify readers with local fake servers, X47 the Shopping list page and Chat tools, X48 plan runs and Product matching, and X49 the plan math, Deals and the plan view. Before them: O1, an owner-run spike for the Target store ID and the cost of one plan run; O2, owner decisions on Chat edits and the default numbers.
+- N324 (S, polish) Find Stores runs again only on the next Price sources page visit after the Household ZIP code changes. Run it again when the ZIP code changes (X46 review). In: src/deal-finder/settings.ts, src/household/.
+- N325 (S, polish) Shopping list: the same words can show twice after Undo; spec 11's export file list lacks `shopping-list.csv` and `shopping-plan.csv`; stored change copies keep removed Members' IDs (X47 review). In: src/deal-finder/shopping-list.ts, docs/spec/11-backup-restore-export.md.
+- N326 (S, polish) A run whose cost is not known counts as $1.00. Keep the run ID and read the real cost later (X46 review). In: src/deal-finder/readers/apify.ts.
+- N327 (S, owner) Some Actor field names in X46 are guesses. The owner checks them with one real run before release (X46 review). In: src/deal-finder/readers/stores/.
+- N328 (S, tests) The `added` counter at `run.ts:670-671` has no test (X48 review). In: src/deal-finder/run.test.ts.
 
 ## Backups, export, jobs and start-up
 

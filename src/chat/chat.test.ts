@@ -317,6 +317,9 @@ describe("Chat", () => {
           "get_budgets_and_goals",
           "propose_budget_change",
           "propose_goal",
+          "get_shopping_list",
+          "edit_shopping_list",
+          "get_shopping_plan",
         ],
         toolChoice: "auto",
       });

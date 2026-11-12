@@ -16,6 +16,9 @@ const SEAMS: Record<string, readonly string[]> = {
   secrets: ["node:crypto"],
   notify: ["web-push", "nodemailer"],
   auth: ["better-auth", "@better-auth/*"],
+  // The deal finder's Price source adapters. It owns no package: its readers call the Kroger API
+  // and Apify with Node's own fetch.
+  "deal-finder": [],
 };
 
 // The Chat page's answer stream in the browser. It is not an AI provider package.

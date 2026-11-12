@@ -28,9 +28,13 @@ import type { ServerEnv } from "./env.ts";
 import { lineItemCategoryApi } from "./line-item-categories.ts";
 import type { MasterKeyCheckResult } from "./master-key-views.ts";
 import { MANUAL_LOAN_KINDS } from "./money-movement-views.ts";
+import { planRunApi } from "./plan-run-api.ts";
+import { priceSourcesApi } from "./price-sources-api.ts";
 import type { ProposalAcceptResult } from "./proposals-views.ts";
 import type { RecurringChargeEditView } from "./recurring-views.ts";
 import { type SetupProgressView, type SetupRefusal, SKIPPABLE_SETUP_STEPS } from "./setup-views.ts";
+import { shoppingListApi } from "./shopping-list.ts";
+import { shoppingPlanApi } from "./shopping-plan-api.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1584,6 +1588,14 @@ export const api = new Hono<ServerEnv>()
   )
   // A Transaction's Amazon links: the shipments to link by hand, the hand link, and Undo.
   .route("/", amazonLinkApi)
+  // Settings, Price sources (spec 15): the deal finder's keys, Stores, and its data.
+  .route("/", priceSourcesApi)
+  // The Shopping list page (spec 15), and Undo on a Shopping list change's card in Chat.
+  .route("/", shoppingListApi)
+  // The Shopping list's "Find the best prices" (spec 15, The Shopping plan) and its progress.
+  .route("/", planRunApi)
+  // The Shopping plan (spec 15, What the plan shows): the last plan, and "Use this Deal".
+  .route("/", shoppingPlanApi)
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the

@@ -549,6 +549,7 @@ export const AI_USE_NAMES = [
   "line item category",
   "merchant cleanup",
   "merchant lookup",
+  "product match",
   "unclear transfer",
   "reimbursement linking",
   "reading a goal",
@@ -2242,4 +2243,395 @@ export const lineItemImports = sqliteTable(
       .notNull(),
   },
   (table) => [index("line_item_imports_imported_at").on(table.importedAt)],
+);
+
+// The deal finder (spec 15, Deal finder). Every table below holds Household data that stays in
+// app.db: no Store data leaves the Household but to the AI provider.
+
+// What a Price source's Test found: the source accepted the key, refused it, said its usage limit
+// was reached, or did not answer.
+export const PRICE_SOURCE_CHECKS = ["passed", "refused", "usage limit", "no answer"] as const;
+
+// The deal finder's Household settings (spec 15, The Price sources page in Settings; Trip setting).
+// It has at most one row, whose ID is 1. With no row, every setting is its default.
+export const dealFinderSettings = sqliteTable(
+  "deal_finder_settings",
+  {
+    id: integer("id").primaryKey(),
+    // The Scraping service's API token (Apify), encrypted with the Master key and bound to this row
+    // and column, and its last 4 characters, which the page shows.
+    apifyToken: text("apify_token"),
+    apifyTokenLast4: text("apify_token_last4"),
+    // The last Test of the token, and when. Saving a new token clears both.
+    apifyCheck: text("apify_check", { enum: PRICE_SOURCE_CHECKS }),
+    apifyCheckedAt: moment("apify_checked_at"),
+    // The Kroger API's client ID and client secret, each stored like the token.
+    krogerClientId: text("kroger_client_id"),
+    krogerClientIdLast4: text("kroger_client_id_last4"),
+    krogerClientSecret: text("kroger_client_secret"),
+    krogerClientSecretLast4: text("kroger_client_secret_last4"),
+    krogerCheck: text("kroger_check", { enum: PRICE_SOURCE_CHECKS }),
+    krogerCheckedAt: moment("kroger_checked_at"),
+    // Open Food Facts, which needs no key. Off until a Member turns it on.
+    openFoodFacts: integer("open_food_facts", { mode: "boolean" }).notNull().default(false),
+    // "Use our ZIP code to find stores": off until a Member turns it on (owner decision, 2026-11-07).
+    useZip: integer("use_zip", { mode: "boolean" }).notNull().default(false),
+    // Find Stores near us: the distance in miles, 10, 25 or 50, and the ZIP code and time of the
+    // last lookup.
+    findDistanceMiles: integer("find_distance_miles").notNull().default(25),
+    storesFoundZip: text("stores_found_zip"),
+    storesFoundAt: moment("stores_found_at"),
+    // The Price source cost cap, for the Scraping service, each month: Apify's Free plan credit.
+    costCap: cents("cost_cap").notNull().default(500),
+    // "An extra trip must save at least $X" (spec 15, Trip setting).
+    tripSaving: cents("trip_saving").notNull().default(1000),
+    // The Household's dietary needs, in plain words, such as "no peanuts, gluten-free".
+    dietaryNeeds: text("dietary_needs").notNull().default(""),
+  },
+  (table) => [
+    check("deal_finder_settings_one_row", sql`${table.id} = 1`),
+    check("deal_finder_settings_distance", sql`${table.findDistanceMiles} IN (10, 25, 50)`),
+    check("deal_finder_settings_cost_cap", sql`${table.costCap} >= 0`),
+    check("deal_finder_settings_trip_saving", sql`${table.tripSaving} >= 0`),
+  ],
+);
+
+// The Scraping service's cost in each month, in the Household time zone, from each run's own record
+// (spec 15, Cost and limits).
+export const priceSourceCosts = sqliteTable("price_source_costs", {
+  // The month, YYYY-MM.
+  month: text("month").primaryKey(),
+  // In billionths of a dollar: one run can cost far less than a cent.
+  costNanos: integer("cost_nanos").notNull().default(0),
+});
+
+// Each Store the deal finder found or reads, and its settings (spec 15, Stores and their readers;
+// Find Stores near us). A chain's ID is its name, such as "kroger"; a weekly-ad-only Store's ID
+// starts with "ad-". Delete all deal finder data keeps every row.
+export const dealFinderStores = sqliteTable(
+  "deal_finder_stores",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    // A Store visited in person is a trip; an online Store is not. A weekly-ad-only Store has only
+    // its weekly-ad Deals.
+    kind: text("kind", { enum: ["in person", "online", "weekly ad only"] }).notNull(),
+    reader: text("reader", { enum: ["Store API", "Scraping service"] }).notNull(),
+    // Ticked on the Stores card. Only a Store that is on is read.
+    on: integer("on", { mode: "boolean" }).notNull().default(false),
+    // Found by the last Find Stores near us. A Store that is not is off, and its settings stay.
+    nearby: integer("nearby", { mode: "boolean" }).notNull().default(true),
+    // The locations to pick the Home store from, nearest first, as JSON. Empty for a Store whose
+    // reader picks its own store.
+    locations: text("locations", { mode: "json" })
+      .$type<{ id: string; name: string; distanceMiles: number }[]>()
+      .notNull(),
+    // The Home store, one of its locations, and its distance in miles.
+    homeStoreId: text("home_store_id"),
+    homeStoreName: text("home_store_name"),
+    distanceMiles: real("distance_miles"),
+    // Empty means no fee (spec 15, Trip setting).
+    deliveryFee: cents("delivery_fee"),
+    freeDeliveryFrom: cents("free_delivery_from"),
+    lastGoodReadAt: moment("last_good_read_at"),
+    foundAt: moment("found_at").notNull(),
+  },
+  (table) => [
+    check("deal_finder_stores_delivery_fee", sql`${table.deliveryFee} >= 0`),
+    check("deal_finder_stores_free_delivery_from", sql`${table.freeDeliveryFrom} >= 0`),
+  ],
+);
+
+// A Product at one Store, as its Price source read it (spec 15, Matching List items to Products).
+export const dealFinderProducts = sqliteTable(
+  "deal_finder_products",
+  {
+    id: text("id").primaryKey(),
+    storeId: text("store_id")
+      .notNull()
+      .references(() => dealFinderStores.id, { onDelete: "cascade" }),
+    // The Store's re-read key: its item number, ASIN, or Product link (spec 15, Search once, then
+    // re-read).
+    readKey: text("read_key").notNull(),
+    name: text("name").notNull(),
+    brand: text("brand"),
+    size: text("size"),
+    upc: text("upc"),
+    // Shown as a link only when it is https: on the Store's own domain (K15).
+    link: text("link"),
+    addedAt: moment("added_at").notNull(),
+  },
+  (table) => [uniqueIndex("deal_finder_products_store_read_key").on(table.storeId, table.readKey)],
+);
+
+// Price history: each price read of a Product, kept 400 days (spec 15, Prices and Deals). Costco
+// gives its warehouse price as the regular price, and its online price beside it.
+export const dealFinderPriceReads = sqliteTable(
+  "deal_finder_price_reads",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => dealFinderProducts.id, { onDelete: "cascade" }),
+    readAt: moment("read_at").notNull(),
+    // Empty for a weekly-ad-only Store, which has only Deals.
+    regularPrice: cents("regular_price"),
+    dealPrice: cents("deal_price"),
+    dealEndsOn: calendarDate("deal_ends_on"),
+    onlinePrice: cents("online_price"),
+  },
+  (table) => [
+    index("deal_finder_price_reads_product").on(table.productId, table.readAt),
+    index("deal_finder_price_reads_read_at").on(table.readAt),
+    // Each price is above $0.00 and below $10,000.00 (spec 15, Checks on every price).
+    check(
+      "deal_finder_price_reads_prices",
+      sql`coalesce(${table.regularPrice}, ${table.dealPrice}, ${table.onlinePrice}) IS NOT NULL AND coalesce(${table.regularPrice}, 1) BETWEEN 1 AND 999999 AND coalesce(${table.dealPrice}, 1) BETWEEN 1 AND 999999 AND coalesce(${table.onlinePrice}, 1) BETWEEN 1 AND 999999`,
+    ),
+  ],
+);
+
+// The units a List item takes (spec 15, Shopping list).
+export const LIST_ITEM_UNITS = ["each", "oz", "lb", "fl oz", "gal", "ct", "pack"] as const;
+
+// The Household's one Shopping list, of at most 100 List items (spec 15, Shopping list). Delete all
+// deal finder data keeps it.
+export const shoppingListItems = sqliteTable(
+  "shopping_list_items",
+  {
+    id: text("id").primaryKey(),
+    // Its words, such as "ground beef", and its quantity and unit, such as 2 lb.
+    words: text("words").notNull(),
+    quantity: real("quantity").notNull(),
+    unit: text("unit", { enum: LIST_ITEM_UNITS }).notNull(),
+    // A brand lock, such as "Jif": every other brand is `no`.
+    brandLock: text("brand_lock"),
+    note: text("note"),
+    // The search words the AI wrote once, such as "ground beef 80/20". Empty until then.
+    searchWords: text("search_words"),
+    ticked: integer("ticked", { mode: "boolean" }).notNull().default(false),
+    // Its place on the list, from 0.
+    place: integer("place").notNull(),
+    addedAt: moment("added_at").notNull(),
+    addedBy: text("added_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    check("shopping_list_items_quantity", sql`${table.quantity} > 0`),
+    index("shopping_list_items_added_by").on(table.addedBy),
+  ],
+);
+
+// A Member's confirm or reject of a match, kept for the same List item words and Product (so the
+// same Store), so the AI is not asked again (spec 15, Matching List items to Products, step 5).
+export const memberMatchChoices = sqliteTable(
+  "member_match_choices",
+  {
+    // The List item's words, trimmed and in lower case.
+    words: text("words").notNull(),
+    productId: text("product_id")
+      .notNull()
+      .references(() => dealFinderProducts.id, { onDelete: "cascade" }),
+    choice: text("choice", { enum: ["confirmed", "rejected"] }).notNull(),
+    memberId: text("member_id").references(() => members.id, { onDelete: "set null" }),
+    at: moment("at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.words, table.productId] }),
+    index("member_match_choices_product").on(table.productId),
+    index("member_match_choices_member").on(table.memberId),
+  ],
+);
+
+// Each answer a List item and a Product can have (spec 15, Matching List items to Products).
+export const PRODUCT_MATCH_ANSWERS = ["match", "substitute", "no", "unchecked"] as const;
+
+// The AI's answer for one List item and one Product (spec 15, Matching List items to Products). It
+// keeps the Store's re-read key and the time of the List item's last full search at that Store, so
+// later plan runs re-read a `match` and search again after 30 days (Search once, then re-read).
+export const productMatches = sqliteTable(
+  "product_matches",
+  {
+    listItemId: text("list_item_id")
+      .notNull()
+      .references(() => shoppingListItems.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => dealFinderProducts.id, { onDelete: "cascade" }),
+    storeId: text("store_id")
+      .notNull()
+      .references(() => dealFinderStores.id, { onDelete: "cascade" }),
+    // "unchecked" until the AI or a Member answers: a search found the Product, and with no AI
+    // provider a Member picks from these (spec 15, Rules that stay in force: Works without AI).
+    answer: text("answer", { enum: PRODUCT_MATCH_ANSWERS }).notNull(),
+    // One line, for a substitute, such as "Turkey instead of beef".
+    reason: text("reason"),
+    readKey: text("read_key").notNull(),
+    lastFullSearchAt: moment("last_full_search_at").notNull(),
+    matchedAt: moment("matched_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.listItemId, table.productId] }),
+    index("product_matches_product").on(table.productId),
+    index("product_matches_store").on(table.storeId, table.listItemId),
+  ],
+);
+
+// When each List item was last fully searched at each Store, even a search that found nothing, so
+// a later plan run re-reads its saved `match` and searches again only after 30 days or when the
+// match fails (spec 15, Search once, then re-read). Delete all deal finder data removes every row.
+export const listItemSearches = sqliteTable(
+  "list_item_searches",
+  {
+    listItemId: text("list_item_id")
+      .notNull()
+      .references(() => shoppingListItems.id, { onDelete: "cascade" }),
+    storeId: text("store_id")
+      .notNull()
+      .references(() => dealFinderStores.id, { onDelete: "cascade" }),
+    searchedAt: moment("searched_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.listItemId, table.storeId] }),
+    index("list_item_searches_store").on(table.storeId),
+  ],
+);
+
+// Each Shopping plan a Member started with "Find the best prices" (spec 15, The Shopping plan).
+export const shoppingPlans = sqliteTable(
+  "shopping_plans",
+  {
+    id: text("id").primaryKey(),
+    startedAt: moment("started_at").notNull(),
+    startedBy: text("started_by").references(() => members.id, { onDelete: "set null" }),
+    state: text("state", { enum: ["running", "done", "failed"] }).notNull(),
+    finishedAt: moment("finished_at"),
+    // The trip setting the plan used.
+    tripSaving: cents("trip_saving").notNull(),
+    total: cents("total"),
+    trips: integer("trips"),
+    // Against the best one-Store plan.
+    saving: cents("saving"),
+    // Each Store that could not be read, with its reason, as JSON.
+    storeFailures: text("store_failures", { mode: "json" })
+      .$type<{ storeId: string; reason: string }[]>()
+      .notNull(),
+  },
+  (table) => [
+    index("shopping_plans_started_at").on(table.startedAt),
+    index("shopping_plans_started_by").on(table.startedBy),
+  ],
+);
+
+// One List item's line in a Shopping plan: its Store, Product, packages and price, or "Not found"
+// with no Store. It keeps the words and the Product's name, so it reads the same after a change.
+export const shoppingPlanLines = sqliteTable(
+  "shopping_plan_lines",
+  {
+    planId: text("plan_id")
+      .notNull()
+      .references(() => shoppingPlans.id, { onDelete: "cascade" }),
+    place: integer("place").notNull(),
+    listItemId: text("list_item_id").references(() => shoppingListItems.id, {
+      onDelete: "set null",
+    }),
+    words: text("words").notNull(),
+    storeId: text("store_id").references(() => dealFinderStores.id, { onDelete: "set null" }),
+    productId: text("product_id").references(() => dealFinderProducts.id, {
+      onDelete: "set null",
+    }),
+    productName: text("product_name"),
+    packages: integer("packages"),
+    price: cents("price"),
+    total: cents("total"),
+    priceKind: text("price_kind", { enum: ["regular", "deal", "online"] }),
+    priceReadAt: moment("price_read_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.planId, table.place] }),
+    index("shopping_plan_lines_list_item").on(table.listItemId),
+    index("shopping_plan_lines_store").on(table.storeId),
+    index("shopping_plan_lines_product").on(table.productId),
+  ],
+);
+
+// One List item as a Shopping list change kept it: every column, with its time as ISO 8601 text.
+export type ListItemSnapshot = {
+  id: string;
+  words: string;
+  quantity: number;
+  unit: (typeof LIST_ITEM_UNITS)[number];
+  brandLock: string | null;
+  note: string | null;
+  searchWords: string | null;
+  ticked: boolean;
+  place: number;
+  addedAt: string;
+  addedBy: string | null;
+};
+
+// A Shopping list change Chat's AI made with edit_shopping_list (spec 15, Chat tools). It applied at
+// once, and shows as a card in its thread with Undo (owner decision, 2026-11-11). It keeps each List
+// item it touched as it was before and after, so Undo puts back the exact list. Deleting the thread
+// deletes it.
+export const shoppingListChanges = sqliteTable(
+  "shopping_list_changes",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    // The AI answer that made it. It may fail and never be stored.
+    answerId: text("answer_id").notNull(),
+    // Each List item it touched, in the order of the AI's changes: null before for an add, and null
+    // after for a remove. The card's lines are made from it.
+    items: text("items", { mode: "json" })
+      .$type<{ before: ListItemSnapshot | null; after: ListItemSnapshot | null }[]>()
+      .notNull(),
+    madeAt: moment("made_at").notNull(),
+    // The Member whose question it answered.
+    madeBy: text("made_by").references(() => members.id, { onDelete: "set null" }),
+    // When a Member pressed Undo, and who.
+    undoneAt: moment("undone_at"),
+    undoneBy: text("undone_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    index("shopping_list_changes_thread").on(table.threadId),
+    index("shopping_list_changes_made_by").on(table.madeBy),
+    index("shopping_list_changes_undone_by").on(table.undoneBy),
+  ],
+);
+
+// A Deal a Member used in a Shopping plan with "Use this Deal" (spec 15, What the plan shows). It
+// moves the plan's line at `place` to the Deal's Store until the Deal ends; then the line is back
+// at its regular-price Store. It keeps the Deal as it was shown, so it reads the same later.
+export const shoppingPlanDeals = sqliteTable(
+  "shopping_plan_deals",
+  {
+    planId: text("plan_id")
+      .notNull()
+      .references(() => shoppingPlans.id, { onDelete: "cascade" }),
+    place: integer("place").notNull(),
+    storeId: text("store_id")
+      .notNull()
+      .references(() => dealFinderStores.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => dealFinderProducts.id, { onDelete: "cascade" }),
+    productName: text("product_name").notNull(),
+    packages: integer("packages").notNull(),
+    price: cents("price").notNull(),
+    total: cents("total").notNull(),
+    // Empty when the source gave no end date: the Deal holds until the next plan.
+    endsOn: calendarDate("ends_on"),
+    priceReadAt: moment("price_read_at").notNull(),
+    usedAt: moment("used_at").notNull(),
+    usedBy: text("used_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.planId, table.place] }),
+    index("shopping_plan_deals_store").on(table.storeId),
+    index("shopping_plan_deals_product").on(table.productId),
+    index("shopping_plan_deals_used_by").on(table.usedBy),
+    check("shopping_plan_deals_amounts", sql`${table.packages} >= 1 AND ${table.price} >= 1`),
+  ],
 );

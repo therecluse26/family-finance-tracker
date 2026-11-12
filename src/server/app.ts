@@ -12,6 +12,12 @@ import {
 } from "../bank/index.ts";
 import type { Chat } from "../chat/index.ts";
 import type { Database } from "../db/index.ts";
+import {
+  type PlanRuns,
+  type PriceSourceAdapter,
+  priceSourceSettings,
+  shoppingList,
+} from "../deal-finder/index.ts";
 import type { GoalWriting } from "../goals/index.ts";
 import type { Logger } from "../log.ts";
 import type { SmtpSettings } from "../notify/email-view.ts";
@@ -52,6 +58,7 @@ import { reviewRoutes } from "./review.ts";
 import { safetyHeaders } from "./safety-headers.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
 import { readSetupState, setupRoutes } from "./setup.ts";
+import { shoppingPlanRoutes } from "./shopping-plan.ts";
 import { topMerchantRoutes } from "./top-merchants.ts";
 
 // A route threw a value that is not an Error, such as a string.
@@ -105,7 +112,7 @@ function requireSession(auth: Auth): MiddlewareHandler<ServerEnv> {
 // the first-run wizard's required steps are done (spec 12):
 // until then, every route but a GET answers 409. They take only JSON bodies, so a form on another
 // site cannot post to them. An app made without the service answers 404.
-function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push">(
+function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push" | "priceSources">(
   database: Database,
   name: Name,
   service: ServerEnv["Variables"][Name] | undefined,
@@ -119,6 +126,20 @@ function secretRoutes<Name extends "plaid" | "ai" | "smtp" | "push">(
       if (!sendsJson(c)) return c.json({ error: "Send JSON." }, 415);
     }
     c.set(name, service);
+    await next();
+  };
+}
+
+// Before /api/shopping-plan/run: "Find the best prices" and its progress. It takes
+// only JSON bodies, so a form on another site cannot post to it. An app made with no Price source
+// adapter has no plan runs, and answers 404.
+function planRunRoutes(planRuns: PlanRuns | undefined): MiddlewareHandler<ServerEnv> {
+  return async (c, next) => {
+    if (planRuns === undefined) return c.json({ error: "Not found" }, 404);
+    if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sendsJson(c)) {
+      return c.json({ error: "Send JSON." }, 415);
+    }
+    c.set("planRuns", planRuns);
     await next();
   };
 }
@@ -211,6 +232,12 @@ export function createApp(
     goalWriting?: GoalWriting;
     // AI work on your Transactions, under /api/ai/work. Without it, those routes answer 404.
     aiWork?: AiWork;
+    // The deal finder's Price source adapter. Without one, Test and Find Stores near us have no
+    // reader. The built app gives the real readers; `pnpm dev` gives the fake one.
+    priceSources?: PriceSourceAdapter;
+    // "Find the best prices" and its progress, at /api/shopping-plan/run. Without it, that route
+    // answers 404.
+    planRuns?: PlanRuns;
     // `pnpm dev`'s own routes, under /api/dev. The built app has none, so each answers 404.
     devRoutes?: Hono<ServerEnv>;
   } = {},
@@ -246,8 +273,16 @@ export function createApp(
   const repairing = connectionRepairing();
   const dataExport = dataExportRoutes(database, bank, security.logger);
   const amazon = amazonRoutes(database, security.logger);
+  const priceSources = priceSourceSettings({
+    database,
+    secrets,
+    logger: security.logger,
+    ...(services.priceSources === undefined ? {} : { adapter: services.priceSources }),
+  });
+  const shopping = shoppingList({ database });
   const lineItemCategories = lineItemCategoryRoutes(database);
   const amazonLinks = amazonLinkRoutes(database);
+  const shoppingPlan = shoppingPlanRoutes(database);
   const members = memberRoutes(database, auth, security.appUrl);
   const devices = deviceRoutes(auth);
   return (
@@ -312,8 +347,10 @@ export function createApp(
         c.set("repairing", repairing);
         c.set("dataExport", dataExport);
         c.set("amazon", amazon);
+        c.set("shoppingList", shopping);
         c.set("lineItemCategories", lineItemCategories);
         c.set("amazonLinks", amazonLinks);
+        c.set("shoppingPlan", shoppingPlan);
         c.set("members", members);
         c.set("devices", devices);
         c.set("aiWork", services.aiWork);
@@ -329,6 +366,10 @@ export function createApp(
       .use("/api/ai/*", secretRoutes(database, "ai", services.ai))
       .use("/api/smtp/*", secretRoutes(database, "smtp", services.smtp))
       .use("/api/push/*", secretRoutes(database, "push", services.push))
+      // The Price source keys are Master-key secrets too.
+      .use("/api/price-sources/*", secretRoutes(database, "priceSources", priceSources))
+      .use("/api/price-sources", secretRoutes(database, "priceSources", priceSources))
+      .use("/api/shopping-plan/run", planRunRoutes(services.planRuns))
       // A Member's own channels take only a JSON body.
       .use("/api/alert-channels", jsonOnly)
       .use("/api/weekly-summary", jsonOnly)

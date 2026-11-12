@@ -8,6 +8,7 @@ import {
   listGoals,
   listItemRules,
   listMemberNamesById,
+  listShoppingListItems,
   readExportedJson,
   readExportedLineItems,
   readExportedTransactions,
@@ -18,10 +19,14 @@ import { householdTimeZone } from "../household/index.ts";
 import type { Logger } from "../log.ts";
 import type { BankViews } from "./bank-views.ts";
 import type { DataExportRoutes } from "./data-export-views.ts";
+import { shoppingPlanView } from "./shopping-plan.ts";
+import type { ShoppingPlanView } from "./shopping-plan-views.ts";
 import { type ZipFile, zipStream } from "./zip.ts";
 
 // "Download my data" (spec 11, Data export): one ZIP file with five CSV files and data.json, and
-// two CSV files more when the Household has Line items or Item rules. Every file is written as the ZIP streams, a page of rows at a time, so the export never holds the whole
+// two CSV files more when the Household has Line items or Item rules, shopping-list.csv when the
+// Shopping list has a List item, and shopping-plan.csv when it has a Shopping plan (spec 15, Data
+// and privacy). Every file is written as the ZIP streams, a page of rows at a time, so the export never holds the whole
 // history. What data.json holds is the db module's allowlist; it holds no secret.
 
 // A cell a spreadsheet would run as a formula starts with one of these (OWASP, CSV Injection).
@@ -322,6 +327,55 @@ async function* itemRulesCsv(database: Database, names: Names): AsyncGenerator<s
   }
 }
 
+const SHOPPING_PLAN_COLUMNS = [
+  "plan_date",
+  "store",
+  "list_item",
+  "product",
+  "packages",
+  "price",
+  "total",
+  "price_kind",
+  "price_date",
+  "deal_ends_on",
+] as const;
+
+// The last Shopping plan as the Shopping list page shows it (spec 15, Data and privacy): one row
+// per List item, by Store, with a used Deal in place, then each List item not found, with no Store.
+async function* shoppingPlanCsv(plan: ShoppingPlanView): AsyncGenerator<string> {
+  yield header(SHOPPING_PLAN_COLUMNS);
+  for (const store of plan.stores) {
+    for (const line of store.lines) {
+      yield csvLine([
+        csvText(plan.builtOn),
+        csvText(store.name),
+        csvText(line.words),
+        csvText(line.productName),
+        String(line.packages),
+        csvAmount(line.price),
+        csvAmount(line.total),
+        csvText(line.priceKind),
+        csvText(line.readOn),
+        csvText(line.dealEndsOn),
+      ]);
+    }
+  }
+  for (const line of plan.notFound) {
+    yield csvLine([
+      csvText(plan.builtOn),
+      "",
+      csvText(line.words),
+      "",
+      "",
+      "",
+      "",
+      csvText("not found"),
+      "",
+      "",
+    ]);
+  }
+}
+
 // data.json: each table on the db module's allowlist, as app.db holds it, by column name.
 async function* dataJson(database: Database, at: Date): AsyncGenerator<string> {
   const about = {
@@ -342,6 +396,37 @@ async function* dataJson(database: Database, at: Date): AsyncGenerator<string> {
   yield "}}";
 }
 
+const SHOPPING_LIST_COLUMNS = [
+  "id",
+  "words",
+  "quantity",
+  "unit",
+  "brand_lock",
+  "note",
+  "ticked",
+  "added_on",
+  "added_by",
+] as const;
+
+// Each List item on the Shopping list, in its place (spec 15, Data and privacy). The list holds at
+// most 100.
+async function* shoppingListCsv(database: Database, names: Names): AsyncGenerator<string> {
+  yield header(SHOPPING_LIST_COLUMNS);
+  for (const item of await listShoppingListItems(database)) {
+    yield csvLine([
+      csvText(item.id),
+      csvText(item.words),
+      String(item.quantity),
+      csvText(item.unit),
+      csvText(item.brandLock),
+      csvText(item.note),
+      csvFlag(item.ticked),
+      csvText(names.day(item.addedAt)),
+      csvText(names.members.get(item.addedBy ?? "") ?? null),
+    ]);
+  }
+}
+
 export function dataExportRoutes(
   database: Database,
   bank: BankViews,
@@ -354,6 +439,9 @@ export function dataExportRoutes(
       const lineItemFiles =
         (await countLineItems(database, "amazon")) > 0 ||
         (await listItemRules(database)).length > 0;
+      const shoppingListFile = (await listShoppingListItems(database)).length > 0;
+      // The last Shopping plan, when there is one.
+      const shoppingPlan = await shoppingPlanView(database, at);
       // The Account names and Member names, read once each, when the first file that needs them
       // starts.
       let accountNames: Promise<Map<string, string>> | undefined;
@@ -408,6 +496,19 @@ export function dataExportRoutes(
               },
             ]
           : []),
+        ...(shoppingListFile
+          ? [
+              {
+                name: "shopping-list.csv",
+                content: async function* () {
+                  yield* shoppingListCsv(database, await people());
+                },
+              },
+            ]
+          : []),
+        ...(shoppingPlan === undefined
+          ? []
+          : [{ name: "shopping-plan.csv", content: () => shoppingPlanCsv(shoppingPlan) }]),
         { name: "data.json", content: () => dataJson(database, at) },
       ];
       const zip = zipStream(files, at);

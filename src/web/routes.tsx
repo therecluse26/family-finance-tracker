@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Navigate, type RouteObject } from "react-router";
 import { MAIN_MENU, MORE_MENU, SETTINGS_SECTIONS } from "./menu.ts";
 import { Accounts } from "./pages/Accounts.tsx";
@@ -9,12 +10,15 @@ import { Goals } from "./pages/Goals.tsx";
 import { Join } from "./pages/Join.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
+import { PlanRunButton } from "./pages/PlanRunButton.tsx";
 import { RecurringCharges } from "./pages/RecurringCharges.tsx";
 import { Reports } from "./pages/Reports.tsx";
 import { Reset } from "./pages/Reset.tsx";
 import { ReviewList } from "./pages/ReviewList.tsx";
 import { MonthlyReviewPage, Reviews } from "./pages/Reviews.tsx";
 import { Setup } from "./pages/Setup.tsx";
+import { ShoppingList } from "./pages/ShoppingList.tsx";
+import { ShoppingPlan } from "./pages/ShoppingPlan.tsx";
 import { SignIn } from "./pages/SignIn.tsx";
 import { About } from "./pages/settings/About.tsx";
 import { Ai } from "./pages/settings/Ai.tsx";
@@ -28,6 +32,7 @@ import { DataSources } from "./pages/settings/DataSources.tsx";
 import { Household } from "./pages/settings/Household.tsx";
 import { Members } from "./pages/settings/Members.tsx";
 import { MyLogin } from "./pages/settings/MyLogin.tsx";
+import { PriceSources } from "./pages/settings/PriceSources.tsx";
 import { Settings, SettingsIndex, SettingsPlaceholder } from "./pages/settings/Settings.tsx";
 import { StoreOrders } from "./pages/settings/StoreOrders.tsx";
 import { TopMerchants } from "./pages/TopMerchants.tsx";
@@ -45,6 +50,7 @@ const BUILT_SECTIONS: Record<string, () => React.JSX.Element> = {
   banks: Banks,
   categories: Categories,
   "store-orders": StoreOrders,
+  "price-sources": PriceSources,
   alerts: Alerts,
   "backups-and-data": BackupsAndData,
   ai: Ai,
@@ -59,6 +65,18 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
+// The Shopping list page with the deal finder's parts: "Find the best prices" beside the heading,
+// and the last Shopping plan under the list, read again each time a plan run ends.
+function ShoppingListPage() {
+  const [planVersion, setPlanVersion] = useState(0);
+  return (
+    <ShoppingList
+      findBestPrices={<PlanRunButton onDone={() => setPlanVersion((version) => version + 1)} />}
+      plan={<ShoppingPlan version={planVersion} />}
+    />
+  );
+}
+
 const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/accounts": Accounts,
   "/alert-list": AlertList,
@@ -68,6 +86,7 @@ const BUILT_PAGES: Record<string, () => React.JSX.Element> = {
   "/recurring-charges": RecurringCharges,
   "/reports": Reports,
   "/review-list": ReviewList,
+  "/shopping-list": ShoppingListPage,
   "/reviews": Reviews,
   "/top-merchants": TopMerchants,
   "/transactions": Transactions,

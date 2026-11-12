@@ -17,6 +17,7 @@ import {
   storeChatMessage,
   storeChatThread,
 } from "../db/index.ts";
+import { type ShoppingListChangeCardView, shoppingListCards } from "../deal-finder/index.ts";
 import { log } from "../log.ts";
 import { type ChatProposal, chatProposals } from "../proposals/index.ts";
 import { lookupTools } from "./lookup-tools.ts";
@@ -29,6 +30,7 @@ import {
   storedNote,
 } from "./note.ts";
 import { proposalTools } from "./proposal-tools.ts";
+import { shoppingTools } from "./shopping-tools.ts";
 
 // Chat (spec 08, Chat; spec 07, Chat page): shared threads, each answer streamed from its route as
 // the AI writes it. Every Member sees every thread, with who wrote each message, and any Member
@@ -54,6 +56,7 @@ export const CHAT_TASK = [
   "You may make at most 5 tool calls for one question, lookups and Proposals together. Then answer with what you have.",
   "To suggest a change to a Budget or a new Goal, use a Proposal tool: at most 2 in one answer, and one Category in each Budget change. Nothing changes until a Member accepts it.",
   "After a Proposal tool answers shown, mention the Proposal in one sentence. After it answers an error, do not try the same Proposal again: explain in one sentence.",
+  "To change the Shopping list, read it with get_shopping_list, then make every change in one edit_shopping_list call. The change applies at once, and the Member sees it as a card with Undo. After it answers an error, explain the rule in one sentence. You cannot start a Shopping plan: a Member presses Find the best prices.",
 ].join("\n");
 
 export type ChatMember = { id: string; name: string };
@@ -88,6 +91,8 @@ export type ChatThread = {
   // Whether an answer is streaming in the thread now.
   answering: boolean;
   proposals: ChatProposal[];
+  // The Shopping list changes its AI made, each with the answer that made it.
+  shoppingListChanges: (Omit<ShoppingListChangeCardView, "answerId"> & { answerId: string })[];
 };
 
 // Why a message or an answer did not start. Nothing was stored.
@@ -238,6 +243,7 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
     rows: ChatMessageRow[],
     note: unknown,
     runId: string,
+    memberId: string,
   ): Promise<AiCall> {
     const turns: AiMessage[] = rows.slice(firstSentIndex(rows.length, true)).map((row) => ({
       role: row.author === "AI" ? "assistant" : "user",
@@ -254,6 +260,7 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
       tools: {
         ...lookupTools({ database, ai, now }),
         ...proposalTools({ database, ai, runId: `${threadId}/${runId}`, now }),
+        ...shoppingTools({ database, threadId, answerId: runId, memberId, now }),
       },
     };
   }
@@ -264,11 +271,12 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
     threadId: string,
     note: unknown,
     sendAnyway: boolean,
+    memberId: string,
   ): Promise<Response | ChatRefusal> {
     const rows = await listChatMessages(database, threadId);
     if (rows.at(-1)?.author !== "Member") return { refused: "nothing to answer" };
     const answerId = crypto.randomUUID();
-    const streamed = await ai.stream(await callFor(threadId, rows, note, answerId), {
+    const streamed = await ai.stream(await callFor(threadId, rows, note, answerId, memberId), {
       sendAnyway,
       chatThreadId: threadId,
       async ended(end) {
@@ -337,6 +345,7 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
         firstSent: first === 0 ? null : (rows[first]?.id ?? null),
         answering: answering.has(id),
         proposals: await chatProposals(database, `${id}/`, now()),
+        shoppingListChanges: await shoppingListCards(database, id),
       };
     },
 
@@ -393,7 +402,7 @@ export function chat({ database, ai, summary, now = () => new Date() }: ChatOpti
           );
           if (stored === undefined) return { refused: "not found" };
         }
-        const answered = await streamAnswer(threadId, thread.note, sendAnyway);
+        const answered = await streamAnswer(threadId, thread.note, sendAnyway, member.id);
         streaming = answered instanceof Response;
         return answered;
       } finally {

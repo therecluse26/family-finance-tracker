@@ -6,6 +6,9 @@ import type {
   ConnectionRepairing,
 } from "../bank/connect-view.ts";
 import type { PlaidSettings } from "../bank/plaid-view.ts";
+import type { PlanRuns } from "../deal-finder/index.ts";
+import type { ShoppingList } from "../deal-finder/shopping-list-view.ts";
+import type { PriceSourceSettings } from "../deal-finder/view.ts";
 import type { ChannelSettings, SmtpSettings } from "../notify/email-view.ts";
 import type { PushSettings } from "../notify/push-view.ts";
 import type { PictureRoutes } from "../pictures/picture-view.ts";
@@ -39,6 +42,7 @@ import type { RecurringRoutes } from "./recurring-views.ts";
 import type { ReportRoutes } from "./reports-views.ts";
 import type { ReviewRoutes } from "./review-views.ts";
 import type { SetupRoutes } from "./setup-views.ts";
+import type { ShoppingPlanRoutes } from "./shopping-plan-views.ts";
 import type { TopMerchantRoutes } from "./top-merchants-views.ts";
 
 // What the security check sets on every request it accepts, and the session check on every /api
@@ -90,6 +94,15 @@ export type ServerEnv = {
     // Settings, Store orders: the order file upload and "Delete all Amazon data", and each
     // Transaction's Line items.
     amazon: AmazonRoutes;
+    // Settings, Price sources: the deal finder's keys, Stores, and "Delete all deal finder data",
+    // for the routes under /api/price-sources/.
+    priceSources: PriceSourceSettings;
+    // The Shopping list page, and Undo on a Shopping list change's card in Chat.
+    shoppingList: ShoppingList;
+    // "Find the best prices" and its progress, for /api/shopping-plan/run.
+    planRuns: PlanRuns;
+    // The Shopping plan on the Shopping list page, and "Use this Deal".
+    shoppingPlan: ShoppingPlanRoutes;
     // A Line item's Category, and Item rules on Settings > Categories.
     lineItemCategories: LineItemCategoryRoutes;
     // A Transaction's Amazon links, on its detail view: the hand link and Undo.

@@ -60,7 +60,7 @@ const BESIDE = ["-wal", "-shm", "-journal"];
 
 // What every Member reads after a restore without the Master key (spec 11, Without the Master key).
 export const RESTORED_WITHOUT_MASTER_KEY =
-  "The app was restored from a backup without its Master key, so its saved secrets are gone. Set these up again: the Plaid secret, the AI key, and the SMTP password in Settings; each bank, with Link again; and Alerts on each device.";
+  "The app was restored from a backup without its Master key, so its saved secrets are gone. Set these up again: the Plaid secret, the AI key, the SMTP password, and the Price source keys in Settings; each bank, with Link again; and Alerts on each device.";
 
 const NOTHING_CHANGED = "Nothing changed.";
 
@@ -147,6 +147,8 @@ function lossLines(losses: RestoreLosses): string[] {
   if (losses.plaidSecret) lines.push("  - the Plaid secret");
   if (losses.aiKey) lines.push("  - the AI key");
   if (losses.smtpPassword) lines.push("  - the SMTP password, with the rest of the SMTP settings");
+  if (losses.priceSourceKeys)
+    lines.push("  - the Price source keys: the Apify token and the Kroger keys");
   if (losses.banks.length > 0) {
     lines.push(
       `  - the access to each bank: ${losses.banks.join(", ")}. Each Connection becomes Broken, and a Member links each bank again with Link again.`,

@@ -71,6 +71,7 @@ describe("the app shell", () => {
       "Alert list",
       "Recurring charges",
       "Top Merchants",
+      "Shopping list",
     ]);
     expect(SETTINGS_SECTIONS.map((section) => section.label)).toEqual([
       "Household",
@@ -81,6 +82,7 @@ describe("the app shell", () => {
       "Store orders",
       "Alerts",
       "AI",
+      "Price sources",
       "Backups and data",
       "About",
     ]);
