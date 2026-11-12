@@ -123,12 +123,14 @@ export type PriceSourceAdapter = {
     readKeys: string[];
     keys: PriceSourceKeys;
   }): Promise<Costed<(ProductRead | null)[]>>;
-  // Reads one Product by its re-read key. Null when the Store no longer has it.
+  // Reads one Product by its re-read key. Null when the Store no longer has it. Walmart has no
+  // lookup by item number, so it searches for the Product's saved name.
   readProduct(input: {
     storeId: string;
     homeStoreId: string | null;
     zipCode: string | null;
     readKey: string;
+    name?: string | null;
     keys: PriceSourceKeys;
   }): Promise<Costed<ProductRead | null>>;
   // The weekly ads near the ZIP code, for the named Stores and words.

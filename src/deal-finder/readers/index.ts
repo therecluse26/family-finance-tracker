@@ -20,7 +20,7 @@ import { amazon } from "./stores/amazon.ts";
 import { costco, costcoFindInput, costcoWarehousesIn } from "./stores/costco.ts";
 import { type ActorCall, type ApifyStore, type Place, withBrand } from "./stores/store.ts";
 import { target, targetFindInput, targetStoresIn } from "./stores/target.ts";
-import { walmart, walmartFindInput, walmartStoreIn } from "./stores/walmart.ts";
+import { walmart } from "./stores/walmart.ts";
 import {
   adStoresIn,
   weeklyAdFindInput,
@@ -156,10 +156,9 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
     const runs = await allLookups([
       run("target", targetFindInput(zipCode, miles)),
       run("costco", costcoFindInput(zipCode)),
-      run("walmart", walmartFindInput(zipCode)),
       run("weekly ads", weeklyAdFindInput(zipCode)),
     ]);
-    const [targetRows, costcoRows, walmartRows, adRows] = runs.map((each) => each.value);
+    const [targetRows, costcoRows, adRows] = runs.map((each) => each.value);
     const adStores = adRows?.ok === true ? adStoresIn(adRows.value) : null;
     const lookups: StoreLookup[] = [
       outcomeOf("target", targetRows, (rows) => {
@@ -170,11 +169,8 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
         const warehouses = costcoWarehousesIn(rows).slice(0, 5);
         return warehouses.length === 0 ? null : scraped("Costco", "in person", warehouses);
       }),
-      outcomeOf("walmart", walmartRows, (rows) => {
-        if (rows.length === 0) return null;
-        const picked = walmartStoreIn(rows);
-        return scraped("Walmart", "in person", picked === null ? [] : [picked]);
-      }),
+      // Walmart reads by the ZIP code, with no Home store, so it is found with no run.
+      { storeId: "walmart", outcome: "found", store: scraped("Walmart", "in person", []) },
       // Aldi is found by its weekly ad near the ZIP code.
       outcomeOf("aldi", adRows, () => adStores?.find((store) => store.id === "aldi") ?? null),
       { storeId: "amazon", outcome: "found", store: scraped("Amazon", "online", []) },
@@ -269,7 +265,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       }
       const store = storeOf(input.storeId);
       const token = tokenOf(input.keys);
-      const call = store.readInput(input.readKey, place);
+      const call = store.readInput(input.readKey, place, input.name);
       if (call === null) return { value: null, costNanos: null };
       const run = await apify.run(token, call.actor, call.input);
       let found: ProductRead | null = null;

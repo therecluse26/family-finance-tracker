@@ -102,11 +102,12 @@ function readModeOf(store: Pick<StoredDealFinderStore, "id" | "reader">): ReadMo
 }
 
 // Measured prices (spec 15, Cost and limits, spike round 12), in billionths of a dollar: per
-// search, per Actor run, and per Product or Deal. Aldi takes one query, so each search is its own
-// run. A Store with no measured price counts Costco's price per Product, the highest.
+// search, per Actor run, and per Product or Deal. Aldi and Walmart take one query, so each search
+// is its own run. Walmart's $0.08 a search is the owner's run of 2026-11-11: one page of 40 rows.
+// A Store with no measured price counts Costco's price per Product, the highest.
 type RunPrice = { perSearch: number; perRun: number; perProduct: number };
 const RUN_PRICES: Readonly<Record<string, RunPrice>> = {
-  walmart: { perSearch: 2_000_000, perRun: 0, perProduct: 0 },
+  walmart: { perSearch: 80_000_000, perRun: 0, perProduct: 0 },
   target: { perSearch: 250_000, perRun: 0, perProduct: 0 },
   aldi: { perSearch: 0, perRun: 10_000_000, perProduct: 2_000_000 },
   costco: { perSearch: 0, perRun: 0, perProduct: 5_000_000 },

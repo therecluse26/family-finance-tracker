@@ -267,38 +267,103 @@ describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => 
   it("runs each Actor with a $1.00 charge cap, and takes the cost from the run record", async () => {
     const found = await readers().searchStore(search("walmart"));
     expect(found.costNanos).toBe(12_300_000);
-    const [started] = servers.apify.to("/v2/acts/gauravlabs~walmart-search-api/runs");
+    const [started] = servers.apify.to("/v2/acts/burbn~walmart-product-search/runs");
     expect(started?.query.maxTotalChargeUsd).toBe("1.00");
     expect(servers.apify.to("/v2/actor-runs/")).toHaveLength(0);
     // A run record with no cost counts at the run's cap.
-    servers.apify.runUsd.set("gauravlabs/walmart-search-api", null);
+    servers.apify.runUsd.set("burbn/walmart-product-search", null);
     expect((await readers().searchStore(search("walmart"))).costNanos).toBe(1_000_000_000);
   });
 
-  it("Walmart: searches by ZIP code with no paid ads, and maps each row", async () => {
+  it("Walmart: one query a run at the ZIP code, keeping only in-stock store rows that are not ads", async () => {
     const found = await readers().searchStore(search("walmart", { brand: "Sample" }));
-    expect(servers.apify.inputsOf("gauravlabs/walmart-search-api")).toEqual([
-      {
-        queries: ["Sample peanut butter"],
-        maxResultsPerQuery: 15,
-        excludeSponsored: true,
-        zipcode: ZIP,
-      },
+    expect(servers.apify.inputsOf("burbn/walmart-product-search")).toEqual([
+      { query: "Sample peanut butter", domain: "us", maxPages: 1, zip: ZIP },
     ]);
+    // The paid ad, the row out of stock, and the marketplace seller's row are dropped. A price
+    // below `listPrice` is a Deal.
     expect(
-      found.value.map((product) => [product.readKey, product.regularPrice, product.link]),
+      found.value.map((product) => [
+        product.readKey,
+        product.regularPrice,
+        product.dealPrice,
+        product.link,
+      ]),
     ).toEqual([
-      ["990000101", 278, "https://www.walmart.com/ip/sample-creamy-peanut-butter/990000101"],
-      ["990000102", 312, "https://www.walmart.com/ip/fake-valley-large-eggs/990000102"],
+      ["990000101", 278, null, "https://www.walmart.com/ip/sample-creamy-peanut-butter/990000101"],
+      ["990000102", 348, 312, "https://www.walmart.com/ip/fake-valley-large-eggs/990000102"],
     ]);
-    // A Home store ID never goes to Walmart: its storeId input fails.
+    // Walmart has no Home store: a Home store ID never goes to it.
     await readers().searchStore(search("walmart", { homeStoreId: "9401" }));
-    expect(allSent()).not.toContain("storeId");
-    const again = await readers().readProduct({ ...search("walmart"), readKey: "990000102" });
-    expect(again.value?.name).toBe("Fake Valley Large Eggs, 12 ct");
-    expect(servers.apify.inputsOf("gauravlabs/walmart-search-api").at(-1)?.queries).toEqual([
-      "990000102",
+    expect(allSent()).not.toContain("9401");
+  });
+
+  it("Walmart: keeps the first Products in the Actor's order, in whole cents", async () => {
+    servers.apify.rows["burbn/walmart-product-search"] = () =>
+      Array.from({ length: 40 }, (_, at) => ({
+        usItemId: String(990001000 + at),
+        title: `Fake Item ${at}`,
+        // Binary fractions, such as 0.29 * 100, still give whole cents.
+        price: 0.29 + at,
+        listPrice: at === 1 ? 0.29 : null,
+        pickup: at % 2 === 0,
+        deliveryFromStore: at % 2 === 1,
+        sponsored: false,
+        outOfStock: false,
+      }));
+    const found = await readers().searchStore(search("walmart", { productCount: 15 }));
+    expect(found.value).toHaveLength(15);
+    expect(found.value.map((product) => product.readKey)).toEqual(
+      Array.from({ length: 15 }, (_, at) => String(990001000 + at)),
+    );
+    expect(found.value.map((product) => product.regularPrice)).toEqual(
+      Array.from({ length: 15 }, (_, at) => 29 + 100 * at),
+    );
+    // A `listPrice` not above the price is no Deal.
+    expect(found.value.every((product) => product.dealPrice === null)).toBe(true);
+  });
+
+  it("Walmart: re-reads by searching for the saved name and keeping the same item number", async () => {
+    const reader = readers();
+    const again = await reader.readProduct({
+      ...search("walmart"),
+      readKey: "990000102",
+      name: "Fake Valley Large Eggs, 12 ct",
+    });
+    expect([again.value?.readKey, again.value?.regularPrice]).toEqual(["990000102", 348]);
+    expect(again.costNanos).toBe(12_300_000);
+    expect(servers.apify.inputsOf("burbn/walmart-product-search")).toEqual([
+      { query: "Fake Valley Large Eggs, 12 ct", domain: "us", maxPages: 1, zip: ZIP },
     ]);
+    // Not in the rows, out of stock, or sold only by a marketplace seller: not found.
+    for (const readKey of ["990000555", "990000198", "990000197"]) {
+      const gone = await reader.readProduct({ ...search("walmart"), readKey, name: "Fake eggs" });
+      expect(gone.value).toBeNull();
+    }
+    // With no name, or a key not in Walmart's form, it runs nothing.
+    const runs = servers.apify.inputsOf("burbn/walmart-product-search").length;
+    for (const readKey of ["990000102", " 990000102", "99000010２", "9900%2e0102", "990000102;"]) {
+      const name = readKey === "990000102" ? null : "Fake eggs";
+      const none = await reader.readProduct({ ...search("walmart"), readKey, name });
+      expect([none.value, none.costNanos]).toEqual([null, null]);
+    }
+    expect(servers.apify.inputsOf("burbn/walmart-product-search")).toHaveLength(runs);
+    // A failed re-read names no key in its error or a log line (K8).
+    servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
+    const failed = await failureOf(
+      reader.readProduct({ ...search("walmart"), readKey: "990000102", name: "Fake eggs" }),
+    );
+    expect(failed.kind).toBe("store failed");
+    expect(`${failed.message} ${lines.join("")}`).not.toContain(keys.apifyToken);
+  });
+
+  it("Walmart: keeps a row's item number only in the form it is sent back", async () => {
+    servers.apify.rows["burbn/walmart-product-search"] = () =>
+      [" 990000301", "990000302\t", "99000030３", "9900%2e0304", "990000305;", "{990000306}"].map(
+        (usItemId) => ({ usItemId, title: "Fake Bad Key", price: 1, pickup: true }),
+      );
+    const found = await readers().searchStore(search("walmart"));
+    expect(found.value).toEqual([]);
   });
 
   it("Target: searches at the Home store with 25 results per search, and reads one page with Apify's own Actor", async () => {
@@ -486,7 +551,7 @@ describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => 
   });
 
   it("drops a row whose price, link or key fails the checks", async () => {
-    servers.apify.rows["gauravlabs/walmart-search-api"] = () => [
+    const rows = [
       { usItemId: "1", title: "Fake A", price: 0 },
       { usItemId: "2", title: "Fake B", price: 10_000 },
       { usItemId: "3", title: "Fake C", price: "2.999" },
@@ -505,6 +570,8 @@ describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => 
       },
       { usItemId: "6", title: "Fake F again", price: 4.5 },
     ];
+    servers.apify.rows["burbn/walmart-product-search"] = () =>
+      rows.map((row) => ({ ...row, pickup: true }));
     const found = await readers().searchStore(search("walmart"));
     expect(
       found.value.map((product) => [product.readKey, product.link, product.name.length]),
@@ -524,7 +591,7 @@ describe("Find Stores near us (spec 15)", () => {
       ["kroger", "in person", ["FAKE0101", "FAKE0102"]],
       ["target", "in person", ["9101", "9102"]],
       ["costco", "in person", ["9301", "9302"]],
-      ["walmart", "in person", ["9401"]],
+      ["walmart", "in person", []],
       ["aldi", "in person", []],
       ["amazon", "online", []],
     ]);
@@ -533,16 +600,15 @@ describe("Find Stores near us (spec 15)", () => {
       ["ad-hilltop-fake-market", "weekly ad only", []],
       ["ad-sam-s-club", "weekly ad only", []],
     ]);
-    expect(found.costNanos).toBe(4 * 12_300_000);
+    expect(found.costNanos).toBe(3 * 12_300_000);
     expect(servers.apify.inputsOf("axlymxp/target-store-scraper")).toEqual([
       { locations: [ZIP], within: 25, limit: 5 },
     ]);
     expect(servers.apify.inputsOf("dromb/costco-us")).toEqual([
       { operation: "warehouses", postalCode: ZIP, autoResolveLocation: true, limit: 5 },
     ]);
-    expect(servers.apify.inputsOf("gauravlabs/walmart-search-api")[0]).toMatchObject({
-      zipcode: ZIP,
-    });
+    // Walmart reads by the ZIP code, with no Home store, so its lookup runs nothing.
+    expect(servers.apify.inputsOf("burbn/walmart-product-search")).toEqual([]);
     // Search mode, with only the Actor's own input fields: "flyers" mode has no limit per flyer.
     expect(servers.apify.inputsOf("gratifying_graph/us-grocery-deals")).toEqual([
       {
@@ -609,14 +675,14 @@ describe("Find Stores near us (spec 15)", () => {
   it("says which Store's lookup failed, apart from one with none near, and stops on a refused token", async () => {
     servers.apify.runStatus.set("axlymxp/target-store-scraper", "FAILED");
     servers.apify.rows["dromb/costco-us"] = () => [];
-    // As when the Walmart Actor refuses the account its run.
-    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "FAILED");
+    // A Walmart Actor that refuses the account its runs fails no lookup: Walmart runs none.
+    servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
     expect(outcomesIn(found.value)).toEqual({
       kroger: "found",
       target: "failed: store failed",
       costco: "none",
-      walmart: "failed: store failed",
+      walmart: "found",
       aldi: "found",
       amazon: "found",
     });
@@ -645,8 +711,8 @@ describe("Find Stores near us (spec 15)", () => {
     servers.apify.runStatus.set("axlymxp/target-store-scraper", "FAILED");
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
     expect(outcomesIn(found.value).target).toBe("failed: store failed");
-    expect(found.costNanos).toBe(4 * 12_300_000);
-    // A usage limit on one Actor ends the lookup, and the other three runs' cost goes with it.
+    expect(found.costNanos).toBe(3 * 12_300_000);
+    // A usage limit on one Actor ends the lookup, and the other two runs' cost goes with it.
     servers.apify.answer("/v2/acts/axlymxp~target-store-scraper/runs", {
       status: 402,
       body: { error: { type: "not-enough-usage-to-run-paid-actor" } },
@@ -654,7 +720,7 @@ describe("Find Stores near us (spec 15)", () => {
     const limit = await failureOf(
       readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys }),
     );
-    expect([limit.kind, limit.costNanos]).toEqual(["usage limit", 3 * 12_300_000]);
+    expect([limit.kind, limit.costNanos]).toEqual(["usage limit", 2 * 12_300_000]);
     // A refused Kroger key ends it too, after the Apify runs end, and keeps their cost.
     const refused = await failureOf(
       readers().findLocations({
@@ -663,7 +729,7 @@ describe("Find Stores near us (spec 15)", () => {
         keys: { ...keys, kroger: { clientId: "fake-wrong", clientSecret: "fake-wrong" } },
       }),
     );
-    expect([refused.kind, refused.costNanos]).toEqual(["refused key", 3 * 12_300_000]);
+    expect([refused.kind, refused.costNanos]).toEqual(["refused key", 2 * 12_300_000]);
   });
 
   it("fails only Kroger's lookup when Kroger fails, and keeps the other Stores and their cost", async () => {
@@ -677,7 +743,7 @@ describe("Find Stores near us (spec 15)", () => {
     expect(outcomesIn(near.value).kroger).toBe("none");
     expect(ids).not.toContain("kroger");
     expect(ids).toEqual(expect.arrayContaining(["target", "costco", "walmart", "amazon"]));
-    expect(found.costNanos).toBe(4 * 12_300_000);
+    expect(found.costNanos).toBe(3 * 12_300_000);
     expect(lines.join("")).toContain("A Store lookup failed");
     expect(lines.join("")).not.toContain("Fake:");
   });
@@ -704,7 +770,7 @@ describe("Find Stores near us (spec 15)", () => {
 describe("Apify's errors (spec 15, Failures)", () => {
   it("maps each error to its own state, with a fixed message and no raw error in a log line", async () => {
     const at = search("walmart");
-    const actor = "/v2/acts/gauravlabs~walmart-search-api/runs";
+    const actor = "/v2/acts/burbn~walmart-product-search/runs";
     const refused = await failureOf(
       readers().searchStore({ ...at, keys: { apifyToken: "apify_api_fake_wrong" } }),
     );
@@ -734,16 +800,16 @@ describe("Apify's errors (spec 15, Failures)", () => {
   });
 
   it("an Actor that fails is a store failure; one that times out is a timeout", async () => {
-    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "FAILED");
+    servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
     const failed = await failureOf(readers().searchStore(search("walmart")));
     expect([failed.kind, failed.message]).toEqual(["store failed", "The Actor run failed."]);
     expect(failed.costNanos).toBe(12_300_000);
-    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "TIMED-OUT");
+    servers.apify.runStatus.set("burbn/walmart-product-search", "TIMED-OUT");
     const timedOut = await failureOf(readers().searchStore(search("walmart")));
     expect([timedOut.kind, timedOut.costNanos]).toEqual(["timed out", 12_300_000]);
     // With no cost in the run record, a failed run counts at its $1.00 cap.
-    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "FAILED");
-    servers.apify.runUsd.set("gauravlabs/walmart-search-api", null);
+    servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
+    servers.apify.runUsd.set("burbn/walmart-product-search", null);
     expect((await failureOf(readers().searchStore(search("walmart")))).costNanos).toBe(
       1_000_000_000,
     );
@@ -757,7 +823,7 @@ describe("Apify's errors (spec 15, Failures)", () => {
 
   it("stops a run it cannot follow, as on a timeout, and keeps its cost", async () => {
     servers.apify.answer("/v2/actor-runs/", { status: 500, body: {} });
-    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "RUNNING");
+    servers.apify.runStatus.set("burbn/walmart-product-search", "RUNNING");
     const failed = await failureOf(readers().searchStore(search("walmart")));
     expect(failed.kind).toBe("store failed");
     expect(
@@ -768,7 +834,7 @@ describe("Apify's errors (spec 15, Failures)", () => {
   });
 
   it("stops a run that never ends after its waits, and aborts it", async () => {
-    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "RUNNING");
+    servers.apify.runStatus.set("burbn/walmart-product-search", "RUNNING");
     const stopped = await failureOf(readers().searchStore(search("walmart")));
     expect(stopped.kind).toBe("timed out");
     // The cost comes from the run record the abort answers with.
@@ -805,9 +871,11 @@ describe("What is sent (spec 15, Data and privacy)", () => {
     // Kroger and Aldi give no price without a location, so they are not called.
     expect(servers.kroger.requests).toHaveLength(0);
     expect(servers.apify.inputsOf("blackfalcondata/aldi-us-scraper")).toHaveLength(0);
-    expect(servers.apify.inputsOf("gauravlabs/walmart-search-api")[0]).not.toHaveProperty(
-      "zipcode",
-    );
+    expect(servers.apify.inputsOf("burbn/walmart-product-search")[0]).toEqual({
+      query: "peanut butter",
+      domain: "us",
+      maxPages: 1,
+    });
     expect(servers.apify.inputsOf("litescrape/target-search")[0]).not.toHaveProperty("store_id");
     expect(servers.apify.inputsOf("vant47/costco-scraper")[0]).not.toHaveProperty("locations");
   });
