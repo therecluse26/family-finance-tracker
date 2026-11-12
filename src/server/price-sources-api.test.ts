@@ -470,14 +470,105 @@ describe("the Price sources routes", () => {
       expect(priceSources.monthCostNanos).toBe(30_000_000);
     });
 
-    it("leaves out a Store with no location within a shorter distance", async () => {
+    it("lists a Store with no location within a shorter distance as none within, and refuses its tick", async () => {
       await ok(await put("/api/price-sources/apify", { token: madeKey("apify_api") }));
 
       const { priceSources } = await findStores(10);
 
       expect(priceSources.findDistanceMiles).toBe(10);
-      expect(priceSources.stores.map((store) => store.id)).not.toContain("costco");
+      expect(priceSources.stores.find((store) => store.id === "costco")).toMatchObject({
+        on: false,
+        notFound: "none",
+        earlierResult: false,
+        homeStore: null,
+      });
       expect(priceSources.stores.find((store) => store.id === "kroger")?.locations).toHaveLength(2);
+      const before = await dealFinderTables();
+      expect((await put("/api/price-sources/stores/costco", { on: true })).status).toBe(404);
+      expect(await dealFinderTables()).toEqual(before);
+    });
+
+    describe("a Store whose lookup failed", () => {
+      const walmartRow = async () =>
+        (await sql("SELECT * FROM deal_finder_stores WHERE id = 'walmart'"))[0];
+
+      it("keeps a saved Walmart row as it was: on, nearby, Home store and locations", async () => {
+        await findStores(25);
+        await ok(await put("/api/price-sources/stores/walmart", { on: true, deliveryFee: 499 }));
+        const before = await walmartRow();
+        fake.failingLookups.add("walmart");
+
+        const { priceSources } = await ok(
+          await browser.post("/api/price-sources/find-stores", { distanceMiles: 50 }),
+        );
+
+        expect(await walmartRow()).toEqual({ ...before, last_lookup: "failed" });
+        const walmart = priceSources.stores.find((store) => store.id === "walmart");
+        expect(walmart).toMatchObject({
+          on: true,
+          notFound: null,
+          earlierResult: true,
+          homeStore: { id: "fake-walmart-4401", name: "Walmart, Pine Street" },
+          deliveryFee: 499,
+        });
+        // The other Stores are found again.
+        const target = priceSources.stores.find((store) => store.id === "target");
+        expect(target).toMatchObject({ notFound: null, earlierResult: false });
+        // After a reload, the page still shows the last lookup's outcome.
+        expect((await view()).stores.find((store) => store.id === "walmart")).toEqual(walmart);
+        // A later good lookup clears it.
+        fake.failingLookups.clear();
+        const again = (await findStores(25)).priceSources.stores.find(
+          (store) => store.id === "walmart",
+        );
+        expect(again).toMatchObject({ on: true, earlierResult: false, notFound: null });
+      });
+
+      it("shows a Store never found as one that could not be looked up, and refuses its tick", async () => {
+        fake.failingLookups.add("walmart");
+
+        const { priceSources } = await findStores(25);
+
+        expect(priceSources.stores.find((store) => store.id === "walmart")).toMatchObject({
+          on: false,
+          notFound: "failed",
+          earlierResult: false,
+          homeStore: null,
+          locations: [],
+        });
+        const before = await dealFinderTables();
+        expect((await put("/api/price-sources/stores/walmart", { on: true })).status).toBe(404);
+        expect(await dealFinderTables()).toEqual(before);
+      });
+
+      it("keeps the saved weekly-ad-only Stores as they were when the weekly-ad lookup fails", async () => {
+        await findStores(25);
+        await ok(await put("/api/price-sources/stores/ad-hilltop-market", { on: true }));
+        const ad = async () =>
+          (await sql("SELECT * FROM deal_finder_stores WHERE id = 'ad-hilltop-market'"))[0];
+        const before = await ad();
+        fake.failingLookups.add("weekly ads");
+
+        await findStores(25);
+
+        expect(await ad()).toEqual(before);
+        expect((await view()).stores.find((store) => store.id === "ad-hilltop-market")?.on).toBe(
+          true,
+        );
+      });
+
+      it("still fails the whole Find Stores on a refused key or a usage limit, changing no Store", async () => {
+        await findStores(25);
+        const before = await dealFinderTables();
+        for (const kind of ["refused key", "usage limit"] as const) {
+          fake.sourceErrors.set("apify", kind);
+          const res = await browser.post("/api/price-sources/find-stores", { distanceMiles: 25 });
+          expect(res.status).toBe(kind === "refused key" ? 409 : 429);
+        }
+        expect(await dealFinderTables()).toEqual(before);
+        // No key reaches a log line or an answer (K8).
+        expect(lines.join("")).not.toMatch(/(apify_api|client|secret)_[0-9a-f]{32}/);
+      });
     });
 
     it("takes only 10, 25 or 50 miles, as the number it stores (K15)", async () => {
@@ -717,7 +808,12 @@ describe("the Price sources routes", () => {
       await browser.post("/api/price-sources/find-stores", { distanceMiles: 25 }),
     );
 
-    expect(priceSources.stores.map((store) => store.id)).toEqual(["kroger"]);
+    const found = priceSources.stores.filter((store) => store.notFound === null);
+    expect(found.map((store) => store.id)).toEqual(["kroger"]);
+    // Every other supported Store is listed as not looked up, since no Apify token is saved.
+    expect(
+      priceSources.stores.filter((store) => store.notFound === "no key").map((store) => store.id),
+    ).toEqual(["aldi", "amazon", "costco", "target", "walmart"]);
     expect(fake.calls).toEqual([{ call: "findLocations", target: ZIP_CODE }]);
   });
 

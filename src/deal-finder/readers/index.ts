@@ -1,11 +1,14 @@
 import { type Logger, log } from "../../log.ts";
 import {
   type Costed,
+  type FoundLocations,
   type FoundStore,
   type PriceSourceAdapter,
   PriceSourceError,
+  type PriceSourceErrorKind,
   type PriceSourceKeys,
   type ProductRead,
+  type StoreLookup,
   type WeeklyAdItem,
 } from "../adapter.ts";
 import type { FindStoresMiles } from "../view.ts";
@@ -88,13 +91,14 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
   };
 
   // A lookup for Find Stores near us. A refused key or a usage limit ends the whole lookup; any
-  // other failure leaves out that one Store, and keeps what its failed run cost.
+  // other failure is that one lookup's, with its kind, and keeps what its failed run cost.
   async function lookup<T>(
     name: string,
     work: () => Promise<Costed<T>>,
-  ): Promise<Costed<T | null>> {
+  ): Promise<Costed<Looked<T>>> {
     try {
-      return await work();
+      const done = await work();
+      return { value: { ok: true, value: done.value }, costNanos: done.costNanos };
     } catch (error) {
       if (
         error instanceof PriceSourceError &&
@@ -107,7 +111,10 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
         failure: error instanceof PriceSourceError ? error.kind : "unknown",
       });
       return {
-        value: null,
+        value: {
+          ok: false,
+          failure: error instanceof PriceSourceError ? error.kind : "store failed",
+        },
         costNanos: error instanceof PriceSourceError ? (error.costNanos ?? null) : null,
       };
     }
@@ -141,7 +148,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
     token: string,
     zipCode: string,
     miles: FindStoresMiles,
-  ): Promise<Costed<FoundStore[]>> {
+  ): Promise<Costed<FoundLocations>> {
     const scraped = (name: string, kind: FoundStore["kind"], locations: FoundStore["locations"]) =>
       ({ id: name.toLowerCase(), name, kind, reader: "Scraping service", locations }) as FoundStore;
     const run = (name: string, call: ActorCall) =>
@@ -153,18 +160,27 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       run("weekly ads", weeklyAdFindInput(zipCode)),
     ]);
     const [targetRows, costcoRows, walmartRows, adRows] = runs.map((each) => each.value);
-    const found: FoundStore[] = [];
-    const targetStores = targetStoresIn(targetRows ?? []).slice(0, 5);
-    if (targetStores.length > 0) found.push(scraped("Target", "in person", targetStores));
-    const warehouses = costcoWarehousesIn(costcoRows ?? []).slice(0, 5);
-    if (warehouses.length > 0) found.push(scraped("Costco", "in person", warehouses));
-    if (walmartRows != null && walmartRows.length > 0) {
-      const picked = walmartStoreIn(walmartRows);
-      found.push(scraped("Walmart", "in person", picked === null ? [] : [picked]));
-    }
-    found.push(...adStoresIn(adRows ?? []));
-    found.push(scraped("Amazon", "online", []));
-    return { value: found, costNanos: costOf(runs) };
+    const adStores = adRows?.ok === true ? adStoresIn(adRows.value) : null;
+    const lookups: StoreLookup[] = [
+      outcomeOf("target", targetRows, (rows) => {
+        const stores = targetStoresIn(rows).slice(0, 5);
+        return stores.length === 0 ? null : scraped("Target", "in person", stores);
+      }),
+      outcomeOf("costco", costcoRows, (rows) => {
+        const warehouses = costcoWarehousesIn(rows).slice(0, 5);
+        return warehouses.length === 0 ? null : scraped("Costco", "in person", warehouses);
+      }),
+      outcomeOf("walmart", walmartRows, (rows) => {
+        if (rows.length === 0) return null;
+        const picked = walmartStoreIn(rows);
+        return scraped("Walmart", "in person", picked === null ? [] : [picked]);
+      }),
+      // Aldi is found by its weekly ad near the ZIP code.
+      outcomeOf("aldi", adRows, () => adStores?.find((store) => store.id === "aldi") ?? null),
+      { storeId: "amazon", outcome: "found", store: scraped("Amazon", "online", []) },
+    ];
+    const weeklyAds = adStores?.filter((store) => store.kind === "weekly ad only") ?? null;
+    return { value: { lookups, weeklyAds }, costNanos: costOf(runs) };
   }
 
   return {
@@ -177,26 +193,40 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
     async findLocations(input) {
       const { apifyToken, kroger: krogerKeys } = input.keys;
       if (apifyToken === undefined && krogerKeys === undefined) throw noApifyToken();
-      const none: Costed<FoundStore[] | null> = { value: null, costNanos: null };
-      // Kroger is one more lookup: a failure other than a refused key or a usage limit leaves out
-      // only Kroger, and the Apify lookups' cost is kept.
-      const sources = await allLookups<FoundStore[] | null>([
-        krogerKeys === undefined
-          ? Promise.resolve(none)
-          : lookup("kroger", async () => {
-              const store = await kroger.findLocations({
-                zipCode: input.zipCode,
-                distanceMiles: input.distanceMiles,
-                keys: krogerKeys,
-              });
-              return { value: store.locations.length === 0 ? [] : [store], costNanos: null };
-            }),
+      const none: Costed<FoundLocations> = {
+        value: { lookups: [], weeklyAds: null },
+        costNanos: null,
+      };
+      // Kroger is one more lookup: a failure other than a refused key or a usage limit is only
+      // Kroger's, and the Apify lookups' cost is kept.
+      const krogerLookup = async (keys: NonNullable<PriceSourceKeys["kroger"]>) => {
+        const { value, costNanos } = await lookup("kroger", async () => ({
+          value: await kroger.findLocations({
+            zipCode: input.zipCode,
+            distanceMiles: input.distanceMiles,
+            keys,
+          }),
+          costNanos: null,
+        }));
+        const found = outcomeOf("kroger", value, (store) =>
+          store.locations.length === 0 ? null : store,
+        );
+        return { value: { lookups: [found], weeklyAds: null }, costNanos };
+      };
+      const [krogerFound, apifyFound] = await allLookups<FoundLocations>([
+        krogerKeys === undefined ? Promise.resolve(none) : krogerLookup(krogerKeys),
         apifyToken === undefined
           ? Promise.resolve(none)
           : apifyLookups(apifyToken, input.zipCode, input.distanceMiles),
       ]);
-      const found = sources.flatMap((each) => each.value ?? []);
-      return { value: found, costNanos: apifyToken === undefined ? null : costOf(sources) };
+      const sources = [krogerFound ?? none, apifyFound ?? none];
+      return {
+        value: {
+          lookups: sources.flatMap((each) => each.value.lookups),
+          weeklyAds: apifyFound?.value.weeklyAds ?? null,
+        },
+        costNanos: apifyToken === undefined ? null : costOf(sources),
+      };
     },
 
     async searchStore(input) {
@@ -264,6 +294,22 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       return { value: items satisfies WeeklyAdItem[], costNanos: run.costNanos };
     },
   };
+}
+
+// A lookup's answer, or the kind of its failure.
+type Looked<T> = { ok: true; value: T } | { ok: false; failure: PriceSourceErrorKind };
+
+// One Store's lookup: failed with its run, found, or none within the distance.
+function outcomeOf<T>(
+  storeId: string,
+  looked: Looked<T> | undefined,
+  found: (value: T) => FoundStore | null,
+): StoreLookup {
+  if (looked === undefined || !looked.ok) {
+    return { storeId, outcome: "failed", failure: looked?.failure ?? "store failed" };
+  }
+  const store = found(looked.value);
+  return store === null ? { storeId, outcome: "none" } : { storeId, outcome: "found", store };
 }
 
 // What a set of lookups cost together.

@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLogger, registerSecretValue } from "../../log.ts";
-import { type PriceSourceAdapter, PriceSourceError, type PriceSourceKeys } from "../adapter.ts";
+import {
+  type FoundLocations,
+  type FoundStore,
+  type PriceSourceAdapter,
+  PriceSourceError,
+  type PriceSourceKeys,
+} from "../adapter.ts";
 import { type FakePriceSourceServers, startFakePriceSourceServers } from "../fake-servers/index.ts";
 import { type PriceSourceReaderOptions, priceSourceReaders } from "./index.ts";
 import { KROGER_PRODUCT_CALLS_A_DAY, type KrogerCallCount } from "./kroger.ts";
+import { costcoWarehousesIn } from "./stores/costco.ts";
+import { adStoresIn, weeklyAdItem } from "./stores/weekly-ads.ts";
 
 // The real readers against the local fake servers. Every key and token is made when the test runs,
 // and every ZIP code, store and Product is made up.
@@ -51,6 +59,19 @@ const search = (storeId: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+// Each Store Find Stores near us found, in its lookups' order.
+const foundIn = (found: FoundLocations): FoundStore[] =>
+  found.lookups.flatMap((each) => (each.outcome === "found" ? [each.store] : []));
+
+// Each supported Store's lookup outcome, with a failure's kind.
+const outcomesIn = (found: FoundLocations) =>
+  Object.fromEntries(
+    found.lookups.map((each) => [
+      each.storeId,
+      each.outcome === "failed" ? `failed: ${each.failure}` : each.outcome,
+    ]),
+  );
+
 async function failureOf(work: Promise<unknown>): Promise<PriceSourceError> {
   const error = await work.then(
     () => null,
@@ -80,18 +101,26 @@ describe("The Kroger reader (spec 15, Stores and their readers)", () => {
       distanceMiles: 25,
       keys: { kroger: keys.kroger },
     });
-    expect(found.value).toEqual([
-      {
-        id: "kroger",
-        name: "Kroger",
-        kind: "in person",
-        reader: "Store API",
-        locations: [
-          { id: "FAKE0101", name: "Kroger Fake Maple Avenue", distanceMiles: 10 },
-          { id: "FAKE0102", name: "Kroger Fake Orchard Road", distanceMiles: 25 },
-        ],
-      },
-    ]);
+    expect(found.value).toEqual({
+      lookups: [
+        {
+          storeId: "kroger",
+          outcome: "found",
+          store: {
+            id: "kroger",
+            name: "Kroger",
+            kind: "in person",
+            reader: "Store API",
+            locations: [
+              { id: "FAKE0101", name: "Kroger Fake Maple Avenue", distanceMiles: 10 },
+              { id: "FAKE0102", name: "Kroger Fake Orchard Road", distanceMiles: 25 },
+            ],
+          },
+        },
+      ],
+      // Only the Kroger keys: the weekly ads are not looked up.
+      weeklyAds: null,
+    });
     expect(found.costNanos).toBeNull();
     const radii = servers.kroger
       .to("/v1/locations")
@@ -489,16 +518,20 @@ describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => 
 describe("Find Stores near us (spec 15)", () => {
   it("finds every supported Store near the ZIP code, with each one's locations", async () => {
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
-    expect(
-      found.value.map((store) => [store.id, store.kind, store.locations.map((place) => place.id)]),
-    ).toEqual([
+    const rows = (stores: FoundStore[]) =>
+      stores.map((store) => [store.id, store.kind, store.locations.map((place) => place.id)]);
+    expect(rows(foundIn(found.value))).toEqual([
       ["kroger", "in person", ["FAKE0101", "FAKE0102"]],
       ["target", "in person", ["9101", "9102"]],
       ["costco", "in person", ["9301", "9302"]],
       ["walmart", "in person", ["9401"]],
-      ["ad-hilltop-fake-market", "weekly ad only", []],
       ["aldi", "in person", []],
       ["amazon", "online", []],
+    ]);
+    // "ALDI" is Aldi, and Target has its own reader: Sam's Club, with none, is weekly-ad-only.
+    expect(rows(found.value.weeklyAds ?? [])).toEqual([
+      ["ad-hilltop-fake-market", "weekly ad only", []],
+      ["ad-sam-s-club", "weekly ad only", []],
     ]);
     expect(found.costNanos).toBe(4 * 12_300_000);
     expect(servers.apify.inputsOf("axlymxp/target-store-scraper")).toEqual([
@@ -510,19 +543,89 @@ describe("Find Stores near us (spec 15)", () => {
     expect(servers.apify.inputsOf("gauravlabs/walmart-search-api")[0]).toMatchObject({
       zipcode: ZIP,
     });
-    expect(servers.apify.inputsOf("gratifying_graph/us-grocery-deals")[0]).toMatchObject({
-      mode: "flyers",
-      zipCodes: [ZIP],
-      onlyWithPrice: true,
-    });
+    // Search mode, with only the Actor's own input fields: "flyers" mode has no limit per flyer.
+    expect(servers.apify.inputsOf("gratifying_graph/us-grocery-deals")).toEqual([
+      {
+        mode: "search",
+        zipCodes: [ZIP],
+        queries: ["milk", "eggs", "bread", "chicken"],
+        onlyWithPrice: true,
+        maxItemsPerQuery: 25,
+      },
+    ]);
   });
 
-  it("leaves out a Store whose lookup fails, and stops on a refused token", async () => {
+  it("reads each Costco warehouse number from `id`, and from `warehouse_id` only when `id` is missing", () => {
+    const place = { name: "Costco Fake", distance_miles: 3.5 };
+    expect(
+      costcoWarehousesIn([
+        { ...place, id: "1234", warehouse_id: "1234-ab" },
+        { ...place, id: "567", warehouse_id: "999-cd" },
+        { ...place, warehouse_id: "4321-ef" },
+        // A malformed `id` drops the row: no fall back.
+        { ...place, id: "12a", warehouse_id: "1200-gh" },
+        // Neither form: dropped.
+        { ...place, warehouse_id: "4321" },
+        { ...place, warehouse_id: "4321-EF" },
+        { ...place, id: "1111" },
+      ]).map((warehouse) => warehouse.id),
+    ).toEqual(["1234", "567", "4321", "1111"]);
+  });
+
+  it("reads a Deal's sale price from `currentPrice`, and its regular price as that plus `discount`", () => {
+    const deal = {
+      merchant: "Sam's Club",
+      name: "Fake Whole Milk, 1 gal",
+      validFrom: "2026-11-10",
+      validTo: "2026-11-16",
+    };
+    expect(weeklyAdItem({ ...deal, currentPrice: 3.48, discount: 0.5 })).toEqual({
+      storeId: "ad-sam-s-club",
+      name: "Fake Whole Milk, 1 gal",
+      dealPrice: 348,
+      regularPrice: 398,
+      validFrom: "2026-11-10",
+      validTo: "2026-11-16",
+    });
+    expect(weeklyAdItem({ ...deal, currentPrice: 3.48, discount: 0 })?.regularPrice).toBeNull();
+    expect(weeklyAdItem({ ...deal, currentPrice: 3.48 })?.regularPrice).toBeNull();
+    // Not whole cents, or a field name the Actor does not send: dropped.
+    expect(weeklyAdItem({ ...deal, currentPrice: 3.48, discount: 0.005 })).toBeNull();
+    expect(weeklyAdItem({ ...deal, salePrice: 3.48 })).toBeNull();
+    expect(
+      adStoresIn([
+        { merchant: "ALDI" },
+        { merchant: "Target" },
+        { merchant: "Sam's Club" },
+        { merchant: "Giant Eagle" },
+      ]).map((store) => [store.id, store.kind]),
+    ).toEqual([
+      ["aldi", "in person"],
+      ["ad-sam-s-club", "weekly ad only"],
+      ["ad-giant-eagle", "weekly ad only"],
+    ]);
+  });
+
+  it("says which Store's lookup failed, apart from one with none near, and stops on a refused token", async () => {
     servers.apify.runStatus.set("axlymxp/target-store-scraper", "FAILED");
+    servers.apify.rows["dromb/costco-us"] = () => [];
+    // As when the Walmart Actor refuses the account its run.
+    servers.apify.runStatus.set("gauravlabs/walmart-search-api", "FAILED");
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
-    expect(found.value.map((store) => store.id)).not.toContain("target");
-    expect(found.value.map((store) => store.id)).toContain("costco");
+    expect(outcomesIn(found.value)).toEqual({
+      kroger: "found",
+      target: "failed: store failed",
+      costco: "none",
+      walmart: "failed: store failed",
+      aldi: "found",
+      amazon: "found",
+    });
     expect(lines.join("")).toContain("A Store lookup failed");
+    // A failed weekly-ad lookup fails Aldi, and leaves the weekly-ad-only Stores unknown.
+    servers.apify.runStatus.set("gratifying_graph/us-grocery-deals", "FAILED");
+    const noAds = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
+    expect(outcomesIn(noAds.value).aldi).toBe("failed: store failed");
+    expect(noAds.value.weeklyAds).toBeNull();
     const refused = await failureOf(
       readers().findLocations({
         zipCode: ZIP,
@@ -541,7 +644,7 @@ describe("Find Stores near us (spec 15)", () => {
     // A failed Actor run still cost what Apify charged.
     servers.apify.runStatus.set("axlymxp/target-store-scraper", "FAILED");
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
-    expect(found.value.map((store) => store.id)).not.toContain("target");
+    expect(outcomesIn(found.value).target).toBe("failed: store failed");
     expect(found.costNanos).toBe(4 * 12_300_000);
     // A usage limit on one Actor ends the lookup, and the other three runs' cost goes with it.
     servers.apify.answer("/v2/acts/axlymxp~target-store-scraper/runs", {
@@ -563,10 +666,15 @@ describe("Find Stores near us (spec 15)", () => {
     expect([refused.kind, refused.costNanos]).toEqual(["refused key", 3 * 12_300_000]);
   });
 
-  it("leaves out only Kroger when Kroger fails, and keeps the other Stores and their cost", async () => {
+  it("fails only Kroger's lookup when Kroger fails, and keeps the other Stores and their cost", async () => {
     servers.kroger.answer("/v1/locations", { status: 500, body: { error: "Fake: broken" } });
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
-    const ids = found.value.map((store) => store.id);
+    expect(outcomesIn(found.value).kroger).toBe("failed: store failed");
+    const ids = foundIn(found.value).map((store) => store.id);
+    // No Kroger location near is "none", not a failure.
+    servers.kroger.answer("/v1/locations", { status: 200, body: { data: [] } });
+    const near = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
+    expect(outcomesIn(near.value).kroger).toBe("none");
     expect(ids).not.toContain("kroger");
     expect(ids).toEqual(expect.arrayContaining(["target", "costco", "walmart", "amazon"]));
     expect(found.costNanos).toBe(4 * 12_300_000);

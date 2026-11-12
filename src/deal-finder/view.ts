@@ -66,6 +66,12 @@ export type PriceSourceStoreView = {
   // Its saved Home store came from the fake adapter, and the real readers are in use: it has no
   // Home store until Find Stores near us runs again.
   findAgain: boolean;
+  // With the ZIP code switch on, after a Find Stores near us: why the Store is not found, when it is
+  // not. None within the distance; the lookup failed; not looked up, since its Price source has no
+  // saved key; or not found by a lookup that stored no reason. A Store not found cannot be ticked.
+  notFound: "none" | "failed" | "no key" | "unknown" | null;
+  // The last lookup failed, and the Store shows what an earlier lookup found.
+  earlierResult: boolean;
   // The Home store, and the nearest-first locations to pick it from. A Store whose reader picks its
   // own store has one location or none, so it offers no Change.
   homeStore: { id: string; name: string } | null;

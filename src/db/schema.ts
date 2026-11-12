@@ -2305,6 +2305,9 @@ export const priceSourceCosts = sqliteTable("price_source_costs", {
   costNanos: integer("cost_nanos").notNull().default(0),
 });
 
+// What the last Find Stores near us learned about one Store (spec 15, Find Stores near us).
+export const STORE_LOOKUP_OUTCOMES = ["found", "none", "failed", "no key"] as const;
+
 // Each Store the deal finder found or reads, and its settings (spec 15, Stores and their readers;
 // Find Stores near us). A chain's ID is its name, such as "kroger"; a weekly-ad-only Store's ID
 // starts with "ad-". Delete all deal finder data keeps every row.
@@ -2335,6 +2338,10 @@ export const dealFinderStores = sqliteTable(
     freeDeliveryFrom: cents("free_delivery_from"),
     lastGoodReadAt: moment("last_good_read_at"),
     foundAt: moment("found_at").notNull(),
+    // What the last Find Stores near us learned about this Store: found; none within the distance;
+    // a lookup that failed, which keeps the row as an earlier lookup left it; or no lookup, since
+    // its Price source has no saved key. Null before the first lookup that stored it.
+    lastLookup: text("last_lookup", { enum: STORE_LOOKUP_OUTCOMES }),
   },
   (table) => [
     check("deal_finder_stores_delivery_fee", sql`${table.deliveryFee} >= 0`),

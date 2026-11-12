@@ -1,0 +1,1 @@
+ALTER TABLE `deal_finder_stores` ADD `last_lookup` text;
