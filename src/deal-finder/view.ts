@@ -63,6 +63,9 @@ export type PriceSourceStoreView = {
   on: boolean;
   // Without the ZIP switch on, this Store cannot be read: Kroger, Aldi, and the weekly ads.
   needsZip: boolean;
+  // Its saved Home store came from the fake adapter, and the real readers are in use: it has no
+  // Home store until Find Stores near us runs again.
+  findAgain: boolean;
   // The Home store, and the nearest-first locations to pick it from. A Store whose reader picks its
   // own store has one location or none, so it offers no Change.
   homeStore: { id: string; name: string } | null;

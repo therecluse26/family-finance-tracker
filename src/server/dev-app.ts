@@ -14,7 +14,7 @@ import {
 } from "../db/index.ts";
 import { FakePriceSource } from "../deal-finder/fake.ts";
 import { startFakePriceSourceServers } from "../deal-finder/fake-servers/index.ts";
-import { priceSourceReaders } from "../deal-finder/index.ts";
+import { type PriceSourceReaderOptions, priceSourceReaders } from "../deal-finder/index.ts";
 import { scheduledTasks } from "../jobs/list.ts";
 import {
   checkDataKey,
@@ -47,8 +47,9 @@ export type DevEnv = {
   TRUSTED_PROXIES?: string;
   FFT_MASTER_KEY_FILE?: string;
   FFT_MASTER_KEY?: string;
-  // "fake-servers" runs the real Price source readers against the local fake Apify and Kroger
-  // servers. Without it, dev uses the in-memory fake Price source.
+  // Unset, dev reads with the real Price source readers and the Household's saved keys, as the
+  // built app does. "fake" uses the in-memory fake Price source, with its made-up Stores;
+  // "fake-servers" runs the real readers against the local fake Apify and Kroger servers.
   FFT_DEV_PRICE_SOURCE?: string;
 };
 
@@ -135,12 +136,17 @@ export const devScheduledTasks = scheduledTasks.filter(
 
 // The services `pnpm start` runs, with the same start-up steps: the bank module, the job runner and
 // its schedule, the follow-up work, and email. Dev adds the fake adapter beside Plaid's, with each
-// demo bank scripted, and its fake bank route, and the fake Price source. close() stops them, as Vite closes or before a
-// restart. Tests pass their own folder, and no scheduled tasks.
+// demo bank scripted, and its fake bank route. close() stops them, as Vite closes or before a
+// restart. Tests pass their own folder, no scheduled tasks, and the local fake servers' addresses
+// for the real Price source readers.
 export async function createDevApp(
   webRoot: string,
   env: DevEnv,
-  { folder = DEV_FOLDER, tasks = devScheduledTasks } = {},
+  {
+    folder = DEV_FOLDER,
+    tasks = devScheduledTasks,
+    readers = {},
+  }: { folder?: string; tasks?: typeof devScheduledTasks; readers?: PriceSourceReaderOptions } = {},
 ) {
   const security = await loadSecurity(env);
   const opened = await openDevDatabase(env, folder);
@@ -153,9 +159,8 @@ export async function createDevApp(
   offerDemoBanks(fake);
   // "Back up now" and the daily backup write to .dev/backups.
   const backups = join(folder, "backups");
-  // The deal finder reads only made-up Stores and prices in development, for its settings page and
-  // its plan runs alike.
-  const priceSources = await devPriceSources(env);
+  // The deal finder's Price source, for its settings page and its plan runs alike.
+  const priceSources = await devPriceSources(env, readers);
   let services: Awaited<ReturnType<typeof launchServices>>;
   try {
     services = await launchServices({
@@ -190,11 +195,18 @@ export async function createDevApp(
   }
 }
 
-// The deal finder's Price source in dev: the in-memory fake, or the real readers against the local
-// fake servers on 127.0.0.1. Neither reaches a real service.
-async function devPriceSources(env: DevEnv) {
-  if (env.FFT_DEV_PRICE_SOURCE !== "fake-servers") {
-    return { adapter: new FakePriceSource(), close: async () => {} };
+// The deal finder's Price source in dev. Unset, the real readers with the Household's saved keys,
+// as the built app chooses (src/server/start.ts): with no saved key they read nothing, and the page
+// asks for one. "fake" is the in-memory fake, and "fake-servers" the real readers against the local
+// fake servers on 127.0.0.1; neither reaches a real service.
+async function devPriceSources(env: DevEnv, readers: PriceSourceReaderOptions) {
+  const chosen = env.FFT_DEV_PRICE_SOURCE ?? "";
+  if (chosen === "") return { adapter: priceSourceReaders(readers), close: async () => {} };
+  if (chosen === "fake") return { adapter: new FakePriceSource(), close: async () => {} };
+  if (chosen !== "fake-servers") {
+    throw new DevStartError(
+      "FFT_DEV_PRICE_SOURCE is `fake`, `fake-servers`, or unset for the real Price source readers.",
+    );
   }
   const servers = await startFakePriceSourceServers();
   servers.apify.acceptAnyKey = true;

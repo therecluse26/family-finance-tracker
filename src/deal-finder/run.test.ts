@@ -35,7 +35,13 @@ import {
   prunePriceHistory,
   storeFailingCondition,
 } from "./run.ts";
-import { COST_CAP_REACHED, COULD_NOT_READ, type PlanRunView, SOURCE_REASONS } from "./run-view.ts";
+import {
+  COST_CAP_REACHED,
+  COULD_NOT_READ,
+  FIND_STORES_AGAIN,
+  type PlanRunView,
+  SOURCE_REASONS,
+} from "./run-view.ts";
 import { priceSourceSettings } from "./settings.ts";
 
 // The plan run (spec 15, The Shopping plan; Search once, then re-read; Cost and limits; Failures)
@@ -164,8 +170,9 @@ describe("plan runs", () => {
     return (await runs.view()) as PlanRunView;
   }
 
-  // The fake Price source with some calls changed.
+  // The fake Price source with some calls changed. It still reads the fake's made-up Home stores.
   const wrapped = (changes: Partial<PriceSourceAdapter>): PriceSourceAdapter => ({
+    madeUpStores: true,
     checkAccount: fake.checkAccount.bind(fake),
     findLocations: fake.findLocations.bind(fake),
     searchStore: fake.searchStore.bind(fake),
@@ -1053,13 +1060,52 @@ describe("plan runs", () => {
       servers.apify.acceptAnyKey = true;
       servers.kroger.acceptAnyKey = true;
       const logger = createLogger((line) => lines.push(line), { throwOnSecretField: true });
-      runs = makeRuns(priceSourceReaders({ ...servers.addresses, logger, now: () => clock }));
+      readers = priceSourceReaders({ ...servers.addresses, logger, now: () => clock });
+      runs = makeRuns(readers);
       await addItem("peanut butter");
       await turnOn("walmart");
+      // The Stores found again with the real readers, in place of the fake's made-up Home stores.
+      await findWithReaders();
     });
 
     afterEach(async () => {
       await servers.close();
+    });
+
+    let readers: PriceSourceAdapter;
+    const findWithReaders = async () => {
+      const settings = priceSourceSettings({ database, secrets, adapter: readers });
+      expect(await settings.findStores(25)).toMatchObject({ outcome: "found" });
+      await sql("DELETE FROM price_source_costs");
+      servers.apify.requests.length = 0;
+      servers.kroger.requests.length = 0;
+    };
+    const homeStoreOf = async (storeId: string) =>
+      (await sql("SELECT home_store_id FROM deal_finder_stores WHERE id = ?", [storeId]))[0]
+        ?.home_store_id;
+
+    it("never sends a Home store the fake adapter found, and asks for Find Stores near us again", async () => {
+      await sql(
+        "UPDATE deal_finder_stores SET home_store_id = 'fake-walmart-4401' WHERE id = 'walmart'",
+      );
+
+      const view = await runPlan();
+
+      expect(storesOf(view)).toEqual({ walmart: ["skipped", FIND_STORES_AGAIN] });
+      expect(walmartRuns()).toEqual([]);
+      expect(JSON.stringify(servers.apify.requests)).not.toContain("fake-walmart");
+      // Find Stores near us with the real readers picks a real Home store, and the next run reads.
+      await findWithReaders();
+      expect(await homeStoreOf("walmart")).not.toMatch(/^fake-/);
+      clock = new Date(START.getTime() + HOUR);
+      expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
+    });
+
+    it("sends a Home store the readers found, which does not start with fake-", async () => {
+      expect(await homeStoreOf("walmart")).not.toMatch(/^fake-/);
+
+      expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
+      expect(walmartRuns()).not.toEqual([]);
     });
 
     it("counts what a timed-out search charged, tries once more, then ends the Store failed", async () => {

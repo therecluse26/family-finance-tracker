@@ -57,6 +57,7 @@ export type PlanRunStart =
 
 // The reasons a Store shows when it was not read.
 export const NEEDS_ZIP = "Needs your ZIP code";
+export const FIND_STORES_AGAIN = "Its Home store is made up. Find Stores near us again";
 export const COULD_NOT_READ = "Could not read this store";
 export const COST_CAP_REACHED =
   "The Price source cost cap is reached. Stored prices until the 1st.";

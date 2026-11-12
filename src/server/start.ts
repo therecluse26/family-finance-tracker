@@ -101,8 +101,8 @@ export type ServiceOptions = {
   // Bank-data adapters beside the Plaid adapter. `pnpm dev` adds the fake adapter; the built app
   // adds none.
   extraBankAdapters?: readonly BankDataAdapter[];
-  // The deal finder's Price source adapter. `pnpm dev` gives the fake one; the built app leaves it
-  // out and gets the real readers, which read only with the Household's saved keys.
+  // The deal finder's Price source adapter. Left out, the real readers, which read only with the
+  // Household's saved keys. `pnpm dev` gives the same, or a fake one when FFT_DEV_PRICE_SOURCE asks.
   priceSources?: PriceSourceAdapter;
   // /backups and /data/backups. Tests give temporary folders.
   backupFolders: BackupFolders;

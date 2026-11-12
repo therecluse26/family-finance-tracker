@@ -15,7 +15,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../auth/index.ts";
 import { addMember } from "../auth/testing.ts";
 import { DEMO_BANKS } from "../bank/demo.ts";
-import { closeDatabase, markSetupStep, openDatabase } from "../db/index.ts";
+import { closeDatabase, markSetupStep, openDatabase, storeHouseholdFacts } from "../db/index.ts";
+import {
+  type FakePriceSourceServers,
+  startFakePriceSourceServers,
+} from "../deal-finder/fake-servers/index.ts";
+import type { PriceSourceReaderOptions, PriceSourcesView } from "../deal-finder/index.ts";
 import { scheduledTasks } from "../jobs/list.ts";
 import { createLogger, log } from "../log.ts";
 import { setupCodeOf, unlockSecrets } from "../secrets/index.ts";
@@ -23,6 +28,7 @@ import { newMasterKeyHex } from "../secrets/testing.ts";
 import * as appModule from "./app.ts";
 import {
   createDevApp,
+  type DevEnv,
   DevStartError,
   devScheduledTasks,
   openDevDatabase,
@@ -254,6 +260,9 @@ describe("the dev setup link", () => {
 // createDevApp runs the services `pnpm start` runs, on the dev folder, plus the fake adapter and
 // its fake bank route. No test uses a real Bank-data provider or real bank data, and no scheduled
 // task runs, so nothing calls out.
+// A local address with no server, for the tests that send no reader call.
+const NO_SERVER = "http://127.0.0.1:9";
+
 describe("the dev app", () => {
   let root: string;
   let folder: string;
@@ -277,8 +286,11 @@ describe("the dev app", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  async function start() {
-    const dev = await createDevApp(webRoot, { APP_URL }, { folder, tasks: [] });
+  async function start(
+    env: Partial<DevEnv> = {},
+    readers: PriceSourceReaderOptions = { apifyBaseUrl: NO_SERVER, krogerBaseUrl: NO_SERVER },
+  ) {
+    const dev = await createDevApp(webRoot, { APP_URL, ...env }, { folder, tasks: [], readers });
     running.push(dev);
     return dev;
   }
@@ -297,6 +309,15 @@ describe("the dev app", () => {
       const auth = createAuth({ database, secrets, appOrigin: APP_URL, logger: quiet });
       const member = await addMember(auth, { name: "Alice", email: "alice@example.test" });
       await markSetupStep(database, "master key", "done");
+      await storeHouseholdFacts(database, {
+        zipCode: "10001",
+        state: "NY",
+        timeZone: "America/New_York",
+        ages: [40, 38],
+        rentOrOwn: "rent",
+        updatedAt: new Date(),
+        updatedBy: null,
+      });
       return member;
     } finally {
       closeDatabase(database);
@@ -358,6 +379,105 @@ describe("the dev app", () => {
     const tab = new TestBrowser(fixed.app, APP_URL, "192.168.1.3");
     await tab.signIn(member);
     expect((await tab.get("/api/connections")).status).toBe(200);
+  });
+
+  // The deal finder's Price source (X52): the real readers with the saved keys, as in the built
+  // app, unless FFT_DEV_PRICE_SOURCE asks for a fake one. Every key here is made when the test runs,
+  // and every reader call goes to a local fake server on 127.0.0.1.
+  describe("the Price source", () => {
+    let servers: FakePriceSourceServers;
+
+    beforeEach(async () => {
+      servers = await startFakePriceSourceServers();
+    });
+
+    afterEach(async () => {
+      await servers.close();
+    });
+
+    async function signedIn(env: Partial<DevEnv>, readers?: PriceSourceReaderOptions) {
+      const member = await firstMember();
+      const tab = new TestBrowser((await start(env, readers)).app, APP_URL, "192.168.1.4");
+      await tab.signIn(member);
+      return tab;
+    }
+
+    async function findStores(tab: TestBrowser, token: string) {
+      expect((await tab.send("PUT", "/api/price-sources/apify", { token })).status).toBe(200);
+      expect((await tab.send("PUT", "/api/price-sources/zip", { on: true })).status).toBe(200);
+      const found = await tab.post("/api/price-sources/find-stores", { distanceMiles: 25 });
+      expect(found.status).toBe(200);
+      const { priceSources } = (await found.json()) as { priceSources: PriceSourcesView };
+      return priceSources.stores.flatMap((store) =>
+        store.homeStore === null ? [] : [store.homeStore],
+      );
+    }
+
+    it("is the real readers with the saved keys when FFT_DEV_PRICE_SOURCE is unset, and logs no key (K8)", async () => {
+      const tab = await signedIn({}, servers.addresses);
+      const answers: string[] = [];
+      const written: string[] = [];
+      for (const stream of [process.stdout, process.stderr]) {
+        vi.spyOn(stream, "write").mockImplementation((chunk) => {
+          written.push(String(chunk));
+          return true;
+        });
+      }
+      const logged = [vi.spyOn(log, "info"), vi.spyOn(log, "warn"), vi.spyOn(log, "error")];
+      const testApify = async () => {
+        const res = await tab.post("/api/price-sources/apify/test", {});
+        answers.push(await res.clone().text());
+        return res;
+      };
+
+      // With no saved key, the page asks for one, and nothing is sent.
+      expect((await testApify()).status).toBe(409);
+      expect(servers.apify.requests).toEqual([]);
+      // A token the fake Apify does not know is refused: the readers send the saved key.
+      const unknown = `apify_api_wrong_${crypto.randomUUID().replaceAll("-", "")}`;
+      expect((await tab.send("PUT", "/api/price-sources/apify", { token: unknown })).status).toBe(
+        200,
+      );
+      expect(await (await testApify()).json()).toMatchObject({ check: "refused" });
+      const token = servers.apify.newToken();
+      const found = await findStores(tab, token);
+      expect(await (await testApify()).json()).toMatchObject({ check: "passed" });
+
+      expect(servers.apify.to("/v2/users/me")).toHaveLength(2);
+      expect(found.length).toBeGreaterThan(0);
+      expect(found.some((place) => place.id.startsWith("fake-"))).toBe(false);
+      const seen = [
+        ...answers,
+        ...written,
+        ...logged.flatMap((spy) => spy.mock.calls.map((call) => JSON.stringify(call))),
+      ].join("\n");
+      for (const key of [token, unknown]) expect(seen).not.toContain(key);
+    });
+
+    it("is the fake Price source, with its made-up Stores, with FFT_DEV_PRICE_SOURCE=fake", async () => {
+      const tab = await signedIn({ FFT_DEV_PRICE_SOURCE: "fake" }, servers.addresses);
+
+      const found = await findStores(tab, `apify_api_${crypto.randomUUID().replaceAll("-", "")}`);
+
+      expect(found.map((place) => place.name)).toContain("Target, Riverside");
+      expect(servers.apify.requests).toEqual([]);
+      expect(servers.kroger.requests).toEqual([]);
+    });
+
+    it("is the real readers on dev's own local fake servers with FFT_DEV_PRICE_SOURCE=fake-servers", async () => {
+      const tab = await signedIn({ FFT_DEV_PRICE_SOURCE: "fake-servers" }, servers.addresses);
+
+      // Dev's own fake servers take any made-up key.
+      const found = await findStores(tab, `apify_api_${crypto.randomUUID().replaceAll("-", "")}`);
+
+      expect(found.length).toBeGreaterThan(0);
+      expect(found.some((place) => place.id.startsWith("fake-"))).toBe(false);
+      expect(servers.apify.requests).toEqual([]);
+    });
+
+    it("does not start with any other FFT_DEV_PRICE_SOURCE", async () => {
+      await expect(start({ FFT_DEV_PRICE_SOURCE: "fake-server" })).rejects.toThrow(DevStartError);
+    });
   });
 });
 
