@@ -11,6 +11,8 @@ import { createLogger } from "../log.ts";
 import { unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
 import { CACHE_FOLDER } from "./build.ts";
+import { realNow, useHistoryClock } from "./clock.ts";
+import { HISTORY_NOW } from "./history.ts";
 import {
   generateHistory,
   HISTORY_FIRST_DAY,
@@ -197,6 +199,30 @@ describe("the timing table", () => {
     expect(table("2026-11-04T18:01:00.000Z")).toContain(
       "| Sync of the full history | 20,000 ms | 21,000 ms | 40,000 ms |",
     );
+  });
+});
+
+// Each case runs on the history's clock, so the bench gives the same answers on any real day.
+describe("the history's clock", () => {
+  it("starts at HISTORY_NOW and moves at the real rate, until it is put back", async () => {
+    const realClock = useHistoryClock();
+    try {
+      const first = Date.now();
+      expect(Math.abs(first - HISTORY_NOW().getTime())).toBeLessThan(1_000);
+      expect(new Date().toISOString().slice(0, 10)).toBe("2026-11-01");
+      expect(Math.abs(Date.parse(Date()) - first)).toBeLessThan(2_000);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(Date.now() - first).toBeGreaterThanOrEqual(25);
+      // A Date for a given time, and Date's own helpers, stay as they are.
+      expect(new Date("2021-11-01T00:00:00.000Z").toISOString()).toBe("2021-11-01T00:00:00.000Z");
+      expect(new Date(2021, 10, 1).getMonth()).toBe(10);
+      expect(Date.UTC(2021, 10, 1)).toBe(Date.parse("2021-11-01T00:00:00.000Z"));
+      expect(new Date()).toBeInstanceOf(Date);
+    } finally {
+      realClock();
+    }
+    expect(Math.abs(Date.now() - realNow())).toBeLessThan(1_000);
+    expect(Math.abs(Date.now() - HISTORY_NOW().getTime())).toBeGreaterThan(1_000);
   });
 });
 

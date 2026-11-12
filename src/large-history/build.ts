@@ -19,6 +19,7 @@ import { runFollowUp } from "../follow-up/index.ts";
 import { createLogger } from "../log.ts";
 import { unlockSecrets } from "../secrets/index.ts";
 import { newMasterKey } from "../secrets/testing.ts";
+import { realNow } from "./clock.ts";
 import {
   GENERATOR_VERSION,
   type GeneratedHistory,
@@ -86,6 +87,7 @@ const BUILD_FILES = new Set([
   "src/large-history/history.ts",
   "src/large-history/modules.ts",
   "src/large-history/build.ts",
+  "src/large-history/clock.ts",
 ]);
 function buildInputs(): string[] {
   const walk = (dir: string): string[] =>
@@ -122,7 +124,7 @@ export async function cacheKey(): Promise<string> {
 
 const timed = async (path: string, limitMs: number, run: () => Promise<unknown>) => {
   const { ms, wallMs } = await timeWork(run);
-  return { path, ms, wallMs, limitMs, timedAt: new Date().toISOString() };
+  return { path, ms, wallMs, limitMs, timedAt: new Date(realNow()).toISOString() };
 };
 
 // Builds app.db at `path` from the generated history, through the real sync path on the fake
@@ -203,7 +205,7 @@ async function build(path: string, history: GeneratedHistory): Promise<BuildRepo
 
 // Deletes all but the most recently used builds, and builds left half done an hour ago.
 function pruneCache(keep: string): void {
-  const hourAgo = Date.now() - 3_600_000;
+  const hourAgo = realNow() - 3_600_000;
   const entries = readdirSync(CACHE_FOLDER, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== keep)
     .map((entry) => ({ path: join(CACHE_FOLDER, entry.name), name: entry.name }))
@@ -230,13 +232,13 @@ export async function builtHistory(history = generateHistory()): Promise<BuiltHi
   const path = join(folder, "app.db");
   const reportPath = join(folder, "build.json");
   if (existsSync(reportPath)) {
-    const now = new Date();
+    const now = new Date(realNow());
     utimesSync(folder, now, now);
     const report: BuildReport = JSON.parse(readFileSync(reportPath, "utf8"));
     return { path, report: { ...report, builtNow: false } };
   }
   mkdirSync(CACHE_FOLDER, { recursive: true });
-  const building = join(CACHE_FOLDER, `${key}.building-${process.pid}-${Date.now()}`);
+  const building = join(CACHE_FOLDER, `${key}.building-${process.pid}-${realNow()}`);
   mkdirSync(building);
   try {
     const report = await build(join(building, "app.db"), history);
