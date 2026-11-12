@@ -10,7 +10,7 @@ import { Goals } from "./pages/Goals.tsx";
 import { Join } from "./pages/Join.tsx";
 import { NotFound } from "./pages/NotFound.tsx";
 import { Placeholder } from "./pages/Placeholder.tsx";
-import { PlanRunButton } from "./pages/PlanRunButton.tsx";
+import { usePlanRun } from "./pages/PlanRunButton.tsx";
 import { RecurringCharges } from "./pages/RecurringCharges.tsx";
 import { Reports } from "./pages/Reports.tsx";
 import { Reset } from "./pages/Reset.tsx";
@@ -66,12 +66,15 @@ const settingsSections: RouteObject[] = SETTINGS_SECTIONS.map((section) => {
 });
 
 // The Shopping list page with the deal finder's parts: "Find the best prices" beside the heading,
-// and the last Shopping plan under the list, read again each time a plan run ends.
+// the plan run's progress under the heading, and the last Shopping plan under the list, read again
+// each time a plan run ends.
 function ShoppingListPage() {
   const [planVersion, setPlanVersion] = useState(0);
+  const planRun = usePlanRun(() => setPlanVersion((version) => version + 1));
   return (
     <ShoppingList
-      findBestPrices={<PlanRunButton onDone={() => setPlanVersion((version) => version + 1)} />}
+      findBestPrices={planRun.button}
+      planRun={planRun.panel}
       plan={<ShoppingPlan version={planVersion} />}
     />
   );

@@ -70,7 +70,7 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
    | Amazon | Always listed, as "Online" | none | free |
    | Local chains | The weekly ads list each chain that prints an ad near the ZIP code. Each one the app has no reader for, such as Sam's Club, is a weekly-ad-only Store | none | in the weekly ads lookup |
 
-4. **The list.** The page lists every supported Store and each weekly-ad-only Store found. A Store found shows its nearest location and distance. A Store not found shows why, unticked, and cannot be ticked: "None within 25 miles" (the chosen distance), or "Could not look it up. Try Find Stores again later." A failed lookup is not "none": a Store found before keeps its row as it was (ticked or not, its Home store and locations) and shows "The last lookup failed; this is the earlier result." A refused key or a usage limit still fails the whole lookup. Each Store keeps its last lookup's outcome, so the page shows it after a reload. The Member ticks the Stores to read. A ticked Store is on; the rest are off.
+4. **The list.** The page lists every supported Store and each weekly-ad-only Store found. A Store found shows its nearest location and distance. A Store not found shows why as a short tag on its line, unticked, and cannot be ticked: "None within 25 miles" (the chosen distance), or "Lookup failed" ("Could not look it up. Try Find Stores again later."). A failed lookup is not "none": a Store found before keeps its row as it was (ticked or not, its Home store and locations) and shows "Earlier result" ("The last lookup failed; this is the earlier result."). Each tag's full words show under the Stores, and as its tooltip. A refused key or a usage limit still fails the whole lookup. Each Store keeps its last lookup's outcome, so the page shows it after a reload. The Member ticks the Stores to read. A ticked Store is on; the rest are off.
 5. **Locations.** For a ticked Store with a list, the app picks the nearest location as its Home store. A Member can pick another one from the list. Each Store has one Home store.
 6. **Saved.** The app saves the ticked Stores and their Home store IDs. Plan runs use the saved IDs, and do not look them up again.
 
@@ -125,7 +125,7 @@ A one-time setup step finds every supported Store near the ZIP code. The Member 
 
 ## The Shopping plan
 
-A Member presses **Find the best prices** on the Shopping list page. A job reads prices, matches Products, and builds the plan. The page shows each Store's progress while it works.
+A Member presses **Find the best prices** on the Shopping list page. A job reads prices, matches Products, and builds the plan. The page shows each Store's progress while it works, in a panel under the page's heading at the page's width. The heading holds only its title and the button, so it keeps its height while a run works.
 
 ### Trip setting
 
@@ -133,7 +133,7 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
 
 - Each Store visited in person is one trip.
 - An online Store, such as Amazon, is not a trip. Its cost is its delivery fee when the order is below its free-delivery amount.
-- Each Store has a **Delivery fee** and a **Free delivery from** amount, set by a Member. Both are empty by default, which means no fee.
+- Each online Store has a **Delivery fee per order** and a **Free delivery on orders of** amount, set by a Member on the Price sources page. Both are empty by default, which means no fee. The fields show only on online Stores (today, Amazon): a Store visited in person shows none, since the plan adds no delivery fee to it.
 
 ### How app code builds the plan
 
@@ -214,11 +214,12 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
 
 The Settings tab is **Price sources**, not "Connections": that word means bank Connections (owner decision, 2026-11-10). Its intro line says the deal finder reads Store prices through these sources.
 
-- **Scraping service card.** The service (Apify), its API token, **Test**, the month's cost, and the Price source cost cap.
-- **Kroger card.** Client ID, client secret, and **Test**. The Kroger Home store is on the Stores card.
-- **Open Food Facts card.** On or off. It needs no key.
-- **ZIP code switch.** "Use our ZIP code to find stores", with the ZIP code shown.
-- **Stores card.** **Find Stores near us** with the distance ([Find Stores near us](#find-stores-near-us-owner-design-2026-11-11)). Each Store found: ticked or not, its reader, its Home store with **Change** where a list exists, its distance, its delivery fee and free-delivery amount, and its last good read.
+The cards, in order (owner design, 2026-11-12):
+
+- **Keys card.** One line for each Price source: its name, the last 4 characters of its key, its state (working, what the last **Test** found, not tested, or not set), **Test**, and **Change**, which opens the key's fields in place. The Apify token is one line; the Kroger client ID and client secret are one line. Open Food Facts is one line with an on/off switch. It needs no key.
+- **Cost this month card.** The month's Price source cost against the Price source cost cap, with a bar, and **Change cap**, which opens the cap's field in place.
+- **Stores card.** The ZIP code switch, "Use our ZIP code to find stores", with the ZIP code shown. **Find Stores near us** with the distance ([Find Stores near us](#find-stores-near-us-owner-design-2026-11-11)), and when the Stores were last looked up. Then one compact line for each Store: its tick, its name, where it is read (its Home store and distance, "Priced by ZIP code" for Walmart, "Online" with its delivery amounts for Amazon, or "Its default store" with the ZIP code switch off), its last good read, and **Change** where a Home store list exists, which opens the list in place. An online Store has **Edit** for its delivery amounts in place ([Trip setting](#trip-setting)). Each problem is one short tag on the Store's line, such as "None within 25 miles", "Lookup failed", "Earlier result", "Needs ZIP code", "Find again" or "Save the Apify token first". Weekly-ad-only Stores show as one wrapped row of ticks under "Weekly ads (Deals only)". On a phone, a Store's line may wrap to two lines.
+- **Distances** show with one decimal, as "6.4 mi", and a whole number with none, as "50 mi", on the Store's line and in its Home store list. The stored distance keeps every digit.
 - Each key is stored encrypted by the Master key ([Members, login, and security](09-members-login-security.md#encryption-at-rest)). The page shows only the last 4 characters of a key. **Test** makes one small call: an Apify account read, or a Kroger token request.
 - **Delete all deal finder data** asks once to confirm. It removes every Product, price, match and plan. It keeps the Shopping list and the keys.
 

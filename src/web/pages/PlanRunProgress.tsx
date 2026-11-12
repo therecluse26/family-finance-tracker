@@ -26,19 +26,19 @@ const PHASE_WORDS: Record<PlanRunPhase, string> = {
 export function PlanRunProgress(props: { run: PlanRunView; poll: PollState }) {
   const { run } = props;
   return (
-    <section className="mt-3" aria-label="Plan run progress">
+    <section aria-label="Plan run progress">
       <p className={run.phase === "failed" ? "text-critical" : undefined} aria-live="polite">
         {PHASE_WORDS[run.phase]}
       </p>
       {run.running && props.poll === "gave up" ? (
         <p className="text-small text-muted">Still working. Reload the page to see its progress.</p>
       ) : null}
-      <ul className="mt-2 flex flex-col gap-1">
+      <ul className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-x-4 gap-y-1.5">
         {run.stores.map((store) => {
           const words = STATE_WORDS[store.state];
           return (
-            <li key={store.storeId} className="flex flex-wrap gap-x-2">
-              <span>{store.name}</span>
+            <li key={store.storeId} className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-semibold">{store.name}</span>
               <StatusText tone={words.tone}>{words.word}</StatusText>
               {store.reason === null ? null : (
                 <span className="text-small text-muted">{store.reason}</span>

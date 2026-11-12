@@ -1,7 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlanRunCost, PlanRunView } from "../../deal-finder/run-view.ts";
-import { loadPlanRun, PlanRunControls, startPlanRun } from "./PlanRunButton.tsx";
+import { loadPlanRun, PlanRunControls, PlanRunPanel, startPlanRun } from "./PlanRunButton.tsx";
 import { costWords, PlanRunConfirm } from "./PlanRunConfirm.tsx";
 import { PlanRunProgress } from "./PlanRunProgress.tsx";
 
@@ -43,49 +43,48 @@ const RUNNING: PlanRunView = {
 const noop = () => undefined;
 
 describe("the Find the best prices button", () => {
-  it("starts a plan run, and is off while one runs", () => {
-    const idle = renderToString(
-      <PlanRunControls
-        run={null}
-        cost={undefined}
-        busy={false}
-        onStart={noop}
-        onConfirm={noop}
-        onCancel={noop}
-      />,
-    );
-    const running = renderToString(
-      <PlanRunControls
-        run={RUNNING}
-        cost={undefined}
-        busy={false}
-        onStart={noop}
-        onConfirm={noop}
-        onCancel={noop}
-      />,
-    );
+  it("starts a plan run, and is off while one runs or its cost waits to be confirmed", () => {
+    const button = (run: PlanRunView | null, confirming: boolean) =>
+      renderToString(
+        <PlanRunControls run={run} busy={false} confirming={confirming} onStart={noop} />,
+      );
+    const idle = button(null, false);
+    const running = button(RUNNING, false);
+    const confirming = button(null, true);
 
     expect(text(idle)).toBe("Find the best prices");
     expect(idle).not.toContain('disabled=""');
     expect(text(running)).toBe("Finding the best prices…");
     expect(running).toContain('disabled=""');
+    expect(text(confirming)).toBe("Find the best prices");
+    expect(confirming).toContain('disabled=""');
   });
+});
 
-  it("shows the cost to confirm in its place before a full search", () => {
-    const html = renderToString(
-      <PlanRunControls
-        run={null}
-        cost={COST}
+describe("the plan run panel under the heading", () => {
+  const panel = (fields: { run?: PlanRunView | null; cost?: PlanRunCost; error?: string }) =>
+    renderToString(
+      <PlanRunPanel
+        run={fields.run ?? null}
+        cost={fields.cost}
         busy={false}
-        onStart={noop}
+        error={fields.error}
+        poll="polling"
         onConfirm={noop}
         onCancel={noop}
       />,
     );
 
-    expect(text(html)).toBe(
+  it("shows the cost to confirm before a full search", () => {
+    expect(text(panel({ cost: COST }))).toBe(
       "This plan run searches each Store for new List items. It should cost about $0.05 in Price source fees. $0.12 spent this month, $4.88 left under the $5.00 cap. Find the best prices for $0.05 Cancel",
     );
+  });
+
+  it("shows each Store's progress and the error, and nothing with neither", () => {
+    expect(text(panel({ run: RUNNING }))).toContain("Reading Store prices. Kroger ✓ Prices read");
+    expect(text(panel({ error: "The server did not answer." }))).toBe("The server did not answer.");
+    expect(panel({})).toBe("");
   });
 });
 

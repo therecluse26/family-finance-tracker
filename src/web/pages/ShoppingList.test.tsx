@@ -85,11 +85,21 @@ describe("the Shopping list page", () => {
     expect(text(full)).not.toContain("What to buy");
   });
 
-  it("holds a place for Find the best prices beside the heading, and for the plan under the list", () => {
+  it("holds a place for Find the best prices beside the heading, the plan run under it, and the plan under the list", () => {
     const page = renderToString(
-      <ShoppingList findBestPrices={<button type="button">Find</button>} />,
+      <ShoppingList
+        findBestPrices={<button type="button">Find</button>}
+        planRun={<p>Reading Store prices.</p>}
+      />,
     );
-    expect(page).toMatch(/<h1[^>]*>Shopping list<\/h1><div data-slot="find-best-prices">/);
+    expect(page).toMatch(
+      /<h1[^>]*>Shopping list<\/h1><div data-slot="find-best-prices"><button type="button">Find<\/button><\/div><\/div>/,
+    );
+    // The plan run's progress sits under the heading, outside it, so the heading keeps its height.
+    const heading = page.slice(0, page.indexOf('<div data-slot="plan-run">'));
+    expect(heading).toContain('data-slot="find-best-prices"');
+    expect(heading).not.toContain("Reading Store prices.");
+    expect(page).toMatch(/<\/div><div data-slot="plan-run"><p>Reading Store prices.<\/p><\/div>/);
 
     const html = cards(view([]), <p>The plan</p>);
     expect(text(html)).toContain("The list is empty.");
