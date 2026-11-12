@@ -12,17 +12,37 @@ import {
   type WeeklyAdItem,
 } from "../adapter.ts";
 import type { FindStoresMiles } from "../view.ts";
-import { APIFY_BASE_URL, ApifyClient, type ApifyTimings } from "./apify.ts";
+import { type ActorEvents, APIFY_BASE_URL, ApifyClient, type ApifyTimings } from "./apify.ts";
 import { cutText } from "./checks.ts";
 import { KROGER_BASE_URL, type KrogerCallCount, KrogerReader } from "./kroger.ts";
-import { aldi } from "./stores/aldi.ts";
-import { amazon } from "./stores/amazon.ts";
-import { costco, costcoFindInput, costcoWarehousesIn } from "./stores/costco.ts";
+import { ALDI_ACTOR, ALDI_EVENTS, aldi } from "./stores/aldi.ts";
+import { AMAZON_ACTOR, AMAZON_EVENTS, amazon } from "./stores/amazon.ts";
+import {
+  COSTCO_ACTOR,
+  COSTCO_EVENTS,
+  COSTCO_WAREHOUSES_ACTOR,
+  COSTCO_WAREHOUSES_EVENTS,
+  costco,
+  costcoFindInput,
+  costcoWarehousesIn,
+} from "./stores/costco.ts";
 import { type ActorCall, type ApifyStore, type Place, withBrand } from "./stores/store.ts";
-import { target, targetFindInput, targetStoresIn } from "./stores/target.ts";
-import { walmart } from "./stores/walmart.ts";
+import {
+  TARGET_ACTOR,
+  TARGET_EVENTS,
+  TARGET_PAGE_ACTOR,
+  TARGET_PAGE_EVENTS,
+  TARGET_STORES_ACTOR,
+  TARGET_STORES_EVENTS,
+  target,
+  targetFindInput,
+  targetStoresIn,
+} from "./stores/target.ts";
+import { WALMART_ACTOR, WALMART_EVENTS, walmart } from "./stores/walmart.ts";
 import {
   adStoresIn,
+  WEEKLY_ADS_ACTOR,
+  WEEKLY_ADS_EVENTS,
   weeklyAdFindInput,
   weeklyAdItem,
   weeklyAdSearchInput,
@@ -53,6 +73,22 @@ const APIFY_STORES: Readonly<Record<string, ApifyStore>> = {
   costco,
   amazon,
 };
+
+// The events each Actor charges, as its reader names them. A run of an Actor not listed, or listed
+// with null, counts at its $1.00 cap.
+const ACTOR_EVENTS: Readonly<Record<string, ActorEvents | null>> = {
+  [WALMART_ACTOR]: WALMART_EVENTS,
+  [TARGET_ACTOR]: TARGET_EVENTS,
+  [TARGET_PAGE_ACTOR]: TARGET_PAGE_EVENTS,
+  [TARGET_STORES_ACTOR]: TARGET_STORES_EVENTS,
+  [ALDI_ACTOR]: ALDI_EVENTS,
+  [COSTCO_ACTOR]: COSTCO_EVENTS,
+  [COSTCO_WAREHOUSES_ACTOR]: COSTCO_WAREHOUSES_EVENTS,
+  [AMAZON_ACTOR]: AMAZON_EVENTS,
+  [WEEKLY_ADS_ACTOR]: WEEKLY_ADS_EVENTS,
+};
+
+const withEvents = (call: ActorCall) => ({ ...call, events: ACTOR_EVENTS[call.actor] ?? null });
 
 // Search words are cut to 200 characters, like every text field.
 const wordsOf = (words: string, brand: string | null) => cutText(withBrand(words, brand)) ?? "";
@@ -152,7 +188,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
     const scraped = (name: string, kind: FoundStore["kind"], locations: FoundStore["locations"]) =>
       ({ id: name.toLowerCase(), name, kind, reader: "Scraping service", locations }) as FoundStore;
     const run = (name: string, call: ActorCall) =>
-      lookup(name, () => apify.run(token, call.actor, call.input));
+      lookup(name, () => apify.run(token, withEvents(call)));
     const runs = await allLookups([
       run("target", targetFindInput(zipCode, miles)),
       run("costco", costcoFindInput(zipCode)),
@@ -247,7 +283,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
         dealsOnly: input.dealsOnly === true,
       });
       if (call === null) return { value: [], costNanos: null };
-      const run = await apify.run(token, call.actor, call.input);
+      const run = await apify.run(token, withEvents(call));
       const products = run.value.flatMap((row) => {
         const product = store.product(row);
         return product === null ? [] : [product];
@@ -267,7 +303,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       const token = tokenOf(input.keys);
       const call = store.readInput(input.readKey, place, input.name);
       if (call === null) return { value: null, costNanos: null };
-      const run = await apify.run(token, call.actor, call.input);
+      const run = await apify.run(token, withEvents(call));
       let found: ProductRead | null = null;
       for (const row of run.value) {
         found = call.product(row);
@@ -281,7 +317,7 @@ export function priceSourceReaders(options: PriceSourceReaderOptions = {}): Pric
       const words = input.words.map((each) => cutText(each)).filter((each) => each !== null);
       if (words.length === 0 || input.storeIds.length === 0) return { value: [], costNanos: null };
       const call = weeklyAdSearchInput(input.zipCode, words);
-      const run = await apify.run(token, call.actor, call.input);
+      const run = await apify.run(token, withEvents(call));
       const wanted = new Set(input.storeIds);
       const items = run.value.flatMap((row) => {
         const item = weeklyAdItem(row);

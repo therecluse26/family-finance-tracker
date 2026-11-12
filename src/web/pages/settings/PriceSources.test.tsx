@@ -224,7 +224,7 @@ describe("Settings, Price sources", () => {
       ],
     });
 
-    expect(text(shown)).toContain("Walmart Priced by ZIP code Not read yet");
+    expect(text(shown)).toContain("Walmart Priced by ZIP code About $0.88 a search Not read yet");
     expect(text(shown)).toContain("Weekly ads (Deals only) Bluebird Market Corner Grocer");
     expect(shown.indexOf("Bluebird Market")).toBeGreaterThan(shown.indexOf("Weekly ads"));
   });

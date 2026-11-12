@@ -1,5 +1,4 @@
 import {
-  addPriceSourceCost,
   changeDealFinderStore,
   countDealFinderData,
   type Database,
@@ -26,6 +25,7 @@ import {
   PriceSourceError,
   type PriceSourceKeys,
 } from "./adapter.ts";
+import { FIND_STORES_RUNS, priceSourceCostCap } from "./cost-cap.ts";
 import {
   FIND_STORES_MILES,
   type FindStoresMiles,
@@ -212,6 +212,8 @@ export function priceSourceSettings(options: {
   // step as its check, before the first await, and given back when its work ends.
   const testing = new Set<KeyedPriceSource>();
   let finding = false;
+  // The Price source cost cap, shared with the plan run.
+  const costCap = priceSourceCostCap(database);
 
   async function zone(): Promise<string> {
     return (await readHouseholdFacts(database))?.timeZone ?? "UTC";
@@ -258,7 +260,7 @@ export function priceSourceSettings(options: {
   // A run's cost, when the source reported one, counts toward this month.
   async function addCost(costNanos: number | null): Promise<void> {
     if (costNanos === null || costNanos === 0) return;
-    await addPriceSourceCost(database, monthOf(now(), await zone()), costNanos);
+    await costCap.free(monthOf(now(), await zone())).end(costNanos);
   }
 
   // What a Test's call found. Only a PriceSourceError is read, and only its kind: any other thrown
@@ -355,23 +357,29 @@ export function priceSourceSettings(options: {
         if (!stored.useZip) return { outcome: "zip off" };
         const zipCode = (await readHouseholdFacts(database))?.zipCode;
         if (zipCode === undefined) return { outcome: "no zip code" };
+        const keys = keysOf(stored, secrets);
+        // The Scraping service's lookups take their places under the cost cap before they start,
+        // at one Actor run's worst case each (K18). The Kroger API is free.
+        const month = monthOf(now(), await zone());
+        let place = costCap.free(month);
+        if (keys.apifyToken !== undefined) {
+          const held = await costCap.hold(month, stored.costCap, FIND_STORES_RUNS);
+          if (held === null) return { outcome: "cost cap" };
+          place = held;
+        }
         let found: Awaited<ReturnType<PriceSourceAdapter["findLocations"]>>;
         try {
-          found = await adapter.findLocations({
-            zipCode,
-            distanceMiles: miles,
-            keys: keysOf(stored, secrets),
-          });
+          found = await adapter.findLocations({ zipCode, distanceMiles: miles, keys });
         } catch (error) {
           // The lookups that ran before the failure still cost.
-          if (error instanceof PriceSourceError) await addCost(error.costNanos ?? null);
+          await place.end(error instanceof PriceSourceError ? error.costNanos : undefined);
           const kind = error instanceof PriceSourceError ? error.kind : "unknown";
           logger.warn("Find Stores near us failed", { failure: kind });
           if (kind === "refused key") return { outcome: "refused key" };
           if (kind === "usage limit") return { outcome: "usage limit" };
           return { outcome: "failed" };
         }
-        await addCost(found.costNanos);
+        await place.end(found.costNanos);
         // A location outside the distance is not shown, whatever the source sent: a Store with
         // locations, none within the distance, is "none".
         const within = (store: FoundStore): FoundStore | null => {

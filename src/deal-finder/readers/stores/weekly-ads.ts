@@ -1,4 +1,5 @@
 import type { FoundStore, WeeklyAdItem } from "../../adapter.ts";
+import type { ActorEvents } from "../apify.ts";
 import { calendarDate, cutText, parseCents } from "../checks.ts";
 import { recordsIn } from "../http.ts";
 
@@ -9,6 +10,9 @@ import { recordsIn } from "../http.ts";
 // weekly-ad-only Store.
 
 export const WEEKLY_ADS_ACTOR = "gratifying_graph/us-grocery-deals";
+// Its own start event, charged once a run, and a `deal-result` event for each Deal (owner's run,
+// 2026-11-12).
+export const WEEKLY_ADS_EVENTS: ActorEvents = { start: "actor-start", row: "deal-result" };
 const DEALS_PER_SEARCH = 5;
 
 // The Stores the app reads by their own reader. Their ads count for them, under their own ID.

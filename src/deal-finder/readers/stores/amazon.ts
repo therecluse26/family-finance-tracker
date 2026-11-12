@@ -1,3 +1,4 @@
+import type { ActorEvents } from "../apify.ts";
 import { checkedProduct, parseCents, readKeyOf } from "../checks.ts";
 import type { ApifyStore } from "./store.ts";
 
@@ -7,6 +8,10 @@ import type { ApifyStore } from "./store.ts";
 // Product links return nothing.
 
 export const AMAZON_ACTOR = "delicious_zebu/amazon-product-data-scraper";
+export const AMAZON_EVENTS: ActorEvents = {
+  start: "apify-actor-start",
+  row: "apify-default-dataset-item",
+};
 const ASIN = /^[A-Z0-9]{10}$/;
 
 const common = { website: "amazon.com", deliverTo: "US", scrapeProductDetails: false };

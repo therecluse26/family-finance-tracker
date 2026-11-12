@@ -1,6 +1,5 @@
 import type { HouseholdAi } from "../ai/index.ts";
 import {
-  addPriceSourceCost,
   type CheckedProduct,
   countStoreFailedRuns,
   type Database,
@@ -38,6 +37,7 @@ import {
   type ProductRead,
   type WeeklyAdItem,
 } from "./adapter.ts";
+import { type CapPlace, CostCapReached, priceSourceCostCap } from "./cost-cap.ts";
 import { answerMatches, lookUpFacts, searchQuery, writeSearchWords } from "./match.ts";
 import type { ProductDataAdapter, ProductFacts } from "./product-data.ts";
 import {
@@ -52,7 +52,7 @@ import {
   SOURCE_REASONS,
 } from "./run-view.ts";
 import { readPriceSourceKeys } from "./settings.ts";
-import { PRICE_HISTORY_DAYS, storeNeedsZip } from "./view.ts";
+import { PRICE_HISTORY_DAYS, storeNeedsZip, WALMART_SEARCH_NANOS } from "./view.ts";
 
 // The plan run (spec 15, The Shopping plan; Search once, then re-read; Cost and limits; Failures).
 // A Member presses "Find the best prices", and a job reads each Store that is on, the AI matches
@@ -68,7 +68,7 @@ export const PRICE_REUSE_MS = DAY_MS;
 // A List item is fully searched again 30 days after its last full search.
 export const FULL_SEARCH_AGAIN_MS = 30 * DAY_MS;
 // Walmart searches a List item again 28 days after its last full search, and reads nothing between
-// (owner decision, 2026-11-12): a search costs about $0.08, and its Actor cannot read one Product.
+// (owner decision, 2026-11-12): a search costs about $0.88, and its Actor cannot read one Product.
 export const WALMART_SEARCH_AGAIN_MS = 28 * DAY_MS;
 // The weekly ads are searched again a day after their last search, as Deals change each week.
 const WEEKLY_ADS_AGAIN_MS = DAY_MS;
@@ -107,13 +107,18 @@ function readModeOf(store: Pick<StoredDealFinderStore, "id" | "reader">): ReadMo
   return store.id === "target" ? "search again" : "re-read";
 }
 
-// Measured prices (spec 15, Cost and limits, spike round 12), in billionths of a dollar: per
-// search, per Actor run, and per Product or Deal. Aldi and Walmart take one query, so each search
-// is its own run. Walmart's $0.08 a search is the owner's run of 2026-11-11: one page of 40 rows.
-// A Store with no measured price counts Costco's price per Product, the highest.
+// Measured prices (spec 15, Cost and limits), in billionths of a dollar: per search, per Actor run,
+// and per Product or Deal. They come from the owner's run of 2026-11-12, counted from each Actor's
+// charged events on Apify's run records a day later, not from `usageTotalUsd` at the end of a run,
+// which holds only the start events. Walmart is $0.08 a run (4 start events, one per GB of its 4 GB)
+// plus $0.02 a row, about 40 rows a search: about $0.88 a search at most. Target charges $0.00025 a
+// request. Aldi is about $0.01 a run plus $0.002 a Product, Costco $0.005 a Product, Amazon $0.0025
+// a Product, and the weekly ads $0.002 a Deal; their start events add less than a cent a run. Aldi
+// and Walmart take one query, so each search is its own run. A Store with no measured price counts
+// Costco's price per Product, the highest.
 type RunPrice = { perSearch: number; perRun: number; perProduct: number };
 const RUN_PRICES: Readonly<Record<string, RunPrice>> = {
-  walmart: { perSearch: 80_000_000, perRun: 0, perProduct: 0 },
+  walmart: { perSearch: WALMART_SEARCH_NANOS, perRun: 0, perProduct: 0 },
   target: { perSearch: 250_000, perRun: 0, perProduct: 0 },
   aldi: { perSearch: 0, perRun: 10_000_000, perProduct: 2_000_000 },
   costco: { perSearch: 0, perRun: 0, perProduct: 5_000_000 },
@@ -347,12 +352,8 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
   let starting: Promise<PlanRunStart> | undefined;
   // The progress of the running plan run, or of the last one this process ran.
   let progress: Progress | undefined;
-  // The month's cost each Store read in flight reserved, in billionths of a dollar. Each read takes
-  // its place in the same synchronous step as its check against the cap (K18).
-  let reserved = 0;
-  // The cost this process added to the month, so far. A task that read the month's cost counts
-  // what was added after its read too, so a cost added while it waited is never missed.
-  let added = 0;
+  // The Price source cost cap, held before each Actor run (K18).
+  const costCap = priceSourceCostCap(database);
   // Each barcode's Open Food Facts facts, kept while the app runs.
   const facts = new Map<string, ProductFacts | null>();
 
@@ -645,7 +646,6 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
     type Task = {
       storeIds: string[];
       source: KeyedSource;
-      cost: number;
       read: () => Promise<void>;
     };
     const tasks: Task[] = [];
@@ -662,7 +662,6 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       tasks.push({
         storeIds: [each.store.id],
         source: sourceOf(each.store),
-        cost: storeCost(each),
         read: () => readStore(each, zipCode, keys),
       });
     }
@@ -678,38 +677,29 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
         tasks.push({
           storeIds: adStores.map((store) => store.id),
           source: "apify",
-          cost: weeklyAdsCost(work.ads.items.length),
           read: () => readWeeklyAds(adStores, work.ads.items, zipCode, keys),
         });
       }
     }
 
-    // One store's read, with the cost cap and one retry. Each read is stored as it ends, so a later
-    // Store's failure keeps it (K5).
+    // One store's read, with one retry, and the cost cap before each Actor run. Each read is stored
+    // as it ends, so a later Store's failure keeps it (K5). A Store whose next Actor run does not fit
+    // under the cap ends with "cost cap reached", and keeps what it read before.
     const runTask = async (task: Task) => {
       const down = sourceDown.get(task.source);
       if (down !== undefined) {
         for (const id of task.storeIds) end(id, { state: "skipped", reason: down });
         return;
       }
-      // The Scraping service's cost cap: the month's cost, then the check and the reservation in
-      // one synchronous step (K18). The Store API is free.
-      let place = 0;
-      if (task.source === "apify" && task.cost > 0) {
-        const addedBefore = added;
-        const spent = (await readPriceSourceCost(database, month)) + (added - addedBefore);
-        if (spent + reserved + task.cost > settings.costCap * 10_000_000) {
-          for (const id of task.storeIds) end(id, { state: "skipped", reason: COST_CAP_REACHED });
-          return;
-        }
-        reserved += task.cost;
-        place = task.cost;
-      }
       for (const id of task.storeIds) mark(planId, id, "reading");
       try {
         await task.read();
         for (const id of task.storeIds) end(id, { state: "read" });
       } catch (error) {
+        if (error instanceof CostCapReached) {
+          for (const id of task.storeIds) end(id, { state: "skipped", reason: COST_CAP_REACHED });
+          return;
+        }
         const kind = error instanceof PriceSourceError ? error.kind : "store failed";
         if (kind === "refused key" || kind === "usage limit") {
           const reason = SOURCE_REASONS[task.source][kind];
@@ -723,31 +713,33 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
           });
           for (const id of task.storeIds) end(id, { state: "failed", reason: COULD_NOT_READ });
         }
-      } finally {
-        reserved -= place;
       }
     };
 
-    // A run's cost counts toward the month as soon as it is known.
-    const count = async (costNanos: number | null | undefined) => {
-      if (costNanos === null || costNanos === undefined || !(costNanos > 0)) return;
-      await addPriceSourceCost(database, month, costNanos);
-      added += costNanos;
+    // A place under the cost cap for one adapter call, which starts at most one Actor run. The
+    // Store API is free and holds none. Throws CostCapReached when the run does not fit.
+    const placeFor = async (source: KeyedSource): Promise<CapPlace> => {
+      if (source !== "apify") return costCap.free(month);
+      const place = await costCap.hold(month, settings.costCap);
+      if (place === null) throw new CostCapReached();
+      return place;
     };
 
-    // Each adapter call with one retry for the Store in this run. A refused key or a usage limit
-    // is not retried. A failed run's cost counts too, before the retry or the end. A run that
+    // Each adapter call with one retry for the Store in this run, each try with its own place under
+    // the cost cap. A refused key or a usage limit is not retried. A run's cost counts toward the
+    // month as soon as it is known, and a failed run's too, before the retry or the end. A run that
     // timed out is a Store failure, like any other failed Actor run (spec 15, Failures).
     const withRetry =
-      <T>(retries: { left: number }) =>
-      async (call: () => Promise<{ value: T; costNanos: number | null }>): Promise<T> => {
+      (retries: { left: number }, source: KeyedSource) =>
+      async <T>(call: () => Promise<{ value: T; costNanos: number | null }>): Promise<T> => {
         for (;;) {
+          const place = await placeFor(source);
           try {
             const result = await call();
-            await count(result.costNanos);
+            await place.end(result.costNanos);
             return result.value;
           } catch (error) {
-            if (error instanceof PriceSourceError) await count(error.costNanos);
+            await place.end(error instanceof PriceSourceError ? error.costNanos : undefined);
             const kind = error instanceof PriceSourceError ? error.kind : "store failed";
             const storeFailure = kind === "store failed" || kind === "timed out";
             if (!storeFailure || retries.left === 0) throw error;
@@ -763,35 +755,51 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
     ): Promise<void> {
       const { store } = each;
       const retries = { left: 1 };
+      const call = withRetry(retries, sourceOf(store));
       const base = {
         storeId: store.id,
         homeStoreId: settings.useZip ? store.homeStoreId : null,
         zipCode: zip,
         keys: sourceKeys,
       };
+      // The cost cap can stop the read between two Actor runs. What was read before is kept.
+      let capped: CostCapReached | undefined;
+      const untilCap = async (work: () => Promise<void>) => {
+        try {
+          await work();
+        } catch (error) {
+          if (!(error instanceof CostCapReached)) throw error;
+          capped = error;
+        }
+      };
       const searchItems = [...each.full, ...each.again];
       const count = productsPerSearch(store.id);
       const found: StoreRead["found"] = [];
+      // The searches that ran, in order. A missing answer is a search that found nothing.
+      let searchedCount = 0;
       if (searchItems.length > 0) {
         const searches = searchItems.map((item) => ({
           words: searchQuery(item),
           productCount: count,
         }));
-        let results: ProductRead[][];
-        if (adapter.searchStoreMany !== undefined) {
-          const many = adapter.searchStoreMany.bind(adapter);
-          results = await withRetry<ProductRead[][]>(retries)(() => many({ ...base, searches }));
-        } else {
-          results = [];
+        const results: ProductRead[][] = [];
+        await untilCap(async () => {
+          if (adapter.searchStoreMany !== undefined) {
+            const many = adapter.searchStoreMany.bind(adapter);
+            results.push(...(await call(() => many({ ...base, searches }))));
+            searchedCount = searches.length;
+            return;
+          }
           for (const search of searches) {
             results.push(
-              await withRetry<ProductRead[]>(retries)(() =>
+              await call(() =>
                 adapter.searchStore({ ...base, words: search.words, productCount: count }),
               ),
             );
+            searchedCount += 1;
           }
-        }
-        searchItems.forEach((item, index) => {
+        });
+        searchItems.slice(0, searchedCount).forEach((item, index) => {
           const products = (results[index] ?? [])
             .slice(0, count)
             .flatMap((product) => checkProduct(product) ?? []);
@@ -800,26 +808,25 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       }
       const reread: CheckedProduct[] = [];
       const failed: StoreRead["failed"] = [];
-      if (each.reread.length > 0) {
+      if (each.reread.length > 0 && capped === undefined) {
         const readKeys = [...new Set(each.reread.map((match) => match.readKey))];
-        let results: (ProductRead | null)[];
-        if (readModeOf(store) !== "api" && adapter.readProducts !== undefined) {
-          const many = adapter.readProducts.bind(adapter);
-          results = await withRetry<(ProductRead | null)[]>(retries)(() =>
-            many({ ...base, readKeys }),
-          );
-        } else {
-          results = [];
-          for (const readKey of readKeys) {
-            results.push(
-              await withRetry<ProductRead | null>(retries)(() =>
-                adapter.readProduct({ ...base, readKey }),
-              ),
-            );
+        const results: (ProductRead | null)[] = [];
+        // The re-read keys that were read.
+        let readCount = 0;
+        await untilCap(async () => {
+          if (readModeOf(store) !== "api" && adapter.readProducts !== undefined) {
+            const many = adapter.readProducts.bind(adapter);
+            results.push(...(await call(() => many({ ...base, readKeys }))));
+            readCount = readKeys.length;
+            return;
           }
-        }
+          for (const readKey of readKeys) {
+            results.push(await call(() => adapter.readProduct({ ...base, readKey })));
+            readCount += 1;
+          }
+        });
         const byKey = new Map<string, CheckedProduct | undefined>();
-        readKeys.forEach((readKey, index) => {
+        readKeys.slice(0, readCount).forEach((readKey, index) => {
           const product = results[index];
           // Stored under the key it was read by, so the saved match keeps its Product.
           const checked =
@@ -830,20 +837,26 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
         });
         for (const product of byKey.values()) if (product !== undefined) reread.push(product);
         for (const match of each.reread) {
-          // The match fails: the Store no longer has it, or gave it no price.
-          if (byKey.get(match.readKey) === undefined) {
+          // The match fails: the Store no longer has it, or gave it no price. A key the cost cap
+          // left unread keeps its match.
+          if (byKey.has(match.readKey) && byKey.get(match.readKey) === undefined) {
             failed.push({ listItemId: match.listItemId, readKey: match.readKey });
           }
         }
       }
-      await storeStoreRead(database, {
-        storeId: store.id,
-        at: now(),
-        found,
-        searched: each.full.map((item) => item.id),
-        reread,
-        failed,
-      });
+      // A Store the cost cap stopped before its first run read nothing, and stores nothing.
+      if (capped === undefined || found.length > 0 || reread.length > 0 || failed.length > 0) {
+        const searched = new Set(found.map((each) => each.listItemId));
+        await storeStoreRead(database, {
+          storeId: store.id,
+          at: now(),
+          found,
+          searched: each.full.filter((item) => searched.has(item.id)).map((item) => item.id),
+          reread,
+          failed,
+        });
+      }
+      if (capped !== undefined) throw capped;
     }
 
     async function readWeeklyAds(
@@ -853,7 +866,10 @@ export function planRuns(options: PlanRunOptions): PlanRuns {
       sourceKeys: PriceSourceKeys,
     ): Promise<void> {
       const retries = { left: 1 };
-      const ads = await withRetry<WeeklyAdItem[]>(retries)(() =>
+      const ads = await withRetry(
+        retries,
+        "apify",
+      )<WeeklyAdItem[]>(() =>
         adapter.readWeeklyAds({
           zipCode: zip,
           storeIds: stores.map((store) => store.id),

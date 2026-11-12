@@ -12,8 +12,82 @@ type FakeRun = {
   actId: string;
   status: string;
   defaultDatasetId: string;
+  options: { memoryMbytes: number; maxTotalChargeUsd: number };
+  pricingInfo?: {
+    pricingModel: "PAY_PER_EVENT";
+    pricingPerEvent: { actorChargeEvents: Record<string, { eventPriceUsd: number }> };
+  };
+  chargedEventCounts: Record<string, number>;
   usageTotalUsd: number;
 };
+
+// One Actor's made-up pay-per-event price list, near the one the owner's run measured
+// (2026-11-12). The start event is charged as the run starts: Apify's own `apify-actor-start` once
+// for each GB of the run's memory, an Actor's own once. The row event is charged for each dataset
+// row, and `perRun` events once a run, both only after the run ends: a run record read at the end
+// shows only the start events, and a later read shows the rest.
+export type FakePricing = {
+  memoryMbytes: number;
+  prices: Record<string, number>;
+  start: string | null;
+  row: string | null;
+  perRun?: string;
+};
+
+const START = "apify-actor-start";
+const ROW = "apify-default-dataset-item";
+const priced = (
+  memoryMbytes: number,
+  start: [string, number] | null,
+  row: [string, number] | null,
+  perRun?: [string, number],
+): FakePricing => ({
+  memoryMbytes,
+  prices: Object.fromEntries([start, row, perRun ?? null].filter((each) => each !== null)),
+  start: start?.[0] ?? null,
+  row: row?.[0] ?? null,
+  ...(perRun === undefined ? {} : { perRun: perRun[0] }),
+});
+
+// Each Actor's made-up price list.
+export const FAKE_ACTOR_PRICING: Record<string, FakePricing> = {
+  "burbn/walmart-product-search": priced(4096, [START, 0.02], [ROW, 0.02]),
+  "litescrape/target-search": priced(1024, null, null, ["request", 0.00025]),
+  "apify/e-commerce-scraping-tool": priced(1024, [START, 0.001], [ROW, 0.004]),
+  "axlymxp/target-store-scraper": priced(1024, [START, 0.005], [ROW, 0.002]),
+  "blackfalcondata/aldi-us-scraper": priced(1024, [START, 0.001], [ROW, 0.0029]),
+  "vant47/costco-scraper": priced(1024, [START, 0.001], ["product", 0.0048]),
+  "dromb/costco-us": priced(1024, [START, 0.001], [ROW, 0.001]),
+  "delicious_zebu/amazon-product-data-scraper": priced(1024, [START, 0.001], [ROW, 0.00234]),
+  "gratifying_graph/us-grocery-deals": priced(
+    1024,
+    ["actor-start", 0.0005],
+    ["deal-result", 0.002],
+  ),
+};
+
+// The events a run is charged: at its end, or once the row events are in.
+function chargedEvents(pricing: FakePricing, rows: number, ended: boolean): Record<string, number> {
+  const counts: Record<string, number> = {};
+  if (pricing.start !== null) {
+    counts[pricing.start] = pricing.start === START ? Math.ceil(pricing.memoryMbytes / 1024) : 1;
+  }
+  if (!ended) {
+    if (pricing.row !== null) counts[pricing.row] = rows;
+    if (pricing.perRun !== undefined) counts[pricing.perRun] = 1;
+  }
+  return counts;
+}
+
+const usdOf = (pricing: FakePricing, counts: Record<string, number>) =>
+  Math.round(
+    Object.entries(counts).reduce(
+      (sum, [event, count]) => sum + (pricing.prices[event] ?? 0) * count * 1e9,
+      0,
+    ),
+  ) / 1e9;
+
+const ENDED_STATUSES = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]);
 
 // The run statuses a test can set for an Actor. "RUNNING" never ends.
 export type FakeRunStatus = "SUCCEEDED" | "FAILED" | "ABORTED" | "TIMED-OUT" | "RUNNING";
@@ -297,19 +371,22 @@ export const FAKE_ACTOR_ROWS: Record<string, ActorRows> = {
   },
 };
 
-// Made-up run costs, in dollars, near the ones spec 15 measured.
-const FAKE_RUN_USD = 0.0123;
-
 export class FakeApify extends FakeJsonServer {
   readonly rows: Record<string, ActorRows> = { ...FAKE_ACTOR_ROWS };
   // Each Actor's run status, when not "SUCCEEDED".
   readonly runStatus = new Map<string, FakeRunStatus>();
-  // Each Actor's run cost, in dollars, when not the default. Null leaves it out of the run record.
-  readonly runUsd = new Map<string, number | null>();
+  // Each Actor's price list, when not its default. Null leaves it out of the run record.
+  readonly pricing = new Map<string, FakePricing | null>();
   // In a dev run, any token is accepted but one that holds "wrong", so a Member can save one.
   acceptAnyKey = false;
   private readonly tokens = new Set<string>();
   private readonly runs = new Map<string, FakeRun>();
+  // Each run's price list and rows, and whether its record was read since it ended. The row
+  // events show only on a read after that.
+  private readonly charges = new Map<
+    string,
+    { pricing: FakePricing | null; rows: number; readAtEnd: boolean }
+  >();
   private readonly datasets = new Map<string, Record<string, unknown>[]>();
 
   // A made-up token, which this server accepts.
@@ -353,7 +430,13 @@ export class FakeApify extends FakeJsonServer {
       if (found === undefined)
         return { status: 404, body: { error: { type: "record-not-found" } } };
       if (run[2] !== undefined && request.method === "POST") found.status = "ABORTED";
-      return { body: { data: found } };
+      return { body: { data: this.recordOf(found) } };
+    }
+    const dataset = /^\/v2\/datasets\/([A-Za-z0-9]+)$/.exec(request.path);
+    if (request.method === "GET" && dataset?.[1] !== undefined) {
+      const rows = this.datasets.get(dataset[1]);
+      if (rows === undefined) return { status: 404, body: { error: { type: "record-not-found" } } };
+      return { body: { data: { id: dataset[1], itemCount: rows.length } } };
     }
     const items = /^\/v2\/datasets\/([A-Za-z0-9]+)\/items$/.exec(request.path);
     if (request.method === "GET" && items?.[1] !== undefined) {
@@ -377,16 +460,51 @@ export class FakeApify extends FakeJsonServer {
     const datasetId = `fakeData${this.runs.size + 1}`;
     const input = typeof request.body === "object" && request.body !== null ? request.body : {};
     this.datasets.set(datasetId, rowsOf(input as Record<string, unknown>));
-    const usd = this.runUsd.has(actor) ? this.runUsd.get(actor) : FAKE_RUN_USD;
+    const rows = this.datasets.get(datasetId)?.length ?? 0;
+    const pricing = this.pricing.has(actor)
+      ? (this.pricing.get(actor) ?? null)
+      : (FAKE_ACTOR_PRICING[actor] ?? null);
     const run: FakeRun = {
       id,
       actId: actor.replace("/", "~"),
       status: this.runStatus.get(actor) ?? "SUCCEEDED",
       defaultDatasetId: datasetId,
-      usageTotalUsd: usd ?? Number.NaN,
+      options: { memoryMbytes: pricing?.memoryMbytes ?? 1024, maxTotalChargeUsd: 1 },
+      chargedEventCounts: {},
+      usageTotalUsd: 0,
     };
-    if (usd === null) Reflect.deleteProperty(run, "usageTotalUsd");
     this.runs.set(id, run);
-    return { status: 201, body: { data: run } };
+    this.charges.set(id, { pricing, rows, readAtEnd: false });
+    return { status: 201, body: { data: this.recordOf(run) } };
+  }
+
+  // A run's record as Apify answers it now: at its end, only the start events are charged, and on a
+  // later read the row events too. A running run has charged its start events.
+  private recordOf(run: FakeRun): FakeRun {
+    const charge = this.charges.get(run.id);
+    if (charge === undefined || charge.pricing === null) {
+      const { pricingInfo: _none, ...record } = run;
+      return record;
+    }
+    const ended = ENDED_STATUSES.has(run.status);
+    const atEnd = !ended || !charge.readAtEnd;
+    if (ended) charge.readAtEnd = true;
+    const counts = chargedEvents(charge.pricing, charge.rows, atEnd);
+    return {
+      ...run,
+      pricingInfo: {
+        pricingModel: "PAY_PER_EVENT",
+        pricingPerEvent: {
+          actorChargeEvents: Object.fromEntries(
+            Object.entries(charge.pricing.prices).map(([event, usd]) => [
+              event,
+              { eventPriceUsd: usd },
+            ]),
+          ),
+        },
+      },
+      chargedEventCounts: counts,
+      usageTotalUsd: usdOf(charge.pricing, counts),
+    };
   }
 }

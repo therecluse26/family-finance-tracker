@@ -8,6 +8,7 @@ import {
   type PriceSourceStoreView,
   type PriceSourcesView,
   type StoreChanges,
+  WALMART_SEARCH_NANOS,
 } from "../../../deal-finder/view.ts";
 import { calendarDateIn, dateLabel, dollarsAndCents, wholeDollars } from "../../../format.ts";
 import { api } from "../../api.ts";
@@ -502,6 +503,14 @@ export function storeTagsOf(
       word: "Earlier result",
       tone: "serious",
       why: "The last lookup failed; this is the earlier result.",
+    });
+  }
+  if (store.id === "walmart") {
+    const cost = dollarsAndCents(Math.round(WALMART_SEARCH_NANOS / 10_000_000));
+    tags.push({
+      word: `About ${cost} a search`,
+      tone: "muted",
+      why: `Each Walmart search costs about ${cost} on Apify. It is off until a Member ticks it.`,
     });
   }
   return tags;
