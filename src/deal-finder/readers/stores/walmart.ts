@@ -1,12 +1,19 @@
+import type { ActorEvents } from "../apify.ts";
 import { checkedProduct, cutText, parseCents, readKeyOf } from "../checks.ts";
 import type { ApifyStore, Place } from "./store.ts";
 
 // Walmart: `burbn/walmart-product-search`, by ZIP code (owner decision, 2026-11-11: the earlier
 // Actor stopped taking the owner's runs). It takes one query a run and has no Home store: Walmart's
-// prices are for the ZIP code. It charges per run and per row, about $0.08 for one page of about
+// prices are for the ZIP code. It charges per run and per row, about $0.88 for one page of about
 // 40 rows. It has no field to leave paid ads out, so the reader drops them.
 
 export const WALMART_ACTOR = "burbn/walmart-product-search";
+// Its charged events (owner's run, 2026-11-12): $0.02 a start event, one for each GB of its 4 GB,
+// and $0.02 a row.
+export const WALMART_EVENTS: ActorEvents = {
+  start: "apify-actor-start",
+  row: "apify-default-dataset-item",
+};
 const ITEM_ID = /^\d{1,20}$/;
 
 // The ZIP code, sent only with the ZIP code switch on: it names a place.
@@ -52,7 +59,7 @@ export const walmart: ApifyStore = {
   searchInput: (search) => searchOf(search.words.join(" "), search),
   product: walmartProduct,
   // The Actor has no lookup by item number, so a re-read is one search for the Product's saved
-  // name, at the same cost as a search (about $0.08), keeping only the row with the same item
+  // name, at the same cost as a search (about $0.88), keeping only the row with the same item
   // number. Plan runs search Walmart again instead, as it costs the same.
   readInput: (readKey, place, name) => {
     const itemId = readKeyOf(readKey, ITEM_ID);

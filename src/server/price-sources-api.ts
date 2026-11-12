@@ -77,6 +77,10 @@ const FIND_REFUSALS: Record<
   busy: { status: 409, error: "Find Stores near us is running. Wait for its answer." },
   "refused key": { status: 409, error: "The Price source refused the saved key." },
   "usage limit": { status: 429, error: "Apify usage limit reached." },
+  "cost cap": {
+    status: 409,
+    error: "The Price source cost cap is reached. Raise the cap, or wait for the 1st.",
+  },
   failed: { status: 502, error: "The Price source did not answer. Try again later." },
 };
 

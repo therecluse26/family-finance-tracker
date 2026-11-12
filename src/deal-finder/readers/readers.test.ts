@@ -8,6 +8,7 @@ import {
   type PriceSourceKeys,
 } from "../adapter.ts";
 import { type FakePriceSourceServers, startFakePriceSourceServers } from "../fake-servers/index.ts";
+import { type ActorEvents, runCostNanos } from "./apify.ts";
 import { type PriceSourceReaderOptions, priceSourceReaders } from "./index.ts";
 import { KROGER_PRODUCT_CALLS_A_DAY, type KrogerCallCount } from "./kroger.ts";
 import { costcoWarehousesIn } from "./stores/costco.ts";
@@ -18,6 +19,15 @@ import { adStoresIn, weeklyAdItem } from "./stores/weekly-ads.ts";
 
 const ZIP = "00000";
 const DAY = new Date("2026-11-11T15:00:00Z");
+
+// What each fake run costs, from its fake price list (fake-servers/apify.ts), once its rows are
+// counted. Walmart: 4 start events for its 4 GB and 5 rows, at $0.02 each. The weekly ads: one
+// `actor-start` at $0.0005 and 4 Deals at $0.002. Find Stores near us: Target's stores ($0.005 a
+// start, 3 rows at $0.002), Costco's warehouses ($0.001 a start, 2 rows at $0.001) and the weekly ads.
+const WALMART_RUN_NANOS = 180_000_000;
+const AD_SEARCH_RUN_NANOS = 8_500_000;
+const TARGET_FIND_RUN_NANOS = 11_000_000;
+const FIND_RUNS_NANOS = TARGET_FIND_RUN_NANOS + 3_000_000 + AD_SEARCH_RUN_NANOS;
 
 let servers: FakePriceSourceServers;
 let lines: string[];
@@ -266,12 +276,12 @@ describe("The Kroger reader (spec 15, Stores and their readers)", () => {
 describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => {
   it("runs each Actor with a $1.00 charge cap, and takes the cost from the run record", async () => {
     const found = await readers().searchStore(search("walmart"));
-    expect(found.costNanos).toBe(12_300_000);
+    expect(found.costNanos).toBe(WALMART_RUN_NANOS);
     const [started] = servers.apify.to("/v2/acts/burbn~walmart-product-search/runs");
     expect(started?.query.maxTotalChargeUsd).toBe("1.00");
     expect(servers.apify.to("/v2/actor-runs/")).toHaveLength(0);
     // A run record with no cost counts at the run's cap.
-    servers.apify.runUsd.set("burbn/walmart-product-search", null);
+    servers.apify.pricing.set("burbn/walmart-product-search", null);
     expect((await readers().searchStore(search("walmart"))).costNanos).toBe(1_000_000_000);
   });
 
@@ -331,7 +341,7 @@ describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => 
       name: "Fake Valley Large Eggs, 12 ct",
     });
     expect([again.value?.readKey, again.value?.regularPrice]).toEqual(["990000102", 348]);
-    expect(again.costNanos).toBe(12_300_000);
+    expect(again.costNanos).toBe(WALMART_RUN_NANOS);
     expect(servers.apify.inputsOf("burbn/walmart-product-search")).toEqual([
       { query: "Fake Valley Large Eggs, 12 ct", domain: "us", maxPages: 1, zip: ZIP },
     ]);
@@ -538,7 +548,7 @@ describe("Each Store's Apify reader (spec 15, Stores and their readers)", () => 
         validTo: "2026-11-15",
       },
     ]);
-    expect(found.costNanos).toBe(12_300_000);
+    expect(found.costNanos).toBe(AD_SEARCH_RUN_NANOS);
   });
 
   it("never asks a Store to sort by price", async () => {
@@ -600,7 +610,7 @@ describe("Find Stores near us (spec 15)", () => {
       ["ad-hilltop-fake-market", "weekly ad only", []],
       ["ad-sam-s-club", "weekly ad only", []],
     ]);
-    expect(found.costNanos).toBe(3 * 12_300_000);
+    expect(found.costNanos).toBe(FIND_RUNS_NANOS);
     expect(servers.apify.inputsOf("axlymxp/target-store-scraper")).toEqual([
       { locations: [ZIP], within: 25, limit: 5 },
     ]);
@@ -711,7 +721,7 @@ describe("Find Stores near us (spec 15)", () => {
     servers.apify.runStatus.set("axlymxp/target-store-scraper", "FAILED");
     const found = await readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys });
     expect(outcomesIn(found.value).target).toBe("failed: store failed");
-    expect(found.costNanos).toBe(3 * 12_300_000);
+    expect(found.costNanos).toBe(FIND_RUNS_NANOS);
     // A usage limit on one Actor ends the lookup, and the other two runs' cost goes with it.
     servers.apify.answer("/v2/acts/axlymxp~target-store-scraper/runs", {
       status: 402,
@@ -720,7 +730,10 @@ describe("Find Stores near us (spec 15)", () => {
     const limit = await failureOf(
       readers().findLocations({ zipCode: ZIP, distanceMiles: 25, keys }),
     );
-    expect([limit.kind, limit.costNanos]).toEqual(["usage limit", 2 * 12_300_000]);
+    expect([limit.kind, limit.costNanos]).toEqual([
+      "usage limit",
+      FIND_RUNS_NANOS - TARGET_FIND_RUN_NANOS,
+    ]);
     // A refused Kroger key ends it too, after the Apify runs end, and keeps their cost.
     const refused = await failureOf(
       readers().findLocations({
@@ -729,7 +742,10 @@ describe("Find Stores near us (spec 15)", () => {
         keys: { ...keys, kroger: { clientId: "fake-wrong", clientSecret: "fake-wrong" } },
       }),
     );
-    expect([refused.kind, refused.costNanos]).toEqual(["refused key", 2 * 12_300_000]);
+    expect([refused.kind, refused.costNanos]).toEqual([
+      "refused key",
+      FIND_RUNS_NANOS - TARGET_FIND_RUN_NANOS,
+    ]);
   });
 
   it("fails only Kroger's lookup when Kroger fails, and keeps the other Stores and their cost", async () => {
@@ -743,7 +759,7 @@ describe("Find Stores near us (spec 15)", () => {
     expect(outcomesIn(near.value).kroger).toBe("none");
     expect(ids).not.toContain("kroger");
     expect(ids).toEqual(expect.arrayContaining(["target", "costco", "walmart", "amazon"]));
-    expect(found.costNanos).toBe(3 * 12_300_000);
+    expect(found.costNanos).toBe(FIND_RUNS_NANOS);
     expect(lines.join("")).toContain("A Store lookup failed");
     expect(lines.join("")).not.toContain("Fake:");
   });
@@ -803,22 +819,26 @@ describe("Apify's errors (spec 15, Failures)", () => {
     servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
     const failed = await failureOf(readers().searchStore(search("walmart")));
     expect([failed.kind, failed.message]).toEqual(["store failed", "The Actor run failed."]);
-    expect(failed.costNanos).toBe(12_300_000);
+    expect(failed.costNanos).toBe(WALMART_RUN_NANOS);
     servers.apify.runStatus.set("burbn/walmart-product-search", "TIMED-OUT");
     const timedOut = await failureOf(readers().searchStore(search("walmart")));
-    expect([timedOut.kind, timedOut.costNanos]).toEqual(["timed out", 12_300_000]);
+    expect([timedOut.kind, timedOut.costNanos]).toEqual(["timed out", WALMART_RUN_NANOS]);
     // With no cost in the run record, a failed run counts at its $1.00 cap.
     servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
-    servers.apify.runUsd.set("burbn/walmart-product-search", null);
+    servers.apify.pricing.set("burbn/walmart-product-search", null);
     expect((await failureOf(readers().searchStore(search("walmart")))).costNanos).toBe(
       1_000_000_000,
     );
   });
 
-  it("keeps the cost of a run whose dataset cannot be read", async () => {
-    servers.apify.answer("/v2/datasets/", { status: 500, body: {} });
+  it("keeps the cost of a run whose dataset cannot be read, at its cap when its rows are not known", async () => {
+    servers.apify.answer("/v2/datasets/fakeData1/items", { status: 500, body: {} });
     const failed = await failureOf(readers().searchStore(search("walmart")));
-    expect([failed.kind, failed.costNanos]).toEqual(["store failed", 12_300_000]);
+    // The dataset record still gives the row count.
+    expect([failed.kind, failed.costNanos]).toEqual(["store failed", WALMART_RUN_NANOS]);
+    servers.apify.answer("/v2/datasets/", { status: 500, body: {} });
+    const unknown = await failureOf(readers().searchStore(search("walmart")));
+    expect([unknown.kind, unknown.costNanos]).toEqual(["store failed", 1_000_000_000]);
   });
 
   it("stops a run it cannot follow, as on a timeout, and keeps its cost", async () => {
@@ -838,7 +858,7 @@ describe("Apify's errors (spec 15, Failures)", () => {
     const stopped = await failureOf(readers().searchStore(search("walmart")));
     expect(stopped.kind).toBe("timed out");
     // The cost comes from the run record the abort answers with.
-    expect(stopped.costNanos).toBe(12_300_000);
+    expect(stopped.costNanos).toBe(WALMART_RUN_NANOS);
     const polls = servers.apify.requests.filter(
       (request) => request.method === "GET" && request.path.startsWith("/v2/actor-runs/"),
     );
@@ -916,5 +936,124 @@ describe("What is sent (spec 15, Data and privacy)", () => {
       real.checkAccount("apify", { apifyToken: "apify_api_fake_unused" }),
     );
     expect(error.message).toBe("A test may call only a local fake server.");
+  });
+});
+
+describe("Each Actor run's real cost (spec 15, Cost and limits)", () => {
+  const WALMART: ActorEvents = { start: "apify-actor-start", row: "apify-default-dataset-item" };
+  // A made-up Walmart run record at the run's end: Apify has charged only its 4 start events.
+  const walmartAtEnd = (changes: Record<string, unknown> = {}) => ({
+    options: { memoryMbytes: 4096, maxTotalChargeUsd: 1 },
+    pricingInfo: {
+      pricingModel: "PAY_PER_EVENT",
+      pricingPerEvent: {
+        actorChargeEvents: {
+          "apify-actor-start": { eventPriceUsd: 0.02 },
+          "apify-default-dataset-item": { eventPriceUsd: 0.02 },
+          "fake-extra": { eventPriceUsd: 0.5 },
+        },
+      },
+    },
+    chargedEventCounts: { "apify-actor-start": 4 },
+    usageTotalUsd: 0.08,
+    ...changes,
+  });
+
+  const fortyRows = () =>
+    Array.from({ length: 40 }, (_, at) => ({
+      usItemId: String(990_001_000 + at),
+      title: `Fake Row ${at}`,
+      price: 1,
+      pickup: true,
+    }));
+
+  it("counts a 40-row Walmart run at 4,096 MB as $0.88, though its record at the end says $0.08", async () => {
+    servers.apify.rows["burbn/walmart-product-search"] = fortyRows;
+    const found = await readers().searchStore(search("walmart"));
+    expect(found.costNanos).toBe(880_000_000);
+    // Apify's own record catches up later: a read after the end shows the row events.
+    const later = await fetch(`${servers.addresses.apifyBaseUrl}/v2/actor-runs/fakeRun1`, {
+      headers: { authorization: `Bearer ${keys.apifyToken}` },
+    });
+    const { data } = (await later.json()) as { data: Record<string, unknown> };
+    expect(data.usageTotalUsd).toBe(0.88);
+    // The record the run ended with counts the same.
+    expect(runCostNanos(walmartAtEnd(), WALMART, 40)).toBe(880_000_000);
+  });
+
+  it("counts the weekly ads' `deal-result` events and target-search's request", async () => {
+    const ads = await readers().readWeeklyAds({
+      zipCode: ZIP,
+      storeIds: ["aldi"],
+      words: ["eggs"],
+      keys,
+    });
+    // One `actor-start` at $0.0005 and 4 Deals at $0.002, though only the start was charged.
+    expect(ads.costNanos).toBe(8_500_000);
+    const found = await readers().searchStore(search("target", { homeStoreId: "9101" }));
+    expect(found.costNanos).toBe(250_000);
+  });
+
+  it("counts a run with no price list, or none for the reader's events, at its $1.00 cap", () => {
+    expect(runCostNanos(walmartAtEnd({ pricingInfo: undefined }), WALMART, 40)).toBe(1_000_000_000);
+    expect(runCostNanos(walmartAtEnd(), null, 40)).toBe(1_000_000_000);
+    expect(runCostNanos(walmartAtEnd(), { start: "fake-start", row: null }, 40)).toBe(
+      1_000_000_000,
+    );
+    expect(runCostNanos(walmartAtEnd(), { ...WALMART, row: "fake-row" }, 40)).toBe(1_000_000_000);
+    expect(runCostNanos(walmartAtEnd(), { ...WALMART, perRun: "fake-request" }, 40)).toBe(
+      1_000_000_000,
+    );
+    // Rows not known, or memory not known for a per-GB start.
+    expect(runCostNanos(walmartAtEnd(), WALMART, null)).toBe(1_000_000_000);
+    expect(runCostNanos(walmartAtEnd({ options: {} }), WALMART, 40)).toBe(1_000_000_000);
+  });
+
+  it("counts each part of the rule: start events per GB, rows, charged events, usage, and the cap", () => {
+    // Start events: at least one for each started GB, though fewer were charged.
+    const oneStart = walmartAtEnd({ chargedEventCounts: { "apify-actor-start": 1 } });
+    expect(runCostNanos(oneStart, WALMART, 0)).toBe(80_000_000);
+    expect(runCostNanos({ ...oneStart, options: { memoryMbytes: 4097 } }, WALMART, 0)).toBe(
+      100_000_000,
+    );
+    // An Actor's own start event counts once.
+    expect(runCostNanos(walmartAtEnd(), { start: "fake-extra", row: null }, 0)).toBe(580_000_000);
+    // Rows: the dataset's rows, when more than the charged row events.
+    expect(runCostNanos(walmartAtEnd(), WALMART, 10)).toBe(280_000_000);
+    const charged = walmartAtEnd({
+      chargedEventCounts: { "apify-actor-start": 4, "apify-default-dataset-item": 20 },
+    });
+    expect(runCostNanos(charged, WALMART, 10)).toBe(480_000_000);
+    // Every other charged event counts too.
+    const extra = walmartAtEnd({
+      chargedEventCounts: { "apify-actor-start": 4, "fake-extra": 1 },
+    });
+    expect(runCostNanos(extra, WALMART, 10)).toBe(780_000_000);
+    // `usageTotalUsd`, when it is more than the count.
+    expect(runCostNanos(walmartAtEnd({ usageTotalUsd: 0.5 }), WALMART, 10)).toBe(500_000_000);
+    // Never more than the run's $1.00 cap.
+    expect(runCostNanos(walmartAtEnd(), WALMART, 400)).toBe(1_000_000_000);
+  });
+
+  it("counts a failed or stopped run's rows from its dataset record (K5)", async () => {
+    servers.apify.rows["burbn/walmart-product-search"] = fortyRows;
+    servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
+    const failed = await failureOf(readers().searchStore(search("walmart")));
+    expect([failed.kind, failed.costNanos]).toEqual(["store failed", 880_000_000]);
+    servers.apify.runStatus.set("burbn/walmart-product-search", "RUNNING");
+    const stopped = await failureOf(readers().searchStore(search("walmart")));
+    expect([stopped.kind, stopped.costNanos]).toEqual(["timed out", 880_000_000]);
+    expect(servers.apify.to("/v2/datasets/fakeData2")).not.toHaveLength(0);
+  });
+
+  it("logs no run record, input or price list", async () => {
+    servers.apify.rows["burbn/walmart-product-search"] = fortyRows;
+    servers.apify.runStatus.set("burbn/walmart-product-search", "FAILED");
+    await failureOf(readers().searchStore(search("walmart")));
+    const logged = lines.join("\n");
+    for (const field of ["pricingInfo", "chargedEventCounts", "usageTotalUsd", "memoryMbytes"]) {
+      expect(logged).not.toContain(field);
+    }
+    expect(logged).not.toContain("peanut butter");
   });
 });

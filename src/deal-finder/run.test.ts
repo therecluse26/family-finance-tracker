@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AiGates, aiCost, aiSettings, householdAi } from "../ai/index.ts";
 import { newAiKey, type StubMessage, StubModels } from "../ai/testing.ts";
 import {
+  addPriceSourceCost,
   addShoppingListItem,
   type Database,
   readDealFinderSettings,
@@ -272,13 +273,13 @@ describe("plan runs", () => {
       const asked = await runs.start(null);
       expect(asked).toEqual({
         outcome: "confirm",
-        cost: { fullSearch: true, costNanos: 160_000_000, monthCostNanos: 0, capCents: 500 },
+        cost: { fullSearch: true, costNanos: 1_760_000_000, monthCostNanos: 0, capCents: 500 },
       });
-      expect(await runs.start(null, 159_999_999)).toMatchObject({ outcome: "confirm" });
+      expect(await runs.start(null, 1_759_999_999)).toMatchObject({ outcome: "confirm" });
       expect(started).toEqual([]);
       expect(await sql("SELECT * FROM shopping_plans")).toEqual([]);
 
-      expect(await runs.start(null, 160_000_000)).toMatchObject({ outcome: "started" });
+      expect(await runs.start(null, 1_760_000_000)).toMatchObject({ outcome: "started" });
       expect(started).toHaveLength(1);
       expect(fake.calls).toEqual([]);
     });
@@ -453,12 +454,11 @@ describe("plan runs", () => {
       expect(callsOf()).toEqual(["searchStoreMany walmart"]);
     });
 
-    it("never reads past the cost cap when two Stores read at once (K18)", async () => {
+    it("never starts two Actor runs past the cost cap when two Stores read at once (K18)", async () => {
       await addItem("peanut butter");
       await turnOn("costco", "amazon");
-      // Costco's 10 Products cost about $0.05 and Amazon's 5 about $0.0125: each fits under a
-      // $0.06 cap, and both do not.
-      await priceSourceSettings({ database, secrets }).setCostCap(6);
+      // $3.50 spent of the $5.00 cap: one run's $1.00 worst case fits, and two do not.
+      await addPriceSourceCost(database, "2026-11", 3_500_000_000);
       let open!: () => void;
       fake.hold = new Promise((resolve) => {
         open = resolve;
@@ -477,6 +477,27 @@ describe("plan runs", () => {
       expect(states).toContainEqual(["read", null]);
       expect(states).toContainEqual(["skipped", COST_CAP_REACHED]);
       expect(fake.calls).toHaveLength(1);
+    });
+
+    it("starts no Actor run once the month's cost passes $4.00 of a $5.00 cap", async () => {
+      await addItem("peanut butter");
+      await turnOn("kroger", "walmart");
+      await addPriceSourceCost(database, "2026-11", 4_500_000_000);
+
+      const view = await runPlan();
+
+      // The Kroger API is free, and reads.
+      expect(storesOf(view)).toEqual({
+        kroger: ["read", null],
+        walmart: ["skipped", COST_CAP_REACHED],
+      });
+      expect(fake.calls.filter((call) => call.target === "walmart")).toEqual([]);
+      expect(await sql("SELECT * FROM list_item_searches WHERE store_id = 'walmart'")).toEqual([]);
+
+      // At $4.00 exactly, one run's $1.00 worst case still fits.
+      await sql("UPDATE price_source_costs SET cost_nanos = 4000000000");
+      clock = new Date(START.getTime() + HOUR);
+      expect(storesOf(await runPlan()).walmart).toEqual(["read", null]);
     });
 
     it("skips every Store of a source that refused its key, and marks the key refused", async () => {
@@ -746,20 +767,21 @@ describe("plan runs", () => {
     it("counts each try of a Store that always fails, and the cost cap then stops the next run", async () => {
       await addItem("ground beef");
       await turnOn("walmart");
-      await priceSourceSettings({ database, secrets }).setCostCap(10);
+      // $3.95 spent of the $5.00 cap: each try's $1.00 worst case fits until the tries cost $0.06.
+      await addPriceSourceCost(database, "2026-11", 3_950_000_000);
       fake.failingStores.add("walmart");
       fake.failedRunCostNanos = 30_000_000;
 
       const first = await runPlan();
       expect(storesOf(first)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
-      expect(await monthCost()).toBe(60_000_000);
+      expect(await monthCost()).toBe(4_010_000_000);
 
       fake.calls.length = 0;
       clock = new Date(START.getTime() + HOUR);
       const next = await runPlan();
       expect(storesOf(next)).toEqual({ walmart: ["skipped", COST_CAP_REACHED] });
       expect(fake.calls).toEqual([]);
-      expect(await monthCost()).toBe(60_000_000);
+      expect(await monthCost()).toBe(4_010_000_000);
     });
 
     it("keeps the Store failures of a run that fails after its reads", async () => {
@@ -840,7 +862,7 @@ describe("plan runs", () => {
       await turnOn("walmart", "target");
       expect(await runs.start(null)).toMatchObject({
         outcome: "confirm",
-        cost: { fullSearch: true, costNanos: 80_250_000 },
+        cost: { fullSearch: true, costNanos: 880_250_000 },
       });
       await runPlan();
       await answerOnePerStore();
@@ -851,7 +873,7 @@ describe("plan runs", () => {
       clock = new Date(START.getTime() + 7 * DAY);
       expect(await runs.start(null)).toMatchObject({
         outcome: "confirm",
-        cost: { fullSearch: true, costNanos: 80_500_000 },
+        cost: { fullSearch: true, costNanos: 880_500_000 },
       });
       await runPlan();
       expect(sortedCalls()).toEqual(["searchStoreMany target", "searchStoreMany walmart"]);
@@ -1160,6 +1182,8 @@ describe("plan runs", () => {
   });
 
   describe("with the real readers on the local fake servers", () => {
+    // One fake Walmart run of 5 rows: 4 start events for its 4 GB and 5 rows, at $0.02 each.
+    const WALMART_RUN_NANOS = 180_000_000;
     let servers: FakePriceSourceServers;
     const monthCost = async () =>
       Number((await sql("SELECT sum(cost_nanos) AS n FROM price_source_costs"))[0]?.n ?? 0);
@@ -1277,6 +1301,53 @@ describe("plan runs", () => {
       ]);
     });
 
+    it("stops a Store's runs at the cost cap, and keeps the rows read before (K5)", async () => {
+      // 13 List items, each its own Walmart run of 40 rows, $0.88 a run.
+      for (let at = 1; at < 13; at += 1) await addItem(`fake item ${at}`);
+      servers.apify.rows[WALMART_ACTOR] = (input) =>
+        Array.from({ length: 40 }, (_, at) => ({
+          usItemId: String(990_100_000 + at),
+          title: `${String(input.query)} ${at}`,
+          price: 1.5,
+          pickup: true,
+        }));
+
+      const view = await runPlan();
+
+      // 5 runs fit under the $5.00 cap: after them the month's cost is $4.40, past $4.00.
+      expect(storesOf(view)).toEqual({ walmart: ["skipped", COST_CAP_REACHED] });
+      expect(walmartRuns()).toHaveLength(5);
+      expect(await monthCost()).toBe(5 * 880_000_000);
+      expect(await monthCost()).toBeLessThanOrEqual(5_000_000_000 + 1_000_000_000);
+      expect(
+        await sql("SELECT count(*) AS n FROM list_item_searches WHERE store_id = 'walmart'"),
+      ).toEqual([{ n: 5 }]);
+      expect(await sql("SELECT count(DISTINCT list_item_id) AS n FROM product_matches")).toEqual([
+        { n: 5 },
+      ]);
+    });
+
+    it("starts Find Stores near us only when its 3 runs fit under the cost cap", async () => {
+      const settings = priceSourceSettings({ database, secrets, adapter: readers });
+      await addPriceSourceCost(database, "2026-11", 2_500_000_000);
+      expect(await settings.findStores(25)).toEqual({ outcome: "cost cap" });
+      expect(servers.apify.requests).toEqual([]);
+      await sql("UPDATE price_source_costs SET cost_nanos = 2000000000");
+      expect(await settings.findStores(25)).toMatchObject({ outcome: "found" });
+      expect(servers.apify.requests).not.toEqual([]);
+    });
+
+    it("leaves Walmart unticked after a Household's first Find Stores near us, and keeps a tick", async () => {
+      const onOf = async (storeId: string) =>
+        (await sql('SELECT "on" FROM deal_finder_stores WHERE id = ?', [storeId]))[0]?.on;
+      await sql("DELETE FROM deal_finder_stores");
+      await findWithReaders();
+      expect(await onOf("walmart")).toBe(0);
+      await turnOn("walmart");
+      await findWithReaders();
+      expect(await onOf("walmart")).toBe(1);
+    });
+
     it("counts what a timed-out search charged, tries once more, then ends the Store failed", async () => {
       servers.apify.runStatus.set(WALMART_ACTOR, "TIMED-OUT");
 
@@ -1284,7 +1355,7 @@ describe("plan runs", () => {
 
       expect(storesOf(view)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
       expect(walmartRuns()).toHaveLength(2);
-      expect(await monthCost()).toBe(2 * 12_300_000);
+      expect(await monthCost()).toBe(2 * WALMART_RUN_NANOS);
     });
 
     it("counts what a failed search 28 days on charged, tries once more, then ends the Store failed", async () => {
@@ -1300,7 +1371,7 @@ describe("plan runs", () => {
 
       expect(storesOf(view)).toEqual({ walmart: ["failed", COULD_NOT_READ] });
       expect(walmartRuns()).toHaveLength(searches + 2);
-      expect(await monthCost()).toBe(2 * 12_300_000);
+      expect(await monthCost()).toBe(2 * WALMART_RUN_NANOS);
     });
 
     it("sends the ZIP code to the readers only while the switch is on", async () => {

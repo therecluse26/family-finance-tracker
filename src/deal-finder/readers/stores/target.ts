@@ -1,4 +1,5 @@
 import type { StoreLocation } from "../../adapter.ts";
+import type { ActorEvents } from "../apify.ts";
 import { checkedProduct, cutText, readKeyOf } from "../checks.ts";
 import { isRecord, recordsIn } from "../http.ts";
 import type { ApifyStore, Place } from "./store.ts";
@@ -10,6 +11,15 @@ import type { ApifyStore, Place } from "./store.ts";
 export const TARGET_ACTOR = "litescrape/target-search";
 export const TARGET_PAGE_ACTOR = "apify/e-commerce-scraping-tool";
 export const TARGET_STORES_ACTOR = "axlymxp/target-store-scraper";
+// target-search charges only a `request` event, $0.00025, one for each search, with no start or
+// row event (owner's run, 2026-11-12).
+export const TARGET_EVENTS: ActorEvents = { start: null, row: null, perRun: "request" };
+// The page Actor's events were never measured, so each of its runs counts at its $1.00 cap.
+export const TARGET_PAGE_EVENTS: ActorEvents | null = null;
+export const TARGET_STORES_EVENTS: ActorEvents = {
+  start: "apify-actor-start",
+  row: "apify-default-dataset-item",
+};
 // `maxResults` caps the whole run, not each search, so it is 25 per List item.
 const RESULTS_PER_SEARCH = 25;
 const TCIN = /^\d{1,12}$/;

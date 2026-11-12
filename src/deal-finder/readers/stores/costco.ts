@@ -1,4 +1,5 @@
 import type { StoreLocation } from "../../adapter.ts";
+import type { ActorEvents } from "../apify.ts";
 import { checkedProduct, cutText, readKeyOf } from "../checks.ts";
 import { recordsIn } from "../http.ts";
 import type { ApifyStore, Place } from "./store.ts";
@@ -11,6 +12,12 @@ import type { ApifyStore, Place } from "./store.ts";
 
 export const COSTCO_ACTOR = "vant47/costco-scraper";
 export const COSTCO_WAREHOUSES_ACTOR = "dromb/costco-us";
+// The scraper charges a `product` event for each Product row (owner's run, 2026-11-12).
+export const COSTCO_EVENTS: ActorEvents = { start: "apify-actor-start", row: "product" };
+export const COSTCO_WAREHOUSES_EVENTS: ActorEvents = {
+  start: "apify-actor-start",
+  row: "apify-default-dataset-item",
+};
 const ITEM_NUMBER = /^\d{1,20}$/;
 const WAREHOUSE_ID = /^\d{1,6}$/;
 

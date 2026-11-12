@@ -1,3 +1,4 @@
+import type { ActorEvents } from "../apify.ts";
 import { checkedProduct, storeLink } from "../checks.ts";
 import type { ApifyStore } from "./store.ts";
 
@@ -7,6 +8,10 @@ import type { ApifyStore } from "./store.ts";
 // and a deal read sets `onSaleOnly`. Its re-read key is the Product link, which `startUrls` takes.
 
 export const ALDI_ACTOR = "blackfalcondata/aldi-us-scraper";
+export const ALDI_EVENTS: ActorEvents = {
+  start: "apify-actor-start",
+  row: "apify-default-dataset-item",
+};
 
 function aldiProduct(row: Record<string, unknown>) {
   const link = storeLink("aldi", row.url);

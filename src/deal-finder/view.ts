@@ -24,6 +24,11 @@ export const DEFAULT_TRIP_SAVING_CENTS = 1000;
 export const MAX_PRICE_SOURCE_COST_CAP_CENTS = 1_000_000;
 export const MAX_DELIVERY_CENTS = 1_000_000;
 
+// What one Walmart search can cost, in billionths of a dollar (owner's run of 2026-11-12, counted
+// from the run's charged events): $0.08 a run, 4 start events at $0.02 for its 4 GB, plus $0.02 a
+// row for about 40 rows. The Price sources page shows it on Walmart's line.
+export const WALMART_SEARCH_NANOS = 880_000_000;
+
 // The Price sources that take a key: the Scraping service (Apify) and the Kroger API.
 export const KEYED_PRICE_SOURCES = ["apify", "kroger"] as const;
 export type KeyedPriceSource = (typeof KEYED_PRICE_SOURCES)[number];
@@ -125,6 +130,7 @@ export type FindStoresOutcome =
         | "busy"
         | "refused key"
         | "usage limit"
+        | "cost cap"
         | "failed";
     };
 

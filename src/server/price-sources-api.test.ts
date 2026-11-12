@@ -18,6 +18,7 @@ import {
   priceSourceReaders,
   priceSourceSettings,
 } from "../deal-finder/index.ts";
+import { calendarDateIn } from "../format.ts";
 import { createLogger } from "../log.ts";
 import { createApp } from "./app.ts";
 import { loadSecurity } from "./security-mode.ts";
@@ -568,6 +569,24 @@ describe("the Price sources routes", () => {
         expect(await dealFinderTables()).toEqual(before);
         // No key reaches a log line or an answer (K8).
         expect(lines.join("")).not.toMatch(/(apify_api|client|secret)_[0-9a-f]{32}/);
+      });
+
+      it("starts no lookup when its 3 Actor runs do not fit under the cost cap, changing no Store", async () => {
+        await findStores(25);
+        // $2.01 spent: its 3 runs' $3.00 worst case passes the $5.00 cap.
+        await sql(
+          "INSERT INTO price_source_costs (month, cost_nanos) VALUES (?, ?) ON CONFLICT (month) DO UPDATE SET cost_nanos = excluded.cost_nanos",
+          [calendarDateIn(new Date(), "America/New_York").slice(0, 7), 2_010_000_000],
+        );
+        const before = await dealFinderTables();
+        fake.calls.length = 0;
+        const res = await browser.post("/api/price-sources/find-stores", { distanceMiles: 25 });
+        expect(res.status).toBe(409);
+        expect(await res.json()).toEqual({
+          error: "The Price source cost cap is reached. Raise the cap, or wait for the 1st.",
+        });
+        expect(fake.calls).toEqual([]);
+        expect(await dealFinderTables()).toEqual(before);
       });
     });
 

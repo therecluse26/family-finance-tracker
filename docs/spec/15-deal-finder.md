@@ -169,12 +169,27 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
 ## Cost and limits
 
 - **Price source cost cap.** One monthly amount for the Scraping service, like the AI cost cap. The default is $5.00, Apify's Free plan credit. When the month's cost reaches it, plan runs use stored prices only, until the 1st.
-- The app takes each Actor run's cost from Apify's own run record. The Price sources page shows the month's total.
 - Every Actor run sets `maxTotalChargeUsd=1.00`, the lowest Apify accepts.
+- **The cap holds before each Actor run** (owner's run of 2026-11-12: one plan run of 13 List items cost about $8 to $9 while the page estimated about $2.40). Before an Actor run starts, it takes its place under the cap: the month's cost, plus $1.00 for each Actor run in flight, plus its own $1.00, must be at or below the cap. So with a $5.00 cap, Actor runs stop starting once the month's cost passes $4.00. Runs fired at once never pass together. A Store whose next run does not fit ends with "cost cap reached", and keeps what it read before. When a run ends, its cost counts and its place is given back. Find Stores near us holds $3.00 first, for its 3 lookups, and at the cap it answers "The Price source cost cap is reached. Raise the cap, or wait for the 1st." The expected cost a Member confirms does not hold the cap.
+- **Each run's real cost** (owner's run of 2026-11-12). Every Actor the app runs charges per event. At a run's end, Apify's run record shows only the start events in `usageTotalUsd`: the row events are charged later. So the app counts each run's cost from the Actor's price list in the run record (`pricingInfo`): its start events, at least one for each started GB of the run's memory for `apify-actor-start`; its row events, at least one for each row in the run's dataset; and every other event charged. The cost is the largest of that count, `usageTotalUsd`, and the charged events, up to the run's $1.00. A run record with no readable price list counts at $1.00. A failed or stopped run counts too, with its dataset's row count. Each reader names its Actor's events:
+
+  | Actor | Start event | Row event | Measured, 2026-11-12 |
+  |---|---|---|---|
+  | `burbn/walmart-product-search` | `apify-actor-start`, 4 a run at 4 GB | `apify-default-dataset-item` | 10 runs, 349 rows: $7.78 |
+  | `gratifying_graph/us-grocery-deals` | `actor-start` | `deal-result` | 8 runs, 430 Deals: $0.86 |
+  | `blackfalcondata/aldi-us-scraper` | `apify-actor-start` | `apify-default-dataset-item` | 13 runs, 130 rows: $0.39 |
+  | `vant47/costco-scraper` | `apify-actor-start` | `product` | 14 runs, 63 Products: $0.32 |
+  | `delicious_zebu/amazon-product-data-scraper` | `apify-actor-start` | `apify-default-dataset-item` | 17 runs, 100 rows: $0.25 |
+  | `axlymxp/target-store-scraper` | `apify-actor-start` | `apify-default-dataset-item` | 5 runs, 17 rows: $0.06 |
+  | `dromb/costco-us` | `apify-actor-start` | `apify-default-dataset-item` | 8 runs, 40 rows: $0.05 |
+  | `litescrape/target-search` | none | none: one `request` a search | 13 runs: $0.0033 |
+
+  `apify/e-commerce-scraping-tool`, Target's Product page, was not measured, so each of its runs counts at $1.00.
+- The Price sources page shows the month's total.
 - **One Actor run per Store per plan run.** It carries all the search words, for each Actor that takes a list: Target `requests`, Costco `searchTerms`, Amazon `Keywords`, and the weekly ads' `queries`. Aldi and Walmart take one query, so they get one run per List item. Target's `maxResults` caps the whole run, so it is set to 25 per List item.
 - At most 2 Actor runs go at once.
 - Kroger allows 10,000 Products calls a day. The app stops at 5,000.
-- **Measured prices** (spike round 12): every charge matched the Actor's published price. Walmart about $0.08 a search, a run start plus 40 rows (owner's run, 2026-11-11). Target $0.00025 a search. Aldi $0.01 a run plus $0.002 a Product. Costco $0.005 a Product. Amazon $0.0025 a Product. Weekly ads $0.002 a Deal.
+- **Measured prices** (spike round 12, and the owner's run of 2026-11-12, counted from charged events): every charge matched the Actor's published price. Walmart $0.08 a run (4 start events at $0.02, one for each GB of its 4 GB) plus $0.02 a row: about $0.88 a search of about 40 rows. The owner's run of 2026-11-11 saw only $0.08, the start events, at the run's end. Target $0.00025 a search. Aldi $0.01 a run plus $0.002 a Product. Costco $0.005 a Product. Amazon $0.0025 a Product. Weekly ads $0.002 a Deal.
 - Costco re-reads cost the same $0.005 a Product as a search. No cheaper Costco Actor gives warehouse prices (spike round 13).
 
 ### Search once, then re-read (owner decision, 2026-11-11)
@@ -184,23 +199,24 @@ One Household setting: **An extra trip must save at least $X** (owner decision, 
   - 5 at Amazon and the weekly ads. In spike round 12, all of their top 5 Products were the right kind (15 of 15 each).
   - 10 at Costco and Aldi, with no second search. Costco's search matches words in Product names, so its order is poor: its top 5 held 2 of 5 peanut butters and 0 of 5 eggs. 10 Products in one search is simpler than 5 with a retry (owner decision, 2026-11-11).
 - **Re-read.** Later plan runs read only each List item's saved `match`, by item number or Product link, once its price is 24 hours old. Target searches again, because a search costs the same as a re-read. The weekly ads search again at 5 Deals per List item, because Deals change each week.
-- **Walmart reads each List item at most once in 28 days** (owner decision, 2026-11-12). Its Actor cannot read one Product by item number, and a search costs about $0.08, so Walmart does not re-read. Between full searches it reads nothing, and the plan uses the saved Walmart price. Without this, weekly plans for 30 List items cost about $14.50 a month, $9.60 of it at Walmart.
+- **Walmart reads each List item at most once in 28 days** (owner decision, 2026-11-12). Its Actor cannot read one Product by item number, and a search costs about $0.88, so Walmart does not re-read. Between full searches it reads nothing, and the plan uses the saved Walmart price. Without this, Walmart alone would cost about $105.60 a month for weekly plans of 30 List items.
+- **Walmart is off by default, and shows its cost** (owner decision, 2026-11-12). Find Stores near us never ticks a Store, so Walmart stays off until a Member ticks it, and a saved tick stays. Walmart's line on the Price sources page shows "About $0.88 a search". A cheaper Walmart Actor is being sought.
 - **Full search again** for a List item when its last full search is 30 days old or more (28 at Walmart), and when its saved `match` fails: the Store no longer has it, or it has no price.
 - **Cost shown first.** Before a plan run that holds a full search, the page shows its expected cost. The run starts only when a Member confirms it. A run with only re-reads starts at once. The cost counts only the Walmart searches the run makes.
-- **What it costs** for 30 List items with every Store on, from the prices measured in spike round 12, and Walmart's from the owner's run of 2026-11-11.
+- **What it costs** for 30 List items with every Store on, from the prices measured in spike round 12, and Walmart's from the owner's run of 2026-11-12.
 
   | Store | Full search | Weekly run between full searches | Re-read tested |
   |---|---|---|---|
   | Kroger, 15 Products | $0.00 | $0.00 | not needed (API) |
-  | Walmart, 15 Products | $2.40 | $0.00 | not needed (reads nothing; full search every 28 days) |
+  | Walmart, 15 Products | $26.40 | $0.00 | not needed (reads nothing; full search every 28 days) |
   | Target, 15 Products | $0.01 | $0.01 | not needed (searches again) |
   | Aldi, 10 Products | $0.90 | $0.07 | no; its docs say `startUrls` takes Product links |
   | Costco, 10 Products | $1.50 | $0.15 | yes, spike round 13: `productIds`, same prices |
   | Amazon, 5 Products | $0.38 | $0.08 | yes, spike round 14: the ASIN as the search word, 1 Product, same prices. Product links return nothing |
   | Weekly ads, 5 Deals | $0.30 | $0.30 | not needed (searches again) |
-  | **Total** | **about $5.49** | **about $0.61** | |
+  | **Total** | **about $29.49** | **about $0.61** | |
 
-- **For one List item:** a full search costs about $0.18 and a weekly run between full searches about $0.02. A month of weekly plans (one full search, 3 weekly runs) costs about $7.32 for 30 List items, about $0.24 for each. So $5.00 covers about 20 List items with every Store on. Each Store a Member leaves off lowers the cost.
+- **For one List item:** a full search costs about $0.98 and a weekly run between full searches about $0.02. A month of weekly plans (one full search, 3 weekly runs) costs about $31.32 for 30 List items, about $1.04 for each. Walmart is $0.88 of each full search. Without Walmart, a month costs about $4.92 for 30 List items ($3.09, then 3 × $0.61), so $5.00 covers about 30 List items. Each Store a Member leaves off lowers the cost.
 
 ## Failures
 
@@ -274,7 +290,7 @@ These need an owner decision or a short spike before tickets:
    - c. **Costco off by default.** Replaced by [Find Stores near us](#find-stores-near-us-owner-design-2026-11-11): every Store is off until a Member ticks it. At 15 Products per search, Costco is $2.25 of $5.55; with option b, $0.15 of about $0.65.
    - d. **Show the expected cost before a run, and let the Member confirm it.** It saves nothing by itself. It stops a surprise charge.
 
-   With a, b and d, weekly plans cost about $4.05 in the first month ($2.10, then 3 × $0.65) and about $2.60 in each later month, plus searches for new List items. The $5.00 credit also covers any other Apify use that month. Since Walmart moved to `burbn/walmart-product-search` at about $0.08 a search, with 15 Products per search and Walmart searching each List item once in 28 days (owner decision, 2026-11-12), 30 List items cost about $5.49 for the first run and about $0.61 for each weekly run between full searches: about $7.32 a month ($5.49, then 3 × $0.61).
+   With a, b and d, weekly plans cost about $4.05 in the first month ($2.10, then 3 × $0.65) and about $2.60 in each later month, plus searches for new List items. The $5.00 credit also covers any other Apify use that month. Since Walmart moved to `burbn/walmart-product-search` at about $0.88 a search (owner's run, 2026-11-12, counted from charged events), with 15 Products per search and Walmart searching each List item once in 28 days (owner decision, 2026-11-12), 30 List items cost about $29.49 for the first run and about $0.61 for each weekly run between full searches: about $31.32 a month ($29.49, then 3 × $0.61). Without Walmart, about $4.92 a month.
 3. **Store location and filter tests.** Answered in spike round 14: a Costco warehouse can be picked from the 5 nearest; Walmart keeps the store its Actor picks; Amazon re-reads by ASIN; Kroger's brand filter is used, and the other two filters are not.
 4. **Chat edits the list at once, with Undo.** Answered (owner decision, 2026-11-11): keep it. This differs from Proposals, which change nothing until a Member accepts. A Shopping list holds no money, so the edit applies at once.
 5. **Defaults.** Answered (owner decision, 2026-11-11): the trip setting starts at $10.00, and a Member can change it. Products kept per search are 15 at Kroger, Walmart and Target, 10 at Costco and Aldi, and 5 at Amazon and the weekly ads. A full search runs again after 30 days, and after 28 at Walmart (owner decision, 2026-11-12). Price history is kept for 400 days.
