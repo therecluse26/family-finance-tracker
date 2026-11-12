@@ -234,6 +234,9 @@ Small items left open after the T107 notes triage, for after the first release (
 - N328 (S, tests) The `added` counter at `run.ts:670-671` has no test (X48 review). In: src/deal-finder/run.test.ts.
 - N329 (S, polish) A Walmart or Target match never fails in a real run. If its Product drops out of the search results, the saved price grows older with no limit. Mark the match failed, or show the price's age on the plan (X55 review). In: src/deal-finder/run.ts.
 - N330 (S, polish) Plan runs no longer use the Walmart reader's re-read by saved name (`readInput` in `readers/stores/walmart.ts`). Remove it, or use it for a failed match (X55 review). In: src/deal-finder/readers/stores/walmart.ts.
+- N331 (S, bug) In `withRetry`, `place.end` sits inside the `try`. If the cost write fails after a run succeeds, the Actor run is retried and the first run's cost is never counted. Count the cost before any retry (X57 review). In: src/deal-finder/run.ts.
+- N332 (S, polish) Find Stores near us holds $3.00 under the cost cap, so with a $5.00 cap it is refused once the month passes $2.00. Say so in spec 15 and on the page, or hold less (X57 review). In: src/deal-finder/cost-cap.ts, docs/spec/15-deal-finder.md.
+- N333 (S, polish) An error that is not a `PriceSourceError`, thrown after an Actor run starts, counts no cost; count the held worst case. The X57 409 test works out the month in America/New_York and can flake at a month boundary (X57 review). In: src/deal-finder/run.ts, src/server/price-sources-api.test.ts.
 
 ## Backups, export, jobs and start-up
 
