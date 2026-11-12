@@ -17,6 +17,20 @@ export {
   SEARCH_WORDS_TASK,
   showsDietaryDisclaimer,
 } from "./match.ts";
+export {
+  buildShoppingPlan,
+  deliveryFeeOf,
+  findDeals,
+  type PlanDeal,
+  type PlanDeals,
+  type PlanInput,
+  type PlanLine,
+  type PlanStore,
+  packagesToBuy,
+  planTotals,
+  type ShoppingPlanResult,
+  type StoreDeals,
+} from "./plan.ts";
 export type { ProductDataAdapter, ProductFacts } from "./product-data.ts";
 export { type PriceSourceReaderOptions, priceSourceReaders } from "./readers/index.ts";
 export {
@@ -40,10 +54,10 @@ export {
   shoppingListForChat,
 } from "./shopping-list.ts";
 export * from "./shopping-list-view.ts";
+// The plan math above has its own packagesToBuy; this file's is for the size readings of matching.
 export {
   type ListItemUnit,
   type PackageSize,
-  packagesToBuy,
   productSize,
   readSize,
   unitPrice,

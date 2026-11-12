@@ -58,6 +58,7 @@ import { reviewRoutes } from "./review.ts";
 import { safetyHeaders } from "./safety-headers.ts";
 import { type Security, securityCheck } from "./security-mode.ts";
 import { readSetupState, setupRoutes } from "./setup.ts";
+import { shoppingPlanRoutes } from "./shopping-plan.ts";
 import { topMerchantRoutes } from "./top-merchants.ts";
 
 // A route threw a value that is not an Error, such as a string.
@@ -281,6 +282,7 @@ export function createApp(
   const shopping = shoppingList({ database });
   const lineItemCategories = lineItemCategoryRoutes(database);
   const amazonLinks = amazonLinkRoutes(database);
+  const shoppingPlan = shoppingPlanRoutes(database);
   const members = memberRoutes(database, auth, security.appUrl);
   const devices = deviceRoutes(auth);
   return (
@@ -348,6 +350,7 @@ export function createApp(
         c.set("shoppingList", shopping);
         c.set("lineItemCategories", lineItemCategories);
         c.set("amazonLinks", amazonLinks);
+        c.set("shoppingPlan", shoppingPlan);
         c.set("members", members);
         c.set("devices", devices);
         c.set("aiWork", services.aiWork);

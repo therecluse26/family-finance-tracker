@@ -2600,3 +2600,38 @@ export const shoppingListChanges = sqliteTable(
     index("shopping_list_changes_undone_by").on(table.undoneBy),
   ],
 );
+
+// A Deal a Member used in a Shopping plan with "Use this Deal" (spec 15, What the plan shows). It
+// moves the plan's line at `place` to the Deal's Store until the Deal ends; then the line is back
+// at its regular-price Store. It keeps the Deal as it was shown, so it reads the same later.
+export const shoppingPlanDeals = sqliteTable(
+  "shopping_plan_deals",
+  {
+    planId: text("plan_id")
+      .notNull()
+      .references(() => shoppingPlans.id, { onDelete: "cascade" }),
+    place: integer("place").notNull(),
+    storeId: text("store_id")
+      .notNull()
+      .references(() => dealFinderStores.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => dealFinderProducts.id, { onDelete: "cascade" }),
+    productName: text("product_name").notNull(),
+    packages: integer("packages").notNull(),
+    price: cents("price").notNull(),
+    total: cents("total").notNull(),
+    // Empty when the source gave no end date: the Deal holds until the next plan.
+    endsOn: calendarDate("ends_on"),
+    priceReadAt: moment("price_read_at").notNull(),
+    usedAt: moment("used_at").notNull(),
+    usedBy: text("used_by").references(() => members.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.planId, table.place] }),
+    index("shopping_plan_deals_store").on(table.storeId),
+    index("shopping_plan_deals_product").on(table.productId),
+    index("shopping_plan_deals_used_by").on(table.usedBy),
+    check("shopping_plan_deals_amounts", sql`${table.packages} >= 1 AND ${table.price} >= 1`),
+  ],
+);

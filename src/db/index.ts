@@ -784,6 +784,19 @@ export {
   undoShoppingListChange,
 } from "./shopping-list.ts";
 export {
+  deleteShoppingPlanDeal,
+  type LastShoppingPlan,
+  type NewShoppingPlanLine,
+  readLastShoppingPlan,
+  readShoppingPlanRows,
+  type ShoppingPlanRows,
+  type StoredShoppingPlan,
+  type StoredShoppingPlanDeal,
+  type StoredShoppingPlanLine,
+  storeShoppingPlanDeal,
+  storeShoppingPlanResult,
+} from "./shopping-plan.ts";
+export {
   addSignInTries,
   countSignInTries,
   removeSignInTries,

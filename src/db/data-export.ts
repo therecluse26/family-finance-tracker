@@ -310,6 +310,7 @@ export const EXPORTED_TABLES: readonly ExportedTable[] = [
   exported(schema.shoppingPlanLines, "every column"),
   // Each Shopping list change Chat made, with the List items it touched, for its card and Undo.
   exported(schema.shoppingListChanges, "every column"),
+  exported(schema.shoppingPlanDeals, "every column"),
   // Each Merchant's Web lookup: its Category and the line about the business.
   exported(schema.merchantLookups, "every column"),
   exported(schema.aiCalls, "every column"),

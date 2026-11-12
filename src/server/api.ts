@@ -34,6 +34,7 @@ import type { ProposalAcceptResult } from "./proposals-views.ts";
 import type { RecurringChargeEditView } from "./recurring-views.ts";
 import { type SetupProgressView, type SetupRefusal, SKIPPABLE_SETUP_STEPS } from "./setup-views.ts";
 import { shoppingListApi } from "./shopping-list.ts";
+import { shoppingPlanApi } from "./shopping-plan-api.ts";
 import { TOP_MERCHANT_PERIODS } from "./top-merchants-views.ts";
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1593,6 +1594,8 @@ export const api = new Hono<ServerEnv>()
   .route("/", shoppingListApi)
   // The Shopping list's "Find the best prices" (spec 15, The Shopping plan) and its progress.
   .route("/", planRunApi)
+  // The Shopping plan (spec 15, What the plan shows): the last plan, and "Use this Deal".
+  .route("/", shoppingPlanApi)
   // Settings, Members (spec 09, Members; Invites): every Member and the open invite links.
   .get("/members", async (c) => c.json(await c.var.members.members(c.var.member.id)))
   // "Make an invite link": any Member, with an empty JSON body. The answer holds the link once; the
