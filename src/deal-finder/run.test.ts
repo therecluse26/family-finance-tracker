@@ -8,6 +8,7 @@ import {
   storeDealFinderSettings,
   storeHouseholdFacts,
   storeMatchAnswers,
+  storeStoreRead,
 } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
 import { newTestDatabase, type TestDatabase } from "../db/testing.ts";
@@ -784,6 +785,115 @@ describe("plan runs", () => {
     });
   });
 
+  describe("Walmart, 28 days apart (owner decision, 2026-11-12)", () => {
+    // One saved match for each List item at each Store, as if the AI had answered.
+    const answerOnePerStore = () =>
+      sql(`UPDATE product_matches SET answer = 'match'
+           WHERE (list_item_id, product_id) IN (
+             SELECT list_item_id, min(product_id) FROM product_matches
+             GROUP BY list_item_id, store_id)`);
+    const sortedCalls = () => callsOf().sort();
+
+    it("searches a List item once, reads nothing at Walmart for 28 days, then searches once, while Target and Aldi read after 24 hours (K2)", async () => {
+      // Walmart and Aldi have the beef, and Target and Aldi the eggs.
+      await addItem("ground beef");
+      await addItem("eggs");
+      await turnOn("walmart", "target", "aldi");
+      await runPlan();
+      expect(sortedCalls()).toEqual([
+        "searchStoreMany aldi",
+        "searchStoreMany target",
+        "searchStoreMany walmart",
+      ]);
+      await answerOnePerStore();
+
+      for (const days of [1, 7, 14, 21, 27]) {
+        fake.calls.length = 0;
+        clock = new Date(START.getTime() + days * DAY);
+        const view = await runPlan();
+        expect([days, sortedCalls()]).toEqual([
+          days,
+          ["readProducts aldi", "searchStoreMany target"],
+        ]);
+        expect(storesOf(view).walmart).toEqual(["stored prices", null]);
+      }
+
+      fake.calls.length = 0;
+      clock = new Date(START.getTime() + 28 * DAY);
+      await runPlan();
+      expect(sortedCalls()).toEqual([
+        "readProducts aldi",
+        "searchStoreMany target",
+        "searchStoreMany walmart",
+      ]);
+      expect(
+        await sql("SELECT searched_at FROM list_item_searches WHERE store_id = 'walmart'"),
+      ).toEqual(
+        Array.from({ length: 2 }, () => ({
+          searched_at: new Date(START.getTime() + 28 * DAY).toISOString(),
+        })),
+      );
+    });
+
+    it("counts Walmart in the expected cost only for the List items it searches", async () => {
+      await addItem("eggs");
+      await turnOn("walmart", "target");
+      expect(await runs.start(null)).toMatchObject({
+        outcome: "confirm",
+        cost: { fullSearch: true, costNanos: 80_250_000 },
+      });
+      await runPlan();
+      await answerOnePerStore();
+
+      // A new List item: Walmart searches only it, and Target searches both, as it has the eggs.
+      await addItem("peanut butter");
+      fake.calls.length = 0;
+      clock = new Date(START.getTime() + 7 * DAY);
+      expect(await runs.start(null)).toMatchObject({
+        outcome: "confirm",
+        cost: { fullSearch: true, costNanos: 80_500_000 },
+      });
+      await runPlan();
+      expect(sortedCalls()).toEqual(["searchStoreMany target", "searchStoreMany walmart"]);
+      await answerOnePerStore();
+
+      // Only Target's searches again: no cost to confirm.
+      fake.calls.length = 0;
+      clock = new Date(START.getTime() + 14 * DAY);
+      expect(await runs.start(null)).toMatchObject({ outcome: "started" });
+      await runs.run(started.at(-1) as string);
+      expect(sortedCalls()).toEqual(["searchStoreMany target"]);
+    });
+
+    it("searches a List item at Walmart again on the next run after its match failed", async () => {
+      const beef = await addItem("ground beef");
+      await turnOn("walmart");
+      await runPlan();
+      await answerOnePerStore();
+      const [match] = await sql(
+        "SELECT read_key FROM product_matches WHERE answer = 'match' AND store_id = 'walmart'",
+      );
+      await storeStoreRead(database, {
+        storeId: "walmart",
+        at: new Date(START.getTime() + 3 * DAY),
+        found: [],
+        searched: [],
+        reread: [],
+        failed: [{ listItemId: beef, readKey: String(match?.read_key) }],
+      });
+      fake.calls.length = 0;
+
+      clock = new Date(START.getTime() + 4 * DAY);
+      await runPlan();
+      expect(callsOf()).toEqual(["searchStoreMany walmart"]);
+
+      fake.calls.length = 0;
+      clock = new Date(START.getTime() + 11 * DAY);
+      await runPlan();
+      expect(callsOf()).toEqual([]);
+    });
+  });
+
   describe("a failed match", () => {
     it("forgets a match the Store no longer has, and searches its List item again next run (K2)", async () => {
       const beef = await addItem("ground beef");
@@ -1177,13 +1287,13 @@ describe("plan runs", () => {
       expect(await monthCost()).toBe(2 * 12_300_000);
     });
 
-    it("counts what a failed re-read charged, tries once more, then ends the Store failed", async () => {
+    it("counts what a failed search 28 days on charged, tries once more, then ends the Store failed", async () => {
       expect(storesOf(await runPlan())).toEqual({ walmart: ["read", null] });
       await sql("UPDATE product_matches SET answer = 'match'");
       await sql("DELETE FROM price_source_costs");
       const searches = walmartRuns().length;
-      // Two days on, the prices are old, so the next run re-reads each saved match.
-      clock = new Date(START.getTime() + 2 * DAY);
+      // 28 days on, Walmart searches each List item again.
+      clock = new Date(START.getTime() + 28 * DAY);
       servers.apify.runStatus.set(WALMART_ACTOR, "FAILED");
 
       const view = await runPlan();
