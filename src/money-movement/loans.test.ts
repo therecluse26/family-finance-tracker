@@ -28,8 +28,7 @@ const PAYMENT = 45_218;
 // The demo's payments to Larkspur from checking, by month.
 const larkspurPayment = (month: string) => {
   const record = demoRecords().find(
-    (each) =>
-      each.description.startsWith("LARKSPUR LOAN PMT") && each.postedDate.startsWith(month),
+    (each) => each.description.startsWith("LARKSPUR LOAN PMT") && each.postedDate.startsWith(month),
   );
   if (record === undefined) throw new Error(`The demo has no Larkspur payment in ${month}.`);
   return record;
@@ -110,14 +109,12 @@ describe("connected loans", () => {
       provisionalUntil: null,
       parts: [{ type: "Transfer", amount: 1_500_000, category: null }],
     });
-    expect(await readLoanSettings(bank.database, await accountIdOf(LARKSPUR?.id ?? ""))).toEqual(
-      {
-        accountId: await accountIdOf(LARKSPUR?.id ?? ""),
-        loanType: "cash loan",
-        setBy: "app",
-        apr: null,
-      },
-    );
+    expect(await readLoanSettings(bank.database, await accountIdOf(LARKSPUR?.id ?? ""))).toEqual({
+      accountId: await accountIdOf(LARKSPUR?.id ?? ""),
+      loanType: "cash loan",
+      setBy: "app",
+      apr: null,
+    });
   });
 
   it("takes Larkspur's interest from the drop in its balance, and a payment before the first saved balance from the first measured share", async () => {

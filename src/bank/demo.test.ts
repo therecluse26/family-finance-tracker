@@ -131,9 +131,9 @@ describe("the demo Household fixture", () => {
     expect(category("LOAN_DISBURSEMENTS_PERSONAL")).toHaveLength(1);
     expect(byDescription(/^LARKSPUR LOAN PMT/).length).toBeGreaterThanOrEqual(12);
     // Transfers to Pinecrest with "transfer" wording.
-    expect(
-      byDescription(/TRANSFER TO PINECREST BANK XXXXXX6014$/).length,
-    ).toBeGreaterThanOrEqual(18);
+    expect(byDescription(/TRANSFER TO PINECREST BANK XXXXXX6014$/).length).toBeGreaterThanOrEqual(
+      18,
+    );
     expect(DEMO_PINECREST.mask).toBe("6014");
     // A monthly Recurring charge with one Price increase, and a yearly one.
     const streaming = byDescription(/^STREAMFLIX/);

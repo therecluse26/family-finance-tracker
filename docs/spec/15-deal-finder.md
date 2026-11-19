@@ -312,4 +312,4 @@ These need an owner decision or a short spike before tickets:
 
 - Owner request and choices in the Claude Code session of 2026-11-07: dietary disclaimer, opt-in ZIP code, List items in Chat, regular price first, the trip setting.
 - Owner decisions of 2026-11-10: stealth readers kept in the public repo, one Scraping service per Household, Store APIs first, the Actor order, the Price sources page.
-- Spike rounds 1 to 11, 2026-11-09 and 2026-11-10: branch `spike/price-source`, `spikes/price-source/FINDINGS.md`.
+- Spike rounds 1 to 11, 2026-11-09 and 2026-11-10. The spike scripts and notes are not in this repo.

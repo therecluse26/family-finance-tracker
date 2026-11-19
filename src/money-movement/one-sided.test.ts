@@ -48,9 +48,7 @@ const RETIREMENT: UnconnectedAccountInput = {
 };
 
 // The demo's transfers to Pinecrest.
-const TO_PINECREST = demoRecords().filter((record) =>
-  record.description.includes("PINECREST"),
-);
+const TO_PINECREST = demoRecords().filter((record) => record.description.includes("PINECREST"));
 
 describe("one-sided Transfers and Saving", () => {
   let bank: TestBank;

@@ -2,7 +2,7 @@ import { type FakeAnswer, FakeJsonServer, type FakeRequest } from "./server.ts";
 
 // A fake Apify API on 127.0.0.1: the account read, an Actor run with its run record, and the run's
 // dataset. Each Actor answers with rows made up by hand in that Actor's field shapes (spike rounds
-// 7 to 14, spikes/price-source/FINDINGS.md). No ZIP code, store ID, address or name in it is real.
+// 7 to 14). No ZIP code, store ID, address or name in it is real.
 // Its tokens are made when a test or dev run starts.
 
 export type ActorRows = (input: Record<string, unknown>) => Record<string, unknown>[];

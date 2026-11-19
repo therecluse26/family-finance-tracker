@@ -1,12 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adviseAlerts } from "../anomalies/advice.ts";
 import { type AlertFacts, alertNotes, alertText, startAnomalyChecks } from "../anomalies/index.ts";
-import {
-  DEMO_BANKS,
-  DEMO_MEMBERS,
-  DEMO_PINECREST,
-  seedDemoHousehold,
-} from "../bank/demo.ts";
+import { DEMO_BANKS, DEMO_MEMBERS, DEMO_PINECREST, seedDemoHousehold } from "../bank/demo.ts";
 import { fakeTxn } from "../bank/fake.ts";
 import { runFirstRun, syncConnection } from "../bank/index.ts";
 import { newTestBank, type TestBank } from "../bank/testing.ts";

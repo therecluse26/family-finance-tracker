@@ -66,9 +66,7 @@ describe("the remembered Transfer answer list", () => {
       />,
     );
 
-    expect(text(html)).toContain(
-      "Online Transfer To Sav, ending 5678: Pinecrest savingsDelete",
-    );
+    expect(text(html)).toContain("Online Transfer To Sav, ending 5678: Pinecrest savingsDelete");
     expect(text(html)).toContain("Rent Transfer: Not a TransferDelete");
     expect(html).toContain('aria-label="Delete the answer for Rent Transfer"');
   });
