@@ -57,7 +57,7 @@ export const US_BANKS_AND_LENDERS: readonly string[] = Object.freeze([
   "Klarna",
   "LendingClub",
   "LendingTree",
-  "Larkspur",
+  "LightStream",
   "Mr. Cooper",
   "Navient",
   "Nelnet",
